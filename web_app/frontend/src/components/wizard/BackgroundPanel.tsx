@@ -324,14 +324,23 @@ export function StageBackground() {
   const setBackground = useWizardStore((state) => state.setBackground);
   const toggleVibe = useWizardStore((state) => state.toggleVibe);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
-  // План — часть ключа: переключил тип футажей → пришёл другой список примеров.
+  const lyrics = useWizardStore((state) => state.fragmentEnabled ? state.fragmentLyrics : state.lyrics);
+  // Lyrics and media plane both determine the semantic order.
   const footagePlane = footageTypePlane(background.footageType);
   const vibesQuery = useQuery({
-    queryKey: ['vibes', footagePlane],
-    queryFn: () => api.vibes(footagePlane),
-    enabled: background.mode === 'footage'
+    queryKey: ['vibes', footagePlane, footagePlane === 'vibes' ? lyrics : ''],
+    queryFn: async () => footagePlane === 'vibes'
+      ? { vibes: (await api.rankBackgrounds(lyrics, 'video')).items }
+      : api.vibes(footagePlane),
+    staleTime: 60_000,
+    enabled: background.mode === 'footage' && (footagePlane !== 'vibes' || Boolean(lyrics.trim()))
   });
-  const photosQuery = useQuery({ queryKey: ['photos'], queryFn: api.photos, enabled: background.mode === 'photo' });
+  const photosQuery = useQuery({
+    queryKey: ['photos', lyrics],
+    queryFn: async () => ({ photos: (await api.rankBackgrounds(lyrics, 'photo')).items }),
+    staleTime: 60_000,
+    enabled: background.mode === 'photo' && Boolean(lyrics.trim())
+  });
   const cardsScroll = useDragScroll();
   const gluesScroll = useDragScroll();
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -496,14 +505,23 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
   const chip = useChip();
   const background = useWizardStore((state) => state.background);
   const setBackground = useWizardStore((state) => state.setBackground);
-  // План — часть ключа: переключил тип футажей → пришёл другой список примеров.
+  const lyrics = useWizardStore((state) => state.fragmentEnabled ? state.fragmentLyrics : state.lyrics);
+  // Lyrics and media plane both determine the semantic order.
   const footagePlane = footageTypePlane(background.footageType);
   const vibesQuery = useQuery({
-    queryKey: ['vibes', footagePlane],
-    queryFn: () => api.vibes(footagePlane),
-    enabled: background.mode === 'footage'
+    queryKey: ['vibes', footagePlane, footagePlane === 'vibes' ? lyrics : ''],
+    queryFn: async () => footagePlane === 'vibes'
+      ? { vibes: (await api.rankBackgrounds(lyrics, 'video')).items }
+      : api.vibes(footagePlane),
+    staleTime: 60_000,
+    enabled: background.mode === 'footage' && (footagePlane !== 'vibes' || Boolean(lyrics.trim()))
   });
-  const photosQuery = useQuery({ queryKey: ['photos'], queryFn: api.photos, enabled: background.mode === 'photo' });
+  const photosQuery = useQuery({
+    queryKey: ['photos', lyrics],
+    queryFn: async () => ({ photos: (await api.rankBackgrounds(lyrics, 'photo')).items }),
+    staleTime: 60_000,
+    enabled: background.mode === 'photo' && Boolean(lyrics.trim())
+  });
   const [index, setIndex] = useState(0);
   const [broken, setBroken] = useState<Record<string, boolean>>({});
   const pillsScroll = useDragScroll();

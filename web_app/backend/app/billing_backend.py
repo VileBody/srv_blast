@@ -111,6 +111,34 @@ class BillingBackend:
     async def close(self) -> None:
         await self._db.close()
 
+    async def queue_payment_notifications(self) -> None:
+        """Reconcile web Init events from the durable ledger, including a lost
+        HTTP response/restart between saving the payment and notifying ops.
+        Settlement notifications remain owned by the existing T-Bank webhook.
+        """
+        from . import notifications
+        from starlette.concurrency import run_in_threadpool
+
+        async with self._db._pool_or_fail().acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT order_id, tg_id, package, amount_rub, status, payment_url FROM payments "
+                "WHERE order_id LIKE '%-web-%'"
+            )
+        for row in rows:
+            status = str(row["status"])
+            # A saved URL proves Init succeeded even if the payment has already
+            # advanced to CONFIRMED before this monitor tick.
+            event = "created" if row["payment_url"] else status.lower()
+            if event not in {"created", "init_failed", "init_unknown"}:
+                continue
+            label = {"created": "Создана ссылка на оплату", "init_failed": "Не удалось создать платёж",
+                     "init_unknown": "Неопределённый результат создания платежа"}[event]
+            await run_in_threadpool(
+                notifications.manager_event, f"payment:{row['order_id']}:{event}",
+                f"{label} на сайте\nПользователь: {row['tg_id']}\nПакет: {row['package']}\n"
+                f"Сумма: {row['amount_rub']} ₽\nOrder: {row['order_id']}"
+            )
+
     async def healthcheck(self) -> None:
         pool = self._db._pool_or_fail()
         async with pool.acquire() as conn:

@@ -253,6 +253,10 @@ export const api = {
   vibes: (plane = 'vibes') =>
     request<{ status: string; vibes: Vibe[] }>(`/api/wizard/vibes?plane=${encodeURIComponent(plane)}`),
   photos: () => request<{ status: string; photos: Vibe[] }>('/api/wizard/photos'),
+  rankBackgrounds: (lyrics: string, mediaType: 'video' | 'photo') =>
+    request<{ items: Vibe[] }>('/api/wizard/rank-backgrounds', {
+      method: 'POST', body: JSON.stringify({ lyrics, mediaType })
+    }),
   subtitleStyles: () => request<{ status: string; styles: { id: string; name: string; previewUrl: string }[] }>('/api/wizard/subtitle-styles'),
   wizardSession: () => request<{ session: WizardSession | null }>('/api/wizard/session'),
   saveWizardSession: (payload: { projectId?: string | null; stage: number; data: Record<string, unknown> }) =>

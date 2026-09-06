@@ -1,7 +1,7 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import type { Vibe } from '../lib/types';
 import { Button } from '../components/ui/Button';
@@ -347,6 +347,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
 export function WizardPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const { push } = useToast();
   const stage = useWizardStore((state) => state.stage);
@@ -428,6 +429,23 @@ export function WizardPage() {
       // would leave the next panel rendered from a draft the server never saw.
       push({ variant: 'error', title: t('wizard.page.saveFail'), text: t('wizard.page.saveFailText') });
     }
+  });
+  const renameProjectMutation = useMutation({
+    mutationFn: (name: string) => {
+      if (!projectId) throw new Error('Project is not selected');
+      return api.updateProject(projectId, { name });
+    },
+    onSuccess: async (data) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['projects'] }),
+        queryClient.invalidateQueries({ queryKey: ['project', data.project.id] })
+      ]);
+    },
+    onError: (error) => push({
+      variant: 'error',
+      title: t('wizard.page.renameFail'),
+      text: error instanceof Error ? error.message : undefined
+    })
   });
   const submitMutation = useMutation({
     mutationFn: () => api.submitWizard({ projectId, stageData: state.stageData(), videosToGenerate: safeVideosToGenerate, idempotencyKey: state.final.idempotencyKey }),
@@ -544,7 +562,9 @@ export function WizardPage() {
   }
 
   const track = state.track;
-  const headerTitle = track ? track.filename.replace(/\.[^.]+$/, '') : t('wizard.track.nameFallback');
+  const currentProject = projectsQuery.data?.projects.find((project) => project.id === projectId);
+  const headerTitle = currentProject?.name
+    ?? (track ? track.filename.replace(/\.[^.]+$/, '') : t('wizard.track.nameFallback'));
   const artist = meQuery.data?.user.artistNick || meQuery.data?.user.name || undefined;
   const back = () => {
     const idx = STAGE_ORDER.indexOf(stage);
@@ -578,7 +598,10 @@ export function WizardPage() {
         <WizardHeaderCard
           title={headerTitle}
           artist={artist}
-          onRename={track ? (value) => value && state.setTrack({ ...track, filename: `${value}.${track.filename.split('.').pop()}` }) : undefined}
+          onRename={projectId ? (value) => {
+            const name = value.trim();
+            if (name && name !== currentProject?.name) renameProjectMutation.mutate(name);
+          } : undefined}
         />
         {/* data-limits-dim: хост затемнения для LimitsIndicator (Figma W46 — на всю карточку) */}
         <div data-limits-dim className={cn('card-2 relative min-h-0 flex-1 px-space-7 py-space-6 max-lg:px-space-5', stage === 5 ? 'overflow-hidden' : 'subtle-scroll overflow-y-auto')}>

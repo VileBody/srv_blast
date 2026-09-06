@@ -190,7 +190,6 @@ class ProductionConfig:
     asset_prefix: str
     stage1_backend: str
     subtitle_modes: dict[str, str]
-    footage_artists: dict[str, str]
     footage_catalog: tuple[dict[str, Any], ...]
     photo_catalog: tuple[dict[str, Any], ...]
     subtitle_catalog: tuple[dict[str, Any], ...]
@@ -198,12 +197,7 @@ class ProductionConfig:
     # фона намеренно: у футажа и фото есть одинаковые подписи («Тёмный лес / туман»,
     # «Портрет девушки / светлый»), и в общем словаре фото затирало бы футаж — выбор
     # футажа уезжал бы в фото-рендер (bg_mode=photo, геометрия 4:3).
-    # С дефолтами: конфиг собирают и тесты, и старые артистовые каталоги — им эти
-    # поля не нужны, и требовать их значило бы ломать обратную совместимость.
     selector_by_mode: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
-    # базовый профиль артиста: с закреплённой парой rotation он больше не выбирает
-    # бакет, но Stage 2 без него не планирует футаж (в т.ч. на solid-фоне)
-    default_artist_id: str = ""
     fx_catalog: tuple[dict[str, Any], ...] = ()
 
     @classmethod
@@ -218,7 +212,6 @@ class ProductionConfig:
                 "production_backend: WEB_STAGE1_ALIGNMENT_BACKEND must be gemini or local_ctc"
             )
         subtitle_modes = _json_mapping("WEB_SUBTITLE_MODE_MAP_JSON")
-        footage_artists = _json_mapping("WEB_FOOTAGE_ARTIST_MAP_JSON")
         footage_catalog = _json_catalog("WEB_FOOTAGE_CATALOG_JSON")
         photo_catalog = _json_catalog("WEB_PHOTO_CATALOG_JSON")
         subtitle_catalog = _json_catalog("WEB_SUBTITLE_CATALOG_JSON")
@@ -246,38 +239,27 @@ class ProductionConfig:
                 + ", ".join(missing_fx_groups)
             )
 
-        # Запись каталога может нести `selector` — точную пару (theme, tags_group),
-        # которой закрепляется бакет. Такой записи карта артистов не нужна: артист
-        # больше не решает, из чего брать клипы. Требуем маппинг только у записей
-        # СТАРОГО, артистового формата — иначе фильмы и коллекции 16:9 просто
-        # невозможно было бы завести (в карте артистов их нет и быть не может).
+        # Современный выбор фона всегда закрепляет точный бакет парой
+        # (rotationTheme, rotationTagsGroup). Старый artist_id больше не является
+        # частью пользовательского контракта и не должен незаметно менять выбор.
         selector_by_mode: dict[str, dict[str, dict[str, Any]]] = {"footage": {}, "photo": {}}
         for mode, catalog in (("footage", footage_catalog), ("photo", photo_catalog)):
             for item in catalog:
                 selector = item.get("selector")
-                if isinstance(selector, dict) and selector:
+                if isinstance(selector, dict) and selector.get("rotationTheme") and selector.get("rotationTagsGroup"):
                     selector_by_mode[mode][str(item["name"])] = dict(selector)
-        missing_artists = sorted(
+        missing_selectors = sorted(
             {
                 str(item["name"])
                 for mode, catalog in (("footage", footage_catalog), ("photo", photo_catalog))
                 for item in catalog
-                if str(item["name"]) not in footage_artists
-                and str(item["name"]) not in selector_by_mode[mode]
+                if str(item["name"]) not in selector_by_mode[mode]
             }
         )
-        if missing_artists:
+        if missing_selectors:
             raise ProductionBackendError(
-                "production_backend: preview catalog entries have neither a "
-                f"selector nor a WEB_FOOTAGE_ARTIST_MAP_JSON mapping: {missing_artists}"
-            )
-        default_artist_id = str(os.getenv("WEB_DEFAULT_FOOTAGE_ARTIST_ID") or "").strip()
-        if not default_artist_id and footage_artists:
-            default_artist_id = str(next(iter(footage_artists.values())))
-        if not default_artist_id:
-            raise ProductionBackendError(
-                "production_backend: set WEB_DEFAULT_FOOTAGE_ARTIST_ID or provide "
-                "WEB_FOOTAGE_ARTIST_MAP_JSON — Stage 2 needs a base artist profile"
+                "production_backend: every footage/photo catalog entry requires an exact "
+                f"rotation selector: {missing_selectors}"
             )
         missing_subtitles = sorted(
             {
@@ -304,12 +286,10 @@ class ProductionConfig:
             asset_prefix=_required("S3_WEB_ASSET_PREFIX").strip("/"),
             stage1_backend=stage1_backend,
             subtitle_modes=subtitle_modes,
-            footage_artists=footage_artists,
             footage_catalog=footage_catalog,
             photo_catalog=photo_catalog,
             subtitle_catalog=subtitle_catalog,
             selector_by_mode=selector_by_mode,
-            default_artist_id=default_artist_id,
             fx_catalog=fx_catalog,
         )
 
@@ -372,6 +352,27 @@ class ProductionBackend:
                 f"orchestrator /hook/analyze failed status={response.status_code}"
             )
         return dict(response.json())
+
+    def ranked_backgrounds(self, *, lyrics: str, media_type: str) -> list[dict[str, Any]]:
+        """Use the same semantic bucket order as the Telegram bot."""
+        if media_type not in {"video", "photo"}:
+            raise ProductionBackendError(f"unsupported ranked media type {media_type!r}")
+        response = self._http.post(
+            f"{self.config.orchestrator_url}/footage/rank-buckets",
+            json={"lyrics": lyrics, "mood": "", "top": 0, "media_type": media_type, "pool": "vibes"},
+        )
+        if response.status_code >= 300:
+            raise ProductionBackendError(f"background ranking failed status={response.status_code}")
+        body = response.json()
+        buckets = body.get("buckets") if isinstance(body, dict) else None
+        if not isinstance(buckets, list) or not buckets:
+            raise ProductionBackendError("background ranking returned no buckets")
+        ranked_ids = [str(item.get("bucket_id") or "") for item in buckets if isinstance(item, dict)]
+        source = self.preview_catalog("photo" if media_type == "photo" else "footage")
+        by_id = {item["id"]: item for item in source if media_type == "photo" or item.get("plane") == "vibes"}
+        if len(ranked_ids) != len(set(ranked_ids)) or set(ranked_ids) != set(by_id):
+            raise ProductionBackendError("ranked background catalog does not match preview catalog; refresh server catalogs")
+        return [by_id[item_id] for item_id in ranked_ids]
 
     def preview_catalog(self, kind: str) -> list[dict[str, Any]]:
         source = {
@@ -837,11 +838,9 @@ class ProductionBackend:
         background = variation.get("background") or {}
         groups = list(background.get("groups") or [])
         background_mode = str(background.get("mode") or "footage")
-        artist_id = ""
         selector: dict[str, Any] = {}
         custom_sources = background.get("sourceAssets") or []
         if custom_sources:
-            artist_id = self.config.default_artist_id
             source_format = str(background.get("sourceFormat") or "")
             render_preset = {"9:16": "vertical", "16:9": "wide"}.get(source_format)
             if render_preset is None:
@@ -857,24 +856,14 @@ class ProductionBackend:
             selector = dict(
                 self.config.selector_by_mode.get(background_mode, {}).get(group_name) or {}
             )
-            artist_id = self.config.footage_artists.get(group_name, "") or self.config.default_artist_id
-            if not selector and not artist_id:
-                raise ProductionBackendError(f"no footage mapping for {group_name!r}")
-            # A pinned rotation pair is already the exact source pool. Sending
-            # a legacy artist profile as well makes Stage 2 require artist
-            # metadata on every clip in that bucket and rejects valid catalog
-            # clips with stage2_style_rotation_missing_artist_id.
-            if selector.get("rotationTheme") and selector.get("rotationTagsGroup"):
-                artist_id = ""
+            if not selector.get("rotationTheme") or not selector.get("rotationTagsGroup"):
+                raise ProductionBackendError(f"exact rotation selector required for {background_mode} {group_name!r}")
 
         bg_mode = "photo" if background_mode == "photo" else "footage"
         bg_solid_color = ""
         if background_mode == "color":
             bg_mode = "solid"
-            # Solid всё равно требует валидный artist_id: Stage 2 планирует футаж,
-            # даже когда его не видно (см. SendAudioS3Request.bg_mode). Бот в этом
-            # случае подставляет первый ключ из пресетов — делаем то же.
-            artist_id = artist_id or self.config.default_artist_id
+            # Solid scene boundaries are built by the renderer without an artist.
             color = str(background.get("color") or "").lower()
             # The web palette uses the product's near-white/near-black design
             # tokens, while the renderer names the corresponding solid planes.
@@ -971,7 +960,6 @@ class ProductionBackend:
             "target_fragment": target_fragment,
             "stage1_alignment_backend": self.config.stage1_backend,
             "subtitles_mode": subtitles_mode,
-            "footage_artist_id": artist_id,
             "user_clip_start_sec": float(start) if start is not None else None,
             "user_clip_end_sec": float(end) if end is not None else None,
             "hook_enabled": bool(family),

@@ -7,7 +7,7 @@ import secrets
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -203,11 +203,15 @@ async def _restore_state() -> None:
         await run_in_threadpool(security.healthcheck)
         await run_in_threadpool(telegram_bot.healthcheck)
         await run_in_threadpool(tiktok_token_store.healthcheck)
+        from . import production_monitor
+        production_monitor.start()
 
 
 @app.on_event("shutdown")
 async def _close_dependencies() -> None:
     if RUNTIME.backend == "production":
+        from . import production_monitor
+        await production_monitor.stop()
         from .production_backend import close_backend
         from .billing_backend import close_billing
 
@@ -240,6 +244,11 @@ class WizardSessionPayload(BaseModel):
     projectId: str | None = None
     stage: int = 1
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+class RankBackgroundsPayload(BaseModel):
+    lyrics: str = Field(min_length=1, max_length=20000)
+    mediaType: Literal["video", "photo"]
 
 
 class SubmitPayload(BaseModel):
@@ -1083,6 +1092,19 @@ def api_vibes(plane: str = "vibes") -> dict[str, Any]:
     return {"status": "COMPLETED", "vibes": vibes, "mock": RUNTIME.backend == "mock"}
 
 
+@app.post("/api/wizard/rank-backgrounds", tags=["wizard"])
+def api_rank_backgrounds(payload: RankBackgroundsPayload) -> dict[str, Any]:
+    if not payload.lyrics.strip():
+        raise HTTPException(status_code=422, detail="Для подбора вайбов нужен текст отрывка")
+    if RUNTIME.backend == "production":
+        try:
+            items = _production_backend().ranked_backgrounds(lyrics=payload.lyrics, media_type=payload.mediaType)
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        return {"items": items, "mock": False}
+    return {"items": store.PHOTOS if payload.mediaType == "photo" else [item for item in store.VIBES if item.get("plane") == "vibes"], "mock": True}
+
+
 @app.get("/api/wizard/photos", tags=["wizard"])
 def api_photos() -> dict[str, Any]:
     if RUNTIME.backend == "production":
@@ -1248,7 +1270,8 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         try:
             await _billing_backend().reserve(tg_id, live_job["id"], len(live_job.get("videos") or []))
             await _billing_backend().consume_track(tg_id, track_hash)
-            await run_in_threadpool(_production_backend().enqueue_job, live_job)
+            from . import production_monitor
+            await production_monitor.enqueue_job(live_job)
         except Exception as exc:
             from .billing_backend import InsufficientCredits, TrackQuotaExhausted
 
@@ -1275,6 +1298,7 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
                 store.rollback_job_creation(live_job["id"])
             raise _production_error(exc) from exc
         live_job.pop("enqueueError", None)
+        live_job["productionNotifications"] = True
         persistence.save_job(live_job["id"])
         job = store.get_job(live_job["id"]) or live_job
     analytics.track("generation_started", store.current_user_id(), {"jobId": job["id"], "videos": job["versions"], "projectId": project_id})
@@ -1306,9 +1330,8 @@ async def api_active_job() -> dict[str, Any]:
     if job and RUNTIME.backend == "production":
         try:
             live_job = store.JOBS[job["id"]]
-            await run_in_threadpool(_production_backend().sync_job, live_job)
-            await _refund_terminal_failures(live_job)
-            persistence.save_job(live_job["id"])
+            from . import production_monitor
+            await production_monitor.sync_job(live_job)
             job = store.get_job(live_job["id"])
         except Exception as exc:
             raise _production_error(exc) from exc
@@ -1323,22 +1346,12 @@ async def api_job(job_id: str) -> dict[str, Any]:
     if RUNTIME.backend == "production":
         try:
             live_job = store.JOBS[job_id]
-            await run_in_threadpool(_production_backend().sync_job, live_job)
-            await _refund_terminal_failures(live_job)
-            persistence.save_job(job_id)
+            from . import production_monitor
+            await production_monitor.sync_job(live_job)
             job = store.get_job(job_id) or live_job
         except Exception as exc:
             raise _production_error(exc) from exc
     return {"job": job, "mock": RUNTIME.backend == "mock"}
-
-
-async def _refund_terminal_failures(job: dict[str, Any]) -> None:
-    if job.get("status") != "FAILED" or job.get("failedCreditsRefunded"):
-        return
-    failed = sum(1 for video in job.get("videos", []) if video.get("status") == "FAILED")
-    if failed:
-        await _billing_backend().refund(_telegram_chat_id(), job["id"], failed)
-    job["failedCreditsRefunded"] = failed
 
 
 @app.post("/api/jobs/{job_id}/rate", tags=["jobs"])

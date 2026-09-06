@@ -459,6 +459,7 @@
       "genFailText": "Check your balance and project.",
       "saveFail": "Failed to save this step",
       "saveFailText": "Check your connection and try again. The transition was stopped and your data is safe.",
+      "renameFail": "Failed to rename project",
       "carriedTitle": "Use the same inputs?",
       "carriedText": "The track, lyrics and timings carried over from the previous batch — you can go straight to the settings. Pick another fragment or text if you need a different take.",
       "carriedKeep": "Continue",
@@ -567,7 +568,7 @@
   "footage": {
     "type": {
       "vertical": "Vertical 9:16",
-      "cine16x9": "Cinematic 16:9",
+      "cine16x9": "16:9",
       "films": "Movies"
     }
   },

@@ -39,10 +39,11 @@ def _config(module: Any, *, stage1_backend: str = "gemini"):
         asset_prefix="app/blast808",
         stage1_backend=stage1_backend,
         subtitle_modes={"Impulse": "impulse_2nd"},
-        footage_artists={"Неон": "electro_synthwave"},
+        selector_by_mode={"footage": {"Неон": {"rotationTheme": "visual", "rotationTagsGroup": "neon", "renderPreset": "vertical"}}},
         footage_catalog=(
             {
-                "id": "neon",
+                "id": "visual:neon",
+                "plane": "vibes",
                 "name": "Неон",
                 "previewUrl": "s3://assets/previews/neon.mp4",
                 "score": 1.0,
@@ -50,7 +51,7 @@ def _config(module: Any, *, stage1_backend: str = "gemini"):
         ),
         photo_catalog=(
             {
-                "id": "neon-photo",
+                "id": "photo:neon",
                 "name": "Неон",
                 "previewUrl": "https://cdn.example/neon.jpg",
                 "score": 1.0,
@@ -299,6 +300,33 @@ def test_f1_and_f5_hooks_use_orchestrator_contract(monkeypatch: pytest.MonkeyPat
     assert payload["reuse_text_job_id"] == "orch-1"
 
 
+@pytest.mark.parametrize("media_type", ["video", "photo"])
+def test_semantic_ranking_preserves_preview_order_and_rejects_catalog_drift(monkeypatch, media_type):
+    module = _module(monkeypatch)
+    config = _config(module)
+    original = dict((config.photo_catalog if media_type == "photo" else config.footage_catalog)[0])
+    second = {**original, "id": "second", "name": "Second"}
+    catalog = (original, second)
+    config = dataclasses.replace(config, **{
+        "photo_catalog" if media_type == "photo" else "footage_catalog": catalog
+    })
+    backend = _backend(module, config)
+    response = {"buckets": [{"bucket_id": "second"}, {"bucket_id": original["id"]}]}
+
+    def rank(url, *, json):
+        assert url.endswith("/footage/rank-buckets")
+        assert json == {"lyrics": "ночной город", "mood": "", "top": 0, "media_type": media_type, "pool": "vibes"}
+        return _Response(response)
+
+    monkeypatch.setattr(backend._http, "post", rank)
+    result = backend.ranked_backgrounds(lyrics="ночной город", media_type=media_type)
+    assert [item["id"] for item in result] == ["second", original["id"]]
+    assert all(item["previewUrl"].startswith("https://") for item in result)
+    response["buckets"] = [{"bucket_id": "unknown"}]
+    with pytest.raises(module.ProductionBackendError, match="does not match"):
+        backend.ranked_backgrounds(lyrics="ночной город", media_type=media_type)
+
+
 @pytest.mark.parametrize(
     ("web_color", "renderer_color"),
     [("#f6f5fd", "white"), ("#05010f", "black"), ("#00ff00", "green")],
@@ -322,6 +350,7 @@ def test_web_solid_palette_maps_to_renderer_planes(
         master_id=None,
     )
 
+    assert "footage_artist_id" not in payload
     assert payload["bg_mode"] == "solid"
     assert payload["bg_solid_color"] == renderer_color
 
@@ -412,7 +441,7 @@ def test_fx_catalog_requires_one_supported_selector(monkeypatch: pytest.MonkeyPa
 
 def test_warmup_video_and_custom_sources_reach_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _module(monkeypatch)
-    config = dataclasses.replace(_config(module), default_artist_id="electro_synthwave")
+    config = _config(module)
     backend = _backend(module, config)
     job = _job()
     job["renderJob"]["track"]["segment"] = {"from": 10.0, "to": 20.0}
@@ -437,6 +466,7 @@ def test_warmup_video_and_custom_sources_reach_orchestrator(monkeypatch: pytest.
     }
 
     payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
+    assert "footage_artist_id" not in payload
     assert payload["f6_video_url"] == "s3://assets/users/intro.mp4"
     assert payload["custom_footage_sources"] == [{
         "url": "s3://assets/users/a.mp4", "width": 1080, "height": 1920, "duration": 15.0,
@@ -482,7 +512,6 @@ def test_bucket_selector_pins_rotation_and_geometry(monkeypatch: pytest.MonkeyPa
             },
             "photo": {},
         },
-        default_artist_id="electro_synthwave",
     )
     backend = _backend(module, config)
     job = _job()
@@ -500,26 +529,12 @@ def test_bucket_selector_pins_rotation_and_geometry(monkeypatch: pytest.MonkeyPa
     assert "footage_artist_id" not in payload
 
 
-def test_vertical_stays_vertical_without_selector(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Каталог старого, артистового формата обязан продолжать работать.
-
-    Без selector пара rotation пустая (оркестратор сам выбирает подгруппу), а
-    геометрия — vertical: неверный формат хуже исторического.
-    """
+def test_missing_selector_is_rejected_instead_of_selecting_by_artist(monkeypatch: pytest.MonkeyPatch) -> None:
     module = _module(monkeypatch)
-    backend = _backend(module, _config(module))
+    backend = _backend(module, dataclasses.replace(_config(module), selector_by_mode={}))
     job = _job()
-    variation = job["renderJob"]["variations"][0]
-    variation["background"] = {"mode": "footage", "groups": ["Неон"]}
-
-    payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
-
-    # Пустые поля payload вычищаются: закреплять «никакую» группу нельзя, иначе
-    # оркестратор получил бы половину пары и не понял бы, чего от него хотят.
-    assert "rotation_theme" not in payload
-    assert "rotation_tags_group" not in payload
-    assert payload["render_preset"] == "vertical"
-    assert payload["footage_artist_id"] == "electro_synthwave"
+    with pytest.raises(module.ProductionBackendError, match="exact rotation selector required"):
+        backend.validate_job(job)
 
 
 def test_submit_payload_requires_server_audio_locator(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -554,7 +569,6 @@ def test_same_label_in_footage_and_photo_does_not_cross_wire(monkeypatch: pytest
                 "renderPreset": "vertical", "bgMode": "photo",
             }},
         },
-        default_artist_id="electro_synthwave",
     )
     backend = _backend(module, config)
 
