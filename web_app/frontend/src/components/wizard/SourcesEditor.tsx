@@ -103,7 +103,7 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
 
   if (!open) return null;
   return createPortal(<div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onMouseDown={onClose}>
-    <section role="dialog" aria-modal="true" aria-label={t('wizard.sources.title')} className="max-h-[92vh] w-[820px] max-w-full overflow-auto rounded-r25 bg-[#21153d] p-6 text-text" onMouseDown={e => e.stopPropagation()}>
+    <section role="dialog" aria-modal="true" aria-label={t('wizard.sources.title')} className="max-h-[calc(var(--app-layout-h,100vh)*.92)] w-[820px] max-w-full overflow-auto rounded-r25 bg-[#21153d] p-6 text-text" onMouseDown={e => e.stopPropagation()}>
       <header className="mb-3 flex items-center justify-between"><h2 className="text-2xl">{t('wizard.sources.title')}</h2><button type="button" onClick={onClose} aria-label={t('wizard.sources.close')}>✕</button></header>
       <p className="mb-4 text-sm text-text-60">{t('wizard.sources.editorHint')}</p>
       <div className="mb-4 flex flex-wrap items-center gap-2">

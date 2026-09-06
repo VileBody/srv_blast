@@ -118,7 +118,7 @@ function Hero({ name, resume, onCreate, onResume }: {
       />
       <div className="relative flex flex-col items-center px-space-6 text-center">
         <h1
-          className="text-[clamp(40px,5vw,64px)] font-[400] leading-none text-transparent"
+          className="text-[clamp(40px,calc(var(--app-layout-w,100vw)*.05),64px)] font-[400] leading-none text-transparent"
           style={{
             backgroundImage: 'linear-gradient(184deg, #f6f5fd 8%, rgba(246,245,253,.8) 95%)',
             WebkitBackgroundClip: 'text',

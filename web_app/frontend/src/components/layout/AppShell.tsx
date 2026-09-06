@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -17,17 +17,17 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 // intended 1600x900 CSS viewport. Keep that geometry inside the app so users do
 // not have to change browser zoom themselves.
 const DESKTOP_LAYOUT_WIDTH = 1600;
-const DESKTOP_LAYOUT_HEIGHT = 900;
 const MIN_DESKTOP_SCALE = 0.64;
 
-function desktopScale(width: number, height: number): number {
+function desktopScale(width: number): number {
   // Tailwind's max-lg rules end below 1024px. At exactly 1024px the desktop
-  // shell is still active and must receive the same height-aware scaling.
+  // shell is still active and uses the same virtual viewport principle.
   if (width < 1024) return 1;
-  return Math.max(
-    MIN_DESKTOP_SCALE,
-    Math.min(1, width / DESKTOP_LAYOUT_WIDTH, height / DESKTOP_LAYOUT_HEIGHT)
-  );
+  // Browser zoom changes the CSS viewport by the inverse of the zoom level.
+  // It does not choose a smaller zoom because the browser chrome reduced the
+  // available height. Base the application zoom on width for the same result;
+  // pages remain responsible for vertical scrolling at short viewport heights.
+  return Math.max(MIN_DESKTOP_SCALE, Math.min(1, width / DESKTOP_LAYOUT_WIDTH));
 }
 
 function useAppViewport() {
@@ -46,7 +46,7 @@ function useAppViewport() {
     };
   }, []);
 
-  const scale = desktopScale(viewport.width, viewport.height);
+  const scale = desktopScale(viewport.width);
   return {
     scale,
     layoutWidth: viewport.width / scale,
@@ -89,7 +89,7 @@ function Sidebar({ activeJobId, userName, avatarUrl }: { activeJobId?: string; u
       <NavLink to="/app" aria-label={t('nav.dashboard')} className="sidebar-icon !w-[60px]">
         <img src="/assets/figma/logo-star.svg" width="60" height="60" alt="Blast" />
       </NavLink>
-      <nav className="mt-[clamp(48px,10vh,107px)] flex flex-col items-center gap-space-7">
+      <nav className="mt-[clamp(48px,calc(var(--app-layout-h,100vh)*.1),107px)] flex flex-col items-center gap-space-7">
         {nav.map((item) => (
           <NavLink
             key={item.href}
@@ -181,6 +181,18 @@ export function AppShell() {
   const notifiedJob = useRef<string | null>(null);
   const viewport = useAppViewport();
 
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.style.zoom = String(viewport.scale);
+    root.style.setProperty('--app-layout-w', `${viewport.layoutWidth}px`);
+    root.style.setProperty('--app-layout-h', `${viewport.layoutHeight}px`);
+    return () => {
+      root.style.zoom = '';
+      root.style.removeProperty('--app-layout-w');
+      root.style.removeProperty('--app-layout-h');
+    };
+  }, [viewport.layoutHeight, viewport.layoutWidth, viewport.scale]);
+
   useEffect(() => {
     if (!activeJobQuery.data || activeJob) return;
     if (lastCompletedJob) return;
@@ -201,7 +213,6 @@ export function AppShell() {
   const frameStyle = {
     width: `${viewport.layoutWidth}px`,
     height: `${viewport.layoutHeight}px`,
-    transform: `scale(${viewport.scale})`,
     '--app-layout-w': `${viewport.layoutWidth}px`,
     '--app-layout-h': `${viewport.layoutHeight}px`,
     '--app-page-h': `${viewport.layoutHeight - 2 * 32}px`
