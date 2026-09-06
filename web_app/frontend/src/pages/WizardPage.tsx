@@ -205,8 +205,8 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
   const roundSeconds = (value: number) => Math.round(value * 10) / 10;
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-space-4">
+    <div className="flex min-h-full flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-space-4">
         <h2 className="wizard-h flex items-center gap-space-3">
           <FigIcon name="icon-note.svg" h={19} />
           {t('wizard.track.intro')}
@@ -268,7 +268,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
           type="button"
           onClick={() => fileInputRef.current?.click()}
           title={t('wizard.track.replaceFile')}
-          className="dash-panel mt-space-6 flex h-[90px] w-full items-center justify-between gap-space-4 px-space-5"
+          className="dash-panel mt-space-6 flex h-[90px] min-h-[90px] w-full shrink-0 items-center justify-between gap-space-4 px-space-5"
         >
           <span className="wizard-body truncate text-left">{baseName}</span>
           <span className="flex shrink-0 items-center gap-space-3">
@@ -279,7 +279,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
       )}
 
       {/* Лимит длины отрывка виден ДО ввода — рядом с заголовком, а не тостом постфактум */}
-      <div className="mt-space-6 flex flex-wrap items-baseline justify-between gap-space-3">
+      <div className="mt-space-6 flex shrink-0 flex-wrap items-baseline justify-between gap-space-3">
         <h2 className="wizard-h">{t('wizard.track.timing')}</h2>
         <span className="flex items-center gap-space-3">
           <span className={cn('soft-chip', overLimit && '!text-[var(--warning)]')}>{t('wizard.track.segmentCap', { seconds: maxSegmentSeconds })}</span>
@@ -291,7 +291,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
         </span>
       </div>
       {/* Акцентная обводка с момента загрузки трека и дальше — пройденный/активный этап */}
-      <div className={cn('mt-space-5 flex h-[190px] w-full items-center justify-center gap-space-4 px-space-5', track ? 'dash-panel' : 'dash-panel-white', (overLimit || backwards) && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
+      <div className={cn('mt-space-5 flex h-[190px] min-h-[190px] w-full shrink-0 items-center justify-center gap-space-4 px-space-5', track ? 'dash-panel' : 'dash-panel-white', (overLimit || backwards) && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
         <button
           type="button"
           aria-label={playing ? t('wizard.track.pause') : t('wizard.track.play')}
@@ -323,7 +323,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
         <input ref={timingToInputRef} value={timingTo} onChange={(e) => commitTiming('timingTo', clampTiming(e.target.value, track?.durationS))} inputMode="numeric" maxLength={8} aria-label={t('wizard.track.segEnd')} placeholder="00:00:00" className="soft-input" />
       </div>
       {/* Живая длина отрывка: перебор виден сразу, введённое не стирается */}
-      <p className={cn('mt-space-5 max-w-[520px] text-[15px] leading-[1.5]', overLimit || backwards ? 'text-[var(--warning)]' : 'wizard-body')}>
+      <p className={cn('mt-space-5 max-w-[520px] shrink-0 text-[15px] leading-[1.5]', overLimit || backwards ? 'text-[var(--warning)]' : 'wizard-body')}>
         {backwards
           ? t('wizard.track.segmentBackwards')
           : overLimit

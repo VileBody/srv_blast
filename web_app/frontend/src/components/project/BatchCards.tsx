@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isVideoPosted, type VideoVersion } from '../../lib/types';
 import { cn } from '../../lib/cn';
@@ -19,6 +19,75 @@ export const gradLight = {
   WebkitBackgroundClip: 'text',
   backgroundClip: 'text'
 } as const;
+
+/** Горизонтальная лента: мышью/тачем тянется, вертикальное колесо листает по горизонтали. */
+function useHorizontalScroll() {
+  const ref = useRef<HTMLDivElement>(null);
+  const drag = useRef({ active: false, moved: false, startX: 0, startScroll: 0 });
+  const [fade, setFade] = useState({ left: false, right: false });
+
+  const syncFades = () => {
+    const element = ref.current;
+    if (!element) return;
+    setFade({
+      left: element.scrollLeft > 4,
+      right: element.scrollLeft + element.clientWidth < element.scrollWidth - 4
+    });
+  };
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    syncFades();
+    const resize = new ResizeObserver(syncFades);
+    resize.observe(element);
+    const onWheel = (event: WheelEvent) => {
+      if (element.scrollWidth <= element.clientWidth + 1) return;
+      const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+      if (!delta) return;
+      event.preventDefault();
+      element.scrollLeft += delta;
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      resize.disconnect();
+      element.removeEventListener('wheel', onWheel);
+    };
+  }, []);
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const element = ref.current;
+    if (!element) return;
+    drag.current = { active: true, moved: false, startX: event.clientX, startScroll: element.scrollLeft };
+    element.setPointerCapture?.(event.pointerId);
+  };
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const element = ref.current;
+    if (!drag.current.active || !element) return;
+    const dx = event.clientX - drag.current.startX;
+    if (Math.abs(dx) > 5) {
+      drag.current.moved = true;
+      element.scrollLeft = drag.current.startScroll - dx;
+    }
+  };
+  const end = () => {
+    drag.current.active = false;
+    window.setTimeout(() => { drag.current.moved = false; }, 0);
+  };
+
+  return {
+    ref,
+    fade,
+    moved: () => drag.current.moved,
+    handlers: { onPointerDown, onPointerMove, onPointerUp: end, onPointerCancel: end, onPointerLeave: end, onScroll: syncFades }
+  };
+}
+
+function edgeMask(left: boolean, right: boolean, width = 24) {
+  const leftStop = left ? width : 0;
+  const rightStop = right ? width : 0;
+  return `linear-gradient(to right, transparent 0, #000 ${leftStop}px, #000 calc(100% - ${rightStop}px), transparent 100%)`;
+}
 
 /** Чип-тег в строке генерации (h25, r5): иконбокс 25×25 + подпись (Figma 712:333/318/324). */
 export function TagChip({ label, icon }: { label: string; icon: 'bg' | 'sub' | 'hook' }) {
@@ -49,13 +118,20 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
   // Опубликованный ролик выглядел ровно как неопубликованный: юзер не понимал, что уже ушло
   // в TikTok, а «Выложить все» молча пропускала выложенные.
   const posted = isVideoPosted(video);
+  const chips = useHorizontalScroll();
+  const chipsMask = edgeMask(chips.fade.left, chips.fade.right, 20);
   return (
     <div className={cn('relative flex h-[60px] shrink-0 items-center rounded-[15px] bg-[#1d1534] pl-[28px] pr-[24px]', posted && 'opacity-70')}>
       <span className="flex w-[110px] shrink-0 items-center gap-[8px] truncate text-[16px] leading-none text-text">
         <span className="translate-y-px truncate">{t('projectDetail.videoN', { n: video.index })}</span>
         {posted && <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-success" aria-hidden="true" />}
       </span>
-      <div className="mx-[20px] flex min-w-0 flex-1 items-center gap-[10px] overflow-x-auto no-scrollbar">
+      <div
+        ref={chips.ref}
+        className="no-scrollbar mx-[20px] flex min-w-0 flex-1 cursor-grab select-none items-center gap-[10px] overflow-x-auto active:cursor-grabbing"
+        style={{ maskImage: chipsMask, WebkitMaskImage: chipsMask }}
+        {...chips.handlers}
+      >
         {/* Через chip(): бакеты футажа и типы хуков хранятся по-русски (по ним матчит бэк),
             а показывать их надо на языке интерфейса. */}
         <TagChip icon="bg" label={chip(video.source)} />
@@ -159,16 +235,42 @@ export function BatchTrack({
   onAddBatch: () => void;
 }) {
   const { t } = useTranslation();
+  const scroll = useHorizontalScroll();
+  const mask = edgeMask(scroll.fade.left, scroll.fade.right, 28);
+  useEffect(() => {
+    const rail = scroll.ref.current;
+    if (!rail || !selectedId) return;
+    const selected = Array.from(rail.querySelectorAll<HTMLElement>('[data-batch-id]'))
+      .find((element) => element.dataset.batchId === selectedId);
+    if (!selected) return;
+    const isLast = batches[batches.length - 1]?.id === selectedId;
+    if (isLast) {
+      // У последнего батча сразу показываем и соседний «+», иначе он остаётся за краем.
+      rail.scrollLeft = rail.scrollWidth - rail.clientWidth;
+    } else {
+      const left = selected.offsetLeft;
+      const right = left + selected.offsetWidth;
+      if (left < rail.scrollLeft) rail.scrollLeft = left;
+      else if (right > rail.scrollLeft + rail.clientWidth) rail.scrollLeft = right - rail.clientWidth;
+    }
+    rail.dispatchEvent(new Event('scroll'));
+  }, [batches.length, selectedId, scroll.ref]);
   return (
-    <div className="no-scrollbar flex h-[60px] items-stretch overflow-x-auto rounded-[15px]" style={{ background: 'var(--grad-soft-10)' }}>
+    <div
+      ref={scroll.ref}
+      className="no-scrollbar flex h-[60px] cursor-grab select-none items-stretch overflow-x-auto rounded-[15px] active:cursor-grabbing"
+      style={{ background: 'var(--grad-soft-10)', maskImage: mask, WebkitMaskImage: mask }}
+      {...scroll.handlers}
+    >
       {(batches.length ? batches : [{ id: 'empty', number: 1 }]).map((batch) => {
         const selected = batches.length === 0 || batch.id === selectedId;
         return (
           <button
             key={batch.id}
+            data-batch-id={batch.id}
             type="button"
             disabled={batches.length === 0}
-            onClick={() => onSelect(batch.id)}
+            onClick={() => { if (!scroll.moved()) onSelect(batch.id); }}
             aria-pressed={selected}
             className={cn(
               'relative z-10 flex shrink-0 items-center whitespace-nowrap rounded-[15px] border-2 px-[21px] text-[24px] font-[350] leading-none transition [backdrop-filter:blur(40px)]',
@@ -182,9 +284,9 @@ export function BatchTrack({
       })}
       <button
         type="button"
-        onClick={onAddBatch}
+        onClick={() => { if (!scroll.moved()) onAddBatch(); }}
         aria-label={t('projects.addBatch')}
-        className="relative z-0 flex w-[78px] shrink-0 items-center justify-center rounded-[15px] border-2 border-[var(--accent)] text-[24px] leading-none text-text-80 transition hover:text-text"
+        className="relative z-0 -ml-[2px] flex w-[78px] shrink-0 items-center justify-center rounded-[15px] border-2 border-[var(--accent)] text-[24px] leading-none text-text-80 transition hover:text-text"
         style={{ background: 'var(--grad-soft-20)' }}
       >
         +
