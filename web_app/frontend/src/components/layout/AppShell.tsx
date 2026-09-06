@@ -17,7 +17,9 @@ const DESKTOP_LAYOUT_HEIGHT = 800;
 const MIN_DESKTOP_SCALE = 0.72;
 
 function desktopScale(width: number, height: number): number {
-  if (width <= 1024) return 1;
+  // Tailwind's max-lg rules end below 1024px. At exactly 1024px the desktop
+  // shell is still active and must receive the same height-aware scaling.
+  if (width < 1024) return 1;
   return Math.max(
     MIN_DESKTOP_SCALE,
     Math.min(1, width / DESKTOP_LAYOUT_WIDTH, height / DESKTOP_LAYOUT_HEIGHT)
