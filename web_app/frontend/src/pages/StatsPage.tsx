@@ -483,21 +483,18 @@ export function StatsPage() {
           <span className="relative z-10 flex h-[60px] shrink-0 items-center whitespace-nowrap rounded-r15 border-2 border-accent-light bg-grad-soft-20 px-[21px] text-[24px] font-[400] leading-[29px] text-text [backdrop-filter:blur(40px)]">
             {t('stats.iterationN', { n: iterationNumber })}
           </span>
-          {enough && (
-            /* Раньше кнопка ничего не делала. Теперь она запускает следующую итерацию —
-               тем же путём, что и панель справа: фиксируем сработавшее, тестируем то,
-               что проверить нельзя. */
-            <button
-              type="button"
-              aria-label={t('stats.addIteration')}
-              title={t('stats.addIteration')}
-              disabled={!iterationProject || createIteration.isPending}
-              onClick={() => createIteration.mutate({ count: 5, dimension: nextToTest(analysis)?.dimension ?? 'subtitles' })}
-              className="relative z-0 -ml-[33px] flex h-[60px] w-[78px] items-center justify-center rounded-r15 border-2 border-accent bg-grad-soft-20 pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              +
-            </button>
-          )}
+          {/* Кнопка остаётся на месте даже до накопления данных: меняется доступность,
+              а не геометрия rail. После готовности запускает следующую итерацию. */}
+          <button
+            type="button"
+            aria-label={t('stats.addIteration')}
+            title={t('stats.addIteration')}
+            disabled={!enough || !iterationProject || createIteration.isPending}
+            onClick={() => createIteration.mutate({ count: 5, dimension: nextToTest(analysis)?.dimension ?? 'subtitles' })}
+            className="relative z-0 -ml-[33px] flex h-[60px] w-[78px] shrink-0 items-center justify-center rounded-r15 border-2 border-accent bg-grad-soft-20 pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="translate-y-[1px]" aria-hidden="true">+</span>
+          </button>
           {enough && analysis && <VerdictChips analysis={analysis} />}
         </div>
 
