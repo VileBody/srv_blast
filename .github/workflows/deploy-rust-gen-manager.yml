@@ -141,11 +141,14 @@ jobs:
           repo="$1"
           manager_url="$2"
           manager_token="$3"
+          target_ref="$4"
+          target_sha="$5"
+          [[ "$target_sha" =~ ^[0-9a-f]{40}$ ]]
           manager_chat_id="$(awk -F= '/^[[:space:]]*MANAGER_CHAT_ID=/{ value=$2 } END { print value }' "$repo/.env" | tr -d '[:space:]')"
           test -n "$manager_chat_id"
           cd "$repo"
-          git fetch origin main
-          git merge --ff-only origin/main
+          git fetch origin "$target_ref"
+          git merge --ff-only "$target_sha"
           update_env() {
             local key="$1" value="$2" tmp
             tmp="$(mktemp)"
@@ -162,7 +165,7 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.orchestrator-ha.yml build orchestrator-api
           docker compose -f docker-compose.yml -f docker-compose.orchestrator-ha.yml up -d --pull never --no-build --force-recreate orchestrator-api orchestrator-api-2 worker-build worker-alignment-smoke worker-render worker-render-poll
           REMOTE
-            ssh -i "$key" -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$user@$host" "bash -s -- '$repo' 'http://$RUST_GEN_DEPLOY_HOST:8090' '$RUST_GEN_MANAGER_TOKEN'" <<< "$script"
+            ssh -i "$key" -p "$port" -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$user@$host" "bash -s -- '$repo' 'http://$RUST_GEN_DEPLOY_HOST:8090' '$RUST_GEN_MANAGER_TOKEN' '${GITHUB_REF_NAME}' '${GITHUB_SHA}'" <<< "$script"
           }
           configure_node "$HOME/.ssh/prod_node0" "$DEPLOY_PROD_NODE0_HOST" "${DEPLOY_PROD_NODE0_USER:-deploy}" "${DEPLOY_PROD_NODE0_PORT:-22}" "$DEPLOY_PROD_NODE0_REPO_DIR"
           configure_node "$HOME/.ssh/prod_node1" "$DEPLOY_PROD_NODE1_HOST" "${DEPLOY_PROD_NODE1_USER:-deploy}" "${DEPLOY_PROD_NODE1_PORT:-22}" "$DEPLOY_PROD_NODE1_REPO_DIR"
