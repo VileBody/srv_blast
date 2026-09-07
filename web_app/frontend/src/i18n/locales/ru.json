@@ -28,6 +28,7 @@
     "inProgress": "В процессе"
   },
   "common": {
+    "view": "Открыть",
     "toProjects": "К проектам",
     "language": "Язык",
     "cancel": "Отмена",
@@ -724,6 +725,9 @@
     "step4Text": "Хуки, переходы и вспышки привязываем к дропу.",
     "step5": "Собираем ролик",
     "step5Text": "Рендер {{size}} и кадры для обложки.",
+    "renderSizePending": "точного формата",
+    "guideTitle": "Методичка по TikTok",
+    "guideCaption": "как подготовить и выложить ролик",
     "stepNow": "сейчас",
     "stepDone": "готово",
     "allDone": "Готово"

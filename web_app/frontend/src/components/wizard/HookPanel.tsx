@@ -22,12 +22,12 @@ import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragment
  */
 
 const HOOK_TYPES: { kind: HookKind; icon: string; iconW: number; iconH: number; hint: string }[] = [
+  { kind: 'none', icon: '/assets/figma/icon-bolt.svg', iconW: 15, iconH: 18, hint: 'wizard.fx.hintNoHook' },
   { kind: 'warmup', icon: '/assets/figma/hook-sound.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintSound' },
   { kind: 'object', icon: '/assets/figma/hook-object.svg', iconW: 18, iconH: 18, hint: 'wizard.fx.hintObject' },
   { kind: 'effects', icon: '/assets/figma/hook-effects.svg', iconW: 16, iconH: 17, hint: 'wizard.fx.hintEffects' },
   { kind: 'motion', icon: '/assets/figma/hook-motion.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintMotion' },
-  { kind: 'thought', icon: '/assets/figma/hook-thought.svg', iconW: 15, iconH: 16, hint: 'wizard.fx.hintThought' },
-  { kind: 'none', icon: '/assets/figma/icon-bolt.svg', iconW: 15, iconH: 18, hint: 'wizard.fx.hintNoHook' }
+  { kind: 'thought', icon: '/assets/figma/hook-thought.svg', iconW: 15, iconH: 16, hint: 'wizard.fx.hintThought' }
 ];
 
 // Точные списки из Figma (W34/W28/W29/W30/W27/W31)

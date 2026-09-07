@@ -685,6 +685,7 @@ def get_user_bundle() -> dict[str, Any]:
     space = ws()
     sub = deepcopy(space.subscription)
     sub["creditsTotal"] = total
+    sub["bonusMonthsEarned"] = bonuses_earned(sub.get("startedAt"))
     user = deepcopy(space.user)
     # Вход через Telegram не спрашивает ФИО — по флагу фронт требует дозаполнить профиль
     user["profileComplete"] = bool((user.get("name") or "").strip())

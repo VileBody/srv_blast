@@ -257,17 +257,18 @@ function StatsCard({ connected, handle, published, created, previewData, analysi
   const enough = previewData || Boolean(bars);
   const left = analysis?.videosNeeded ?? 0;
   return (
-    <Link to={connected ? '/app/stats' : '/app/profile'} className="card-2 group relative flex flex-col overflow-hidden p-[40px]">
-      <span className="flex items-center gap-[14px] text-text">
+    <section className="card-2 group relative flex flex-col overflow-hidden p-[40px]">
+      <Link to="/app/stats" className="absolute inset-0" aria-label={t('dashboard.stats')} />
+      <span className="pointer-events-none relative flex items-center gap-[14px] text-text">
         <span className="text-[32px] font-[350] leading-none">{t('dashboard.stats')}</span>
         <FigIcon name="home-arrow.svg" h={16} className="translate-y-[1px] transition-transform duration-200 group-hover:translate-x-[4px]" />
       </span>
       {!connected ? (
-        <div className="flex flex-1 items-center justify-center">
+        <div className="relative z-[1] flex flex-1 items-center justify-center">
           <TiktokButton connected={false} />
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col justify-center gap-[20px]">
+        <div className="pointer-events-none relative flex min-h-0 flex-1 flex-col justify-center gap-[20px]">
           <span className="flex items-center gap-[10px] text-[16px] font-[350] leading-none text-text-60">
             <span className="h-[8px] w-[8px] rounded-full bg-accent-light" />
             @{handle}
@@ -314,7 +315,7 @@ function StatsCard({ connected, handle, published, created, previewData, analysi
           )}
         </div>
       )}
-    </Link>
+    </section>
   );
 }
 

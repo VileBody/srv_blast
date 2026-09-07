@@ -155,6 +155,7 @@ class BillingBackend:
         track_balance = await self._db.get_track_balance(tg_id)
         track_unlimited = await self._db.is_track_unlimited(tg_id)
         bonuses_claimed = await self._db.count_web_subscription_bonuses(tg_id)
+        bonuses_earned = await self._db.count_earned_web_subscription_bonuses(tg_id)
         tracks_used = await self._db.count_user_tracks(tg_id)
         payments = await self._db.get_payments(tg_id=tg_id, limit=100)
         confirmed = next(
@@ -216,6 +217,7 @@ class BillingBackend:
             "expiresAt": expires_at,
             "lastPaymentError": None,
             "bonusesClaimed": bonuses_claimed,
+            "bonusMonthsEarned": bonuses_earned,
             "payments": [
                 {
                     "orderId": item["order_id"],

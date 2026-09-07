@@ -45,6 +45,8 @@ export interface Subscription {
   expiresAt?: string | null;
   /** Сколько бонусов со шкалы месяцев уже забрано */
   bonusesClaimed?: number;
+  /** Number of rewards the server has verified from elapsed paid periods. */
+  bonusMonthsEarned?: number;
   payments?: Array<{
     orderId: string;
     amountRub: number;
@@ -212,6 +214,12 @@ export interface GenerationJob {
   userId: string;
   status: JobStatus;
   stageData: Record<string, unknown>;
+  renderJob?: {
+    variations?: Array<{
+      index?: number;
+      background?: { sourceFormat?: VideoVersion['format'] };
+    }>;
+  };
   versions: number;
   rating?: number | string | null;
   outputUrls?: string[];

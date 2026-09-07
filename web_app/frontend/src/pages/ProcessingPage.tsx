@@ -48,6 +48,8 @@ export function ProcessingPage() {
   const activeVideo = videos.find((video) => video.status === 'PROCESSING')
     ?? videos.find((video) => video.status === 'PENDING' && video.stage !== 'waiting_previous')
     ?? videos.find((video) => video.status === 'PENDING');
+  const activeVariation = job?.renderJob?.variations?.find((variation) => variation.index === activeVideo?.index);
+  const activeFormat = activeVideo?.format ?? activeVariation?.background?.sourceFormat;
   const rootFailure = failedVideos.find((video) => video.stage !== 'skipped') ?? failedVideos[0];
   const rawFailure = rootFailure?.error?.split('\n')[0].trim() ?? '';
   const failureReason = rawFailure.includes('stage2_style_rotation_missing_artist_id')
@@ -167,6 +169,7 @@ export function ProcessingPage() {
           done={done.length}
           total={total}
           activeVideo={activeVideo}
+          renderFormat={activeFormat}
           telegram={Boolean(meQuery.data?.telegramNotifications)}
           onBack={() => navigate('/app/projects')}
         />

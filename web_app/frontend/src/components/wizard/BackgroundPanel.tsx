@@ -16,6 +16,7 @@ import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useFragmentAudio } from './useFragmentAudio';
 import { SourcesModal } from './SourcesEditor';
 import { footageTypeKey, footageTypePlane, stepFootageType } from '../../data/footageTypes';
+import effectsRegistry from '../../data/effects-registry.json';
 import { BackgroundMode, backgroundPills, backgroundVariations, useWizardStore } from '../../stores/wizardStore';
 
 /** Стили фото (Figma W13/W30) — те же, что «стиль» у эффектов-хука */
@@ -32,12 +33,9 @@ const ACCENT = 'var(--accent-light)';
 const WHITE80 = 'var(--text-80)';
 
 /** Типы склеек (Figma W22) — для строба и стилизации фото */
-export const GLUE_TYPES = [
-  { id: 'snap-wipe', label: 'Snap Wipe', icon: '/assets/figma/glue-snapwipe.svg' },
-  { id: 'minimax', label: 'Minimax', icon: '/assets/figma/glue-minimax.svg' },
-  { id: 'extract', label: 'Extract', icon: '/assets/figma/glue-extract.svg' },
-  { id: 'invert', label: 'Invert', icon: '/assets/figma/glue-invert.svg' }
-];
+export const GLUE_TYPES = effectsRegistry.glue
+  .filter((effect) => Boolean(effect.altId))
+  .map((effect) => ({ id: effect.altId as string, label: effect.label }));
 
 /** Горизонтальный скролл: драг 1:1, колесо — плавно */
 export function useDragScroll() {
@@ -319,6 +317,7 @@ function ColorRow({ value, onPick }: { value?: string; onPick: (hex?: string) =>
 
 export function StageBackground() {
   const { t } = useTranslation();
+  const chip = useChip();
   const { push } = useToast();
   const background = useWizardStore((state) => state.background);
   const setBackground = useWizardStore((state) => state.setBackground);
@@ -457,11 +456,11 @@ export function StageBackground() {
             <div className="px-[40px]">
               <ColorRow value={background.color} onPick={(hex) => setBackground({ color: hex })} />
             </div>
-            <div className="flex items-center justify-between gap-space-4 px-[40px]">
-              <span className="wizard-body flex items-center gap-space-3">
-                <SvgMaskIcon src="/assets/figma/icon-strobe.svg" style={{ width: 20, height: 20, color: background.strobe ? ACCENT : WHITE80 }} />
-                {t('wizard.bg.strobe')}
-                <span className="ml-space-2">
+            <div className="flex min-h-[30px] items-center justify-between gap-space-4 px-[40px]">
+              <span className="wizard-body flex items-center gap-space-3 leading-none">
+                <SvgMaskIcon src="/assets/figma/icon-strobe.svg" className="-translate-y-px" style={{ width: 20, height: 20, color: background.strobe ? ACCENT : WHITE80 }} />
+                <span className="translate-y-px">{t('wizard.bg.strobe')}</span>
+                <span className="ml-space-2 flex items-center">
                   <Toggle checked={background.strobe} onChange={(value) => setBackground({ strobe: value })} label={t('wizard.bg.strobe')} />
                 </span>
               </span>
@@ -483,8 +482,8 @@ export function StageBackground() {
                     className={cn('glue-chip', background.glue === glue.id && background.strobe && 'is-selected')}
                     onClick={() => { if (!gluesScroll.moved()) setBackground({ glue: glue.id }); }}
                   >
-                    <img src={glue.icon} width="40" height="40" alt="" aria-hidden="true" />
-                    {glue.label}
+                    <ChipIcon label={glue.label} />
+                    {chip(glue.label)}
                   </button>
                 ))}
               </div>

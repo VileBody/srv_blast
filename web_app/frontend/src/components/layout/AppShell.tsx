@@ -17,17 +17,16 @@ import { LanguageSwitcher } from './LanguageSwitcher';
 // intended 1600x900 CSS viewport. Keep that geometry inside the app so users do
 // not have to change browser zoom themselves.
 const DESKTOP_LAYOUT_WIDTH = 1600;
+const DESKTOP_LAYOUT_HEIGHT = 900;
 const MIN_DESKTOP_SCALE = 0.64;
 
-function desktopScale(width: number): number {
+function desktopScale(width: number, height: number): number {
   // Tailwind's max-lg rules end below 1024px. At exactly 1024px the desktop
   // shell is still active and uses the same virtual viewport principle.
   if (width < 1024) return 1;
-  // Browser zoom changes the CSS viewport by the inverse of the zoom level.
-  // It does not choose a smaller zoom because the browser chrome reduced the
-  // available height. Base the application zoom on width for the same result;
-  // pages remain responsible for vertical scrolling at short viewport heights.
-  return Math.max(MIN_DESKTOP_SCALE, Math.min(1, width / DESKTOP_LAYOUT_WIDTH));
+  // Browser zoom increases both virtual dimensions. Use the tighter axis so a
+  // short laptop screen gets the same usable 1600x900 canvas as a manual zoom.
+  return Math.max(MIN_DESKTOP_SCALE, Math.min(1, width / DESKTOP_LAYOUT_WIDTH, height / DESKTOP_LAYOUT_HEIGHT));
 }
 
 function useAppViewport() {
@@ -46,7 +45,7 @@ function useAppViewport() {
     };
   }, []);
 
-  const scale = desktopScale(viewport.width);
+  const scale = desktopScale(viewport.width, viewport.height);
   return {
     scale,
     layoutWidth: viewport.width / scale,
@@ -76,7 +75,7 @@ function Avatar({ name, avatarUrl }: { name?: string; avatarUrl?: string }) {
       {avatarUrl ? (
         <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover p-[2px]" />
       ) : (
-        (name ?? 'B').slice(0, 1).toUpperCase()
+        <span className="translate-y-[2px] leading-none">{(name ?? 'B').slice(0, 1).toUpperCase()}</span>
       )}
     </NavLink>
   );

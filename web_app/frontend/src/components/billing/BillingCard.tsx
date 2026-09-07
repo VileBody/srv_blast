@@ -25,25 +25,10 @@ function formatDate(iso: string | null | undefined, locale: string): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-const PLAN_ART: Record<Exclude<Subscription['tier'], 'TRIAL'>, { shape: string; logo: string; shapeClass: string; logoClass: string }> = {
-  BLAST: {
-    shape: '/assets/figma/pr-shape-blast.svg',
-    logo: '/assets/figma/pr-logo-blast.svg',
-    shapeClass: '-right-[115px] -top-[72px] h-[330px] w-[620px]',
-    logoClass: 'right-[72px] top-1/2 h-[118px] w-[118px] -translate-y-1/2'
-  },
-  GLOW: {
-    shape: '/assets/figma/pr-shape-glow.svg',
-    logo: '/assets/figma/pr-logo-glow.svg',
-    shapeClass: '-right-[30px] -top-[95px] h-[360px] w-[490px]',
-    logoClass: 'right-[60px] top-1/2 h-[108px] w-[144px] -translate-y-1/2'
-  },
-  IMPULSE: {
-    shape: '/assets/figma/pr-shape-impulse.svg',
-    logo: '/assets/figma/pr-logo-impulse.svg',
-    shapeClass: '-right-[85px] -top-[190px] h-[570px] w-[600px]',
-    logoClass: 'right-[64px] top-1/2 h-[128px] w-[134px] -translate-y-1/2'
-  }
+const PLAN_LOGO: Record<Exclude<Subscription['tier'], 'TRIAL'>, string> = {
+  BLAST: '/assets/figma/pr-logo-blast.svg',
+  GLOW: '/assets/figma/pr-logo-glow.svg',
+  IMPULSE: '/assets/figma/pr-logo-impulse.svg'
 };
 
 export function BillingCard({ subscription }: { subscription: Subscription }) {
@@ -72,18 +57,16 @@ export function BillingCard({ subscription }: { subscription: Subscription }) {
         ? { title: t('billing.canceledTitle'), text: renews ? t('billing.canceledText', { date: renews }) : t('billing.canceledTextNoDate'), tone: 'muted' }
         : { title: t('billing.activeTitle'), text: renews ? t('billing.activeText', { date: renews }) : '', tone: 'ok' };
   const payments = subscription.payments ?? [];
-  const planArt = PLAN_ART[subscription.tier as Exclude<Subscription['tier'], 'TRIAL'>];
+  const planLogo = PLAN_LOGO[subscription.tier as Exclude<Subscription['tier'], 'TRIAL'>];
 
   return <section className="card-2 shrink-0 p-[40px]">
     <h2 className="text-[24px] font-[350] leading-none text-text">{t('billing.title')}</h2>
     <div className="mt-[28px] grid gap-[20px] lg:grid-cols-[minmax(280px,.8fr)_minmax(420px,1.2fr)]">
-      <div className="relative flex min-h-[190px] flex-col overflow-hidden rounded-r15 border border-[rgba(139,111,230,.28)] bg-[rgba(16,9,34,.32)] p-[24px]">
-        <img src={planArt.shape} alt="" aria-hidden="true" className={`pointer-events-none absolute max-w-none opacity-65 ${planArt.shapeClass}`} />
-        <img src={planArt.logo} alt="" aria-hidden="true" className={`pointer-events-none absolute max-w-none opacity-45 ${planArt.logoClass}`} />
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-[#100922] via-[rgba(16,9,34,.86)] to-transparent" />
+      <div className="relative flex min-h-[190px] flex-col rounded-r15 border border-[rgba(139,111,230,.28)] bg-[rgba(16,9,34,.32)] p-[24px] pr-[112px]">
+        <img src={planLogo} alt="" aria-hidden="true" className="pointer-events-none absolute right-[24px] top-[24px] h-[56px] w-[64px] object-contain opacity-75" />
         <span className="relative z-[1] text-[14px] text-text-40">{t('billing.currentPlan')}</span>
         <strong className="relative z-[1] mt-[14px] text-[24px] font-[400] text-text">{view.title}</strong>
-        {view.text && <p className="relative z-[1] mt-[8px] max-w-[60%] text-[15px] leading-[21px] text-text-60">{view.text}</p>}
+        {view.text && <p className="relative z-[1] mt-[8px] text-[15px] leading-[21px] text-text-60">{view.text}</p>}
         <div className="relative z-[1] mt-auto flex flex-wrap gap-[10px] pt-[24px]">
           {status === 'past_due' && <button type="button" disabled={busy} onClick={() => retryMutation.mutate()} className="h-[42px] rounded-r15 bg-accent px-[18px] text-[15px] text-text disabled:opacity-50">{t('billing.retryCta')}</button>}
           {status === 'canceled' && <button type="button" disabled={busy} onClick={() => resumeMutation.mutate()} className="h-[42px] rounded-r15 bg-accent px-[18px] text-[15px] text-text disabled:opacity-50">{t('billing.resumeCta')}</button>}

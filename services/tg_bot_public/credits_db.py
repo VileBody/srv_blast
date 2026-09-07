@@ -215,6 +215,18 @@ def completed_subscription_months(started_at: datetime, now: datetime | None = N
     return max(0, min(3, months))
 
 
+def earned_subscription_bonuses(
+    started_at: datetime,
+    paid_periods: int,
+    now: datetime | None = None,
+) -> int:
+    """Rewards require an elapsed month and its confirmed renewal payment."""
+    return max(
+        0,
+        min(3, completed_subscription_months(started_at, now), int(paid_periods) - 1),
+    )
+
+
 def _rowcount_from_tag(tag: str) -> int:
     parts = str(tag or "").split()
     if not parts:
@@ -1079,6 +1091,31 @@ class CreditsDB:
             )
         return int(value or 0)
 
+    async def count_earned_web_subscription_bonuses(self, tg_id: int) -> int:
+        """Return Blast rewards backed by both elapsed time and paid renewals.
+
+        The first confirmed payment opens the current billing period. Each
+        later confirmed Blast charge proves that one more full paid month was
+        completed. Rejected and expired attempts never unlock the timeline.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            subscription = await conn.fetchrow(
+                "SELECT created_at FROM subscriptions WHERE tg_id = $1 "
+                "AND package IN ('15', 'Бласт') ORDER BY id DESC LIMIT 1",
+                int(tg_id),
+            )
+            if not subscription:
+                return 0
+            paid_periods = int(await conn.fetchval(
+                "SELECT COUNT(*) FROM payments WHERE tg_id = $1 "
+                "AND UPPER(status) = 'CONFIRMED' AND package IN ('15', 'Бласт') "
+                "AND created_at >= $2",
+                int(tg_id),
+                subscription["created_at"],
+            ) or 0)
+        return earned_subscription_bonuses(subscription["created_at"], paid_periods)
+
     async def claim_web_subscription_bonus(self, tg_id: int) -> int:
         """Claim the next earned Blast loyalty bonus and return claimed count.
 
@@ -1106,7 +1143,14 @@ class CreditsDB:
                 ):
                     raise ValueError("no_active_blast_subscription")
                 started = subscription["created_at"]
-                earned = completed_subscription_months(started)
+                paid_periods = int(await conn.fetchval(
+                    "SELECT COUNT(*) FROM payments WHERE tg_id = $1 "
+                    "AND UPPER(status) = 'CONFIRMED' AND package IN ('15', 'Бласт') "
+                    "AND created_at >= $2",
+                    int(tg_id),
+                    started,
+                ) or 0)
+                earned = earned_subscription_bonuses(started, paid_periods)
                 claimed = int(await conn.fetchval(
                     "SELECT COUNT(*) FROM web_subscription_bonuses WHERE tg_id = $1",
                     int(tg_id),

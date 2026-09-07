@@ -104,7 +104,7 @@ function FreeTariff() {
         to="/app/pricing"
         className="group absolute bottom-[28px] right-[28px] flex h-[60px] w-[320px] items-center justify-center gap-[16px] rounded-r15 border border-accent bg-grad-soft-20 text-[24px] font-[400] leading-none text-transparent backdrop-blur-[80px] transition hover:brightness-125"
       >
-        <span style={gradSoft}>{t('profile.expandAccess')}</span>
+        <span className="translate-y-[2px]" style={gradSoft}>{t('profile.expandAccess')}</span>
         <FigIcon name="home-arrow.svg" h={15.464} className="transition-transform duration-150 group-hover:translate-x-[2px]" />
       </Link>
     </div>
@@ -119,8 +119,9 @@ function FreeTariff() {
  *  - будущие → пусто.
  * Текст меняется на ховере (wf44 → wf62), причём только у ТОГО сегмента, на который наведён.
  */
-function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
+function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
   startedAt?: string;
+  earned: number;
   claimed: number;
   onClaim: () => void;
   claiming?: boolean;
@@ -128,16 +129,13 @@ function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith('en') ? 'en-US' : 'ru-RU';
   const now = new Date();
-  const start = startedAt ? new Date(startedAt) : now;
-  // сколько ПОЛНЫХ месяцев прошло с начала подписки = столько бонусов ЗАРАБОТАНО
-  let earned = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
-  if (now.getDate() < start.getDate()) earned -= 1;
-  earned = Math.max(0, Math.min(3, earned));
-  // Шкала всегда показывает текущее окно и два следующих месяца. Старый вариант был
-  // навсегда привязан к месяцу первой оплаты, поэтому после получения бонусов в сентябре
-  // продолжал показывать май—июль.
+  const parsedStart = startedAt ? new Date(startedAt) : now;
+  const start = Number.isNaN(parsedStart.getTime()) ? now : parsedStart;
+  const safeEarned = Math.max(0, Math.min(3, earned));
+  // Три сегмента принадлежат конкретным первым месяцам подписки. Они не съезжают
+  // вместе с календарём и потому всегда совпадают с оплаченными периодами на сервере.
   const monthName = (offset: number) =>
-    new Date(now.getFullYear(), now.getMonth() + offset, 1).toLocaleString(locale, { month: 'short' }).replace('.', '').toLocaleLowerCase(locale);
+    new Date(start.getFullYear(), start.getMonth() + offset, 1).toLocaleString(locale, { month: 'short' }).replace('.', '').toLocaleLowerCase(locale);
   const months = [0, 1, 2].map(monthName);
   /*
    * Бонус за месяц открывается, когда месяц ЗАКОНЧИЛСЯ, то есть в начале следующего.
@@ -155,8 +153,8 @@ function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
    */
   const segs = months.map((_, i) => {
     if (i < claimed) return { def: t('profile.claimed'), hov: t('profile.claimed'), bg: 'bg-grad-main', claimable: false };
-    if (i < earned) return { def: rewards[i], hov: t('profile.claim'), bg: CURRENT_BG, claimable: true };
-    if (i === earned) return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: CURRENT_BG, claimable: false };
+    if (i < safeEarned) return { def: rewards[i], hov: t('profile.claim'), bg: CURRENT_BG, claimable: i === claimed };
+    if (i === safeEarned) return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: CURRENT_BG, claimable: false };
     return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: '', claimable: false };
   });
   const labelCls = 'text-[24px] font-[400] leading-none text-transparent';
@@ -238,12 +236,13 @@ function ImpulseValidity({ expiresAt }: { expiresAt?: string | null }) {
 }
 
 /** Нижняя зона тарифа зависит от продукта: Blast — прогресс подписки, Glow/Impulse — своё */
-function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, claimed, onClaim, claiming, showBonuses }: {
+function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, earned, claimed, onClaim, claiming, showBonuses }: {
   tier: string;
   videosTotal: number | null;
   tracksTotal: number | null;
   startedAt?: string;
   expiresAt?: string | null;
+  earned: number;
   claimed: number;
   onClaim: () => void;
   claiming?: boolean;
@@ -266,7 +265,7 @@ function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, clai
 
       {/* Glow — продукт без прогресса: нижняя зона пустая; Impulse — срок+менеджер; Blast — прогресс */}
       {tier === 'IMPULSE' ? <ImpulseValidity expiresAt={expiresAt} /> : tier === 'GLOW' || !showBonuses ? null : (
-        <BlastProgress startedAt={startedAt} claimed={claimed} onClaim={onClaim} claiming={claiming} />
+        <BlastProgress startedAt={startedAt} earned={earned} claimed={claimed} onClaim={onClaim} claiming={claiming} />
       )}
     </>
   );
@@ -641,6 +640,7 @@ export function ProfilePage() {
             startedAt={subscription.startedAt}
             expiresAt={subscription.expiresAt}
             claimed={subscription.bonusesClaimed ?? 0}
+            earned={subscription.bonusMonthsEarned ?? 0}
             onClaim={() => claimMutation.mutate()}
             claiming={claimMutation.isPending}
             showBonuses={Boolean(meQuery.data?.capabilities?.subscriptionBonuses)}

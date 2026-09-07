@@ -27,6 +27,7 @@
     "inProgress": "In progress"
   },
   "common": {
+    "view": "View",
     "toProjects": "To projects",
     "language": "Language",
     "cancel": "Cancel",
@@ -720,6 +721,9 @@
     "step4Text": "Hooks, transitions and flashes are pinned to the drop.",
     "step5": "Rendering",
     "step5Text": "{{size}} output plus the frames for the cover.",
+    "renderSizePending": "Exact format pending",
+    "guideTitle": "TikTok guide",
+    "guideCaption": "how to prepare and publish the video",
     "stepNow": "now",
     "stepDone": "done",
     "allDone": "Done"
