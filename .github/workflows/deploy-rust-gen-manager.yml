@@ -151,7 +151,9 @@ jobs:
           cd "$repo"
           auth_header="$(printf 'x-access-token:%s' "$github_token" | base64 | tr -d '\n')"
           git -c http.extraheader="AUTHORIZATION: basic $auth_header" fetch "https://github.com/$target_repo.git" "$target_ref"
-          git merge --ff-only "$target_sha"
+          git diff --quiet
+          git diff --cached --quiet
+          git checkout --detach "$target_sha"
           update_env() {
             local key="$1" value="$2" tmp
             tmp="$(mktemp)"
