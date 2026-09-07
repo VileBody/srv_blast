@@ -18,8 +18,15 @@ export type LegalSection = { title: string; body: LegalBlock[] };
 export type LegalDoc = { title: string; intro: string; sections: LegalSection[] };
 export type LegalKind = 'policy' | 'offer';
 
-/** Дата последней редакции документов. Менять при каждой правке текста. */
-export const LEGAL_UPDATED = '2026-07-30';
+/**
+ * Дата последней редакции документов. Менять при каждой правке текста.
+ *
+ * Эти документы — источник правды для юридических текстов лендинга
+ * (`landing/js/legal-documents.js`): там опубликован тот же набор фактов плюс
+ * cookie-политика лендинга, форма согласия и контакты. Правку фактов делаем
+ * здесь, зеркалим туда и поднимаем дату/версию в обоих местах.
+ */
+export const LEGAL_UPDATED = '2026-09-08';
 
 /**
  * Реквизиты оператора — те же, что опубликованы на лендинге

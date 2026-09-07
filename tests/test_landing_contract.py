@@ -75,3 +75,31 @@ def test_hero_badge_text_never_wraps() -> None:
     rule = re.search(r"\.hero-badge span\s*\{(?P<body>[^}]*)\}", styles)
     assert rule is not None
     assert re.search(r"white-space\s*:\s*nowrap\s*;", rule.group("body"))
+
+
+def test_landing_legal_texts_stay_in_sync_with_web_app_documents() -> None:
+    """Лендинг и веб-приложение публикуют одни и те же юридические факты.
+
+    Расхождение реквизитов или даты редакции между blast808.com и
+    app.blast808.com — прямой повод для отказа модерации Google/TikTok,
+    поэтому дрейф ловим тестом, а не глазами.
+    """
+    landing = (LANDING / "js" / "legal-documents.js").read_text(encoding="utf-8")
+    web_app = (ROOT / "web_app" / "frontend" / "src" / "data" / "legal-docs.ts").read_text(encoding="utf-8")
+
+    for requisite in ("623013205426", "324620000005644", "support@blast808.com", "Чернов Никита Романович"):
+        assert requisite in landing, f"landing legal docs lost {requisite}"
+        assert requisite in web_app, f"web app legal docs lost {requisite}"
+
+    landing_effective = re.search(r"const EFFECTIVE_RU = '(\d+) (\S+) (\d{4})", landing)
+    web_app_effective = re.search(r"LEGAL_UPDATED = '(\d{4})-(\d{2})-(\d{2})'", web_app)
+    assert landing_effective and web_app_effective
+    months = {
+        "января": "01", "февраля": "02", "марта": "03", "апреля": "04",
+        "мая": "05", "июня": "06", "июля": "07", "августа": "08",
+        "сентября": "09", "октября": "10", "ноября": "11", "декабря": "12",
+    }
+    day, month_ru, year = landing_effective.groups()
+    assert (year, months[month_ru], f"{int(day):02d}") == web_app_effective.groups(), (
+        "Даты редакции разошлись: подними их одновременно в обоих наборах документов"
+    )
