@@ -504,6 +504,9 @@ export function WizardPage() {
     && clipToSeconds !== null
     && dropSeconds >= clipFromSeconds
     && dropSeconds <= clipToSeconds;
+  const configuredHooks = hookPills(state.hooks);
+  const configuredHookCount = configuredHooks.length;
+  const configuredHooksNeedDrop = configuredHooks.some((pill) => pill.kind !== 'none');
 
   // Этап «Трек» можно проскочить только мимо UI (персист стора, прямой ?qaStage, старый батч) —
   // возвращаем на него, иначе визард дойдёт до «Сгенерировать» с пустым треком.
@@ -515,11 +518,11 @@ export function WizardPage() {
   const ready = useMemo(() => {
     if (stage === 1) return trackReady && timingReady && !segmentInvalid;
     if (stage === 2) return backgroundVariations(state.background) > 0;
-    if (stage === 3) return dropReady && hookPills(state.hooks).length > 0;
+    if (stage === 3) return configuredHookCount > 0 && (!configuredHooksNeedDrop || dropReady);
     if (stage === 4) return state.subtitles.pool.length > 0;
     if (stage === 5) return allocBalanced && trackReady;
     return false;
-  }, [allocBalanced, dropReady, segmentInvalid, stage, state.background, state.hooks, state.subtitles.pool, timingReady, trackReady]);
+  }, [allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.subtitles.pool, timingReady, trackReady]);
 
   const canContinue = useMemo(() => {
     return ready;

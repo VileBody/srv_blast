@@ -14,6 +14,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { statusLabel } from '../components/ui/StatusBadge';
 import { FigIcon } from '../components/ui/FigIcon';
+import { ProjectCover } from '../components/project/ProjectCover';
 
 const STATUS: Record<string, { key: string; dot: string }> = {
   ACTIVE: { key: 'active', dot: '#04BA38' },
@@ -62,11 +63,7 @@ function ProjectRow({ project }: { project: Project }) {
   const allPosted = generated > 0 && posted === generated;
   return (
     <Link to={`/app/projects/${project.id}`} className="group flex items-center gap-space-5">
-      <img
-        src={project.coverUrl ?? '/assets/cover-placeholder.svg'}
-        alt=""
-        className="h-[80px] w-[80px] shrink-0 rounded-[5px] object-cover"
-      />
+      <ProjectCover name={project.name} src={project.coverUrl} className="h-[80px] w-[80px] shrink-0 rounded-[5px]" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[24px] leading-none text-text-80 transition-colors group-hover:text-text">
           {project.name}

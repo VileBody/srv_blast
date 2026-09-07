@@ -477,8 +477,8 @@ export function StatsPage() {
       <section className="card-2 min-h-[505px] flex-none p-[24px] sm:p-[32px] lg:flex-1 lg:p-[40px]">
         <h2 className="text-[32px] font-[400] leading-none text-text">{t('stats.evolution')}</h2>
 
-        {/* таб-бар итераций: номер берётся из реальных итераций проекта (был захардкожен «№1»);
-            «+» — свой пил с обводкой ПОД основным (нахлёст 33px, тот же приём, что «+» у батчей) */}
+        {/* Небольшой нахлёст соединяет пилы визуально, но заканчивается внутри скругления:
+            кнопка больше не перекрывает номер итерации. */}
         <div className="mt-[28px] flex h-[60px] items-center rounded-r15 bg-grad-soft-10 pr-[20px]">
           <span className="relative z-10 flex h-[60px] shrink-0 items-center whitespace-nowrap rounded-r15 border-2 border-accent-light bg-grad-soft-20 px-[21px] text-[24px] font-[400] leading-[29px] text-text">
             {t('stats.iterationN', { n: iterationNumber })}
@@ -491,7 +491,7 @@ export function StatsPage() {
             title={t('stats.addIteration')}
             disabled={!enough || !iterationProject || createIteration.isPending}
             onClick={() => createIteration.mutate({ count: 5, dimension: nextToTest(analysis)?.dimension ?? 'subtitles' })}
-            className="relative z-0 -ml-[33px] flex h-[60px] w-[78px] shrink-0 items-center justify-center rounded-r15 border-2 border-accent bg-grad-soft-20 pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+            className="relative z-0 -ml-[12px] flex h-[60px] w-[62px] shrink-0 items-center justify-center rounded-r15 border-2 border-accent bg-grad-soft-20 pl-[12px] text-[24px] leading-none text-text-80 transition hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className="translate-y-[1px]" aria-hidden="true">+</span>
           </button>

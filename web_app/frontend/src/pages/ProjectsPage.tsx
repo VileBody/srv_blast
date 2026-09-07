@@ -12,6 +12,7 @@ import { CreateProjectModal } from '../components/project/CreateProjectModal';
 import { FigIcon } from '../components/ui/FigIcon';
 import { useToast } from '../contexts/ToastContext';
 import { startNextBatch } from '../stores/wizardStore';
+import { ProjectCover } from '../components/project/ProjectCover';
 
 /** Светлый градиент-заливка для текста (bg-clip-text), как в макетах W35/W37. */
 const gradLight = {
@@ -85,7 +86,7 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
     >
       {/* обложка: отступ 14 слева/сверху, уходит за правый край (bleed 38px) и перекрыта фейдом в #281e47 */}
       <div className="relative ml-[14px] mr-[-38px] mt-[14px] min-h-0 flex-1">
-        <img src={project.coverUrl ?? '/assets/cover-placeholder.svg'} alt="" className="h-full w-full rounded-[14px] object-cover" />
+        <ProjectCover name={project.name} src={project.coverUrl} className="h-full w-full rounded-[14px]" />
         <div className="pointer-events-none absolute inset-y-0 right-[38px] w-[100px]" style={{ background: 'linear-gradient(90deg, rgba(40,30,71,0) 0%, #281e47 100%)' }} />
       </div>
 

@@ -396,7 +396,8 @@ export function StageHooks() {
           {HOOK_TYPES.map((item) => {
             const active = hooks.kind === item.kind;
             const configured = hookPills(hooks).some((pill) => pill.kind === item.kind);
-            const locked = !hooks.dropTime;
+            // «Без хука» не использует дроп, поэтому его можно настроить сразу.
+            const locked = !hooks.dropTime && item.kind !== 'none';
             return (
               <button
                 key={item.kind}
@@ -407,7 +408,7 @@ export function StageHooks() {
                   // Подсвечены все настроенные типы, а не только открытый (правка ревью)
                   (active || configured) && 'border-2 border-accent-light',
                   active && 'bg-grad-soft-20',
-                  // Типы неактивны, пока не выбран тайминг дропа (правка ревью)
+                  // Только типы, которым действительно нужен дроп, ждут его тайминг.
                   locked && 'cursor-not-allowed opacity-45'
                 )}
                 onClick={() => setHooks({ kind: item.kind })}

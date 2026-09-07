@@ -406,8 +406,8 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
               [t('wizard.pool.background'), bgLabel ?? t('wizard.pool.notSelected'), combo.bg === '__color__' ? strobeIcon(18) : combo.bg?.startsWith('photo') ? photoIcon(18) : tagIcon(18)],
               [t('wizard.pool.subtitles'), combo.sub ?? t('wizard.pool.notSelected'), tIcon(18)],
               [t('wizard.pool.hook'), hookLabel ?? t('wizard.pool.noHookSelected'), combo.hook ? hookKindIcon(combo.hook as HookKind, 18) : boltIcon(18)],
-              [t('wizard.pool.transition'), transitionLabel, <SvgMaskIcon key="transition" src="/assets/figma/icon-hook-arrow.svg" style={{ width: 18, height: 18, color: WHITE }} />],
-              [t('wizard.pool.style'), styleLabel, boltIcon(18)]
+              [t('wizard.pool.transition'), transitionLabel, <img key="transition" src="/assets/figma/combo-transition.svg" width="22" height="22" alt="" />],
+              [t('wizard.pool.style'), styleLabel, <img key="style" src="/assets/figma/combo-style.svg" width="22" height="22" alt="" />]
             ].map(([label, value, icon]) => (
               <div key={String(label)} className="grid min-h-0 flex-1 grid-cols-[132px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.07)] px-space-5 last:border-0">
                 <span className="text-[15px] text-text-40">{label}</span>
