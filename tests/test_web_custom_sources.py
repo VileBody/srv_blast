@@ -414,3 +414,32 @@ def test_slow_shutter_extension_reaches_resolved_hook(extend: str | None) -> Non
 def test_star_labels_match_the_bot_shape_ids() -> None:
     assert "star2" in effect_map.OBJECT_SCRIPT["Звезда-5"]
     assert "star1" in effect_map.OBJECT_SCRIPT["Звезда-10"]
+
+
+def test_no_hook_style_is_always_full_without_a_drop_scope() -> None:
+    stage = {
+        "background": {"mode": "footage", "footage": ["Вертикаль"]},
+        "subtitles": {"pool": ["Impulse"]},
+        "hooks": {
+            "configs": {"none": {
+                "effectGlue": "Щелчок",
+                "effectStyle": "Глитч",
+                "effectStyleFull": False,
+            }},
+        },
+        "allocation": {
+            "total": 1,
+            "background": {"footage:Вертикаль": 1},
+            "subtitles": {"Impulse": 1},
+            "hooks": {"none": 1},
+        },
+        "track": {"s3Key": "s3://audio/track.wav", "durationS": 20},
+        "timing": {"from": "00:00", "to": "00:10"},
+        "lyrics": "line",
+        "final": {},
+    }
+
+    resolved = build_render_job("batch", "project", "user", stage, 1)["variations"][0]["hook"]["resolved"]
+    assert resolved["hook"] is None
+    assert resolved["extra"] == "analog_glitch"
+    assert resolved["extraFull"] is True

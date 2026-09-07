@@ -583,7 +583,7 @@ function HooksFullscreen({
     <div className={cn('h-[175px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10 py-[28px]', step === index && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
       <div className="flex items-center justify-between gap-[8px] px-[28px]">
         <p className="wizard-body min-w-0 truncate leading-[29px]">{title}</p>
-        {key === 'effectStyle' && <StyleScopeToggle config={config} onPick={(full) => { setHooks({ config: { effectStyleFull: full } }); setStep(index); }} />}
+        {key === 'effectStyle' && kind !== 'none' && <StyleScopeToggle config={config} onPick={(full) => { setHooks({ config: { effectStyleFull: full } }); setStep(index); }} />}
         {key === 'effectHook' && config.effectHook === 'Слоу-шаттер' && <SlowShutterExtendToggle config={config} onPick={(value) => { setHooks({ config: { effectHookExtend: value } }); setStep(index); }} />}
       </div>
       <div className="mt-[28px]">
@@ -765,7 +765,7 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
     <div className="shrink-0 rounded-r15 bg-grad-soft-10 p-space-5">
       <div className="mb-space-4 flex items-center justify-between gap-[10px]">
         <p className="wizard-body min-w-0 truncate">{t(stepDef.title)}</p>
-        {stepDef.key === 'effectStyle' && <StyleScopeToggle config={config} onPick={(full) => setHooks({ config: { effectStyleFull: full } })} />}
+        {stepDef.key === 'effectStyle' && kind !== 'none' && <StyleScopeToggle config={config} onPick={(full) => setHooks({ config: { effectStyleFull: full } })} />}
         {stepDef.key === 'effectHook' && config.effectHook === 'Слоу-шаттер' && <SlowShutterExtendToggle config={config} onPick={(value) => setHooks({ config: { effectHookExtend: value } })} />}
         <span className="flex shrink-0 items-center gap-space-1 rounded-r40 bg-accent-20 px-space-2 py-space-1 text-[14px] text-text-80">
           <button type="button" aria-label={t('wizard.fx.prevStep')} disabled={stepIndex === 0} className="disabled:opacity-40" onClick={() => setStep(stepIndex - 1)}>‹</button>

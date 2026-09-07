@@ -86,7 +86,11 @@ def _resolve_hook(kind: str | None, cfg: dict[str, Any], bg_glue_id: str | None,
         # и на стороне воркера ни во что не резолвился.
         "device": None,
         # грейд на весь ролик вместо «до дропа» (manifest: effect_extra_full)
-        "extraFull": bool(cfg.get("effectStyleFull")) or em.style_is_full_window(cfg.get("effectStyle")),
+        # У «Без хука» нет дропа: выбранная стилизация относится ко всему ролику.
+        # Сохранённый effectStyleFull из другого типа хука здесь не меняет семантику.
+        "extraFull": (kind == "none" and bool(cfg.get("effectStyle")))
+        or (kind != "none" and bool(cfg.get("effectStyleFull")))
+        or em.style_is_full_window(cfg.get("effectStyle")),
         "hookExtend": None,
     }
     family_script = None
