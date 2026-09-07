@@ -223,12 +223,20 @@ jobs:
           URL_MAIN="${LANDING_PUBLIC_URL:-https://blast808.com}"
           URL_WWW="${LANDING_PUBLIC_URL_WWW:-https://www.blast808.com}"
 
+          # Версию ассетов берём из репозитория: cache-busting-суффикс меняется
+          # при каждой правке лендинга, захардкоженный маркер валил деплой.
+          ASSET_MARKER="$(grep -o 'js/i18n\.js?v=[A-Za-z0-9._-]*' landing/index.html | head -n 1 || true)"
+          if [[ -z "$ASSET_MARKER" ]]; then
+            echo "[landing-public-check] landing/index.html has no versioned js/i18n.js reference"
+            exit 1
+          fi
+
           python scripts/landing_public_check.py \
             --url "$URL_MAIN" \
             --url "$URL_WWW" \
             --contains 'href="https://www.instagram.com/impulsemarketing/"' \
             --contains 'href="terms.html"' \
-            --contains 'js/i18n.js?v=20260729-i18n1'
+            --contains "$ASSET_MARKER"
 
       - name: Deployment summary
         env:
