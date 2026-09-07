@@ -311,3 +311,34 @@ def test_thought_hook_resolves_to_f5_device_id() -> None:
     variation = build_render_job("batch", "project", "user", stage, 1)["variations"][0]
     # RU-лейбл визарда доезжает до воркера как id приёма F5, а не как подпись кнопки
     assert variation["hook"]["resolved"]["device"] == "missing_word"
+
+
+def test_style_scope_reaches_render_payload_and_blackwhite_is_forced_full() -> None:
+    def job(style: str, full: bool) -> dict:
+        stage = {
+            "background": {"mode": "footage", "footage": ["Вертикаль"]},
+            "subtitles": {"pool": ["Impulse"]},
+            "hooks": {
+                "dropTime": "00:05:00",
+                "configs": {"effects": {
+                    "effectHook": "Молния", "effectGlue": "Щелчок",
+                    "effectStyle": style, "effectStyleFull": full,
+                }},
+            },
+            "allocation": {
+                "total": 1,
+                "background": {"footage:Вертикаль": 1},
+                "subtitles": {"Impulse": 1},
+                "hooks": {"effects": 1},
+            },
+            "track": {"s3Key": "s3://audio/track.wav", "durationS": 20},
+            "timing": {"from": "00:00", "to": "00:10"},
+            "lyrics": "line",
+            "final": {},
+        }
+        return build_render_job("batch", "project", "user", stage, 1)["variations"][0]
+
+    assert job("Глитч", False)["hook"]["resolved"]["extraFull"] is False
+    assert job("Глитч", True)["hook"]["resolved"]["extraFull"] is True
+    # «Ч/Б» в манифесте помечен full_window — охват у него не спрашивают, флаг ставится сам
+    assert job("Ч/Б", False)["hook"]["resolved"]["extraFull"] is True

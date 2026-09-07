@@ -426,7 +426,11 @@
       "dropNeedsClip": "Pick a fragment of the track first — drop candidates are found inside it.",
       "dropAnalyzing": "Analysing drop moments in the fragment…",
       "dropManualOnly": "No automatic candidates — set the drop timing manually.",
-      "dropOutsideClip": "The drop timing must be inside the selected clip."
+      "dropOutsideClip": "The drop timing must be inside the selected clip.",
+      "scopeLabel": "Apply:",
+      "scopeDrop": "before drop",
+      "scopeFull": "whole video",
+      "scopeLocked": "This style always covers the whole video"
     },
     "subs": {
       "title": "Subtitles",

@@ -96,7 +96,8 @@
       "label": "Ч/Б",
       "manifestId": "blackwhite",
       "icon": "efs-blackwhite.svg",
-      "inner": true
+      "inner": true,
+      "fullWindow": true
     },
     {
       "label": "Crystal Glow",

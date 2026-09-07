@@ -28,6 +28,8 @@ export interface HookConfig {
   effectHook?: string;
   effectGlue?: string;
   effectStyle?: string;
+  /** Грейд на весь ролик, а не только до дропа (manifest: effect_extra_full). */
+  effectStyleFull?: boolean;
   motion?: string;
   thought?: string;
 }

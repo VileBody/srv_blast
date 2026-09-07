@@ -85,6 +85,8 @@ def _resolve_hook(kind: str | None, cfg: dict[str, Any], bg_glue_id: str | None,
         # id приёма «Мысли» (F5). Раньше выбор уезжал сырым RU-лейблом внутри hook.config
         # и на стороне воркера ни во что не резолвился.
         "device": None,
+        # грейд на весь ролик вместо «до дропа» (manifest: effect_extra_full)
+        "extraFull": bool(cfg.get("effectStyleFull")) or em.style_is_full_window(cfg.get("effectStyle")),
     }
     family_script = None
     if kind == "effects":

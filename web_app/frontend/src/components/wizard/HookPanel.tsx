@@ -146,6 +146,42 @@ export interface HookStep {
 const GLUE_STEP: HookStep = { key: 'effectGlue', title: 'wizard.fx.stepGlue', options: EFFECT_GLUES };
 const STYLE_STEP: HookStep = { key: 'effectStyle', title: 'wizard.fx.stepStyle', options: EFFECT_STYLES };
 
+/** Стили, которые манифест всегда тянет на весь ролик — у них выбора нет. */
+const FULL_WINDOW_STYLES = new Set(effectsRegistry.style.filter((e) => e.fullWindow).map((e) => e.label));
+
+/**
+ * Охват грейда: до дропа (по умолчанию) или на весь ролик — то же, что спрашивает бот
+ * (effect_extra_full). Живёт строкой в шапке шага «Стилизация», рядом с его заголовком.
+ */
+export function StyleScopeToggle({ config, onPick }: { config: HookConfig; onPick: (full: boolean) => void }) {
+  const { t } = useTranslation();
+  const locked = Boolean(config.effectStyle && FULL_WINDOW_STYLES.has(config.effectStyle));
+  const full = locked || Boolean(config.effectStyleFull);
+  // Живёт в строке заголовка шага, без подписи: два сегмента объясняют себя сами, а
+  // лишнее слово съедало название шага в узкой рабочей зоне.
+  return (
+    <span className="flex shrink-0 items-center whitespace-nowrap" aria-label={t('wizard.fx.scopeLabel')}>
+      <span className="inline-flex items-center gap-[3px] rounded-r15 bg-[rgba(8,3,19,.5)] p-[3px]" title={locked ? t('wizard.fx.scopeLocked') : undefined}>
+        {([[false, t('wizard.fx.scopeDrop')], [true, t('wizard.fx.scopeFull')]] as const).map(([value, label]) => (
+          <button
+            key={String(value)}
+            type="button"
+            aria-pressed={full === value}
+            disabled={locked && value === false}
+            onClick={() => onPick(value)}
+            className={cn(
+              'flex h-[28px] items-center justify-center whitespace-nowrap rounded-[9px] px-[7px] text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40',
+              full === value ? 'bg-grad-soft-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-60 hover:text-text'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </span>
+    </span>
+  );
+}
+
 /** Первый шаг зависит от типа хука, два следующих общие. */
 const FIRST_STEP: Record<Exclude<HookKind, 'none'>, HookStep> = {
   warmup: { key: 'sound', title: 'wizard.fx.loadSound', options: [] },
@@ -499,7 +535,10 @@ function HooksFullscreen({
   /* Контейнер 390×175: заголовок с отступом, лента на всю ширину (фейды у краёв контейнера, а не ленты) */
   const section = (title: string, index: number, options: string[], key: keyof HookConfig) => (
     <div className={cn('h-[175px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10 py-[28px]', step === index && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
-      <p className="wizard-body px-[28px] leading-[29px]">{title}</p>
+      <div className="flex items-center justify-between gap-[8px] px-[28px]">
+        <p className="wizard-body min-w-0 truncate leading-[29px]">{title}</p>
+        {key === 'effectStyle' && <StyleScopeToggle config={config} onPick={(full) => { setHooks({ config: { effectStyleFull: full } }); setStep(index); }} />}
+      </div>
       <div className="mt-[28px]">
         <ChipRow options={options} value={config[key] as string | undefined} edgePad={28} onPick={(option) => { setHooks({ config: { [key]: option } }); setStep(index); }} />
       </div>
@@ -669,9 +708,10 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
 
   const settings = kind && stepDef && (
     <div className="shrink-0 rounded-r15 bg-grad-soft-10 p-space-5">
-      <div className="mb-space-4 flex items-center justify-between gap-space-3">
-        <p className="wizard-body">{t(stepDef.title)}</p>
-        <span className="flex items-center gap-space-1 rounded-r40 bg-accent-20 px-space-3 py-space-1 text-[14px] text-text-80">
+      <div className="mb-space-4 flex items-center justify-between gap-[10px]">
+        <p className="wizard-body min-w-0 truncate">{t(stepDef.title)}</p>
+        {stepDef.key === 'effectStyle' && <StyleScopeToggle config={config} onPick={(full) => setHooks({ config: { effectStyleFull: full } })} />}
+        <span className="flex shrink-0 items-center gap-space-1 rounded-r40 bg-accent-20 px-space-2 py-space-1 text-[14px] text-text-80">
           <button type="button" aria-label={t('wizard.fx.prevStep')} disabled={stepIndex === 0} className="disabled:opacity-40" onClick={() => setStep(stepIndex - 1)}>‹</button>
           {stepIndex + 1}/{steps.length}
           <button type="button" aria-label={t('wizard.fx.nextStep')} disabled={stepIndex === steps.length - 1} className="disabled:opacity-40" onClick={() => setStep(stepIndex + 1)}>›</button>

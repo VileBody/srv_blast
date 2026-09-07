@@ -40,6 +40,9 @@ def _build_map(group: str, *, include_alt: bool = False) -> dict[str, str]:
 HOOK_MAP: dict[str, str] = _build_map("hook")
 GLUE_MAP: dict[str, str] = _build_map("glue", include_alt=True)   # + GLUE_TYPES dashed-id
 STYLE_MAP: dict[str, str] = _build_map("style")
+# Стили, которые манифест всегда растягивает на весь ролик (manifest.full_window):
+# у них охват не спрашивается, флаг ставится сам.
+STYLE_FULL_WINDOW: set[str] = {e["label"] for e in _REG.get("style", []) if e.get("fullWindow")}
 
 # branding по manifestId хука (из поля registry.hook[].branding)
 HOOK_BRANDING: dict[str, dict] = {}
@@ -91,6 +94,10 @@ def map_style(label: str | None) -> str | None:
 
 def map_thought(label: str | None) -> str | None:
     return THOUGHT_DEVICE.get(label) if label else None
+
+
+def style_is_full_window(label: str | None) -> bool:
+    return bool(label) and label in STYLE_FULL_WINDOW
 
 
 def parse_mmssms(value: str | None) -> float | None:
