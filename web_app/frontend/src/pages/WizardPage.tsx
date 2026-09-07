@@ -13,7 +13,7 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
-import { hasTrackInput, hookPills } from '../stores/wizardStore';
+import { hasTrackInput, hookPills, selectedEffectStyles } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
@@ -472,13 +472,16 @@ export function WizardPage() {
   const allocBgSum = Object.values(state.allocation.background).reduce((a, b) => a + b, 0);
   const allocSubsSum = Object.values(state.allocation.subtitles).reduce((a, b) => a + b, 0);
   const allocHooksSum = Object.values(state.allocation.hooks).reduce((a, b) => a + b, 0);
+  const allocStylesSum = Object.values(state.allocation.styles ?? {}).reduce((a, b) => a + b, 0);
   const selectedHooks = hookPills(state.hooks);
+  const selectedStyles = selectedEffectStyles(state.hooks);
   const hookTarget = compatibleHookTarget(state.background, state.allocation.background);
   const allocBalanced =
     state.allocation.total > 0 &&
     allocBgSum === state.allocation.total - fixedColorCount &&
     (state.subtitles.pool.length === 0 || allocSubsSum === state.allocation.total - fixedColorCount) &&
-    (selectedHooks.length === 0 ? allocHooksSum === 0 : allocHooksSum === hookTarget);
+    (selectedHooks.length === 0 ? allocHooksSum === 0 : allocHooksSum === hookTarget) &&
+    (selectedStyles.length === 0 ? allocStylesSum === 0 : allocStylesSum === hookTarget);
   const safeVideosToGenerate = Math.max(1, state.allocation.total);
 
   // Трек и текст — обязательные вводные: без них рендерить lyric-video нечего.

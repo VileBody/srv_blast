@@ -219,6 +219,36 @@ def test_unknown_https_output_is_not_a_download_fallback(monkeypatch: pytest.Mon
         backend.download_url("https://cdn.example/result.mp4", "video-1")
 
 
+def test_effect_scope_and_slow_shutter_extension_reach_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module(monkeypatch)
+    backend = _backend(module, _config(module))
+    job = _job()
+    job["renderJob"]["track"]["segment"] = {"from": 0.0, "to": 10.0}
+    variation = job["renderJob"]["variations"][0]
+    variation["hook"] = {
+        "family": "effects",
+        "dropTime": 5.0,
+        "resolved": {
+            "hook": "flash_slow_shutter",
+            "extra": "analog_glitch",
+            "extraFull": True,
+            "hookExtend": "to_end",
+        },
+        "config": {},
+    }
+
+    payload = backend._request_payload(
+        job=job,
+        variation=variation,
+        index=0,
+        total=2,
+        master_id=None,
+    )
+
+    assert payload["effect_extra_full"] is True
+    assert payload["effect_hook_extend"] == "to_end"
+
+
 def test_tiktok_file_upload_downloads_only_from_configured_s3(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -71,7 +71,7 @@ def mmss_seconds(v: str | None) -> float | None:
 
 
 def _resolve_hook(kind: str | None, cfg: dict[str, Any], bg_glue_id: str | None,
-                  bg_style_id: str | None) -> tuple[dict[str, str | None], str | None]:
+                  bg_style_id: str | None) -> tuple[dict[str, Any], str | None]:
     """Вернуть (resolved {hook,transition,extra}, family_script). См. spec §5.4.
 
     Склейка и стилизация настраиваются у КАЖДОГО типа хука (решение продукта: разнообразие
@@ -87,10 +87,16 @@ def _resolve_hook(kind: str | None, cfg: dict[str, Any], bg_glue_id: str | None,
         "device": None,
         # грейд на весь ролик вместо «до дропа» (manifest: effect_extra_full)
         "extraFull": bool(cfg.get("effectStyleFull")) or em.style_is_full_window(cfg.get("effectStyle")),
+        "hookExtend": None,
     }
     family_script = None
     if kind == "effects":
         resolved["hook"] = em.map_hook(cfg.get("effectHook"))
+        extend = str(cfg.get("effectHookExtend") or "")
+        if extend not in {"", "to_end", "after_drop:3"}:
+            raise ValueError(f"Неизвестная длина слоу-шаттера: {extend}")
+        if resolved["hook"] == "flash_slow_shutter":
+            resolved["hookExtend"] = extend or None
     elif kind == "object":
         family_script = em.OBJECT_SCRIPT.get(cfg.get("object"))
     elif kind == "motion":
@@ -154,6 +160,15 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
     bg_fallback = bg_groups_all or (["__color__"] if has_color else ["__default__"])
     sub_fallback = subs.get("pool") or ["Impulse"]
     hook_fallback = [hooks["kind"]] if hooks.get("kind") else []
+    configs = hooks.get("configs") or {}
+    style_fallback: list[str] = []
+    for config in configs.values():
+        if not isinstance(config, dict):
+            continue
+        candidates = config.get("effectStyles") or ([config.get("effectStyle")] if config.get("effectStyle") else [])
+        for style_name in candidates:
+            if style_name and style_name not in style_fallback:
+                style_fallback.append(style_name)
 
     bg_allocation = alloc.get("background") or {}
     if bg_allocation:
@@ -206,13 +221,18 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         raise ValueError(
             f"Пул хуков содержит {len(hook_seq)} вариаций, а совместимых вертикальных фонов — {hook_target}"
         )
+    style_keys = _slice_keys(alloc.get("styles") or {}, style_fallback)
+    style_seq = _expand(alloc.get("styles") or distribute(style_keys, hook_target)) if style_keys else []
+    if style_keys and len(style_seq) != hook_target:
+        raise ValueError(
+            f"Пул стилизаций содержит {len(style_seq)} вариаций, а совместимых вертикальных фонов — {hook_target}"
+        )
 
     # общие резолвы фона (одни на батч)
     bg_glue_id = em.map_glue(bg.get("glue"))
     bg_style_id = em.map_style(bg.get("photoStyle")) if bg.get("photoEffects") else None
     drop = em.parse_mmssms(hooks.get("dropTime"))
     kind = hooks.get("kind")
-    configs = hooks.get("configs") or {}
 
     variations: list[dict[str, Any]] = []
     subtitle_index = 0
@@ -231,10 +251,13 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         else:
             style = sub_seq[subtitle_index] if sub_seq else sub_fallback[0]
             subtitle_index += 1
-        v_kind = hook_seq[hook_index] if hook_allowed and hook_seq else None
-        if hook_allowed and hook_seq:
+        compatible_index = hook_index
+        v_kind = hook_seq[compatible_index] if hook_allowed and hook_seq else None
+        if hook_allowed:
             hook_index += 1
-        cfg = configs.get(v_kind) or {} if v_kind else {}
+        cfg = dict(configs.get(v_kind) or {}) if v_kind else {}
+        if hook_allowed and style_seq:
+            cfg["effectStyle"] = style_seq[compatible_index]
         resolved, family_script = _resolve_hook(v_kind, cfg, bg_glue_id, bg_style_id)
 
         branding = em.HOOK_BRANDING.get(resolved["hook"], {"enabled": False}) if resolved["hook"] else {"enabled": False}

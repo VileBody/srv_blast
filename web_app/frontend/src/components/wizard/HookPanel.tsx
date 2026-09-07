@@ -182,6 +182,47 @@ export function StyleScopeToggle({ config, onPick }: { config: HookConfig; onPic
   );
 }
 
+const SLOW_EXTEND_OPTIONS = [
+  ['', 'wizard.fx.slowStandard'],
+  ['to_end', 'wizard.fx.slowToEnd'],
+  ['after_drop:3', 'wizard.fx.slowThree']
+] as const;
+
+/** Дополнительная длина echo-шлейфа доступна только выбранному slow shutter. */
+export function SlowShutterExtendToggle({ config, onPick }: { config: HookConfig; onPick: (value: HookConfig['effectHookExtend']) => void }) {
+  const { t } = useTranslation();
+  const value = config.effectHookExtend ?? '';
+  return (
+    <span className="inline-flex shrink-0 items-center gap-[3px] rounded-r15 bg-[rgba(8,3,19,.5)] p-[3px]" aria-label={t('wizard.fx.slowLength')}>
+      {SLOW_EXTEND_OPTIONS.map(([option, label]) => (
+        <button
+          key={option || 'standard'}
+          type="button"
+          aria-pressed={value === option}
+          onClick={() => onPick(option)}
+          className={cn(
+            'flex h-[28px] items-center justify-center whitespace-nowrap rounded-[9px] px-[7px] text-[11px] transition',
+            value === option ? 'bg-grad-soft-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-60 hover:text-text'
+          )}
+        >
+          {t(label)}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+function selectedStyles(config: HookConfig): string[] {
+  return config.effectStyles?.length ? config.effectStyles : (config.effectStyle ? [config.effectStyle] : []);
+}
+
+function toggleStyle(config: HookConfig, option?: string): Partial<HookConfig> {
+  if (!option) return {};
+  const current = selectedStyles(config);
+  const next = current.includes(option) ? current.filter((style) => style !== option) : [...current, option];
+  return { effectStyles: next, effectStyle: next.includes(option) ? option : next[next.length - 1] };
+}
+
 /** Первый шаг зависит от типа хука, два следующих общие. */
 const FIRST_STEP: Record<Exclude<HookKind, 'none'>, HookStep> = {
   warmup: { key: 'sound', title: 'wizard.fx.loadSound', options: [] },
@@ -407,9 +448,10 @@ export function StageHooks() {
  * прозрачность, сквозь них виден реальный фон → всегда в тон, при любом фоне.
  * Слева фейд у 0; справа встаёт перед кнопкой подтверждения (`rightGap`).
  */
-function ChipRow({ options, value, onPick, rightGap = 0, edgePad = 0 }: {
+function ChipRow({ options, value, values, onPick, rightGap = 0, edgePad = 0 }: {
   options: string[];
   value?: string;
+  values?: string[];
   onPick: (option?: string) => void;
   /** ширина зоны под кнопкой справа (кнопка + зазор): лента прокручивается под неё, фейд встаёт перед */
   rightGap?: number;
@@ -447,17 +489,21 @@ function ChipRow({ options, value, onPick, rightGap = 0, edgePad = 0 }: {
         onScroll={syncFades}
         {...scroll.handlers}
       >
-        {options.map((option) => (
+        {options.map((option) => {
+          const selected = values ? values.includes(option) : value === option;
+          return (
           <button
             key={option}
             type="button"
-            className={cn('glue-chip !h-[52px] !gap-space-3 !pl-[6px] !pr-space-4 !text-[18px]', value === option && 'is-selected relative z-[2]')}
-            onClick={() => { if (!scroll.moved()) onPick(value === option ? undefined : option); }}
+            aria-pressed={selected}
+            className={cn('glue-chip !h-[52px] !gap-space-3 !pl-[6px] !pr-space-4 !text-[18px]', selected && 'is-selected relative z-[2]')}
+            onClick={() => { if (!scroll.moved()) onPick(selected && !values ? undefined : option); }}
           >
             <span className="scale-[0.8]"><ChipIcon label={option} /></span>
             {chip(option)}
           </button>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -538,9 +584,16 @@ function HooksFullscreen({
       <div className="flex items-center justify-between gap-[8px] px-[28px]">
         <p className="wizard-body min-w-0 truncate leading-[29px]">{title}</p>
         {key === 'effectStyle' && <StyleScopeToggle config={config} onPick={(full) => { setHooks({ config: { effectStyleFull: full } }); setStep(index); }} />}
+        {key === 'effectHook' && config.effectHook === 'Слоу-шаттер' && <SlowShutterExtendToggle config={config} onPick={(value) => { setHooks({ config: { effectHookExtend: value } }); setStep(index); }} />}
       </div>
       <div className="mt-[28px]">
-        <ChipRow options={options} value={config[key] as string | undefined} edgePad={28} onPick={(option) => { setHooks({ config: { [key]: option } }); setStep(index); }} />
+        <ChipRow
+          options={options}
+          value={config[key] as string | undefined}
+          values={key === 'effectStyle' ? selectedStyles(config) : undefined}
+          edgePad={28}
+          onPick={(option) => { setHooks({ config: key === 'effectStyle' ? toggleStyle(config, option) : { [key]: option } }); setStep(index); }}
+        />
       </div>
     </div>
   );
@@ -563,7 +616,8 @@ function HooksFullscreen({
     const nextIndex = index < 0
       ? (delta > 0 ? 0 : currentDef.options.length - 1)
       : (index + delta + currentDef.options.length) % currentDef.options.length;
-    setHooks({ config: { [currentDef.key]: currentDef.options[nextIndex] } });
+    const option = currentDef.options[nextIndex];
+    setHooks({ config: currentDef.key === 'effectStyle' ? toggleStyle(config, option) : { [currentDef.key]: option } });
   };
 
   const left = (
@@ -688,8 +742,9 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const stepIndex = Math.min(step, Math.max(0, steps.length - 1));
   const stepDef = steps[stepIndex];
   const stepValue = stepDef ? (config[stepDef.key] as string | undefined) : undefined;
+  const styleValues = selectedStyles(config);
   const previewId = kind ? configuredPreviewId(kind, config, stepDef) : undefined;
-  const canAdvance = Boolean(stepValue) && stepIndex < steps.length - 1;
+  const canAdvance = Boolean(stepDef && (stepDef.key === 'effectStyle' ? styleValues.length : stepValue)) && stepIndex < steps.length - 1;
 
   const confirmButton = canAdvance && (
     /* Подтверждение шага галочкой (Figma W28) — переход только по клику */
@@ -711,6 +766,7 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
       <div className="mb-space-4 flex items-center justify-between gap-[10px]">
         <p className="wizard-body min-w-0 truncate">{t(stepDef.title)}</p>
         {stepDef.key === 'effectStyle' && <StyleScopeToggle config={config} onPick={(full) => setHooks({ config: { effectStyleFull: full } })} />}
+        {stepDef.key === 'effectHook' && config.effectHook === 'Слоу-шаттер' && <SlowShutterExtendToggle config={config} onPick={(value) => setHooks({ config: { effectHookExtend: value } })} />}
         <span className="flex shrink-0 items-center gap-space-1 rounded-r40 bg-accent-20 px-space-2 py-space-1 text-[14px] text-text-80">
           <button type="button" aria-label={t('wizard.fx.prevStep')} disabled={stepIndex === 0} className="disabled:opacity-40" onClick={() => setStep(stepIndex - 1)}>‹</button>
           {stepIndex + 1}/{steps.length}
@@ -725,7 +781,8 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
           <ChipRow
             options={stepDef.options}
             value={stepValue}
-            onPick={(option) => setHooks({ config: { [stepDef.key]: option } })}
+            values={stepDef.key === 'effectStyle' ? styleValues : undefined}
+            onPick={(option) => setHooks({ config: stepDef.key === 'effectStyle' ? toggleStyle(config, option) : { [stepDef.key]: option } })}
             rightGap={canAdvance ? 64 : 0}
           />
         )}

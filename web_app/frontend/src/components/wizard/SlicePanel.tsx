@@ -8,7 +8,7 @@ import { useDragScroll } from './BackgroundPanel';
 import { BackSquareButton } from './WizardFrame';
 import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useFragmentAudio } from './useFragmentAudio';
-import { HOOK_LABELS, HookKind, hookPills, useWizardStore, WizardStateData } from '../../stores/wizardStore';
+import { HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
 
 /*
  * Этап «Пул» (Figma W19 → W33): «Всего видео» закреплён сверху, секции скроллятся
@@ -121,6 +121,7 @@ export function StageSlice() {
   const fixedCount = colorGroup ? 1 : 0;
   const subtitleStyles = state.subtitles.pool;
   const hooksInPool = hookPills(state.hooks);
+  const stylesInPool = selectedEffectStyles(state.hooks);
 
   useEffect(() => {
     const unitKeys = units.map((u) => u.key);
@@ -133,8 +134,21 @@ export function StageSlice() {
         && hookKinds.every((kind) => allocatedHookKinds.includes(kind));
       const hookTarget = compatibleHookTarget(state.background, alloc.background);
       const hookSum = Object.values(alloc.hooks).reduce((sum, count) => sum + count, 0);
-      if (sameHookKinds && hookSum === hookTarget) return;
-      setAllocation({ hooks: distribute(hookKinds, hookTarget) });
+      const allocatedStyles = Object.keys(alloc.styles ?? {});
+      const sameStyles = stylesInPool.length === allocatedStyles.length
+        && stylesInPool.every((style) => allocatedStyles.includes(style));
+      const stylesSum = Object.values(alloc.styles ?? {}).reduce((sum, count) => sum + count, 0);
+      const allocatedSubtitles = Object.keys(alloc.subtitles);
+      const sameSubtitles = subtitleStyles.length === allocatedSubtitles.length
+        && subtitleStyles.every((style) => allocatedSubtitles.includes(style));
+      const subtitleSum = Object.values(alloc.subtitles).reduce((sum, count) => sum + count, 0);
+      if (sameHookKinds && hookSum === hookTarget && sameStyles && (!stylesInPool.length || stylesSum === hookTarget)
+        && sameSubtitles && (!subtitleStyles.length || subtitleSum === unitKeys.length)) return;
+      setAllocation({
+        hooks: sameHookKinds && hookSum === hookTarget ? alloc.hooks : distribute(hookKinds, hookTarget),
+        styles: sameStyles && stylesSum === hookTarget ? alloc.styles : distribute(stylesInPool, hookTarget),
+        subtitles: sameSubtitles && subtitleSum === unitKeys.length ? alloc.subtitles : distribute(subtitleStyles, unitKeys.length)
+      });
       return;
     }
     setAllocation({
@@ -143,11 +157,12 @@ export function StageSlice() {
       background: distribute(unitKeys, unitKeys.length),
       subtitles: distribute(subtitleStyles, unitKeys.length),
       hooks: distribute(hooksInPool.map((p) => p.kind), units.filter((u) => !u.noHook).length),
+      styles: distribute(stylesInPool, units.filter((u) => !u.noHook).length),
       strobeFont: alloc.strobeFont ?? subtitleStyles[0],
       colorFont: alloc.colorFont ?? subtitleStyles[0]
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [units, fixedCount, subtitleStyles.join(','), hooksInPool.map((p) => p.kind).join(',')]);
+  }, [units, fixedCount, subtitleStyles.join(','), hooksInPool.map((p) => p.kind).join(','), stylesInPool.join(',')]);
 
   const bgSum = Object.values(alloc.background).reduce((a, b) => a + b, 0);
   const bgTarget = alloc.total - fixedCount;
@@ -159,8 +174,10 @@ export function StageSlice() {
   const hookTarget = compatibleHookTarget(state.background, alloc.background);
   const hooksSum = Object.values(alloc.hooks).reduce((a, b) => a + b, 0);
   const hooksRest = hookTarget - hooksSum;
+  const stylesSum = Object.values(alloc.styles ?? {}).reduce((a, b) => a + b, 0);
+  const stylesRest = stylesInPool.length ? hookTarget - stylesSum : 0;
 
-  const setCount = (slice: 'background' | 'subtitles' | 'hooks', key: string, value: number) =>
+  const setCount = (slice: 'background' | 'subtitles' | 'hooks' | 'styles', key: string, value: number) =>
     setAllocation({ [slice]: { ...alloc[slice], [key]: Math.max(0, value) } });
 
   const distributeEvenly = () => {
@@ -173,7 +190,8 @@ export function StageSlice() {
     setAllocation({
       background,
       subtitles: distribute(subtitleStyles, backgroundTarget),
-      hooks: distribute(hooksInPool.map((pill) => pill.kind), footageTarget)
+      hooks: distribute(hooksInPool.map((pill) => pill.kind), footageTarget),
+      styles: distribute(stylesInPool, footageTarget)
     });
   };
 
@@ -190,7 +208,7 @@ export function StageSlice() {
           <span className="wizard-h !text-[28px] max-xl:!text-[22px]">{t('wizard.pool.total')}</span>
           {/* Figma W19: кружок-индикатор лимита в 20px справа от «+» (W46 — поповер по ховеру) */}
           <span className="relative flex items-center gap-[20px]">
-            {(bgRest !== 0 || subsRest !== 0 || hooksRest !== 0) && (
+            {(bgRest !== 0 || subsRest !== 0 || hooksRest !== 0 || stylesRest !== 0) && (
               <button type="button" onClick={distributeEvenly} className="flex h-[34px] items-center whitespace-nowrap rounded-r10 border border-accent bg-grad-soft-20 px-[14px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125">
                 {t('wizard.pool.distributeEven')}
               </button>
@@ -264,6 +282,17 @@ export function StageSlice() {
             ))}
           </SectionCard>
         )}
+
+        {stylesInPool.length > 0 && (
+          <SectionCard title={t('wizard.pool.styles')} note={restNote(stylesRest, t('wizard.pool.stylesNote', { count: hookTarget }))} warn={stylesRest !== 0}>
+            {stylesInPool.map((style) => (
+              <div key={style} className="flex items-center justify-between gap-space-3">
+                <MiniPill icon={boltIcon()} label={chip(style)} />
+                <Stepper value={alloc.styles?.[style] ?? 0} onChange={(value) => setCount('styles', style, value)} />
+              </div>
+            ))}
+          </SectionCard>
+        )}
         </div>
       </div>
     </div>
@@ -275,15 +304,17 @@ function combinationAt(
   bg: [string, number][],
   subs: [string, number][],
   hooks: [string, number][],
+  styles: [string, number][],
   units: ReturnType<typeof backgroundUnits>,
   hasColor: boolean,
   colorStyle?: string
-): { bg?: string; sub?: string; hook?: string } {
+): { bg?: string; sub?: string; hook?: string; style?: string } {
   const expand = (pairs: [string, number][]) => pairs.flatMap(([key, count]) => Array.from({ length: count }, () => key));
   const bgList = expand(bg);
   if (hasColor) bgList.push('__color__');
   const subList = expand(subs);
   const hookList = expand(hooks);
+  const styleList = expand(styles);
   const bgKey = bgList[index];
   const unit = units.find((candidate) => candidate.key === bgKey);
   const hookAllowed = Boolean(unit && !unit.noHook);
@@ -295,7 +326,8 @@ function combinationAt(
   return {
     bg: bgKey,
     sub: bgKey === '__color__' ? colorStyle : subList[nonColorIndex],
-    hook: hookAllowed ? hookList[hookIndex] : undefined
+    hook: hookAllowed ? hookList[hookIndex] : undefined,
+    style: hookAllowed ? styleList[hookIndex] : undefined
   };
 }
 
@@ -330,6 +362,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
     Object.entries(alloc.background),
     Object.entries(alloc.subtitles),
     Object.entries(alloc.hooks),
+    Object.entries(alloc.styles ?? {}),
     units,
     Boolean(state.background.color),
     colorStyle
@@ -341,7 +374,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const hookLabel = combo.hook ? chip(HOOK_LABELS[combo.hook as HookKind]) : undefined;
   const hookConfig = combo.hook ? state.hooks.configs[combo.hook as HookKind] : undefined;
   const transitionLabel = hookConfig?.effectGlue ? chip(hookConfig.effectGlue) : t('wizard.pool.notSelected');
-  const styleLabel = hookConfig?.effectStyle ? chip(hookConfig.effectStyle) : t('wizard.pool.noStyleSelected');
+  const styleLabel = combo.style ? chip(combo.style) : t('wizard.pool.noStyleSelected');
 
   // Стрелки клавиатуры листают комбинации, пока фокус внутри панели
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -422,6 +455,12 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
                 <span className="pool-pill !h-[44px] !rounded-r10 !pl-[56px] !text-[17px]">
                   <span className="pool-pill-count !h-[44px] !w-[44px] !rounded-r10">{hookKindIcon(combo.hook as HookKind, 20)}</span>
                   {hookLabel}
+                </span>
+              )}
+              {combo.style && (
+                <span className="pool-pill !h-[44px] !rounded-r10 !pl-[56px] !text-[17px]">
+                  <span className="pool-pill-count !h-[44px] !w-[44px] !rounded-r10">{boltIcon(20)}</span>
+                  {chip(combo.style)}
                 </span>
               )}
             </div>

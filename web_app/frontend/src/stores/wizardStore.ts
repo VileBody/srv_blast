@@ -26,8 +26,12 @@ export interface HookConfig {
   soundPlaybackUrl?: string;
   object?: string;
   effectHook?: string;
+  /** Длина echo-шлейфа slow shutter: штатная, до конца или три футажа после дропа. */
+  effectHookExtend?: '' | 'to_end' | 'after_drop:3';
   effectGlue?: string;
   effectStyle?: string;
+  /** Выбранные стилизации образуют отдельное измерение распределения в Пуле. */
+  effectStyles?: string[];
   /** Грейд на весь ролик, а не только до дропа (manifest: effect_extra_full). */
   effectStyleFull?: boolean;
   motion?: string;
@@ -96,6 +100,7 @@ export interface WizardStateData {
     background: Record<string, number>;
     subtitles: Record<string, number>;
     hooks: Record<string, number>;
+    styles: Record<string, number>;
     strobeFont?: string;
     colorFont?: string;
     seeded: boolean;
@@ -114,6 +119,11 @@ export function migrateHooks(raw: Record<string, any>): WizardStateData['hooks']
   if (configs.sound) {
     configs.warmup = configs.warmup ?? { ...configs.sound, warmupKind: 'audio' };
     delete configs.sound;
+  }
+  for (const [kind, value] of Object.entries(configs)) {
+    const config = { ...((value as HookConfig | undefined) ?? {}) };
+    if (!config.effectStyles?.length && config.effectStyle) config.effectStyles = [config.effectStyle];
+    configs[kind] = config;
   }
   return { ...raw, kind: raw.kind === 'sound' ? 'warmup' : raw.kind, configs };
 }
@@ -155,7 +165,19 @@ export function hookComplete(kind: HookKind, config?: HookConfig): boolean {
       : kind === 'effects' ? Boolean(config.effectHook)
         : kind === 'motion' ? Boolean(config.motion)
           : Boolean(config.thought);
-  return own && Boolean(config.effectGlue) && Boolean(config.effectStyle);
+  return own && Boolean(config.effectGlue) && Boolean(config.effectStyles?.length || config.effectStyle);
+}
+
+/** Уникальный список стилизаций из всех настроенных типов хука, в порядке выбора. */
+export function selectedEffectStyles(hooks: WizardStateData['hooks']): string[] {
+  const result: string[] = [];
+  for (const kind of Object.keys(HOOK_LABELS) as HookKind[]) {
+    const config = hooks.configs[kind];
+    for (const style of config?.effectStyles?.length ? config.effectStyles : (config?.effectStyle ? [config.effectStyle] : [])) {
+      if (!result.includes(style)) result.push(style);
+    }
+  }
+  return result;
 }
 
 export function hookPills(hooks: WizardStateData['hooks']): { kind: HookKind; label: string }[] {
@@ -203,7 +225,7 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   background: { mode: 'footage', footage: [], footageType: DEFAULT_FOOTAGE_TYPE, uploads: [], sourceVideos: [], photo: [], photoEffects: false, photoStyle: undefined, color: undefined, strobe: false, glue: undefined },
   hooks: { dropTime: undefined, kind: undefined, configs: {} },
   subtitles: { color: '#f6f5fd', pool: [] },
-  allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
+  allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, styles: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
   final: { subtitleColor: '#ffffff', accentColor: '#8b6fe6', videosToGenerate: 1, idempotencyKey: crypto.randomUUID() }
 });
 
@@ -236,7 +258,10 @@ export const useWizardStore = create<WizardStore>()(
         const configs = config && kind
           ? { ...state.hooks.configs, [kind]: { ...state.hooks.configs[kind], ...config } }
           : state.hooks.configs;
-        return { hooks: { ...state.hooks, ...rest, configs } };
+        return {
+          hooks: { ...state.hooks, ...rest, configs },
+          allocation: config ? { ...state.allocation, seeded: false } : state.allocation
+        };
       }),
       setSubtitles: (patch) => set((state) => ({ subtitles: { ...state.subtitles, ...patch } })),
       toggleSubtitleStyle: (style) => set((state) => {
@@ -329,14 +354,14 @@ export const useWizardStore = create<WizardStore>()(
     }),
     {
       name: 'blast-wizard-v4',
-      version: 2,
+      version: 3,
       migrate: (raw: any) => {
         const background = { ...raw.background };
         if (!background.sourceVideos?.length && background.uploads?.length) background.sourceVideos = [{
           id: 'source-video-legacy', format: background.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...background.uploads]
         }];
         background.sourceVideos ??= [];
-        return { ...raw, background, hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation,
+        return { ...raw, background, hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {},
           hooks: Object.fromEntries(Object.entries(raw.allocation?.hooks ?? {}).map(([key, value]) => [key === 'sound' ? 'warmup' : key, value])) } };
       },
       partialize: (state) => ({

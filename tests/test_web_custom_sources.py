@@ -4,6 +4,7 @@ import pytest
 
 from mlcore.custom_sources import apply_custom_sources
 from web_app.backend.app.batch_geometry import selected_geometry
+from web_app.backend.app import effect_map
 from web_app.backend.app.render_job import _segment, build_render_job, selected_hook_families
 
 
@@ -342,3 +343,74 @@ def test_style_scope_reaches_render_payload_and_blackwhite_is_forced_full() -> N
     assert job("Глитч", True)["hook"]["resolved"]["extraFull"] is True
     # «Ч/Б» в манифесте помечен full_window — охват у него не спрашивают, флаг ставится сам
     assert job("Ч/Б", False)["hook"]["resolved"]["extraFull"] is True
+
+
+def test_style_pool_assigns_one_style_to_each_compatible_video() -> None:
+    stage = {
+        "background": {
+            "mode": "footage",
+            "footage": ["Вертикаль"],
+            "footageFormats": {"Вертикаль": "9:16"},
+        },
+        "subtitles": {"pool": ["Impulse"]},
+        "hooks": {
+            "dropTime": "00:05:00",
+            "configs": {"effects": {
+                "effectHook": "Молния",
+                "effectGlue": "Щелчок",
+                "effectStyle": "Неон",
+                "effectStyles": ["Глитч", "Неон"],
+            }},
+        },
+        "allocation": {
+            "total": 2,
+            "background": {"footage:Вертикаль": 2},
+            "subtitles": {"Impulse": 2},
+            "hooks": {"effects": 2},
+            "styles": {"Глитч": 1, "Неон": 1},
+        },
+        "track": {"s3Key": "s3://audio/track.wav", "durationS": 20},
+        "timing": {"from": "00:00", "to": "00:10"},
+        "lyrics": "line",
+        "final": {},
+    }
+
+    variations = build_render_job("batch", "project", "user", stage, 2)["variations"]
+    assert [item["hook"]["resolved"]["extra"] for item in variations] == [
+        "analog_glitch", "neon_extract"
+    ]
+
+
+@pytest.mark.parametrize("extend", [None, "to_end", "after_drop:3"])
+def test_slow_shutter_extension_reaches_resolved_hook(extend: str | None) -> None:
+    config = {
+        "effectHook": "Слоу-шаттер",
+        "effectGlue": "Щелчок",
+        "effectStyle": "Глитч",
+    }
+    if extend:
+        config["effectHookExtend"] = extend
+    stage = {
+        "background": {"mode": "footage", "footage": ["Вертикаль"]},
+        "subtitles": {"pool": ["Impulse"]},
+        "hooks": {"dropTime": "00:05:00", "configs": {"effects": config}},
+        "allocation": {
+            "total": 1,
+            "background": {"footage:Вертикаль": 1},
+            "subtitles": {"Impulse": 1},
+            "hooks": {"effects": 1},
+        },
+        "track": {"s3Key": "s3://audio/track.wav", "durationS": 20},
+        "timing": {"from": "00:00", "to": "00:10"},
+        "lyrics": "line",
+        "final": {},
+    }
+
+    resolved = build_render_job("batch", "project", "user", stage, 1)["variations"][0]["hook"]["resolved"]
+    assert resolved["hook"] == "flash_slow_shutter"
+    assert resolved["hookExtend"] == extend
+
+
+def test_star_labels_match_the_bot_shape_ids() -> None:
+    assert "star2" in effect_map.OBJECT_SCRIPT["Звезда-5"]
+    assert "star1" in effect_map.OBJECT_SCRIPT["Звезда-10"]

@@ -976,6 +976,8 @@ class ProductionBackend:
             "effect_hook": resolved.get("hook"),
             "effect_transition": resolved.get("transition"),
             "effect_extra": resolved.get("extra"),
+            "effect_extra_full": bool(resolved.get("extraFull")),
+            "effect_hook_extend": resolved.get("hookExtend"),
             "f2_shape": f2_shape,
             "subtitle_color_hex": variation.get("subtitle", {}).get("color"),
             "accent_color_hex": stage_data.get("final", {}).get("accentColor"),

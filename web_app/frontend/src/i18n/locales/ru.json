@@ -433,7 +433,11 @@
       "scopeLabel": "Применить:",
       "scopeDrop": "до дропа",
       "scopeFull": "весь ролик",
-      "scopeLocked": "Этот стиль всегда идёт на весь ролик"
+      "scopeLocked": "Этот стиль всегда идёт на весь ролик",
+      "slowLength": "Длина слоу-шаттера",
+      "slowStandard": "станд.",
+      "slowToEnd": "до конца",
+      "slowThree": "+3 футажа"
     },
     "subs": {
       "title": "Субтитры",
@@ -453,6 +457,7 @@
       "background": "Фон",
       "subtitles": "Субтитры",
       "fx": "FX",
+      "styles": "Стилизация",
       "hook": "Хук",
       "transition": "Переход",
       "style": "Стиль",
@@ -463,6 +468,7 @@
       "bgNote": "Футажей и фото, вместе на {{count}} видео",
       "subsNote": "На {{count}} видео",
       "fxNote": "На {{count}} видео с футажами",
+      "stylesNote": "По одной на {{count}} видео с футажами",
       "unallocated": "нераспределено: +{{n}}",
       "over": "перебор: {{n}}",
       "chooseFont": "└ Выбери шрифт:",

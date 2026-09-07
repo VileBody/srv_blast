@@ -430,7 +430,11 @@
       "scopeLabel": "Apply:",
       "scopeDrop": "before drop",
       "scopeFull": "whole video",
-      "scopeLocked": "This style always covers the whole video"
+      "scopeLocked": "This style always covers the whole video",
+      "slowLength": "Slow shutter length",
+      "slowStandard": "standard",
+      "slowToEnd": "to end",
+      "slowThree": "+3 clips"
     },
     "subs": {
       "title": "Subtitles",
@@ -450,6 +454,7 @@
       "background": "Background",
       "subtitles": "Subtitles",
       "fx": "FX",
+      "styles": "Styling",
       "hook": "Hook",
       "transition": "Transition",
       "style": "Style",
@@ -460,6 +465,7 @@
       "bgNote": "Footage and photos, together for {{count}} videos",
       "subsNote": "For {{count}} videos",
       "fxNote": "For {{count}} videos with footage",
+      "stylesNote": "One per {{count}} footage videos",
       "unallocated": "unallocated: +{{n}}",
       "over": "over: {{n}}",
       "chooseFont": "└ Choose font:",

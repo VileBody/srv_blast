@@ -68,8 +68,8 @@ OBJECT_SCRIPT: dict[str, str] = {
     "Круг": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_elipse.jsx",
     "Квадрат": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_square.jsx",
     "Ромб": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_rhomb.jsx",
-    "Звезда-5": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_star1.jsx",
-    "Звезда-10": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_star2.jsx",
+    "Звезда-5": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_star2.jsx",
+    "Звезда-10": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_star1.jsx",
 }
 MOTION_SCRIPT: dict[str, str] = {
     "Свайп": "Хуки/Движение/ш3/rebuild_swipe.jsx",
