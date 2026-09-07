@@ -37,18 +37,26 @@ export function MobileUploadPage() {
 
   useEffect(() => { void requestInfo().then(setInfo).catch(e => setError(String(e.message))); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /*
+   * Файлы идут по очереди, и сбой одного больше не роняет остальные: раньше первая же
+   * ошибка формата обрывала цикл и следующие ролики просто не уезжали на сервер.
+   */
   const pick = async (files: FileList | null) => {
     const queue = Array.from(files ?? []); if (!queue.length || busy) return;
     setBusy(true); setError('');
     const start = rows.length;
     setRows(current => [...current, ...queue.map(file => ({ name: file.name, percent: 0, state: 'uploading' as const }))]);
-    try {
-      for (const [index, file] of queue.entries()) await upload(file, start + index);
-      setInfo(await requestInfo());
-    } catch (e) {
-      setRows(current => current.map(row => row.state === 'uploading' ? { ...row, state: 'error' } : row));
-      setError(e instanceof Error ? e.message : t('wizard.sources.uploadFail'));
-    } finally { setBusy(false); }
+    for (const [index, file] of queue.entries()) {
+      try {
+        await upload(file, start + index);
+      } catch (e) {
+        const rowIndex = start + index;
+        setRows(current => current.map((row, i) => i === rowIndex ? { ...row, state: 'error' } : row));
+        setError(e instanceof Error ? e.message : t('wizard.sources.uploadFail'));
+      }
+    }
+    try { setInfo(await requestInfo()); } catch { /* счётчик обновится при следующей загрузке */ }
+    setBusy(false);
   };
 
   return <main className="min-h-[100dvh] bg-[#100820] px-5 py-8 text-text">

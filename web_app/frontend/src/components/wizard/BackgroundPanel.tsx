@@ -186,10 +186,12 @@ function FootageTypeStepper() {
   );
 
   return (
-    <span className="grid w-[300px] grid-cols-[24px_minmax(0,1fr)_24px] items-center gap-[12px]">
+    /* Стрелки держатся текста на постоянном отступе: фиксированная ширина ряда разносила
+       их по краям и у коротких подписей («16:9») зазор становился огромным. */
+    <span className="inline-flex items-center gap-[15px]">
       {arrow(-1)}
       <span
-        className="min-w-0 whitespace-nowrap text-center text-[24px] font-[350] leading-normal text-transparent"
+        className="whitespace-nowrap text-center text-[24px] font-[350] leading-normal text-transparent"
         style={{ backgroundImage: 'var(--grad-main)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}
       >
         {label}

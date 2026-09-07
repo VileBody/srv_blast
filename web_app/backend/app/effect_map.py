@@ -50,6 +50,16 @@ for _e in _REG.get("hook", []):
     else:
         HOOK_BRANDING[_e["manifestId"]] = {"enabled": False}
 
+# «Мысль» — TTS-вставка (mlcore/hooks/f5_cognition). Своего run_job-хука не даёт: воркеру
+# нужен id приёма, а стор визарда хранит RU-лейбл. Зеркало F5-набора из tg_bot_public.
+THOUGHT_DEVICE: dict[str, str] = {
+    "Панчлайн": "punchline",
+    "Пропущенное слово": "missing_word",
+    "Эхо": "lyric_echo",
+    "Вопрос": "question_to_track",
+    "Инверсия": "inverse_lyric",
+}
+
 # object/motion — не идут в run_job, зовутся отдельными скриптами (spec §4.4)
 OBJECT_SCRIPT: dict[str, str] = {
     "Круг": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_elipse.jsx",
@@ -77,6 +87,10 @@ def map_glue(label: str | None) -> str | None:
 
 def map_style(label: str | None) -> str | None:
     return STYLE_MAP.get(label) if label else None
+
+
+def map_thought(label: str | None) -> str | None:
+    return THOUGHT_DEVICE.get(label) if label else None
 
 
 def parse_mmssms(value: str | None) -> float | None:

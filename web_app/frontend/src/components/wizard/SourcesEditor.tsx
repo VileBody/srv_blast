@@ -18,7 +18,10 @@ const timeSeconds = (value: string) => {
 };
 
 const ICON_BTN = 'flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[9px] bg-accent-20 text-[14px] leading-none text-text-80 transition hover:text-text disabled:opacity-25';
-const PILL = 'flex h-[38px] items-center justify-center rounded-r15 px-[18px] text-[15px] transition';
+const SEGMENT = 'inline-flex shrink-0 items-center gap-[4px] rounded-r15 bg-[rgba(8,3,19,.5)] p-[4px]';
+const SEGMENT_ITEM = 'flex h-[34px] items-center justify-center rounded-[11px] px-[16px] text-[14px] transition';
+const SEGMENT_ON = 'bg-grad-soft-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]';
+const SEGMENT_OFF = 'text-text-60 hover:text-text';
 
 export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
@@ -133,36 +136,47 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
           <h2 className="text-[24px] leading-tight">{t('wizard.sources.title')}</h2>
           <p className="mt-[8px] max-w-[640px] text-[14px] leading-[1.45] text-text-60">{t('wizard.sources.editorHint')}</p>
         </div>
-        <button type="button" className={ICON_BTN} onClick={onClose} aria-label={t('wizard.sources.close')}>✕</button>
+        <button type="button" className={ICON_BTN} onClick={onClose} aria-label={t('wizard.sources.close')}>
+          <span className="translate-y-[1px]" aria-hidden="true">✕</span>
+        </button>
       </header>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-[20px] overflow-auto px-[28px] pb-[20px] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         {/* Левая колонка — откуда приходят файлы и что с ними происходит прямо сейчас */}
         <div className="flex min-w-0 flex-col gap-[14px]">
-          <div className="flex flex-wrap items-center gap-[8px]">
-            <span className="mr-[4px] text-[14px] text-text-60">{t('wizard.sources.chooseFormat')}</span>
-            {(['9:16', '16:9'] as const).map(value => (
-              <button key={value} type="button" aria-pressed={format === value}
-                className={cn(PILL, 'border', format === value ? 'border-accent-light bg-grad-soft-20 text-text' : 'border-transparent bg-accent-20 text-text-60 hover:text-text')}
-                onClick={() => { setFormat(value); setLink(undefined); }}>{value}</button>
-            ))}
-          </div>
-          <div className="flex flex-wrap items-center gap-[8px]">
-            {([['pc', t('wizard.sources.fromPc')], ['qr', t('wizard.sources.fromPhone')]] as const).map(([value, label]) => (
-              <button key={value} type="button" aria-pressed={tab === value} disabled={busy || !projectId}
-                className={cn(PILL, 'border', tab === value ? 'border-accent-light bg-grad-soft-20 text-text' : 'border-transparent bg-accent-20 text-text-60 hover:text-text')}
-                onClick={async () => {
-                  if (value === 'pc') { setTab('pc'); return; }
-                  setTab('qr'); setBusy(true); setError('');
-                  try { setLink(await api.uploadLink(projectId!, format)); } catch (e) { report(e); } finally { setBusy(false); }
-                }}>{label}</button>
-            ))}
+          {/* Формат и источник — два одинаковых сегмент-контрола в одном блоке: раньше это
+              были разнокалиберные пилюли в два ряда и левая колонка читалась как свалка. */}
+          <div className="flex flex-col gap-[12px] rounded-r15 bg-[rgba(16,9,34,.35)] p-[16px]">
+            <div className="flex items-center justify-between gap-[12px]">
+              <span className="text-[14px] text-text-60">{t('wizard.sources.chooseFormat')}</span>
+              <span className={SEGMENT}>
+                {(['9:16', '16:9'] as const).map(value => (
+                  <button key={value} type="button" aria-pressed={format === value}
+                    className={cn(SEGMENT_ITEM, format === value ? SEGMENT_ON : SEGMENT_OFF)}
+                    onClick={() => { setFormat(value); setLink(undefined); }}>{value}</button>
+                ))}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-[12px]">
+              <span className="text-[14px] text-text-60">{t('wizard.sources.chooseSource')}</span>
+              <span className={SEGMENT}>
+                {([['pc', t('wizard.sources.fromPc')], ['qr', t('wizard.sources.fromPhone')]] as const).map(([value, label]) => (
+                  <button key={value} type="button" aria-pressed={tab === value} disabled={busy || !projectId}
+                    className={cn(SEGMENT_ITEM, tab === value ? SEGMENT_ON : SEGMENT_OFF)}
+                    onClick={async () => {
+                      if (value === 'pc') { setTab('pc'); return; }
+                      setTab('qr'); setBusy(true); setError('');
+                      try { setLink(await api.uploadLink(projectId!, format)); } catch (e) { report(e); } finally { setBusy(false); }
+                    }}>{label}</button>
+                ))}
+              </span>
+            </div>
           </div>
 
           {tab === 'pc' ? <>
             <input ref={input} type="file" accept="video/mp4,video/quicktime,video/webm" multiple className="sr-only" disabled={busy} onChange={e => { void upload(e.target.files); e.target.value = ''; }} />
             <button type="button" disabled={busy || !projectId}
-              className="flex min-h-[132px] w-full flex-col items-center justify-center gap-[10px] rounded-r15 border-2 border-dashed border-accent-light bg-grad-soft-10 px-[20px] text-center transition hover:brightness-110 disabled:opacity-60"
+              className="flex min-h-[220px] w-full flex-1 flex-col items-center justify-center gap-[14px] rounded-r15 border-2 border-dashed border-accent-light bg-grad-soft-10 px-[24px] py-[28px] text-center transition hover:brightness-110 disabled:opacity-60"
               onClick={() => input.current?.click()}
               onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void upload(e.dataTransfer.files); }}>
               <span aria-hidden="true" className="flex h-[44px] w-[44px] items-center justify-center rounded-r15 bg-text text-[26px] leading-none text-accent">+</span>

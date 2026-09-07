@@ -17,7 +17,7 @@ import { hasTrackInput, hookPills } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
-import { timingToSeconds } from '../components/wizard/useFragmentAudio';
+import { dropToSeconds, timingToSeconds } from '../components/wizard/useFragmentAudio';
 import { BackSquareButton, WizardHeaderCard } from '../components/wizard/WizardFrame';
 import { useToast } from '../contexts/ToastContext';
 import { cn } from '../lib/cn';
@@ -493,7 +493,7 @@ export function WizardPage() {
     && timingToSeconds(state.timingFrom) !== null
     && timingToSeconds(state.timingTo) !== null
     && !segmentInvalid;
-  const dropSeconds = timingToSeconds(state.hooks.dropTime ?? '');
+  const dropSeconds = dropToSeconds(state.hooks.dropTime);
   const clipFromSeconds = timingToSeconds(state.timingFrom);
   const clipToSeconds = timingToSeconds(state.timingTo);
   const dropReady = dropSeconds !== null

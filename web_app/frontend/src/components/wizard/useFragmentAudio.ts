@@ -8,6 +8,20 @@ export function timingToSeconds(value: string): number | null {
   return Number(parsed[1]) * 60 + Number(parsed[2]) + Number(parsed[3]) / 100;
 }
 
+/*
+ * Тайминг дропа приходит из анализа как «mm:ss», а ручной ввод — как «mm:ss:cs».
+ * Храним всегда трёхчастную форму: её же ждёт бэк (parse_mmssms), который двухчастную
+ * читает как «ss:cs» и ставит дроп в начало трека.
+ */
+export function normalizeDropTime(value: string): string {
+  return /^\d{2}:\d{2}$/.test(value) ? `${value}:00` : value;
+}
+
+/** Секунды дропа в любой из двух форм записи. */
+export function dropToSeconds(value: string | null | undefined): number | null {
+  return value ? timingToSeconds(normalizeDropTime(value)) : null;
+}
+
 /**
  * Проигрывание ВЫБРАННОГО ОТРЫВКА загруженного трека — поверх любого превью визарда.
  *

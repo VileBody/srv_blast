@@ -525,7 +525,8 @@
       "queueTitle": "Загружено {{done}} из {{total}}",
       "queueDone": "готово",
       "queueError": "ошибка",
-      "summary": "В Пул уйдёт видео: {{count}}"
+      "summary": "В Пул уйдёт видео: {{count}}",
+      "chooseSource": "Источник:"
     },
     "preview": {
       "unavailable": "Видео-пример недоступен",

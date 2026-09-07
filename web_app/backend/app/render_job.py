@@ -82,6 +82,9 @@ def _resolve_hook(kind: str | None, cfg: dict[str, Any], bg_glue_id: str | None,
         "hook": None,
         "transition": em.map_glue(cfg.get("effectGlue")) or bg_glue_id,
         "extra": em.map_style(cfg.get("effectStyle")) or bg_style_id,
+        # id приёма «Мысли» (F5). Раньше выбор уезжал сырым RU-лейблом внутри hook.config
+        # и на стороне воркера ни во что не резолвился.
+        "device": None,
     }
     family_script = None
     if kind == "effects":
@@ -90,7 +93,9 @@ def _resolve_hook(kind: str | None, cfg: dict[str, Any], bg_glue_id: str | None,
         family_script = em.OBJECT_SCRIPT.get(cfg.get("object"))
     elif kind == "motion":
         family_script = em.MOTION_SCRIPT.get(cfg.get("motion"))
-    # sound / thought — отдельные шаги воркера, собственного run_job-хука не дают
+    elif kind == "thought":
+        resolved["device"] = em.map_thought(cfg.get("thought"))
+    # sound — отдельный шаг воркера, собственного run_job-хука не даёт
     return resolved, family_script
 
 

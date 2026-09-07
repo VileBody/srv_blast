@@ -12,7 +12,7 @@ import { PillsFooter } from './WizardFrame';
 import { HookConfig, HookKind, HOOK_LABELS, hookComplete, hookPills, useWizardStore } from '../../stores/wizardStore';
 import effectsRegistry from '../../data/effects-registry.json';
 import { CatalogMedia } from './CatalogPreview';
-import { timingToSeconds } from './useFragmentAudio';
+import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
 
 /*
  * Этап «Хук» (Figma W18 → W24/32 → W25/34 → W26/28/29/30 → W27 → W31):
@@ -225,7 +225,11 @@ export function StageHooks() {
   const [hint, setHint] = useState<HookKind | null>(null);
 
   const drops = dropsQuery.data?.drops ?? [];
-  const customActive = Boolean(hooks.dropTime && !drops.some((d) => d.time === hooks.dropTime));
+  // В сторе тайминг всегда трёхчастный, в списке — «mm:ss»: сравниваем в одной форме
+  const customActive = Boolean(hooks.dropTime && !drops.some((d) => normalizeDropTime(d.time) === hooks.dropTime));
+  // Пока анализ идёт, ряд занимают заглушки: иначе человек видит один «Свой вариант»
+  // и уходит вписывать тайминг руками, не дождавшись кандидатов.
+  const dropsLoading = drops.length === 0 && clipReady && dropsQuery.isFetching;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -255,17 +259,23 @@ export function StageHooks() {
 
       {/* Тайминг дропа (Figma 606:217): панель 620×60, активный чип — пил во всю высоту */}
       <div className="mt-[20px] flex h-[60px] shrink-0 items-stretch rounded-r15 bg-grad-soft-10">
+        {dropsLoading && [0, 1, 2].map((index) => (
+          <span key={index} className="flex h-full flex-1 items-center justify-center" aria-hidden="true">
+            <span className="h-[26px] w-[92px] animate-pulse rounded-[8px] bg-accent-20" />
+          </span>
+        ))}
         {drops.map((drop) => (
           <button
             key={drop.time}
             type="button"
             className={cn(
               'flex h-full flex-1 items-center justify-center rounded-r15 text-[24px] font-[350] text-text-80 transition hover:text-text max-xl:text-[17px]',
-              hooks.dropTime === drop.time && 'border-2 border-accent-light bg-grad-soft-20 !text-text'
+              hooks.dropTime === normalizeDropTime(drop.time) && 'border-2 border-accent-light bg-grad-soft-20 !text-text'
             )}
-            onClick={() => { setDropError(false); setCustomDrop(false); setHooks({ dropTime: drop.time }); }}
+            onClick={() => { setDropError(false); setCustomDrop(false); setHooks({ dropTime: normalizeDropTime(drop.time) }); }}
           >
-            <span>{drop.time}<small className="ml-2 text-xs opacity-70">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small></span>
+            {/* глиф Point сидит выше геометрического центра пила */}
+            <span className="translate-y-[1px]">{drop.time}<small className="ml-2 text-xs opacity-70">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small></span>
           </button>
         ))}
         {customDrop ? (
@@ -277,7 +287,7 @@ export function StageHooks() {
             onChange={(e: ChangeEvent<HTMLInputElement>) => { e.target.value = clampDrop(e.target.value, track?.durationS); }}
             onBlur={(e) => {
               const value = clampDrop(e.target.value, track?.durationS);
-              const seconds = timingToSeconds(value);
+              const seconds = dropToSeconds(value);
               const valid = seconds !== null && clipFromS !== null && clipToS !== null && seconds >= clipFromS && seconds <= clipToS;
               setDropError(Boolean(value) && !valid);
               if (valid) setHooks({ dropTime: value });
@@ -294,7 +304,7 @@ export function StageHooks() {
             )}
             onClick={() => setCustomDrop(true)}
           >
-            {customActive ? hooks.dropTime : t('wizard.fx.customDrop')}
+            <span className="translate-y-[1px]">{customActive ? hooks.dropTime : t('wizard.fx.customDrop')}</span>
           </button>
         )}
       </div>

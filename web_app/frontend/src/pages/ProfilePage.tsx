@@ -168,7 +168,7 @@ function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
           <span key={index} className={cn(index > 0 && 'ml-[41px]')}>
             <span className="inline-flex h-[35px] w-[80px] items-center justify-center rounded-r15 border border-accent bg-grad-soft-20 backdrop-blur-[15px]">
               {/* метрики Point сажают строчные буквы выше геометрического центра пила */}
-              <span className="translate-y-[2px] text-[24px] font-[400] leading-none text-transparent" style={gradSoft}>{m}</span>
+              <span className="translate-y-[1px] text-[24px] font-[400] leading-none text-transparent" style={gradSoft}>{m}</span>
             </span>
           </span>
         ))}

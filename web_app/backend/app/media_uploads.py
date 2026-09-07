@@ -24,6 +24,31 @@ def _run(args: list[str], timeout: int = 120) -> bytes:
     return proc.stdout
 
 
+def _display_size(video: dict[str, Any]) -> tuple[int, int]:
+    """Ширина/высота ТАК, КАК ролик видит зритель.
+
+    Телефоны пишут вертикальное видео кадром 1920x1080 плюс поворот в метаданных
+    (side_data_list.rotation или tags.rotate). Без учёта поворота проверка формата
+    считала такой файл 16:9 и отклоняла честный вертикальный исходник.
+    """
+    width, height = int(video.get('width') or 0), int(video.get('height') or 0)
+    rotation = 0.0
+    for side in video.get('side_data_list') or []:
+        if side.get('rotation') is not None:
+            try:
+                rotation = float(side['rotation'])
+            except (TypeError, ValueError):
+                rotation = 0.0
+    if not rotation:
+        try:
+            rotation = float((video.get('tags') or {}).get('rotate') or 0)
+        except (TypeError, ValueError):
+            rotation = 0.0
+    if round(abs(rotation)) % 180 == 90:
+        width, height = height, width
+    return width, height
+
+
 def probe(path: Path) -> dict[str, Any]:
     raw = json.loads(_run(['ffprobe', '-v', 'error', '-protocol_whitelist', 'file,pipe',
         '-show_streams', '-show_format', '-of', 'json', str(path)], 30))
@@ -32,8 +57,8 @@ def probe(path: Path) -> dict[str, Any]:
     duration = float(raw.get('format', {}).get('duration') or 0)
     if not math.isfinite(duration) or duration < 0.5 or duration > 600:
         raise ValueError("Длительность файла должна быть от 0,5 до 600 секунд")
-    return {'width': int(video['width']) if video else 0, 'height': int(video['height']) if video else 0,
-            'duration': duration, 'hasAudio': audio}
+    width, height = _display_size(video) if video else (0, 0)
+    return {'width': width, 'height': height, 'duration': duration, 'hasAudio': audio}
 
 
 def normalize(content: bytes, *, video: bool, expected_format: str | None = None) -> tuple[bytes, dict[str, Any]]:

@@ -522,7 +522,8 @@
       "queueTitle": "Uploaded {{done}} of {{total}}",
       "queueDone": "done",
       "queueError": "failed",
-      "summary": "Videos going to the Pool: {{count}}"
+      "summary": "Videos going to the Pool: {{count}}",
+      "chooseSource": "Source:"
     },
     "preview": {
       "unavailable": "Video example unavailable",

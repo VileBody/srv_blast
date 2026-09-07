@@ -286,3 +286,28 @@ def test_personal_video_unknown_allocation_unit_fails_explicitly() -> None:
     }
     with pytest.raises(ValueError, match="Неизвестное личное видео"):
         build_render_job("batch", "project", "user", stage, 1)
+
+
+def test_thought_hook_resolves_to_f5_device_id() -> None:
+    stage = {
+        "background": {"mode": "footage", "footage": ["Вертикаль"]},
+        "subtitles": {"pool": ["Impulse"]},
+        "hooks": {
+            "dropTime": "00:05:00",
+            "configs": {"thought": {"thought": "Пропущенное слово", "effectGlue": "Щелчок"}},
+        },
+        "allocation": {
+            "total": 1,
+            "background": {"footage:Вертикаль": 1},
+            "subtitles": {"Impulse": 1},
+            "hooks": {"thought": 1},
+        },
+        "track": {"s3Key": "s3://audio/track.wav", "durationS": 20},
+        "timing": {"from": "00:00", "to": "00:10"},
+        "lyrics": "line",
+        "final": {},
+    }
+
+    variation = build_render_job("batch", "project", "user", stage, 1)["variations"][0]
+    # RU-лейбл визарда доезжает до воркера как id приёма F5, а не как подпись кнопки
+    assert variation["hook"]["resolved"]["device"] == "missing_word"
