@@ -90,10 +90,11 @@
     "history": "Payment history",
     "noHistory": "No payments yet.",
     "paymentStatus": {
-      "confirmed": "Paid",
-      "pending": "Pending",
-      "rejected": "Declined",
-      "failed": "Failed"
+      "paid": "Paid",
+      "unfinished": "Not completed",
+      "expired": "Payment window expired",
+      "declined": "Declined by bank",
+      "refunded": "Refunded"
     },
     "status": {
       "trial": "Trial",

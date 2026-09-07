@@ -480,7 +480,7 @@ export function StatsPage() {
         {/* таб-бар итераций: номер берётся из реальных итераций проекта (был захардкожен «№1»);
             «+» — свой пил с обводкой ПОД основным (нахлёст 33px, тот же приём, что «+» у батчей) */}
         <div className="mt-[28px] flex h-[60px] items-center rounded-r15 bg-grad-soft-10 pr-[20px]">
-          <span className="relative z-10 flex h-[60px] shrink-0 items-center whitespace-nowrap rounded-r15 border-2 border-accent-light bg-grad-soft-20 px-[21px] text-[24px] font-[400] leading-[29px] text-text [backdrop-filter:blur(40px)]">
+          <span className="relative z-10 flex h-[60px] shrink-0 items-center whitespace-nowrap rounded-r15 border-2 border-accent-light bg-grad-soft-20 px-[21px] text-[24px] font-[400] leading-[29px] text-text">
             {t('stats.iterationN', { n: iterationNumber })}
           </span>
           {/* Кнопка остаётся на месте даже до накопления данных: меняется доступность,

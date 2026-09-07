@@ -8,7 +8,7 @@ import { isVideoPosted } from '../lib/types';
 import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { BatchLayout, BatchTrack, GenerationsCard, PreviewColumn, TrackCard } from '../components/project/BatchCards';
-import { hasTrackInput, useWizardStore } from '../stores/wizardStore';
+import { startNextBatch } from '../stores/wizardStore';
 
 /** Батч видео (Figma W36, состояние с лимитами — W47). Раскладка общая с W51 (генерация). */
 export function ProjectDetailPage() {
@@ -19,9 +19,6 @@ export function ProjectDetailPage() {
   const { push } = useToast();
   const projectQuery = useQuery({ queryKey: ['project', id], queryFn: () => api.project(id ?? ''), enabled: Boolean(id) });
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
-  const reset = useWizardStore((state) => state.reset);
-  const newBatch = useWizardStore((state) => state.newBatch);
-  const setStage = useWizardStore((state) => state.setStage);
   const project = projectQuery.data?.project;
   const jobs = useMemo(
     () => [...(project?.jobs ?? [])].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)),
@@ -60,23 +57,7 @@ export function ProjectDetailPage() {
    * в сторе. Иначе (первый батч, другой проект, чистая сессия) начинаем с «Трек»:
    * без трека и текста генерировать нечего.
    */
-  const addBatch = () => {
-    const state = useWizardStore.getState();
-    const sameProject = state.projectId === id;
-    if (sameProject && hasTrackInput(state)) {
-      newBatch(id);
-      setStage(2);
-    } else if (sameProject && state.track) {
-      // трек уже загружен (например, в модалке «Новый проект») — файл не переспрашиваем,
-      // но текст отрывка ещё нужен, поэтому начинаем с этапа «Трек»
-      newBatch(id);
-      setStage(1);
-    } else {
-      reset(id);
-      setStage(1);
-    }
-    navigate(`/app/generate?project=${id}`);
-  };
+  const addBatch = () => navigate(startNextBatch(id ?? ''));
 
   // 404 разбираем ниже отдельным экраном «проект не найден» — здесь только сбой загрузки
   if (queryDown(projectQuery) && !(projectQuery.error instanceof ApiError && projectQuery.error.status === 404)) {

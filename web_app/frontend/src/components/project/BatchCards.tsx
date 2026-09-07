@@ -24,7 +24,7 @@ export const gradLight = {
 /** Горизонтальная лента: мышью/тачем тянется, вертикальное колесо листает по горизонтали. */
 function useHorizontalScroll() {
   const ref = useRef<HTMLDivElement>(null);
-  const drag = useRef({ active: false, moved: false, startX: 0, startScroll: 0 });
+  const drag = useRef<{ active: boolean; moved: boolean; startX: number; startScroll: number; pointerId?: number }>({ active: false, moved: false, startX: 0, startScroll: 0 });
   const [fade, setFade] = useState({ left: false, right: false });
 
   const syncFades = () => {
@@ -56,22 +56,29 @@ function useHorizontalScroll() {
     };
   }, []);
 
+  /*
+   * Захват указателя ставим только когда лента реально поехала. Захват на pointerdown
+   * перенаправлял и последующий click на саму ленту — из-за этого пилюли батчей и «+»
+   * переставали нажиматься.
+   */
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const element = ref.current;
     if (!element) return;
-    drag.current = { active: true, moved: false, startX: event.clientX, startScroll: element.scrollLeft };
-    element.setPointerCapture?.(event.pointerId);
+    drag.current = { active: true, moved: false, startX: event.clientX, startScroll: element.scrollLeft, pointerId: event.pointerId };
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     const element = ref.current;
     if (!drag.current.active || !element) return;
     const dx = event.clientX - drag.current.startX;
     if (Math.abs(dx) > 5) {
+      if (!drag.current.moved) element.setPointerCapture?.(event.pointerId);
       drag.current.moved = true;
       element.scrollLeft = drag.current.startScroll - dx;
     }
   };
   const end = () => {
+    const element = ref.current;
+    if (drag.current.moved && drag.current.pointerId !== undefined) element?.releasePointerCapture?.(drag.current.pointerId);
     drag.current.active = false;
     window.setTimeout(() => { drag.current.moved = false; }, 0);
   };
@@ -263,7 +270,7 @@ export function BatchTrack({
     <div
       ref={scroll.ref}
       className="no-scrollbar flex h-[60px] cursor-grab select-none items-stretch overflow-x-auto rounded-[15px] active:cursor-grabbing"
-      style={{ maskImage: mask, WebkitMaskImage: mask }}
+      style={{ background: 'var(--grad-soft-10)', maskImage: mask, WebkitMaskImage: mask }}
       {...scroll.handlers}
     >
       {(batches.length ? batches : [{ id: 'empty', number: 1 }]).map((batch) => {

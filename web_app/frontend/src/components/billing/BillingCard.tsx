@@ -5,6 +5,20 @@ import { api } from '../../lib/api';
 import { isSubscriptionPlan, type Subscription } from '../../lib/types';
 import { useToast } from '../../contexts/ToastContext';
 
+/*
+ * Статусы приходят кодами эквайринга Т-банка (NEW, DEADLINE_EXPIRED, INIT_FAILED…).
+ * Пользователю нужен исход платежа, а не код интеграции, поэтому сводим их к пяти
+ * понятным состояниям; незнакомый код — это заведомо не успешная оплата, поэтому
+ * он попадает в «не завершён», а не показывается как есть.
+ */
+const PAYMENT_STATE: Record<string, string> = {
+  CONFIRMED: 'paid', AUTHORIZED: 'paid',
+  NEW: 'unfinished', FORM_SHOWED: 'unfinished', AUTHORIZING: 'unfinished', CONFIRMING: 'unfinished', INIT_IN_PROGRESS: 'unfinished',
+  DEADLINE_EXPIRED: 'expired', ATTEMPTS_EXPIRED: 'expired',
+  REJECTED: 'declined', INIT_FAILED: 'declined', CANCELED: 'declined', AUTH_FAIL: 'declined',
+  REFUNDED: 'refunded', PARTIAL_REFUNDED: 'refunded'
+};
+
 function formatDate(iso: string | null | undefined, locale: string): string {
   if (!iso) return '';
   const date = new Date(iso);
@@ -42,7 +56,7 @@ export function BillingCard({ subscription }: { subscription: Subscription }) {
     <h2 className="text-[24px] font-[350] leading-none text-text">{t('billing.title')}</h2>
     <div className="mt-[28px] grid gap-[20px] lg:grid-cols-[minmax(280px,.8fr)_minmax(420px,1.2fr)]">
       <div className="flex min-h-[190px] flex-col rounded-r15 border border-[rgba(139,111,230,.28)] bg-[rgba(16,9,34,.32)] p-[24px]">
-        <span className="text-[14px] uppercase tracking-[.08em] text-text-40">{t('billing.currentPlan')}</span>
+        <span className="text-[14px] text-text-40">{t('billing.currentPlan')}</span>
         <strong className="mt-[14px] text-[24px] font-[400] text-text">{view.title}</strong>
         {view.text && <p className="mt-[8px] max-w-[430px] text-[15px] leading-[21px] text-text-60">{view.text}</p>}
         <div className="mt-auto flex flex-wrap gap-[10px] pt-[24px]">
@@ -62,7 +76,7 @@ export function BillingCard({ subscription }: { subscription: Subscription }) {
           {payments.map(payment => <div key={payment.orderId} className="grid grid-cols-[1fr_auto_auto] items-center gap-[18px] py-[13px] text-[14px]">
             <span className="min-w-0 truncate text-text-80">{formatDate(payment.createdAt, locale)}</span>
             <span className="text-text">{payment.amountRub.toLocaleString(locale)} ₽</span>
-            <span className="min-w-[92px] text-right text-text-60">{t(`billing.paymentStatus.${payment.status.toLowerCase()}`, { defaultValue: payment.status })}</span>
+            <span className="min-w-[92px] text-right text-text-60">{t(`billing.paymentStatus.${PAYMENT_STATE[payment.status.toUpperCase()] ?? 'unfinished'}`)}</span>
           </div>)}
         </div> : <p className="mt-[20px] text-[15px] text-text-60">{t('billing.noHistory')}</p>}
       </div>

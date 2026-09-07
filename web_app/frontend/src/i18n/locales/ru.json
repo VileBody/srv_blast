@@ -91,10 +91,11 @@
     "history": "История оплат",
     "noHistory": "Оплат пока нет.",
     "paymentStatus": {
-      "confirmed": "Оплачено",
-      "pending": "Ожидает",
-      "rejected": "Отклонено",
-      "failed": "Ошибка"
+      "paid": "Оплачено",
+      "unfinished": "Не завершён",
+      "expired": "Истёк срок оплаты",
+      "declined": "Отклонён банком",
+      "refunded": "Возврат"
     },
     "status": {
       "trial": "Триал",

@@ -356,3 +356,26 @@ export const useWizardStore = create<WizardStore>()(
     }
   )
 );
+
+/*
+ * Общая точка входа в «ещё один батч по этому проекту»: «+» на странице проекта и
+ * «Сделать ещё» на странице проектов вели в разные места — вторая просто открывала тот же
+ * батч. Если трек и текст проекта уже в сторе, начинаем сразу с этапа «Фон», иначе с «Трека».
+ * Возвращает адрес визарда.
+ */
+export function startNextBatch(projectId: string): string {
+  const state = useWizardStore.getState();
+  const sameProject = state.projectId === projectId;
+  if (sameProject && hasTrackInput(state)) {
+    state.newBatch(projectId);
+    state.setStage(2);
+  } else if (sameProject && state.track) {
+    // трек загружен, но текста отрывка ещё нет — без него генерировать нечего
+    state.newBatch(projectId);
+    state.setStage(1);
+  } else {
+    state.reset(projectId);
+    state.setStage(1);
+  }
+  return `/app/generate?project=${projectId}`;
+}
