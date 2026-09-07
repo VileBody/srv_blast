@@ -860,16 +860,17 @@ def delete_project(project_id: str) -> bool:
     return True
 
 
-def _new_video(job_id: str, index: int, source: str, style: str, hook: str) -> dict[str, Any]:
+def _new_video(job_id: str, index: int, source: str, style: str, hook: str, render_format: str) -> dict[str, Any]:
     return {
         "id": f"{job_id}_v{index}",
         "index": index,
         "status": "PENDING",
         "progress": 0,
         "source": source,
+        "format": render_format,
         "subtitleStyle": style,
         "hook": hook,
-        "thumbnailUrl": "/assets/cover-placeholder.svg",
+        "thumbnailUrl": None,
         "downloadUrl": None,
     }
 
@@ -894,7 +895,10 @@ def create_job(
     videos = []
     for var in render_job["variations"]:
         lbl = variation_label(var)
-        videos.append(_new_video(jid, var["index"], lbl["source"], lbl["subtitleStyle"], lbl["hook"]))
+        videos.append(_new_video(
+            jid, var["index"], lbl["source"], lbl["subtitleStyle"], lbl["hook"],
+            str((var.get("background") or {}).get("sourceFormat") or "9:16"),
+        ))
     job = {
         "id": jid,
         "projectId": project_id,

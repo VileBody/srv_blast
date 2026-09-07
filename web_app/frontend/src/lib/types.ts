@@ -178,6 +178,8 @@ export interface VideoVersion {
   status: JobStatus;
   progress: number;
   source: string;
+  /** Exact output aspect ratio attached by the render-job builder. */
+  format?: '9:16' | '16:9' | '4:3' | '1:1';
   subtitleStyle: string;
   hook: string;
   thumbnailUrl?: string | null;

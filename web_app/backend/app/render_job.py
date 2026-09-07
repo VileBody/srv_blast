@@ -264,6 +264,23 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
             cfg["effectStyle"] = style_seq[compatible_index]
         resolved, family_script = _resolve_hook(v_kind, cfg, bg_glue_id, bg_style_id)
 
+        # Keep the output geometry on the variation itself. The web status UI and
+        # the production dispatcher must describe the same render; deriving it
+        # later from a translated source label made every job look vertical.
+        if v_mode == "upload":
+            source_format = str((source_plan or {}).get("format") or "")
+        elif v_mode == "footage":
+            source_format = str(footage_formats.get(
+                group,
+                "16:9" if bg.get("footageType") == "cine16x9" else "9:16",
+            ))
+        elif v_mode == "photo":
+            # Photo assets are 4:3, but the emitted video uses the vertical
+            # render preset; this field describes the output shown to users.
+            source_format = "9:16"
+        else:
+            source_format = "9:16"
+
         branding = em.HOOK_BRANDING.get(resolved["hook"], {"enabled": False}) if resolved["hook"] else {"enabled": False}
         variations.append({
             "index": i + 1,
@@ -280,7 +297,7 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
                 # свои исходники (Figma W39/W49) — вместо библиотечного футажа
                 "uploads": list((source_plan or {}).get("sourceIds") or []),
                 "sourceAssets": variation_sources,
-                "sourceFormat": (source_plan or {}).get("format"),
+                "sourceFormat": source_format,
                 "sourceLabel": (
                     f"Своё видео {source_plans.index(source_plan) + 1} · {source_plan['format']}"
                     if source_plan in source_plans else None

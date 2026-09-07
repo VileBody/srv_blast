@@ -408,7 +408,15 @@ export function GenerationsCard({
         </span>
       </div>
       <div className="relative min-h-0 flex-1">
-        <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto">
+        <div
+          className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto"
+          /* Прячем строки прозрачностью, а не цветной накладкой. Тогда сквозь
+             фейд всегда виден фактический многослойный фон card-2 без шва. */
+          style={{
+            maskImage: 'linear-gradient(to bottom, transparent 0, #000 22px, #000 calc(100% - 22px), transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 22px, #000 calc(100% - 22px), transparent 100%)',
+          }}
+        >
           {videos.length === 0 && !loading ? (
             <div className="flex h-full min-h-[160px] flex-col items-center justify-center gap-[20px] text-center">
               <p className="text-[16px] leading-[19px] text-text-60">{t('projectDetail.noGenerations')}</p>
@@ -425,9 +433,6 @@ export function GenerationsCard({
           )}
           {loading && pending.length === 0 && <LoadingRow />}
         </div>
-        {/* скролл-фейды сверху/снизу (цвет карты) */}
-        <div className="pointer-events-none absolute inset-x-0 -top-[10px] h-[24px]" style={{ background: 'linear-gradient(180deg, #140e24, rgba(20,14,36,0))' }} />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[24px]" style={{ background: 'linear-gradient(0deg, #140e24, rgba(20,14,36,0))' }} />
       </div>
       {onRate && (
         <div className="mt-[18px] flex shrink-0 items-center justify-between gap-[16px] border-t border-[rgba(246,245,253,0.12)] pt-[18px]">
@@ -522,9 +527,9 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
             ref={videoRef}
             key={video.id}
             src={video.playbackUrl ?? video.downloadUrl ?? undefined}
-            poster={video.thumbnailUrl ?? undefined}
+            poster={video.thumbnailUrl && !video.thumbnailUrl.endsWith('/cover-placeholder.svg') ? video.thumbnailUrl : undefined}
             playsInline
-            preload="metadata"
+            preload="auto"
             onError={() => setPreviewError(true)}
             onEnded={() => setPlaying(false)}
             className="absolute inset-0 h-full w-full rounded-r15 bg-black object-contain"
@@ -560,7 +565,15 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
  */
 export function ProcessingAside({ done, total, activeVideo, telegram, onBack }: { done: number; total: number; activeVideo?: VideoVersion; telegram: boolean; onBack: () => void }) {
   const { t } = useTranslation();
-  const steps = [1, 2, 3, 4, 5].map((n) => ({ title: t(`processing.step${n}`), text: t(`processing.step${n}Text`) }));
+  const legacyFormat = activeVideo?.source.match(/(?:^|[·\s])(16:9|9:16|4:3|1:1)(?:$|[·\s])/)?.[1];
+  const renderFormat = activeVideo?.format ?? legacyFormat ?? '9:16';
+  const renderSize: Record<string, string> = {
+    '9:16': '1080×1920', '16:9': '1920×1080', '4:3': '1920×1440', '1:1': '1080×1080',
+  };
+  const steps = [1, 2, 3, 4, 5].map((n) => ({
+    title: t(`processing.step${n}`),
+    text: t(`processing.step${n}Text`, n === 5 ? { size: renderSize[renderFormat] } : undefined),
+  }));
   // Оркестратор отдаёт этап активной вариации. Поэтому правая колонка сбрасывается
   // для каждого следующего ролика и больше не опережает строки слева по общему проценту батча.
   const stage = activeVideo?.stage ?? 'queued';

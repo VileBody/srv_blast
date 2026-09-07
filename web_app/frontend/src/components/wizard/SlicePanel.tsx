@@ -1,13 +1,10 @@
-import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import React, { ReactNode, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../lib/cn';
 import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { LimitsIndicator } from '../ui/LimitsIndicator';
-import { useDragScroll } from './BackgroundPanel';
 import { BackSquareButton } from './WizardFrame';
-import { PreviewPlayer } from '../ui/PreviewPlayer';
-import { useFragmentAudio } from './useFragmentAudio';
 import { HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
 
 /*
@@ -337,20 +334,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const state = useWizardStore();
   const alloc = state.allocation;
   const units = useMemo(() => backgroundUnits(state.background), [state.background]);
-  const fragmentAudio = useFragmentAudio();
   const [index, setIndex] = useState(0);
-  const pillsScroll = useDragScroll();
-  // Фейды пилюль комбинации: оба края, только при переполнении (правка ревью)
-  const [comboFade, setComboFade] = useState({ left: false, right: false });
-  const syncComboFade = () => {
-    const el = pillsScroll.ref.current;
-    if (!el) return;
-    setComboFade({ left: el.scrollLeft > 4, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 });
-  };
-  useEffect(() => {
-    syncComboFade();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [index, alloc.total]);
 
   const total = Math.max(1, alloc.total);
   const safeIndex = Math.min(index, total - 1);
@@ -386,14 +370,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   return (
     <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full" onKeyDown={onKeyDown}>
       <div className="card-2 flex min-h-0 flex-1 flex-col px-space-6 py-space-6 max-lg:px-space-5">
-        {/*
-          * Единственное окно в будущий результат — и его пропускали: заголовок и счётчик
-          * «1/5» в мелкой пилюле не читались как «здесь можно листать». Стрелки стали
-          * кнопками 36×36, счётчик — словами, плюс строка, объясняющая, что это вообще.
-          * Листать можно и стрелками клавиатуры.
-          */}
-        {/* Пилюля переключения — ровно та же, что в шапке превью батча: одинаковый приём
-            во всех превью, разной навигации в двух местах быть не должно. */}
+        {/* Полная конфигурация одной вариации; листать можно кнопками или клавиатурой. */}
         <div className="mb-space-5 flex shrink-0 items-center justify-between gap-space-3">
           <h2 className="wizard-h whitespace-nowrap">{t('wizard.pool.combinations')}</h2>
           <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
@@ -419,69 +396,29 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
           </div>
         </div>
 
-        {/* Кадр будущего ролика: плей включает выбранный отрывок трека, стрелки листают
-            комбинации — то же управление, что на превью фона и на батче. */}
-        <PreviewPlayer
-          className="min-h-0 flex-1 rounded-r15 bg-grad-soft-10"
-          playing={fragmentAudio.playing}
-          onTogglePlay={fragmentAudio.available ? fragmentAudio.toggle : undefined}
-          onPrev={() => setIndex((safeIndex - 1 + total) % total)}
-          onNext={() => setIndex((safeIndex + 1) % total)}
-          showSteps={total > 1}
-        >
-          <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
-          <div className="relative z-[2] p-space-4">
-            <div
-              ref={pillsScroll.ref}
-              className="media-row cursor-grab select-none items-center gap-[12px] active:cursor-grabbing"
-              style={{ height: 48 }}
-              onScroll={syncComboFade}
-              {...pillsScroll.handlers}
-            >
-              {/* Пилюли комбинации: скругление r10 при высоте 44 (r15 выглядел слишком круглым) */}
-              {bgLabel && (
-                <span className="pool-pill !h-[44px] !rounded-r10 !pl-[56px] !text-[17px]">
-                  <span className="pool-pill-count !h-[44px] !w-[44px] !rounded-r10">{combo.bg === '__color__' ? strobeIcon(20) : combo.bg?.startsWith('photo') ? photoIcon(20) : tagIcon(20)}</span>
-                  {bgLabel}
-                </span>
-              )}
-              {combo.sub && (
-                <span className="pool-pill !h-[44px] !rounded-r10 !pl-[56px] !text-[17px]">
-                  <span className="pool-pill-count !h-[44px] !w-[44px] !rounded-r10">{tIcon(20)}</span>
-                  {combo.sub}
-                </span>
-              )}
-              {hookLabel && (
-                <span className="pool-pill !h-[44px] !rounded-r10 !pl-[56px] !text-[17px]">
-                  <span className="pool-pill-count !h-[44px] !w-[44px] !rounded-r10">{hookKindIcon(combo.hook as HookKind, 20)}</span>
-                  {hookLabel}
-                </span>
-              )}
-              {combo.style && (
-                <span className="pool-pill !h-[44px] !rounded-r10 !pl-[56px] !text-[17px]">
-                  <span className="pool-pill-count !h-[44px] !w-[44px] !rounded-r10">{boltIcon(20)}</span>
-                  {chip(combo.style)}
-                </span>
-              )}
-            </div>
-            {/* Фейды под пилюли комбинации — оба края, скролл-зависимые (правка ревью) */}
-            {comboFade.left && <span className="pointer-events-none absolute inset-y-space-4 left-space-4 z-[2] w-[32px]" style={{ background: 'linear-gradient(-90deg, transparent 0%, var(--fx-container-bg) 92%)' }} />}
-            {comboFade.right && <span className="pointer-events-none absolute inset-y-space-4 right-space-4 z-[2] w-[32px]" style={{ background: 'linear-gradient(90deg, transparent 0%, var(--fx-container-bg) 92%)' }} />}
+        <div className="min-h-0 flex-1 overflow-hidden rounded-r15 border border-[rgba(139,111,230,.28)] bg-grad-soft-10">
+          <div className="grid h-[52px] grid-cols-[132px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.09)] bg-[rgba(139,111,230,.08)] px-space-5 text-[13px] uppercase tracking-[.08em] text-text-40">
+            <span>{t('wizard.pool.parameter')}</span>
+            <span>{t('wizard.pool.selectedValue')}</span>
           </div>
-          <div className="absolute inset-x-space-4 bottom-space-4 z-[2] overflow-hidden rounded-r15 border border-[rgba(139,111,230,.32)] bg-[rgba(16,9,34,.58)] px-space-4 py-space-3 backdrop-blur-[8px]">
+          <div className="flex h-[calc(100%_-_52px)] flex-col">
             {[
-              [t('wizard.pool.background'), bgLabel ?? t('wizard.pool.notSelected')],
-              [t('wizard.pool.subtitles'), combo.sub ?? t('wizard.pool.notSelected')],
-              [t('wizard.pool.hook'), hookLabel ?? t('wizard.pool.noHookSelected')],
-              [t('wizard.pool.transition'), transitionLabel],
-              [t('wizard.pool.style'), styleLabel]
-            ].map(([label, value]) => (
-              <div key={label} className="grid grid-cols-[100px_minmax(0,1fr)] gap-space-3 border-b border-[rgba(246,245,253,.06)] py-[7px] text-[14px] last:border-0">
-                <span className="text-text-40">{label}</span><span className="truncate text-text-80">{value}</span>
+              [t('wizard.pool.background'), bgLabel ?? t('wizard.pool.notSelected'), combo.bg === '__color__' ? strobeIcon(18) : combo.bg?.startsWith('photo') ? photoIcon(18) : tagIcon(18)],
+              [t('wizard.pool.subtitles'), combo.sub ?? t('wizard.pool.notSelected'), tIcon(18)],
+              [t('wizard.pool.hook'), hookLabel ?? t('wizard.pool.noHookSelected'), combo.hook ? hookKindIcon(combo.hook as HookKind, 18) : boltIcon(18)],
+              [t('wizard.pool.transition'), transitionLabel, <SvgMaskIcon key="transition" src="/assets/figma/icon-hook-arrow.svg" style={{ width: 18, height: 18, color: WHITE }} />],
+              [t('wizard.pool.style'), styleLabel, boltIcon(18)]
+            ].map(([label, value, icon]) => (
+              <div key={String(label)} className="grid min-h-0 flex-1 grid-cols-[132px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.07)] px-space-5 last:border-0">
+                <span className="text-[15px] text-text-40">{label}</span>
+                <span className="flex min-w-0 items-center gap-space-3 text-[19px] text-text-80">
+                  <span className="flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-r10 bg-accent-20" aria-hidden="true">{icon}</span>
+                  <span className="truncate">{value}</span>
+                </span>
               </div>
             ))}
           </div>
-        </PreviewPlayer>
+        </div>
       </div>
 
       <div className="card-2 flex h-[140px] shrink-0 items-center gap-[20px] px-space-6 py-space-6 max-lg:px-space-5">

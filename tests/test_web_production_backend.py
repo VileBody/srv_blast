@@ -96,12 +96,16 @@ class _FakeHttp:
     def __init__(self) -> None:
         self.posts: list[dict[str, Any]] = []
         self.states: dict[str, dict[str, Any]] = {}
+        self.supports_custom_sources = True
 
     def post(self, _url: str, *, json: dict[str, Any]) -> _Response:
         self.posts.append(json)
         return _Response({"job_id": f"orch-{len(self.posts)}"})
 
     def get(self, url: str) -> _Response:
+        if url.endswith("/openapi.json"):
+            properties = {"custom_footage_sources": {}} if self.supports_custom_sources else {}
+            return _Response({"components": {"schemas": {"SendAudioS3Request": {"properties": properties}}}})
         return _Response(self.states[url.rsplit("/", 1)[-1]])
 
 
@@ -135,7 +139,28 @@ def _backend(module: Any, config: Any):
     backend.config = config
     backend._s3 = _FakeS3()
     backend._http = _FakeHttp()
+    backend._custom_sources_contract_verified = False
     return backend
+
+
+def test_personal_sources_refuse_an_outdated_orchestrator(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module(monkeypatch)
+    backend = _backend(module, _config(module))
+    backend._http.supports_custom_sources = False
+    job = _job()
+    job["renderJob"]["track"]["segment"] = {"from": 0.0, "to": 10.0}
+    job["renderJob"]["variations"][0]["background"] = {
+        "mode": "upload", "groups": [], "sourceFormat": "9:16",
+        "sourceAssets": [{
+            "s3Key": "s3://assets/users/mine.mp4", "width": 1080,
+            "height": 1920, "duration": 15.0,
+        }],
+    }
+
+    with pytest.raises(module.ProductionBackendError, match="does not support personal footage"):
+        backend.enqueue_job(job)
+
+    assert backend._http.posts == []
 
 
 def test_variations_are_enqueued_sequentially(monkeypatch: pytest.MonkeyPatch) -> None:

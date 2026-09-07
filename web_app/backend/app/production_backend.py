@@ -306,6 +306,7 @@ class ProductionBackend:
             config=Config(signature_version="s3v4"),
         )
         self._http = httpx.Client(timeout=httpx.Timeout(65.0, connect=10.0))
+        self._custom_sources_contract_verified = False
 
     def close(self) -> None:
         self._http.close()
@@ -587,6 +588,31 @@ class ProductionBackend:
                 total=len(variations),
                 master_id=master_id,
             )
+            video["format"] = {
+                "vertical": "9:16", "wide": "16:9", "square": "1:1",
+            }[str(payload.get("render_preset") or "vertical")]
+            if payload.get("custom_footage_sources") and not self._custom_sources_contract_verified:
+                # Pydantic ignores unknown request fields by default. An older
+                # orchestrator therefore accepted this payload, dropped the
+                # user's sources, and rendered random library footage. Verify
+                # the live contract before creating any job so that mismatch is
+                # explicit and cannot spend a generation credit.
+                contract = self._http.get(f"{self.config.orchestrator_url}/openapi.json")
+                if contract.status_code >= 300:
+                    raise ProductionBackendError(
+                        f"orchestrator contract check failed status={contract.status_code}"
+                    )
+                schemas = ((contract.json().get("components") or {}).get("schemas") or {})
+                supports_custom_sources = any(
+                    "custom_footage_sources" in ((schema or {}).get("properties") or {})
+                    for schema in schemas.values()
+                    if isinstance(schema, dict)
+                )
+                if not supports_custom_sources:
+                    raise ProductionBackendError(
+                        "orchestrator does not support personal footage; deploy the matching render service"
+                    )
+                self._custom_sources_contract_verified = True
             response = self._http.post(
                 f"{self.config.orchestrator_url}/send_audio_s3",
                 json=payload,

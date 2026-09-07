@@ -466,6 +466,8 @@
       "subsNote": "For {{count}} videos",
       "fxNote": "For {{count}} videos with footage",
       "stylesNote": "One per {{count}} footage videos",
+      "parameter": "Parameter",
+      "selectedValue": "Selected",
       "unallocated": "unallocated: +{{n}}",
       "over": "over: {{n}}",
       "chooseFont": "└ Choose font:",
@@ -717,7 +719,7 @@
     "step4": "Adding effects",
     "step4Text": "Hooks, transitions and flashes are pinned to the drop.",
     "step5": "Rendering",
-    "step5Text": "1080×1920 output plus the frames for the cover.",
+    "step5Text": "{{size}} output plus the frames for the cover.",
     "stepNow": "now",
     "stepDone": "done",
     "allDone": "Done"
