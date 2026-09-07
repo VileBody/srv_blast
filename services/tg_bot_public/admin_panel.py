@@ -1188,9 +1188,16 @@ def build_app(
 
     # Self-hosted brand fonts (landing/fonts), reused as-is by both /admin and
     # /partner so the whole cabinet reads as one product, not a bolt-on.
+    #
+    # Mounted under BOTH prefixes on purpose: nginx puts Basic Auth on
+    # /admin/, so a partner page pulling its fonts from /admin/static would
+    # get a 401 + WWW-Authenticate per font file and the browser would pop a
+    # credential dialog on every page load. Partner pages must stay entirely
+    # within /partner/.
     fonts_dir = Path(__file__).resolve().parents[2] / "landing" / "fonts"
     if fonts_dir.is_dir():
         app.mount("/admin/static/fonts", StaticFiles(directory=str(fonts_dir)), name="admin_fonts")
+        app.mount("/partner/static/fonts", StaticFiles(directory=str(fonts_dir)), name="partner_fonts")
 
     from . import partner_panel
     app.include_router(partner_panel.build_router(credits_db, state_store, settings))
