@@ -2104,7 +2104,8 @@ a    { text-decoration: none; color: inherit; }
   border-radius: 999px;
   background: rgba(15,13,23,.42);
 }
-.language-switch--desktop { margin-left: auto; margin-right: 18px; }
+/* Переключатель языка живёт рядом с логотипом, а не у правого края */
+.language-switch--desktop { margin-left: 32px; margin-right: 0; }
 .language-switch--mobile { display: none; }
 .language-switch button {
   min-width: 34px;
@@ -2122,7 +2123,6 @@ a    { text-decoration: none; color: inherit; }
 }
 .language-switch button:hover { color: var(--text); }
 .language-switch button.is-active { color: var(--text); background: rgba(246,245,253,.12); }
-.navbar .language-switch + .navbar-cta { margin-left: 0; }
 
 .footer-cookie-settings {
   padding: 0;
@@ -2191,8 +2191,7 @@ a    { text-decoration: none; color: inherit; }
 
 @media (max-width: 768px) {
   .language-switch--desktop { display: none; }
-  .language-switch--mobile { display: flex; margin-left: auto; }
-  .navbar .language-switch + .navbar-cta { margin-left: 10px; }
+  .language-switch--mobile { display: flex; margin-left: 16px; }
   .language-switch button { min-width: 28px; height: 24px; padding: 0 5px; font-size: 10px; }
   .cookie-banner { right: 12px; bottom: 12px; left: 12px; align-items: stretch; flex-direction: column; gap: 14px; padding: 16px; border-radius: 16px; }
   .cookie-banner__actions { display: grid; grid-template-columns: 1fr 1fr; }
@@ -2310,6 +2309,5 @@ a    { text-decoration: none; color: inherit; }
    за карточку навбара. */
 @media (max-width: 768px) {
   .navbar { padding: 0 12px; border-radius: var(--r12); }
-  .navbar .language-switch + .navbar-cta { margin-left: 8px; }
   .navbar-cta { font-size: 13px; white-space: nowrap; }
 }
