@@ -517,7 +517,11 @@
       "split": "Separate video",
       "tooShort": "{{selected}} s of {{required}} s required",
       "noPlans": "Upload the first clip and a video will be created automatically.",
-      "unused": "Uploaded files outside videos"
+      "unused": "Uploaded files outside videos",
+      "queueTitle": "Uploaded {{done}} of {{total}}",
+      "queueDone": "done",
+      "queueError": "failed",
+      "summary": "Videos going to the Pool: {{count}}"
     },
     "preview": {
       "unavailable": "Video example unavailable",
