@@ -226,10 +226,27 @@ export const api = {
   sources: (projectId: string) => request<{ sources: UserSource[] }>(`/api/wizard/sources?projectId=${encodeURIComponent(projectId)}`),
   deleteSource: (id: string) => request(`/api/wizard/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   uploadLink: (projectId: string, format: string) => request<{ url: string; expiresAt: number; qrSvg: string }>(`/api/wizard/upload-link?projectId=${encodeURIComponent(projectId)}&format=${encodeURIComponent(format)}`, { method: 'POST' }),
-  uploadSource: (file: File, projectId: string, format: string) => {
+  uploadSource: (file: File, projectId: string, format: string, onProgress?: (percent: number) => void) => {
     const form = new FormData();
     form.append('file', file);
-    return request<{ source: UserSource }>(`/api/wizard/upload-source?projectId=${encodeURIComponent(projectId)}&format=${encodeURIComponent(format)}`, { method: 'POST', body: form });
+    const path = `/api/wizard/upload-source?projectId=${encodeURIComponent(projectId)}&format=${encodeURIComponent(format)}`;
+    return new Promise<{ source: UserSource }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE}${path}`);
+      xhr.withCredentials = true;
+      const token = csrfToken();
+      if (token) xhr.setRequestHeader(CSRF_HEADER, token);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+      };
+      xhr.onerror = () => reject(new ApiError(0, 'Network error'));
+      xhr.onload = () => {
+        const data = (() => { try { return JSON.parse(xhr.responseText); } catch { return xhr.responseText; } })();
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data as { source: UserSource });
+        else reject(new ApiError(xhr.status, data));
+      };
+      xhr.send(form);
+    });
   },
   fxPreviews: () => request<{ previews: { id: string; name: string; previewUrl: string }[] }>('/api/wizard/fx-previews'),
   uploadHookVideo: (file: File) => {

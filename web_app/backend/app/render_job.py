@@ -41,12 +41,15 @@ def _slice_keys(alloc_slice: dict[str, int], fallback: list[str]) -> list[str]:
 
 
 def _segment(timing: dict[str, Any] | None) -> dict[str, float] | None:
-    if not timing or timing.get("mode") == "ai":
+    if not timing:
         return None
     frm, to = timing.get("from"), timing.get("to")
     if not frm and not to:
         return None
-    return {"from": mmss_seconds(frm), "to": mmss_seconds(to)}
+    start, end = mmss_seconds(frm), mmss_seconds(to)
+    if start is None or end is None:
+        return None
+    return {"from": start, "to": end}
 
 
 def mmss_seconds(v: str | None) -> float | None:

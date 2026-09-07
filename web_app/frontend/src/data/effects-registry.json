@@ -18,6 +18,12 @@
     { "label": "Ксерокс", "manifestId": "xerox", "icon": "efs-xerox-inner.svg", "inner": true },
     { "label": "Глитч", "manifestId": "analog_glitch", "icon": "efs-glitch.svg", "inner": false },
     { "label": "Неон", "manifestId": "neon_extract", "icon": "efs-neon.svg", "inner": false },
-    { "label": "Старая камера", "manifestId": "old_camera", "icon": "efs-oldcam.svg", "inner": false }
+    { "label": "Старая камера", "manifestId": "old_camera", "icon": "efs-oldcam.svg", "inner": false },
+    { "label": "Ч/Б", "manifestId": "blackwhite", "icon": "efs-blackwhite.svg", "inner": true },
+    { "label": "Crystal Glow", "manifestId": "crystal_glow", "icon": "efs-crystal.svg", "inner": true },
+    { "label": "Night Vision", "manifestId": "night_vision", "icon": "efs-night.svg", "inner": true },
+    { "label": "Wave", "manifestId": "wave", "icon": "efs-wave.svg", "inner": true },
+    { "label": "Pixel Grain", "manifestId": "pixel_grain", "icon": "efs-pixel.svg", "inner": true },
+    { "label": "Warm Map", "manifestId": "warm_map", "icon": "efs-warm.svg", "inner": true }
   ]
 }

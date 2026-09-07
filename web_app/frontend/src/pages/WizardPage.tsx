@@ -493,6 +493,14 @@ export function WizardPage() {
     && timingToSeconds(state.timingFrom) !== null
     && timingToSeconds(state.timingTo) !== null
     && !segmentInvalid;
+  const dropSeconds = timingToSeconds(state.hooks.dropTime ?? '');
+  const clipFromSeconds = timingToSeconds(state.timingFrom);
+  const clipToSeconds = timingToSeconds(state.timingTo);
+  const dropReady = dropSeconds !== null
+    && clipFromSeconds !== null
+    && clipToSeconds !== null
+    && dropSeconds >= clipFromSeconds
+    && dropSeconds <= clipToSeconds;
 
   // Этап «Трек» можно проскочить только мимо UI (персист стора, прямой ?qaStage, старый батч) —
   // возвращаем на него, иначе визард дойдёт до «Сгенерировать» с пустым треком.
@@ -504,15 +512,13 @@ export function WizardPage() {
   const ready = useMemo(() => {
     if (stage === 1) return trackReady && timingReady && !segmentInvalid;
     if (stage === 2) return backgroundVariations(state.background) > 0;
-    if (stage === 3) return hookPills(state.hooks).length > 0;
+    if (stage === 3) return dropReady && hookPills(state.hooks).length > 0;
     if (stage === 4) return state.subtitles.pool.length > 0;
     if (stage === 5) return allocBalanced && trackReady;
     return false;
-  }, [allocBalanced, segmentInvalid, stage, state.background, state.hooks, state.subtitles.pool, timingReady, trackReady]);
+  }, [allocBalanced, dropReady, segmentInvalid, stage, state.background, state.hooks, state.subtitles.pool, timingReady, trackReady]);
 
   const canContinue = useMemo(() => {
-    // Хук опционален — с этапа можно уйти без выбора
-    if (stage === 3) return true;
     return ready;
   }, [ready, stage]);
 

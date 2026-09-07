@@ -45,6 +45,13 @@ export interface Subscription {
   expiresAt?: string | null;
   /** Сколько бонусов со шкалы месяцев уже забрано */
   bonusesClaimed?: number;
+  payments?: Array<{
+    orderId: string;
+    amountRub: number;
+    package: string;
+    status: string;
+    createdAt: string;
+  }>;
 }
 
 /** Подписка ли это — от ответа зависят состояния оплаты и наличие отмены */

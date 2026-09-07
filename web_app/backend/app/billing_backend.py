@@ -216,6 +216,16 @@ class BillingBackend:
             "expiresAt": expires_at,
             "lastPaymentError": None,
             "bonusesClaimed": bonuses_claimed,
+            "payments": [
+                {
+                    "orderId": item["order_id"],
+                    "amountRub": item["amount_rub"],
+                    "package": item["package"],
+                    "status": item["status"],
+                    "createdAt": item["created_at"],
+                }
+                for item in payments[:6]
+            ],
         }
 
     async def can_upload_track(self, tg_id: int, audio_hash: str) -> bool:

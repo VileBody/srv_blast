@@ -924,6 +924,12 @@ class ProductionBackend:
                 raise ProductionBackendError("sound hook requires an uploaded sound URL")
 
         f6_fields: dict[str, Any] = {}
+        if family:
+            drop = hook.get("dropTime")
+            if start is None or end is None or drop is None:
+                raise ProductionBackendError("Для хука нужны отрывок и тайминг дропа")
+            if float(drop) < float(start) or float(drop) > float(end):
+                raise ProductionBackendError("Дроп должен находиться внутри выбранного отрывка")
         if family == "warmup" and hook_config.get("warmupKind") == "video":
             if not hook_config.get("videoUrl") or not hook_config.get("videoDuration") or not hook_config.get("videoWidth") or not hook_config.get("videoHeight"):
                 raise ProductionBackendError("Загрузите видео для прогрева заново")

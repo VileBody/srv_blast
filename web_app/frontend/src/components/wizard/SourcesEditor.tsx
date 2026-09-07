@@ -26,6 +26,7 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
   const [format, setFormat] = useState<SourceFormat>('9:16');
   const [activeId, setActiveId] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [uploadState, setUploadState] = useState<{ name: string; current: number; total: number; percent: number }>();
   const [error, setError] = useState('');
   const [link, setLink] = useState<{ url: string; qrSvg: string; expiresAt: number }>();
   const [drag, setDrag] = useState<{ planId: string; sourceId: string }>();
@@ -86,13 +87,15 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
     setBusy(true); setError('');
     try {
       let targetId = activeId;
-      for (const file of Array.from(files ?? [])) {
-        const result = await api.uploadSource(file, projectId, format);
+      const queue = Array.from(files ?? []);
+      for (const [index, file] of queue.entries()) {
+        setUploadState({ name: file.name, current: index + 1, total: queue.length, percent: 0 });
+        const result = await api.uploadSource(file, projectId, format, (percent) => setUploadState({ name: file.name, current: index + 1, total: queue.length, percent }));
         const currentPlans = useWizardStore.getState().background.sourceVideos;
         targetId = append(result.source, currentPlans.find(plan => plan.id === targetId));
         await sources.refetch();
       }
-    } catch (e) { report(e); } finally { setBusy(false); }
+    } catch (e) { report(e); } finally { setBusy(false); setUploadState(undefined); }
   };
   const sourceById = (id: string) => list.find(source => source.id === id);
   const assigned = new Set(plans.flatMap(plan => plan.sourceIds));
@@ -117,8 +120,14 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
       </div>
       {tab === 'pc' ? <>
         <input ref={input} type="file" accept="video/mp4,video/quicktime,video/webm" multiple className="sr-only" disabled={busy} onChange={e => { void upload(e.target.files); e.target.value = ''; }} />
-        <button type="button" disabled={busy || !projectId} className="min-h-24 w-full rounded-xl border-2 border-dashed border-accent-light p-5" onClick={() => input.current?.click()}
-          onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void upload(e.dataTransfer.files); }}>{busy ? t('wizard.warmup.processing') : t('wizard.sources.drop')}</button>
+        <button type="button" disabled={busy || !projectId} className="relative min-h-28 w-full overflow-hidden rounded-xl border-2 border-dashed border-accent-light p-5" onClick={() => input.current?.click()}
+          onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void upload(e.dataTransfer.files); }}>
+          {uploadState ? <span className="flex flex-col items-center gap-2">
+            <span className="max-w-full truncate text-sm">{uploadState.name}</span>
+            <span className="h-2 w-full overflow-hidden rounded-full bg-accent-20"><span className="block h-full rounded-full bg-grad-main transition-[width]" style={{ width: `${uploadState.percent}%` }} /></span>
+            <span className="text-xs text-text-60">{uploadState.current}/{uploadState.total} · {uploadState.percent}%</span>
+          </span> : t('wizard.sources.drop')}
+        </button>
       </> : link ? <div className="flex flex-col items-center gap-3">
         <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(link.qrSvg)}`} alt={t('wizard.sources.qrAlt')} className="h-48 w-48 rounded-lg bg-white p-2" />
         <input readOnly value={link.url} className="w-full rounded-lg bg-black/20 p-2 text-xs" aria-label={t('wizard.sources.link')} onFocus={e => e.currentTarget.select()} />

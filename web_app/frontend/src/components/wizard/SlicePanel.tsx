@@ -6,7 +6,6 @@ import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { LimitsIndicator } from '../ui/LimitsIndicator';
 import { useDragScroll } from './BackgroundPanel';
 import { BackSquareButton } from './WizardFrame';
-import { FigIcon } from '../ui/FigIcon';
 import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useFragmentAudio } from './useFragmentAudio';
 import { HOOK_LABELS, HookKind, hookPills, useWizardStore, WizardStateData } from '../../stores/wizardStore';
@@ -100,7 +99,8 @@ const HOOK_ICON_SRC: Record<HookKind, string> = {
   object: '/assets/figma/hook-object.svg',
   effects: '/assets/figma/hook-effects.svg',
   motion: '/assets/figma/hook-motion.svg',
-  thought: '/assets/figma/hook-thought.svg'
+  thought: '/assets/figma/hook-thought.svg',
+  none: '/assets/figma/icon-bolt.svg'
 };
 
 function hookKindIcon(kind: HookKind, size = 13) {
@@ -203,9 +203,7 @@ export function StageSlice() {
 
       {/* Скролл секций с постоянными фейдами сверху/снизу — как на списке типов хука */}
       <div className="relative mt-space-5 min-h-0 flex-1">
-        <span className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[24px]" style={{ background: 'linear-gradient(180deg, #140e24 0%, rgba(20,14,36,0) 100%)' }} />
-        <span className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[24px]" style={{ background: 'linear-gradient(0deg, #140e24 0%, rgba(20,14,36,0) 100%)' }} />
-        <div className="no-scrollbar flex h-full flex-col gap-space-5 overflow-y-auto py-[12px]">
+        <div className="no-scrollbar flex h-full flex-col gap-space-5 overflow-y-auto py-[12px]" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)' }}>
         <SectionCard title={t('wizard.pool.background')} note={restNote(bgRest, t('wizard.pool.bgNote', { count: bgTarget }))} warn={bgRest !== 0}>
           {units.map((unit) => (
             <div key={unit.key} className="flex items-center justify-between gap-space-3">
@@ -341,6 +339,9 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
     ? chip(state.background.strobe ? 'Строб' : 'Цвет')
     : combo.bg ? (units.find(unit => unit.key === combo.bg)?.name ?? chip(combo.bg.split(':')[1])) : undefined;
   const hookLabel = combo.hook ? chip(HOOK_LABELS[combo.hook as HookKind]) : undefined;
+  const hookConfig = combo.hook ? state.hooks.configs[combo.hook as HookKind] : undefined;
+  const transitionLabel = hookConfig?.effectGlue ? chip(hookConfig.effectGlue) : t('wizard.pool.notSelected');
+  const styleLabel = hookConfig?.effectStyle ? chip(hookConfig.effectStyle) : t('wizard.pool.noStyleSelected');
 
   // Стрелки клавиатуры листают комбинации, пока фокус внутри панели
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -370,7 +371,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
               disabled={total < 2}
               className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30"
             >
-              <FigIcon name="home-arrow.svg" h={11} className="rotate-180" />
+              <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)', transform: 'rotate(180deg)' }} />
             </button>
             <span className="text-[16px] font-[350] leading-none text-accent">{safeIndex + 1}/{total}</span>
             <button
@@ -380,7 +381,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
               disabled={total < 2}
               className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30"
             >
-              <FigIcon name="home-arrow.svg" h={11} />
+              <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)' }} />
             </button>
           </div>
         </div>
@@ -425,8 +426,21 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
               )}
             </div>
             {/* Фейды под пилюли комбинации — оба края, скролл-зависимые (правка ревью) */}
-            {comboFade.left && <span className="pointer-events-none absolute inset-y-space-4 left-space-4 z-[2] w-[32px]" style={{ background: 'linear-gradient(-90deg, rgba(30,22,53,0) 0%, #1e1635 92%)' }} />}
-            {comboFade.right && <span className="pointer-events-none absolute inset-y-space-4 right-space-4 z-[2] w-[32px]" style={{ background: 'linear-gradient(90deg, rgba(30,22,53,0) 0%, #1e1635 92%)' }} />}
+            {comboFade.left && <span className="pointer-events-none absolute inset-y-space-4 left-space-4 z-[2] w-[32px]" style={{ background: 'linear-gradient(-90deg, transparent 0%, var(--fx-container-bg) 92%)' }} />}
+            {comboFade.right && <span className="pointer-events-none absolute inset-y-space-4 right-space-4 z-[2] w-[32px]" style={{ background: 'linear-gradient(90deg, transparent 0%, var(--fx-container-bg) 92%)' }} />}
+          </div>
+          <div className="absolute inset-x-space-4 bottom-space-4 z-[2] overflow-hidden rounded-r15 border border-[rgba(139,111,230,.32)] bg-[rgba(16,9,34,.58)] px-space-4 py-space-3 backdrop-blur-[8px]">
+            {[
+              [t('wizard.pool.background'), bgLabel ?? t('wizard.pool.notSelected')],
+              [t('wizard.pool.subtitles'), combo.sub ?? t('wizard.pool.notSelected')],
+              [t('wizard.pool.hook'), hookLabel ?? t('wizard.pool.noHookSelected')],
+              [t('wizard.pool.transition'), transitionLabel],
+              [t('wizard.pool.style'), styleLabel]
+            ].map(([label, value]) => (
+              <div key={label} className="grid grid-cols-[100px_minmax(0,1fr)] gap-space-3 border-b border-[rgba(246,245,253,.06)] py-[7px] text-[14px] last:border-0">
+                <span className="text-text-40">{label}</span><span className="truncate text-text-80">{value}</span>
+              </div>
+            ))}
           </div>
         </PreviewPlayer>
       </div>

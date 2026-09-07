@@ -6,7 +6,7 @@ import { api, ApiError } from '../lib/api';
 import { BatchLayout, GenerationsCard, ProcessingAside, ProgressTrack, TrackCard } from '../components/project/BatchCards';
 
 /** Средняя длительность рендера одной вариации — из неё считаем «осталось NN минут». */
-const MINUTES_PER_VIDEO = 1.5;
+const MINUTES_PER_VIDEO = 3;
 
 /**
  * Генерация батча (Figma W51) — тот же макет, что и готовый батч (W36):
@@ -45,6 +45,9 @@ export function ProcessingPage() {
   const videos = job?.videos ?? [];
   const done = videos.filter((video) => video.status === 'COMPLETED');
   const failedVideos = videos.filter((video) => video.status === 'FAILED');
+  const activeVideo = videos.find((video) => video.status === 'PROCESSING')
+    ?? videos.find((video) => video.status === 'PENDING' && video.stage !== 'waiting_previous')
+    ?? videos.find((video) => video.status === 'PENDING');
   const rootFailure = failedVideos.find((video) => video.stage !== 'skipped') ?? failedVideos[0];
   const rawFailure = rootFailure?.error?.split('\n')[0].trim() ?? '';
   const failureReason = rawFailure.includes('stage2_style_rotation_missing_artist_id')
@@ -150,7 +153,7 @@ export function ProcessingPage() {
             <ProgressTrack done={done.length} total={total} minutesLeft={minutesLeft} />
           </TrackCard>
           <GenerationsCard
-            videos={done}
+            videos={videos}
             loading={!allDone}
             postOne={project ? (video) => {
               const index = done.findIndex((item) => item.id === video.id);
@@ -163,6 +166,7 @@ export function ProcessingPage() {
         <ProcessingAside
           done={done.length}
           total={total}
+          activeVideo={activeVideo}
           telegram={Boolean(meQuery.data?.telegramNotifications)}
           onBack={() => navigate('/app/projects')}
         />

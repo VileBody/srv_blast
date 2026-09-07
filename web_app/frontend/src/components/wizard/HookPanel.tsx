@@ -1,5 +1,5 @@
 import { WarmupInput } from './WarmupInput';
-import { ChangeEvent, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, Fragment, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useChip } from '../../i18n/useChip';
@@ -12,6 +12,7 @@ import { PillsFooter } from './WizardFrame';
 import { HookConfig, HookKind, HOOK_LABELS, hookComplete, hookPills, useWizardStore } from '../../stores/wizardStore';
 import effectsRegistry from '../../data/effects-registry.json';
 import { CatalogMedia } from './CatalogPreview';
+import { timingToSeconds } from './useFragmentAudio';
 
 /*
  * Этап «Хук» (Figma W18 → W24/32 → W25/34 → W26/28/29/30 → W27 → W31):
@@ -25,7 +26,8 @@ const HOOK_TYPES: { kind: HookKind; icon: string; iconW: number; iconH: number; 
   { kind: 'object', icon: '/assets/figma/hook-object.svg', iconW: 18, iconH: 18, hint: 'wizard.fx.hintObject' },
   { kind: 'effects', icon: '/assets/figma/hook-effects.svg', iconW: 16, iconH: 17, hint: 'wizard.fx.hintEffects' },
   { kind: 'motion', icon: '/assets/figma/hook-motion.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintMotion' },
-  { kind: 'thought', icon: '/assets/figma/hook-thought.svg', iconW: 15, iconH: 16, hint: 'wizard.fx.hintThought' }
+  { kind: 'thought', icon: '/assets/figma/hook-thought.svg', iconW: 15, iconH: 16, hint: 'wizard.fx.hintThought' },
+  { kind: 'none', icon: '/assets/figma/icon-bolt.svg', iconW: 15, iconH: 18, hint: 'wizard.fx.hintNoHook' }
 ];
 
 // Точные списки из Figma (W34/W28/W29/W30/W27/W31)
@@ -145,7 +147,7 @@ const GLUE_STEP: HookStep = { key: 'effectGlue', title: 'wizard.fx.stepGlue', op
 const STYLE_STEP: HookStep = { key: 'effectStyle', title: 'wizard.fx.stepStyle', options: EFFECT_STYLES };
 
 /** Первый шаг зависит от типа хука, два следующих общие. */
-const FIRST_STEP: Record<HookKind, HookStep> = {
+const FIRST_STEP: Record<Exclude<HookKind, 'none'>, HookStep> = {
   warmup: { key: 'sound', title: 'wizard.fx.loadSound', options: [] },
   object: { key: 'object', title: 'wizard.fx.chooseObject', options: OBJECTS },
   effects: { key: 'effectHook', title: 'wizard.fx.stepFx', options: EFFECT_HOOKS },
@@ -154,6 +156,7 @@ const FIRST_STEP: Record<HookKind, HookStep> = {
 };
 
 export function hookSteps(kind: HookKind): HookStep[] {
+  if (kind === 'none') return [GLUE_STEP, STYLE_STEP];
   return [FIRST_STEP[kind], GLUE_STEP, STYLE_STEP];
 }
 
@@ -203,20 +206,22 @@ export function StageHooks() {
   const hooks = useWizardStore((state) => state.hooks);
   const setHooks = useWizardStore((state) => state.setHooks);
   const track = useWizardStore((state) => state.track);
-  const timingMode = useWizardStore((state) => state.timingMode);
   const timingFrom = useWizardStore((state) => state.timingFrom);
   const timingTo = useWizardStore((state) => state.timingTo);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
   // Окно отрывка — часть ключа: выбрал другой кусок трека → другие кандидаты дропа.
-  // На «ai»-тайминге окна ещё нет, и анализировать нечего (в боте фокус-клип известен
-  // всегда — здесь это состояние «сначала выбери отрывок»).
-  const clipReady = timingMode === 'manual' && Boolean(timingFrom) && Boolean(timingTo);
+  // Сохранённый режим тайминга может быть старым, поэтому готовность определяют сами
+  // валидные границы — ровно те значения, которые отправляются в API.
+  const clipFromS = timingToSeconds(timingFrom);
+  const clipToS = timingToSeconds(timingTo);
+  const clipReady = clipFromS !== null && clipToS !== null && clipToS > clipFromS;
   const dropsQuery = useQuery({
     queryKey: ['drops', track?.id, timingFrom, timingTo],
     queryFn: () => api.drops(track!.id, timingFrom, timingTo),
     enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops) && Boolean(track) && clipReady,
   });
   const [customDrop, setCustomDrop] = useState(false);
+  const [dropError, setDropError] = useState(false);
   const [hint, setHint] = useState<HookKind | null>(null);
 
   const drops = dropsQuery.data?.drops ?? [];
@@ -258,7 +263,7 @@ export function StageHooks() {
               'flex h-full flex-1 items-center justify-center rounded-r15 text-[24px] font-[350] text-text-80 transition hover:text-text max-xl:text-[17px]',
               hooks.dropTime === drop.time && 'border-2 border-accent-light bg-grad-soft-20 !text-text'
             )}
-            onClick={() => { setCustomDrop(false); setHooks({ dropTime: drop.time }); }}
+            onClick={() => { setDropError(false); setCustomDrop(false); setHooks({ dropTime: drop.time }); }}
           >
             <span>{drop.time}<small className="ml-2 text-xs opacity-70">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small></span>
           </button>
@@ -270,7 +275,14 @@ export function StageHooks() {
             placeholder="00:00:00"
             defaultValue={customActive ? hooks.dropTime : ''}
             onChange={(e: ChangeEvent<HTMLInputElement>) => { e.target.value = clampDrop(e.target.value, track?.durationS); }}
-            onBlur={(e) => { if (e.target.value) setHooks({ dropTime: clampDrop(e.target.value, track?.durationS) }); setCustomDrop(false); }}
+            onBlur={(e) => {
+              const value = clampDrop(e.target.value, track?.durationS);
+              const seconds = timingToSeconds(value);
+              const valid = seconds !== null && clipFromS !== null && clipToS !== null && seconds >= clipFromS && seconds <= clipToS;
+              setDropError(Boolean(value) && !valid);
+              if (valid) setHooks({ dropTime: value });
+              setCustomDrop(false);
+            }}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
           />
         ) : (
@@ -287,13 +299,13 @@ export function StageHooks() {
         )}
       </div>
 
+      {dropError && <p className="mt-[8px] shrink-0 text-[14px] leading-[1.3] text-[var(--warning)]">{t('wizard.fx.dropOutsideClip')}</p>}
+
       <p className="wizard-body mt-[28px] shrink-0">{t('wizard.fx.chooseType')}</p>
 
       {/* Список типов: строки 620×80, скролл уходит под градиентные фейды (Figma Rectangle 771/772) */}
       <div className="relative mt-[12px] min-h-0 flex-1">
-        <span className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[28px]" style={{ background: 'linear-gradient(180deg, #140e24 0%, rgba(20,14,36,0) 100%)' }} />
-        <span className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[28px]" style={{ background: 'linear-gradient(0deg, #140e24 0%, rgba(20,14,36,0) 100%)' }} />
-        <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px]">
+        <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px]" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
           {HOOK_TYPES.map((item) => {
             const active = hooks.kind === item.kind;
             const configured = hookPills(hooks).some((pill) => pill.kind === item.kind);
@@ -405,7 +417,7 @@ function ChipRow({ options, value, onPick, rightGap = 0, edgePad = 0 }: {
   );
 }
 
-const KIND_ORDER: HookKind[] = ['warmup', 'object', 'effects', 'motion', 'thought'];
+const KIND_ORDER: HookKind[] = ['warmup', 'object', 'effects', 'motion', 'thought', 'none'];
 
 /** Подпись выбранного варианта в рабочей зоне. Звук — имя файла юзера, его не переводим. */
 function hookPickLabel(config: HookConfig, chip: (label: string) => string): string | undefined {
@@ -491,7 +503,6 @@ function HooksFullscreen({
    * Для «Звука» первый шаг — не список, а загрузка/прослушивание своего файла.
    */
   const steps = hookSteps(kind);
-  const first = steps[0].options.length > 0 ? steps[0] : null;
   const currentDef = steps[Math.min(step, steps.length - 1)];
   const previewId = configuredPreviewId(kind, config, currentDef);
 
@@ -547,13 +558,11 @@ function HooksFullscreen({
         </div>
       </div>
 
-      {first ? section(t(first.title), 0, first.options, first.key) : (
-        <div className={cn('min-h-[175px] shrink-0 rounded-r15 bg-grad-soft-10 p-[28px]', step === 0 && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
+      {steps.map((definition, index) => kind === 'warmup' && index === 0 ? (
+        <div key={definition.key} className={cn('min-h-[175px] shrink-0 rounded-r15 bg-grad-soft-10 p-[28px]', step === 0 && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
           <WarmupInput />
         </div>
-      )}
-      {section(t(steps[1].title), 1, steps[1].options, steps[1].key)}
-      {section(t(steps[2].title), 2, steps[2].options, steps[2].key)}
+      ) : <Fragment key={definition.key}>{section(t(definition.title), index, definition.options, definition.key)}</Fragment>)}
     </div>
   );
 

@@ -458,13 +458,13 @@ export function StatsPage() {
         </div>
 
         <div className="mt-[28px] flex flex-col gap-[20px] lg:flex-row">
-          <StatCard icon="home-eye.svg" title={t('stats.viewsTitle')} value={previewData ? '122' : tiktok ? fmtViews(views) : '—'} unit={t('stats.thousand')} trend={previewData ? '37.8%' : tiktok ? trend(views, previousViews) : undefined} />
-          <StatCard icon="icon-bolt.svg" title={t('stats.engagement')} value={previewData ? '3.6' : tiktok ? engagement.toFixed(engagement >= 10 ? 0 : 1) : '—'} unit="%" trend={previewData ? '1.8%' : undefined} />
+          <StatCard icon="st-views.svg" title={t('stats.viewsTitle')} value={previewData ? '122' : tiktok ? fmtViews(views) : '—'} unit={t('stats.thousand')} trend={previewData ? '37.8%' : tiktok ? trend(views, previousViews) : undefined} />
+          <StatCard icon="st-views.svg" title={t('stats.engagement')} value={previewData ? '3.6' : tiktok ? engagement.toFixed(engagement >= 10 ? 0 : 1) : '—'} unit="%" trend={previewData ? '1.8%' : undefined} />
           {/* «Опубликовано» — только реально выложенное. Без подключённого TikTok показываем
               прочерк, а не число сгенерированных: генерация ≠ публикация, и подстановка
               `created` превращала счётчик в неправду. */}
           <StatCard
-            icon="tt-posted.svg"
+            icon="st-views.svg"
             title={t('stats.videos')}
             value={previewData ? '123' : tiktok ? String(currentVideos.length) : '—'}
             unit={t('stats.pieces')}

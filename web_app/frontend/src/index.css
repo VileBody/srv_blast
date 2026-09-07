@@ -3,14 +3,16 @@
 @tailwind utilities;
 
 @keyframes batch-loading-sweep {
-  from { transform: translateX(-9%); }
-  to { transform: translateX(9%); }
+  from { background-position-x: 0; }
+  to { background-position-x: 136px; }
 }
 
 .batch-loading-stripes {
   background: repeating-linear-gradient(112deg, transparent 0 58px, rgba(139, 111, 230, 0.92) 58px 69px, transparent 69px 136px);
-  animation: batch-loading-sweep 1.35s linear infinite alternate;
+  animation: batch-loading-sweep 1.35s linear infinite;
   filter: drop-shadow(0 0 8px rgba(139, 111, 230, 0.18));
+  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
 }
 
 /*

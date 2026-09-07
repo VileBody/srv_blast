@@ -265,6 +265,7 @@ def test_f1_and_f5_hooks_use_orchestrator_contract(monkeypatch: pytest.MonkeyPat
     module = _module(monkeypatch)
     backend = _backend(module, _config(module))
     job = _job()
+    job["renderJob"]["track"]["segment"] = {"from": 10.0, "to": 20.0}
     thought = job["renderJob"]["variations"][0]
     thought["hook"] = {
         "family": "thought",

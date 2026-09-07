@@ -86,6 +86,15 @@
   },
   "billing": {
     "title": "Billing",
+    "currentPlan": "Current plan",
+    "history": "Payment history",
+    "noHistory": "No payments yet.",
+    "paymentStatus": {
+      "confirmed": "Paid",
+      "pending": "Pending",
+      "rejected": "Declined",
+      "failed": "Failed"
+    },
     "status": {
       "trial": "Trial",
       "active": "Active",
@@ -370,6 +379,7 @@
       "emptyColor": "Background color will appear here",
       "addNew": "Add another background",
       "uploadFootage": "Upload footage",
+      "ownFootageCount": "Your footage · {{count}}",
       "uploadPhoto": "Upload photos",
       "prevType": "Previous footage type",
       "nextType": "Next footage type",
@@ -406,6 +416,7 @@
       "hintEffects": "Visual FX: an effect on the drop, a transition between clips and a color grade",
       "hintMotion": "A «what to do» cue with a hand or head movement",
       "hintThought": "A short AI voice insert before the drop",
+      "hintNoHook": "A video without an opening hook: choose a transition; styling is optional.",
       "set": "Effects set:",
       "configuring": "Setting: {{step}}",
       "nameFx": "fx",
@@ -413,7 +424,8 @@
       "nameStyle": "style",
       "dropNeedsClip": "Pick a fragment of the track first — drop candidates are found inside it.",
       "dropAnalyzing": "Analysing drop moments in the fragment…",
-      "dropManualOnly": "No automatic candidates — set the drop timing manually."
+      "dropManualOnly": "No automatic candidates — set the drop timing manually.",
+      "dropOutsideClip": "The drop timing must be inside the selected clip."
     },
     "subs": {
       "title": "Subtitles",
@@ -433,6 +445,12 @@
       "background": "Background",
       "subtitles": "Subtitles",
       "fx": "FX",
+      "hook": "Hook",
+      "transition": "Transition",
+      "style": "Style",
+      "notSelected": "Not selected",
+      "noHookSelected": "No hook",
+      "noStyleSelected": "No styling",
       "noFx": "No FX",
       "bgNote": "Footage and photos, together for {{count}} videos",
       "subsNote": "For {{count}} videos",
@@ -490,6 +508,7 @@
       "delete": "Delete file",
       "done": "Done",
       "phoneDone": "Files uploaded. Return to your computer and add them to the set.",
+      "remaining": "Files available: {{count}}",
       "editorHint": "Build one or more videos. Clips play from top to bottom inside each video; every video appears separately in the Pool and consumes the number of renders assigned there.",
       "chooseFormat": "Upload format:",
       "videoPlans": "Your videos",
@@ -511,6 +530,8 @@
       "audio": "Audio",
       "video": "Video",
       "upload": "Upload file",
+      "drop": "Drop or upload a file",
+      "back": "Choose another format",
       "processing": "Processing…",
       "tooLarge": "File exceeds 200 MB"
     }
@@ -562,6 +583,12 @@
     "Студийный свет": "Studio light",
     "Уличный кадр": "Street shot",
     "Без хука": "No hook",
+    "Ч/Б": "Black & white",
+    "Crystal Glow": "Crystal glow",
+    "Night Vision": "Night vision",
+    "Wave": "Wave",
+    "Pixel Grain": "Pixel grain",
+    "Warm Map": "Warm map",
     "Футаж": "Footage",
     "Свои исходники": "My footage"
   },
@@ -644,6 +671,9 @@
     "minutesLeft_one": "{{count}} minute left",
     "minutesLeft_other": "{{count}} minutes left",
     "rendering": "Rendering",
+    "queued": "queued",
+    "videoProgress": "{{progress}}%",
+    "videoOf": "Video {{current}} of {{total}}",
     "notFound": "Generation not found",
     "notFoundText": "The link is stale or the generation was not saved. Open the project — finished videos live there.",
     "failed": "Generation failed",

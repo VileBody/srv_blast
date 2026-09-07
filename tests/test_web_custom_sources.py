@@ -4,7 +4,14 @@ import pytest
 
 from mlcore.custom_sources import apply_custom_sources
 from web_app.backend.app.batch_geometry import selected_geometry
-from web_app.backend.app.render_job import build_render_job, selected_hook_families
+from web_app.backend.app.render_job import _segment, build_render_job, selected_hook_families
+
+
+def test_explicit_ai_timing_is_preserved_for_render_payload() -> None:
+    assert _segment({"mode": "ai", "from": "01:31:00", "to": "01:48:00"}) == {
+        "from": 91.0,
+        "to": 108.0,
+    }
 
 
 def test_custom_sources_preserve_user_order_and_cover_timeline() -> None:

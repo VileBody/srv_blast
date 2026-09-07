@@ -6,6 +6,7 @@ import { LimitsIndicator } from '../ui/LimitsIndicator';
 import { FigIcon } from '../ui/FigIcon';
 import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useChip } from '../../i18n/useChip';
+import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 
 /*
  * Общая оболочка батча: W36 (готовый батч) и W51 (идёт генерация) — ОДИН макет.
@@ -170,12 +171,15 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
 }
 
 /** Строка-загрузка W51: диагональные полосы мягко движутся под фейдом до появления готового ролика. */
-export function LoadingRow() {
+export function LoadingRow({ video, active = true }: { video?: VideoVersion; active?: boolean }) {
   const { t } = useTranslation();
   return (
-    <div className="batch-loading-row relative h-[60px] shrink-0 overflow-hidden rounded-[15px] bg-[#1d1534]" role="status" aria-label={t('processing.rendering')}>
-      <span className="batch-loading-stripes absolute inset-y-0 left-[-35%] w-[170%]" aria-hidden="true" />
-      <span className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,#1d1534_0%,rgba(29,21,52,0.08)_18%,rgba(29,21,52,0.08)_82%,#1d1534_100%)]" aria-hidden="true" />
+    <div className="batch-loading-row relative flex h-[60px] shrink-0 items-center overflow-hidden rounded-[15px] bg-[#1d1534] px-[28px]" role="status" aria-label={t('processing.rendering')}>
+      {active && <span className="batch-loading-stripes absolute inset-0" aria-hidden="true" />}
+      <span className="relative z-[1] text-[16px] text-text">{video ? t('projectDetail.videoN', { n: video.index }) : t('processing.rendering')}</span>
+      <span className="relative z-[1] ml-auto text-[14px] text-text-60">
+        {active ? t('processing.videoProgress', { progress: Math.max(1, Math.round(video?.progress ?? 1)) }) : t('processing.queued')}
+      </span>
     </div>
   );
 }
@@ -259,7 +263,7 @@ export function BatchTrack({
     <div
       ref={scroll.ref}
       className="no-scrollbar flex h-[60px] cursor-grab select-none items-stretch overflow-x-auto rounded-[15px] active:cursor-grabbing"
-      style={{ background: 'var(--grad-soft-10)', maskImage: mask, WebkitMaskImage: mask }}
+      style={{ maskImage: mask, WebkitMaskImage: mask }}
       {...scroll.handlers}
     >
       {(batches.length ? batches : [{ id: 'empty', number: 1 }]).map((batch) => {
@@ -273,10 +277,10 @@ export function BatchTrack({
             onClick={() => { if (!scroll.moved()) onSelect(batch.id); }}
             aria-pressed={selected}
             className={cn(
-              'relative z-10 flex shrink-0 items-center whitespace-nowrap rounded-[15px] border-2 px-[21px] text-[24px] font-[350] leading-none transition [backdrop-filter:blur(40px)]',
+              'relative z-10 flex shrink-0 items-center whitespace-nowrap rounded-[15px] border-2 px-[21px] text-[24px] font-[350] leading-none transition',
               selected ? 'border-accent-light text-text' : 'border-transparent text-text-60 hover:text-text'
             )}
-            style={{ background: selected ? 'var(--grad-soft-20)' : 'transparent' }}
+            style={{ background: selected ? '#34245d' : 'transparent' }}
           >
             {t('projectDetail.batchVideo', { n: batch.number })}
           </button>
@@ -286,7 +290,7 @@ export function BatchTrack({
         type="button"
         onClick={() => { if (!scroll.moved()) onAddBatch(); }}
         aria-label={t('projects.addBatch')}
-        className="relative z-0 -ml-[2px] flex w-[78px] shrink-0 items-center justify-center rounded-[15px] border-2 border-[var(--accent)] text-[24px] leading-none text-text-80 transition hover:text-text"
+        className="relative z-0 -ml-[33px] flex w-[109px] shrink-0 items-center justify-center rounded-[15px] border-2 border-[var(--accent)] pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text"
         style={{ background: 'var(--grad-soft-20)' }}
       >
         +
@@ -345,6 +349,8 @@ export function GenerationsCard({
   const ready = videos.filter((video) => video.status === 'COMPLETED');
   const postedCount = ready.filter(isVideoPosted).length;
   const downloadable = videos.filter((video) => video.downloadUrl);
+  const pending = videos.filter((video) => video.status === 'PENDING' || video.status === 'PROCESSING');
+  const activePending = pending.find((video) => video.status === 'PROCESSING' || video.stage !== 'waiting_previous') ?? pending[0];
   // Браузер блокирует пачку одновременных скачиваний — разносим по времени
   const downloadAll = () => {
     downloadable.forEach((video, index) => {
@@ -406,11 +412,11 @@ export function GenerationsCard({
               )}
             </div>
           ) : (
-            videos.map((v) => (
-              <GenerationRow key={v.id} video={v} onPost={postOne && v.status === 'COMPLETED' ? () => postOne(v) : undefined} />
-            ))
+            videos.map((v) => v.status === 'PENDING' || v.status === 'PROCESSING'
+              ? <LoadingRow key={v.id} video={v} active={v.id === activePending?.id} />
+              : <GenerationRow key={v.id} video={v} onPost={postOne && v.status === 'COMPLETED' ? () => postOne(v) : undefined} />)
           )}
-          {loading && <LoadingRow />}
+          {loading && pending.length === 0 && <LoadingRow />}
         </div>
         {/* скролл-фейды сверху/снизу (цвет карты) */}
         <div className="pointer-events-none absolute inset-x-0 -top-[10px] h-[24px]" style={{ background: 'linear-gradient(180deg, #140e24, rgba(20,14,36,0))' }} />
@@ -485,11 +491,11 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
         {videos.length > 0 && (
           <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
             <button type="button" aria-label={t('common.prev')} onClick={() => step(-1)} disabled={total < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-              <FigIcon name="home-arrow.svg" h={11} className="rotate-180" />
+              <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)', transform: 'rotate(180deg)' }} />
             </button>
             <span className="text-[16px] font-[350] leading-none text-accent">{current}/{total}</span>
             <button type="button" aria-label={t('common.next')} onClick={() => step(1)} disabled={total < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-              <FigIcon name="home-arrow.svg" h={11} />
+              <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)' }} />
             </button>
           </div>
         )}
@@ -542,18 +548,25 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
 /**
  * Правая колонка на время генерации (W51). Раньше здесь стояла та же пустая панель превью,
  * что и на готовом батче: человек смотрел в белый прямоугольник и не понимал ни сколько ждать,
- * ни можно ли уйти. Теперь — «можно закрыть вкладку» (бот уже шлёт уведомления) и разбор,
- * что именно сейчас делают с треком; текущий шаг считаем от доли готовых роликов.
+ * ни можно ли уйти. Теперь — «можно закрыть вкладку» (бот уже шлёт уведомления) и разбор
+ * этапа активного ролика, который приходит от оркестратора.
  */
-export function ProcessingAside({ done, total, telegram, onBack }: { done: number; total: number; telegram: boolean; onBack: () => void }) {
+export function ProcessingAside({ done, total, activeVideo, telegram, onBack }: { done: number; total: number; activeVideo?: VideoVersion; telegram: boolean; onBack: () => void }) {
   const { t } = useTranslation();
   const steps = [1, 2, 3, 4, 5].map((n) => ({ title: t(`processing.step${n}`), text: t(`processing.step${n}Text`) }));
-  // первые два шага — разбор трека, он общий на батч; дальше шаги идут по мере готовности роликов
-  const ratio = total > 0 ? done / total : 0;
-  const active = done === 0 ? Math.min(1, steps.length - 1) : Math.min(steps.length - 1, 2 + Math.floor(ratio * (steps.length - 2)));
+  // Оркестратор отдаёт этап активной вариации. Поэтому правая колонка сбрасывается
+  // для каждого следующего ролика и больше не опережает строки слева по общему проценту батча.
+  const stage = activeVideo?.stage ?? 'queued';
+  const stageIndex: Record<string, number> = { queued: 0, build: 0, alignment: 1, dispatch: 2, render: 3, poll: 4, done: 4 };
+  const active = activeVideo
+    ? (stageIndex[stage] ?? Math.min(4, Math.floor(Math.max(0, activeVideo.progress) / 20)))
+    : (total > 0 && done >= total ? 4 : 0);
   return (
     <aside className="wizard-aside card-2 flex shrink-0 flex-col overflow-hidden p-[40px]">
-      <h2 className="shrink-0 truncate text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{t('processing.asideTitle')}</h2>
+      <div className="flex shrink-0 items-center justify-between gap-[16px]">
+        <h2 className="min-w-0 truncate text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{t('processing.asideTitle')}</h2>
+        {activeVideo && <span className="shrink-0 rounded-r10 bg-grad-soft-20 px-[12px] py-[7px] text-[14px] text-text-80">{t('processing.videoOf', { current: activeVideo.index, total })}</span>}
+      </div>
 
       <div className="no-scrollbar mt-[28px] flex min-h-0 flex-1 flex-col gap-[10px] overflow-y-auto">
         {steps.map((step, index) => {

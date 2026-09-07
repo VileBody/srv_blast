@@ -9,7 +9,6 @@ import { cn } from '../../lib/cn';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
 import type { Vibe } from '../../lib/types';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
-import { FigIcon } from '../ui/FigIcon';
 import { InlineError, queryDown } from '../ui/ErrorState';
 import { ChipIcon } from './HookPanel';
 import { PillsFooter } from './WizardFrame';
@@ -187,10 +186,10 @@ function FootageTypeStepper() {
   );
 
   return (
-    <span className="flex items-center gap-[15px]">
+    <span className="grid w-[300px] grid-cols-[24px_minmax(0,1fr)_24px] items-center gap-[12px]">
       {arrow(-1)}
       <span
-        className="min-w-[120px] text-center text-[24px] font-[350] leading-normal text-transparent"
+        className="min-w-0 whitespace-nowrap text-center text-[24px] font-[350] leading-normal text-transparent"
         style={{ backgroundImage: 'var(--grad-main)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}
       >
         {label}
@@ -239,7 +238,6 @@ function MediaCard({ item, selected, wide, format, onToggle }: { item: Vibe; sel
         ? <video src={item.previewUrl} muted loop playsInline autoPlay onError={() => setBroken(true)} />
         : <img src={item.previewUrl} alt="" onError={() => setBroken(true)} />)}
       {broken && <span className="media-card-fallback">{chip(item.name)}</span>}
-      {!broken && <span className="absolute bottom-space-2 left-0 right-0 z-[1] text-center text-[11px] text-text" style={{ textShadow: '0 1px 4px rgba(0,0,0,.8)' }}>{chip(item.name)}</span>}
       {selected && (
         <span
           aria-hidden="true"
@@ -385,10 +383,10 @@ export function StageBackground() {
           <button
             type="button"
             onClick={() => setSourcesOpen(true)}
-            className="wizard-body flex shrink-0 items-center gap-[10px] whitespace-nowrap transition hover:text-text"
+            className={cn('wizard-body flex h-[44px] shrink-0 items-center gap-[10px] whitespace-nowrap rounded-r15 px-[16px] transition hover:text-text', background.sourceVideos.length > 0 && 'border border-accent-light bg-grad-soft-20 !text-text')}
           >
             <SvgMaskIcon src="/assets/figma/bg-upload.svg" style={{ width: 20, height: 20, color: WHITE80 }} />
-            {t('wizard.bg.uploadFootage')}
+            {background.sourceVideos.length > 0 ? t('wizard.bg.ownFootageCount', { count: background.sourceVideos.length }) : t('wizard.bg.uploadFootage')}
           </button>
         )}
       </div>
@@ -420,7 +418,6 @@ export function StageBackground() {
           )}
         </div>
 
-        <p className="mt-2 px-[40px] text-xs text-text-60">{t('wizard.bg.formatHint', { format })}</p>
         {isMedia ? (
           loading ? (
             <div className="flex flex-1 items-center justify-center">
@@ -599,11 +596,11 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
           {isMedia && selected.length > 0 ? (
             <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
               <button type="button" aria-label={t('wizard.bg.prevExample')} onClick={() => step(-1)} disabled={selected.length < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-                <FigIcon name="home-arrow.svg" h={11} className="rotate-180" />
+                <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)', transform: 'rotate(180deg)' }} />
               </button>
               <span className="text-[16px] font-[350] leading-none text-accent">{safeIndex + 1}/{selected.length}</span>
               <button type="button" aria-label={t('wizard.bg.nextExample')} onClick={() => step(1)} disabled={selected.length < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-                <FigIcon name="home-arrow.svg" h={11} />
+                <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)' }} />
               </button>
             </div>
           ) : (

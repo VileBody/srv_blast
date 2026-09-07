@@ -133,8 +133,11 @@ function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
   let earned = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
   if (now.getDate() < start.getDate()) earned -= 1;
   earned = Math.max(0, Math.min(3, earned));
+  // Шкала всегда показывает текущее окно и два следующих месяца. Старый вариант был
+  // навсегда привязан к месяцу первой оплаты, поэтому после получения бонусов в сентябре
+  // продолжал показывать май—июль.
   const monthName = (offset: number) =>
-    new Date(start.getFullYear(), start.getMonth() + offset, 1).toLocaleString(locale, { month: 'short' }).replace('.', '');
+    new Date(now.getFullYear(), now.getMonth() + offset, 1).toLocaleString(locale, { month: 'short' }).replace('.', '').toLocaleLowerCase(locale);
   const months = [0, 1, 2].map(monthName);
   /*
    * Бонус за месяц открывается, когда месяц ЗАКОНЧИЛСЯ, то есть в начале следующего.
@@ -482,7 +485,7 @@ export function ProfilePage() {
      * карточка оплаты просто обрезалась и доскроллить до неё было нельзя. Теперь колонка
      * растёт по контенту и скроллится страницей, как в админке.
      */
-    <div className="flex min-h-0 flex-1 flex-col gap-[20px] pb-space-6 md:pt-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-full shrink-0 flex-col gap-[20px] pb-[calc(var(--rail-pad-y)_-_var(--space-6))] md:pt-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       {/* шапка 1192×202: аватар 120 в кольце, имя 24, ник 32 с карандашом, справа TikTok */}
       <section className="card-2 flex h-[202px] shrink-0 items-center gap-[40px] px-[40px]">
         <label className="relative h-[120px] w-[120px] shrink-0 cursor-pointer">

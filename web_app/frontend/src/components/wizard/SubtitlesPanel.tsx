@@ -71,7 +71,7 @@ export function StageSubtitles() {
   return (
     <div className="flex h-full flex-col">
       <h2 className="wizard-h flex items-center gap-space-3">
-        <em className="bg-grad-text bg-clip-text font-bold italic text-[30px] leading-none text-transparent">Т</em>
+        <em className="inline-block bg-grad-text bg-clip-text pb-[3px] pr-[3px] font-bold italic text-[30px] leading-[1.15] text-transparent">Т</em>
         {t('wizard.subs.title')}
       </h2>
 

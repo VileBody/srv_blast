@@ -195,9 +195,6 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
           </button>
           <h2 className="text-[32px] font-[400] leading-[38px] text-text">{t('projectModal.title')}</h2>
         </div>
-        {/* Что такое «проект» — для пользователя это трек, но нигде не было сказано */}
-        <p className="mt-[14px] text-[16px] leading-[20px] text-text-60">{t('projectModal.whatIsProject')}</p>
-
         {/* Трек идёт первым: из имени файла берётся название проекта */}
         <div className="mt-[24px]">
           <span className="text-[24px] font-[350] leading-[29px] text-text-80">
@@ -292,8 +289,6 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
           <span className="text-[24px] font-[350] leading-[29px] text-text-80">
             {t('projectModal.uploadCover')} <span className="text-[16px] text-text-40">{t('projectModal.coverOptional')}</span>
           </span>
-          {/* Обложка карточки ≠ обложка ролика — человек мог потратить время не на то */}
-          <p className="mt-[8px] text-[15px] leading-[19px] text-text-60">{t('projectModal.coverExplain')}</p>
           <input ref={inputRef} type="file" accept="image/png,image/jpeg" className="sr-only" onChange={onInput} />
           <button
             type="button"

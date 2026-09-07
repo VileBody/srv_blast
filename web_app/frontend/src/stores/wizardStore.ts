@@ -4,7 +4,7 @@ import type { SavedTrack } from '../lib/types';
 import { DEFAULT_FOOTAGE_TYPE, normalizeFootageType } from '../data/footageTypes';
 
 export type BackgroundMode = 'footage' | 'photo' | 'color';
-export type HookKind = 'warmup' | 'object' | 'effects' | 'motion' | 'thought';
+export type HookKind = 'warmup' | 'object' | 'effects' | 'motion' | 'thought' | 'none';
 
 export interface SourceVideoPlan {
   id: string;
@@ -37,7 +37,8 @@ export const HOOK_LABELS: Record<HookKind, string> = {
   object: 'Объект',
   effects: 'Эффекты',
   motion: 'Движение',
-  thought: 'Мысль'
+  thought: 'Мысль',
+  none: 'Без хука'
 };
 
 export interface WizardStateData {
@@ -146,6 +147,7 @@ export function backgroundVariations(bg: WizardStateData['background']): number 
  */
 export function hookComplete(kind: HookKind, config?: HookConfig): boolean {
   if (!config) return false;
+  if (kind === 'none') return Boolean(config.effectGlue);
   const own = kind === 'warmup' ? Boolean(config.sound && (config.warmupKind === 'video' ? config.videoUrl && config.videoWidth && config.videoHeight && config.videoDuration : config.soundUrl))
     : kind === 'object' ? Boolean(config.object)
       : kind === 'effects' ? Boolean(config.effectHook)
