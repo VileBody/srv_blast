@@ -290,10 +290,10 @@ export function BatchTrack({
         type="button"
         onClick={() => { if (!scroll.moved()) onAddBatch(); }}
         aria-label={t('projects.addBatch')}
-        className="relative z-0 -ml-[33px] flex w-[109px] shrink-0 items-center justify-center rounded-[15px] border-2 border-[var(--accent)] pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text"
+        className="relative z-0 -ml-[33px] flex w-[78px] shrink-0 items-center justify-center rounded-[15px] border-2 border-[var(--accent)] pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text"
         style={{ background: 'var(--grad-soft-20)' }}
       >
-        +
+        <span className="translate-y-[1px]" aria-hidden="true">+</span>
       </button>
     </div>
   );
