@@ -93,10 +93,10 @@ _RATING_COLORS = {"low": "#fb7185", "mid_low": "#fbbf24", "high": "#34d399"}
 # colour reserved for real state.
 
 _STYLE = """
-@font-face { font-family:'Point'; src:url('/admin/static/fonts/Point-Regular.ttf') format('truetype'); font-weight:400; font-style:normal; font-display:swap; }
-@font-face { font-family:'Point'; src:url('/admin/static/fonts/Point-Book.ttf') format('truetype'); font-weight:350; font-style:normal; font-display:swap; }
-@font-face { font-family:'Point'; src:url('/admin/static/fonts/Point-SemiBold.ttf') format('truetype'); font-weight:600; font-style:normal; font-display:swap; }
-@font-face { font-family:'Point'; src:url('/admin/static/fonts/PointBold.ttf') format('truetype'); font-weight:700; font-style:normal; font-display:swap; }
+@font-face { font-family:'Point'; src:url('/partner/static/fonts/Point-Regular.ttf') format('truetype'); font-weight:400; font-style:normal; font-display:swap; }
+@font-face { font-family:'Point'; src:url('/partner/static/fonts/Point-Book.ttf') format('truetype'); font-weight:350; font-style:normal; font-display:swap; }
+@font-face { font-family:'Point'; src:url('/partner/static/fonts/Point-SemiBold.ttf') format('truetype'); font-weight:600; font-style:normal; font-display:swap; }
+@font-face { font-family:'Point'; src:url('/partner/static/fonts/PointBold.ttf') format('truetype'); font-weight:700; font-style:normal; font-display:swap; }
 
 :root {
   --bg: #05010f;
