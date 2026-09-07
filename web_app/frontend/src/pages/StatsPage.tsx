@@ -73,7 +73,7 @@ function StatCard({ icon, title, value, unit, trend }: {
   return (
     <div className="taste-metric relative h-[192px] min-w-0 flex-1 rounded-r15 bg-grad-soft-20">
       <span className="absolute left-[28px] top-[28px] flex items-center gap-[8px]">
-        <FigIcon name={icon} h={14} />
+        <img src={`/assets/figma/${icon}`} width={14} height={14} alt="" aria-hidden="true" className="h-[14px] w-[14px] shrink-0 object-contain" />
         <span className="whitespace-nowrap text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{title}</span>
       </span>
       {trend && <span className="absolute right-[28px] top-[28px]"><TrendBadge value={trend} /></span>}
@@ -459,12 +459,12 @@ export function StatsPage() {
 
         <div className="mt-[28px] flex flex-col gap-[20px] lg:flex-row">
           <StatCard icon="st-views.svg" title={t('stats.viewsTitle')} value={previewData ? '122' : tiktok ? fmtViews(views) : '—'} unit={t('stats.thousand')} trend={previewData ? '37.8%' : tiktok ? trend(views, previousViews) : undefined} />
-          <StatCard icon="st-views.svg" title={t('stats.engagement')} value={previewData ? '3.6' : tiktok ? engagement.toFixed(engagement >= 10 ? 0 : 1) : '—'} unit="%" trend={previewData ? '1.8%' : undefined} />
+          <StatCard icon="st-engagement.png" title={t('stats.engagement')} value={previewData ? '3.6' : tiktok ? engagement.toFixed(engagement >= 10 ? 0 : 1) : '—'} unit="%" trend={previewData ? '1.8%' : undefined} />
           {/* «Опубликовано» — только реально выложенное. Без подключённого TikTok показываем
               прочерк, а не число сгенерированных: генерация ≠ публикация, и подстановка
               `created` превращала счётчик в неправду. */}
           <StatCard
-            icon="st-views.svg"
+            icon="st-published.png"
             title={t('stats.videos')}
             value={previewData ? '123' : tiktok ? String(currentVideos.length) : '—'}
             unit={t('stats.pieces')}
