@@ -248,6 +248,7 @@ export function BatchTrack({
   const { t } = useTranslation();
   const scroll = useHorizontalScroll();
   const mask = edgeMask(scroll.fade.left, scroll.fade.right, 28);
+  const lastBatchSelected = Boolean(batches.length && batches[batches.length - 1]?.id === selectedId);
   useEffect(() => {
     const rail = scroll.ref.current;
     if (!rail || !selectedId) return;
@@ -297,7 +298,12 @@ export function BatchTrack({
         type="button"
         onClick={() => { if (!scroll.moved()) onAddBatch(); }}
         aria-label={t('projects.addBatch')}
-        className="relative z-0 -ml-[12px] flex w-[62px] shrink-0 items-center justify-center rounded-[15px] border-2 border-[var(--accent)] pl-[12px] text-[24px] leading-none text-text-80 transition hover:text-text"
+        className={cn(
+          'relative z-0 flex shrink-0 items-center justify-center rounded-[15px] border-2 border-[var(--accent)] text-[24px] leading-none text-text-80 transition-[width,margin,padding,color] hover:text-text',
+          lastBatchSelected
+            ? '-ml-[33px] w-[78px] pl-[33px]'
+            : 'ml-[12px] w-[48px] px-[12px]'
+        )}
         style={{ background: 'var(--grad-soft-20)' }}
       >
         <span className="translate-y-[1px]" aria-hidden="true">+</span>
