@@ -620,7 +620,7 @@ async def api_me() -> dict[str, Any]:
             raise _production_error(exc) from exc
         # Не показываем старую persisted mock-запись как реальное подключение,
         # если TikTok credentials отключены на production-инстансе.
-        if not tiktok_config.load().configured:
+        if not _tiktok_ready():
             data["tiktok"] = None
     # Экран ожидания обещает «пришлём в Telegram» — обещать это можно только когда бот
     # реально настроен И у юзера есть привязанный чат. Иначе фронт молчит про уведомления.
@@ -1536,6 +1536,21 @@ def _apply_token_profile(record: dict[str, Any]) -> None:
     )
 
 
+def _tiktok_ready(cfg: tiktok_config.TiktokConfig | None = None) -> bool:
+    """Готова ли интеграция ДЛЯ ЭТОГО человека: ключи заданы и он в списке доступа.
+
+    Пока заявка не одобрена, приложение живёт в песочнице TikTok: авторизоваться и
+    публиковать может только владелец приложения. Для всех остальных интеграция должна
+    выглядеть ровно так же, как при незаданных ключах, — иначе кнопка приведёт человека
+    в чужой sandbox-аккаунт и на ошибку авторизации.
+    """
+    cfg = cfg or tiktok_config.load()
+    if not cfg.configured:
+        return False
+    user = store.ws().user
+    return cfg.allows(store.current_user_id(), user.get("email"), user.get("tgChatId"))
+
+
 def _refresh_tiktok_tokens(force: bool = False) -> dict[str, Any] | None:
     cfg = tiktok_config.load()
     record = tiktok_token_store.load(store.USER["id"])
@@ -1626,7 +1641,7 @@ def _finish_tiktok_connect(*, handle: str, open_id: str, mock: bool = False,
 def api_tiktok_auth(request: Request, reuse: bool = False) -> RedirectResponse:
     """Старт OAuth: уводим на TikTok. state и PKCE-verifier кладём в серверную сессию."""
     cfg = tiktok_config.load()
-    if not cfg.configured:
+    if not _tiktok_ready(cfg):
         if RUNTIME.production:
             return RedirectResponse(f"{_app_url()}/app/profile?tiktok=not_configured", status_code=302)
         return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True)
@@ -1643,7 +1658,7 @@ def api_tiktok_callback(request: Request, code: str | None = None, state: str | 
                         error: str | None = None, reuse: bool = False) -> RedirectResponse:
     """Возврат от TikTok: сверяем state (CSRF), меняем code на токен, тянем профиль."""
     cfg = tiktok_config.load()
-    if not cfg.configured:
+    if not _tiktok_ready(cfg):
         if RUNTIME.production:
             return RedirectResponse(f"{_app_url()}/app/profile?tiktok=not_configured", status_code=302)
         return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True)
@@ -1696,10 +1711,11 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     if not privacy:
         raise HTTPException(status_code=422, detail="Unsupported TikTok privacy level")
     cfg = tiktok_config.load()
-    if not cfg.configured and RUNTIME.production:
+    ready = _tiktok_ready(cfg)
+    if not ready and RUNTIME.production:
         raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
     try:
-        if cfg.configured:
+        if ready:
             token = _access_token()
             creator = tiktok_api.query_creator_info(token)
         else:
@@ -1745,7 +1761,7 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
             post_info["brand_organic_toggle"],
             "is_aigc" in post_info,
         )
-        if not cfg.configured:
+        if not ready:
             publish_id = f"mock_tt_{uuid4().hex[:8]}"
             video.update({"tiktokPublishId": publish_id, "tiktokStatus": "PUBLISH_COMPLETE", "postedAt": datetime.now(timezone.utc).isoformat()})
             analytics.track("video_posted", store.current_user_id(), {"videoId": payload.videoId, "projectId": payload.projectId, "mock": True})
@@ -1783,7 +1799,7 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
 
 @app.get("/api/tiktok/post/{publish_id}", tags=["tiktok"])
 def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
-    if not tiktok_config.load().configured:
+    if not _tiktok_ready():
         if RUNTIME.production:
             raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         return {"publishId": publish_id, "status": "PUBLISH_COMPLETE", "mock": True}
@@ -1812,7 +1828,7 @@ def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
 def api_tiktok_creator_info() -> dict[str, Any]:
     if store.TIKTOK is None:
         raise HTTPException(status_code=409, detail="TikTok is not connected")
-    if not tiktok_config.load().configured:
+    if not _tiktok_ready():
         if RUNTIME.production:
             raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         return {
@@ -1833,7 +1849,7 @@ def api_tiktok_creator_info() -> dict[str, Any]:
 def api_tiktok_videos(days: int = 30) -> dict[str, Any]:
     if store.TIKTOK is None:
         raise HTTPException(status_code=409, detail="TikTok is not connected")
-    if not tiktok_config.load().configured:
+    if not _tiktok_ready():
         if RUNTIME.production:
             raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         posted = [video for job in store.JOBS.values() for video in job.get("videos", []) if video.get("tiktokStatus") == "PUBLISH_COMPLETE"]
@@ -1903,7 +1919,8 @@ def api_tiktok_status() -> dict[str, Any]:
     """Готовы ли ключи. Фронту нужно, чтобы честно сказать «идёт мок-подключение»."""
     cfg = tiktok_config.load()
     return {
-        "configured": cfg.configured,
+        # Для не-разрешённого человека интеграция «не настроена» — фронт прячет кнопку
+        "configured": _tiktok_ready(cfg),
         "scopes": cfg.scopes,
         "redirectUri": cfg.redirect_uri,
         "uploadSource": cfg.upload_source,

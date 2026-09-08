@@ -130,6 +130,10 @@ class RuntimeSettings:
                 "TIKTOK_REDIRECT_URI",
                 "TIKTOK_TOKEN_KEY",
                 "TIKTOK_UPLOAD_SOURCE",
+                # Кому открыта интеграция. Пустое значение в проде — ошибка старта:
+                # пока заявка не одобрена, приложение живёт в песочнице TikTok, и
+                # «случайно всем» здесь хуже, чем «никому». Открыть всем — явное «*».
+                "TIKTOK_ALLOWED_USER_IDS",
             ),
             callback=("TIKTOK_REDIRECT_URI", f"{self.app_url}/api/tiktok/callback"),
         )
