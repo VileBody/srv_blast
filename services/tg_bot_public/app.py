@@ -6487,6 +6487,7 @@ class BlastBotApp:
         st.colors_done = False
         st.subtitle_color_hex = ""
         st.accent_color_hex = ""
+        st.frame_id = ""
         st.battery_mode = False
         st.battery_cases = []
         st.versions_count = 1
