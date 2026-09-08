@@ -4995,6 +4995,71 @@ class CreditsDB:
             )
         return [{"day": r["day"].isoformat(), "starts": int(r["starts"]), "purchases": int(r["purchases"])} for r in rows]
 
+    async def partner_clients(self, partner_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Attributed users who actually paid, with the partner's own commission
+        per client. Core-team accounts are filtered out via the `admins` table,
+        the same exclusion the CRM/clients views use, so test purchases from the
+        team do not show up as someone's clients."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "WITH ranked AS ("
+                "  SELECT p.tg_id, p.amount_rub, p.created_at,"
+                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
+                "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
+                "  WHERE u.partner_id = $1 AND UPPER(p.status) = 'CONFIRMED'"
+                "    AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
+                ") "
+                "SELECT u.tg_id, u.username, u.partner_link_code,"
+                "  COUNT(*)::BIGINT AS purchases,"
+                "  COALESCE(SUM(CASE WHEN r.rn = 1 THEN r.amount_rub * 0.5 "
+                "                    ELSE r.amount_rub * 0.2 END), 0)::BIGINT AS earned_rub,"
+                "  MIN(r.created_at) AS first_purchase_at,"
+                "  MAX(r.created_at) AS last_purchase_at "
+                "FROM ranked r JOIN users u ON u.tg_id = r.tg_id "
+                "GROUP BY u.tg_id, u.username, u.partner_link_code "
+                "ORDER BY earned_rub DESC, last_purchase_at DESC "
+                "LIMIT $2 OFFSET $3",
+                int(partner_id), int(limit), int(offset),
+            )
+        return [
+            {
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "partner_link_code": str(r["partner_link_code"] or ""),
+                "purchases": int(r["purchases"]),
+                "earned_rub": int(r["earned_rub"]),
+                "first_purchase_at": _fmt_ts(r["first_purchase_at"]),
+                "last_purchase_at": _fmt_ts(r["last_purchase_at"]),
+            }
+            for r in rows
+        ]
+
+    async def partner_clients_summary(self, partner_id: int) -> Dict[str, int]:
+        """Client count and the commission they add up to, admins excluded."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "WITH ranked AS ("
+                "  SELECT p.tg_id, p.amount_rub,"
+                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
+                "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
+                "  WHERE u.partner_id = $1 AND UPPER(p.status) = 'CONFIRMED'"
+                "    AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
+                ") "
+                "SELECT COUNT(DISTINCT tg_id)::BIGINT AS clients,"
+                "  COUNT(*)::BIGINT AS purchases,"
+                "  COALESCE(SUM(CASE WHEN rn = 1 THEN amount_rub * 0.5 "
+                "                    ELSE amount_rub * 0.2 END), 0)::BIGINT AS earned_rub "
+                "FROM ranked",
+                int(partner_id),
+            )
+        return {
+            "clients": int(row["clients"]),
+            "purchases": int(row["purchases"]),
+            "earned_rub": int(row["earned_rub"]),
+        }
+
     async def partner_period_totals(self, partner_id: int, *, days: int, shift: int = 0) -> Dict[str, int]:
         """Starts / purchases / commission for a window of `days`, shifted back
         by `shift` whole windows (shift=1 is the preceding period, used for the

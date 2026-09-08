@@ -342,6 +342,7 @@ _NAV = [
     ("/partner/", "Дашборд"),
     ("/partner/links", "Ссылки"),
     ("/partner/users", "Пользователи"),
+    ("/partner/clients", "Клиенты"),
     ("/partner/activity", "Задачи"),
     ("/partner/payouts", "Выплаты"),
 ]
@@ -877,6 +878,56 @@ def build_router(credits_db: "CreditsDB", state_store: "StateStore", settings: "
         </div>
         """
         return _chrome(name, body, active="/partner/users", who=_who(partner))
+
+    # ── Clients (who actually paid) ─────────────────────────────────
+
+    @router.get("/partner/clients", response_class=HTMLResponse)
+    async def clients_page(request: Request, partner: Dict[str, Any] = Depends(_current_partner)) -> str:
+        pid = int(partner["id"])
+        try:
+            page = max(1, int(str(request.query_params.get("page", "1"))))
+        except ValueError:
+            page = 1
+        per_page = 50
+        summary = await credits_db.partner_clients_summary(pid)
+        clients = await credits_db.partner_clients(pid, limit=per_page, offset=(page - 1) * per_page)
+
+        rows = "".join(
+            f"<tr><td><a href='/partner/users/{c['tg_id']}'>{_esc(c['username'] or c['tg_id'])}</a></td>"
+            f"<td>{_esc(c['partner_link_code'] or '-')}</td>"
+            f"<td class='num'>{c['purchases']}</td>"
+            f"<td class='num'>{_rub(c['earned_rub'])} &#8381;</td>"
+            f"<td>{_esc(c['first_purchase_at'])}</td>"
+            f"<td>{_esc(c['last_purchase_at'])}</td></tr>"
+            for c in clients
+        )
+
+        total_pages = max(1, (summary["clients"] + per_page - 1) // per_page)
+        body = f"""
+        <div class="hero">
+          <div class="tile">
+            <div class="tile-label">Клиентов</div>
+            <div class="tile-value">{summary['clients']}</div>
+          </div>
+          <div class="tile">
+            <div class="tile-label">Заработано с них
+              <span class="hint" tabindex="0" role="note" aria-label="Как считается заработок">?<span class="hint-pop">{_COMMISSION_HINT}</span></span>
+            </div>
+            <div class="tile-value grad">{_rub(summary['earned_rub'])} &#8381;</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-head"><h2>Кто купил</h2><span class="sub">покупок всего {summary['purchases']}</span></div>
+          <div class="table-wrap">
+          <table>
+            <thead><tr><th>Клиент</th><th>Ссылка</th><th class="num">Покупок</th><th class="num">Заработано</th><th>Первая покупка</th><th>Последняя</th></tr></thead>
+            <tbody>{rows if rows else '<tr><td colspan="6"><div class="empty">Покупок пока нет. Здесь появятся те, кто оплатил после перехода по вашей ссылке.</div></td></tr>'}</tbody>
+          </table>
+          </div>
+          {_pager(page, total_pages, '/partner/clients')}
+        </div>
+        """
+        return _chrome("Клиенты", body, active="/partner/clients", who=_who(partner))
 
     # ── Задачи (activity feed) ──────────────────────────────────────
 
