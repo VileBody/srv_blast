@@ -227,7 +227,10 @@ class Settings:
     tg_webhook_delete_on_shutdown: bool = _bool_env("TG_WEBHOOK_DELETE_ON_SHUTDOWN", False)
     bot_status_update_interval_s: float = _float_env("BOT_STATUS_UPDATE_INTERVAL_S", 20.0)
     bot_recovery_poll_interval_s: float = _float_env("BOT_RECOVERY_POLL_INTERVAL_S", 60.0)
-    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 4.0)
+    # Dispatch may legitimately wait up to roughly four hours for a saturated
+    # render node. Keep bot recovery beyond that budget so it cannot abandon a
+    # job that the orchestrator is still processing.
+    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 6.0)
     bot_referral_timeout_h: float = _float_env("BOT_REFERRAL_TIMEOUT_H", 72.0)
     tg_state_ttl_h: float = _float_env("TG_STATE_TTL_H", 720.0)
     tg_state_cleanup_interval_s: float = _float_env("TG_STATE_CLEANUP_INTERVAL_S", 900.0)

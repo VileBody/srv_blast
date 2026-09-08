@@ -4,7 +4,7 @@ import json
 import threading
 import time
 
-from services.orchestrator.job_store import JobStore
+from services.orchestrator.job_store import JobStore, _LUA_SET_STATUS
 from services.orchestrator.schemas import JobState
 
 
@@ -136,6 +136,16 @@ def test_set_status_updates_version_and_timestamps() -> None:
     assert st_s.error is None
 
 
+def test_set_status_lua_treats_json_null_timestamps_as_missing() -> None:
+    # Redis cjson decodes JSON null to a truthy cjson.null sentinel. A plain
+    # `not obj.finished_at` check therefore never initialized timestamps in
+    # production even though the Python fake behaved correctly.
+    assert "value == nil or value == cjson.null" in _LUA_SET_STATUS
+    assert "is_nullish(obj.queued_at)" in _LUA_SET_STATUS
+    assert "is_nullish(obj.started_at)" in _LUA_SET_STATUS
+    assert "is_nullish(obj.finished_at)" in _LUA_SET_STATUS
+
+
 def test_set_status_releases_slot_only_on_active_to_terminal() -> None:
     store = _make_store()
     _seed_job(store, status="RUNNING")
@@ -174,4 +184,3 @@ def test_set_status_concurrent_updates_merge_results_without_lost_update() -> No
     assert final.result.get("a") is True
     assert final.result.get("b") is True
     assert float(final.updated_at) >= 1.0
-

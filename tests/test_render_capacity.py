@@ -23,9 +23,11 @@ class _Response:
 class _Opener:
     def __init__(self, responses: dict[str, object]) -> None:
         self.responses = responses
+        self.timeouts: list[float] = []
 
     def open(self, request, timeout: float):
         assert timeout > 0
+        self.timeouts.append(float(timeout))
         value = self.responses[request.full_url]
         if isinstance(value, Exception):
             raise value
@@ -44,6 +46,7 @@ def test_probe_render_capacity_accepts_one_healthy_node(monkeypatch) -> None:
     assert result["ready"] is True
     assert result["healthy_urls"] == ["http://ready"]
     assert result["configured_count"] == 2
+    assert opener.timeouts == [8.0, 8.0]
 
 
 def test_probe_render_capacity_fails_closed(monkeypatch) -> None:

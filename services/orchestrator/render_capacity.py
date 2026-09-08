@@ -13,7 +13,7 @@ def _normalize_url(raw: str) -> str:
 def probe_render_capacity(
     urls: Sequence[str],
     *,
-    timeout_s: float = 2.5,
+    timeout_s: float = 8.0,
     retry_after_seconds: int = 15,
 ) -> dict[str, Any]:
     """Synchronously probe configured AE nodes and fail closed on dead URLs."""
