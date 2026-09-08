@@ -63,6 +63,13 @@ class _DummyCreditsDB:
             "earned_rub": 500, "paid_rub": 0, "due_rub": 500,
         }
 
+    async def partner_clients(self, partner_id, limit=50, offset=0):
+        return [{"tg_id": 111, "username": "buyer", "partner_link_code": "p_x", "purchases": 2,
+                 "earned_rub": 900, "first_purchase_at": "2026-09-01", "last_purchase_at": "2026-09-05"}]
+
+    async def partner_clients_summary(self, partner_id):
+        return {"clients": 1, "purchases": 2, "earned_rub": 900}
+
     async def partner_period_totals(self, partner_id, *, days, shift=0):
         return {"starts": 3, "purchases": 1, "earned_rub": 500}
 
@@ -166,6 +173,7 @@ def test_partner_cabinet_pages_render_after_login():
         "/partner/links",
         "/partner/users",
         "/partner/users/111",
+        "/partner/clients",
         "/partner/activity",
         "/partner/payouts",
     ):
