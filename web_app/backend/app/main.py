@@ -254,7 +254,16 @@ async def _restore_state() -> None:
         )
         await _billing_backend().healthcheck()
         await run_in_threadpool(security.healthcheck)
-        await run_in_threadpool(telegram_bot.healthcheck)
+        # Телеграм — НЕ фатальная зависимость старта. Очередь и S3 без ответа означают,
+        # что принимать загрузки нельзя, а недоступный на секунду api.telegram.org (мы
+        # ходим туда через прокси на гейтвее) означает лишь, что временно не работает
+        # вход через бота. Раньше таймаут этого запроса ронял lifespan: контейнер уходил
+        # в рестарт, деплой падал на «unhealthy», и сайт отдавал 502 — из-за проверки
+        # того, что и так переподнимается поллером бота.
+        try:
+            await run_in_threadpool(telegram_bot.healthcheck)
+        except Exception:
+            logger.exception("telegram healthcheck failed at startup; login via bot may be degraded")
         await run_in_threadpool(tiktok_token_store.healthcheck)
         from . import production_monitor
         production_monitor.start()
