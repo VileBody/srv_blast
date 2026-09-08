@@ -62,6 +62,15 @@ check_optional_pair() {
 check_optional_pair Google GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
 check_optional_pair TikTok TIKTOK_CLIENT_KEY TIKTOK_CLIENT_SECRET
 
+# Тот же гейт, что в runtime.py: пока приложение не прошло аудит TikTok, оно живёт в
+# песочнице, и ключи без списка доступа открыли бы кнопку всем — человек попал бы в
+# чужой sandbox-аккаунт. Проверяем здесь тоже, иначе деплой пропустит конфиг, на
+# котором контейнер не поднимется, и мы узнаем об этом только по откату.
+if grep -Eq '^TIKTOK_CLIENT_KEY=.+' "$ENV_FILE" && ! grep -Eq '^TIKTOK_ALLOWED_USER_IDS=.+' "$ENV_FILE"; then
+  echo "production env sets TikTok credentials without TIKTOK_ALLOWED_USER_IDS (use '*' to open it to everyone)" >&2
+  exit 1
+fi
+
 if ! grep -Eq '^MODE=prod$' "$ENV_FILE" || ! grep -Eq '^BLAST_BACKEND_MODE=production$' "$ENV_FILE"; then
   echo "production env must explicitly select MODE=prod and BLAST_BACKEND_MODE=production" >&2
   exit 1
