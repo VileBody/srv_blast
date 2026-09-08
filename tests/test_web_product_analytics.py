@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 os.environ.setdefault("MODE", "dev")
 os.environ.setdefault("BLAST_BACKEND_MODE", "mock")
@@ -13,7 +14,7 @@ os.environ.setdefault("APP_URL", "http://localhost:5173")
 os.environ.setdefault("BLAST_SESSION_SECRET", "test-session-secret")
 os.environ.setdefault("BLAST_CORS_ORIGINS", "http://localhost:5173")
 
-from web_app.backend.app import analytics, main, persistence
+from web_app.backend.app import analytics, main, persistence, security
 
 
 def _event(name: str, user_id: str, **props: object) -> dict[str, object]:
@@ -106,3 +107,23 @@ def test_browser_analytics_rejects_unknown_properties() -> None:
         main.api_track(main.TrackPayload(name="page_view", props={"email": "private@example.com"}))
 
     assert caught.value.status_code == 422
+
+
+def test_rate_limit_identity_ignores_spoofable_forwarded_chain() -> None:
+    request = Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/auth/tg-start",
+            "headers": [
+                (b"x-forwarded-for", b"198.51.100.1, 203.0.113.5"),
+                (b"x-real-ip", b"203.0.113.5"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "query_string": b"",
+        }
+    )
+
+    assert security._client_key(request) == "203.0.113.5"

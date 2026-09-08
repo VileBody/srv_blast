@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import secrets
 import threading
@@ -215,10 +216,15 @@ def rate_limit_enabled() -> bool:
 
 
 def _client_key(request: Request) -> str:
-    # За обратным прокси реальный адрес приходит в X-Forwarded-For
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    # Production nginx overwrites X-Real-IP with its own connection address.
+    # X-Forwarded-For may contain a client-supplied first value and therefore
+    # cannot be trusted as a rate-limit identity.
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    try:
+        if real_ip:
+            return str(ipaddress.ip_address(real_ip))
+    except ValueError:
+        pass
     return request.client.host if request.client else "unknown"
 
 
