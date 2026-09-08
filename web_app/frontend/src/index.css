@@ -19,6 +19,12 @@
 .project-cover-gem { width: clamp(4px, 2.7cqi, 7px); height: clamp(4px, 2.7cqi, 7px); }
 .project-cover-initial { font-size: clamp(22px, 22cqi, 48px); transform: translateY(1px); }
 
+/* Hover-capable screens keep the video clear until the player is engaged.
+   Touch users have no hover state, so controls remain visible for them. */
+@media (hover: none), (pointer: coarse) {
+  .preview-player-control { opacity: 1; }
+}
+
 /*
  * Безлимит в «Лимитах» (профиль). Раньше это был обычный прогресс-бар с нулём заливки —
  * читалось как «сломано» или «ничего не доступно». Теперь полоса залита целиком и градиент

@@ -38,9 +38,7 @@ export function PreviewPlayer({
   style?: CSSProperties;
 }) {
   const { t } = useTranslation();
-  const controlsVisibility = playing
-    ? 'opacity-0 group-hover/preview:opacity-100 group-focus-within/preview:opacity-100'
-    : 'opacity-100';
+  const controlsVisibility = 'preview-player-control opacity-0 group-hover/preview:opacity-100 group-focus-within/preview:opacity-100';
   const arrow = 'absolute top-1/2 z-[4] flex h-[44px] w-[44px] -translate-y-1/2 items-center justify-center '
     + 'rounded-full bg-[rgba(5,1,15,0.55)] text-text-80 backdrop-blur-[8px] transition-[opacity,color,filter] hover:text-text';
   return (
