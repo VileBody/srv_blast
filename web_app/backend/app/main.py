@@ -43,16 +43,18 @@ def _shared_web_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 async def _sync_web_analytics_loop() -> None:
+    backfill_complete = False
     while True:
-        await asyncio.sleep(10)
         try:
             await _billing_backend().sync_web_activity(
-                _shared_web_events(analytics.EVENTS[-2000:])
+                _shared_web_events(analytics.EVENTS if not backfill_complete else analytics.EVENTS[-2000:])
             )
+            backfill_complete = True
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.exception("shared web analytics sync failed")
+        await asyncio.sleep(10)
 
 
 def _production_backend():
@@ -247,7 +249,6 @@ async def _restore_state() -> None:
         # unhealthy.  Do not accept uploads and silently leave jobs stranded.
         await run_in_threadpool(_production_backend().healthcheck)
         await _billing_backend().init()
-        await _billing_backend().sync_web_activity(_shared_web_events(analytics.EVENTS))
         _web_analytics_sync_task = asyncio.create_task(
             _sync_web_analytics_loop(), name="shared-web-analytics-sync"
         )
