@@ -13,24 +13,55 @@
 @font-face { font-family:'DriveHearts'; src:url('../fonts/Drive-Hearts.ttf') format('truetype'); font-weight:400; font-display:swap; }
 
 /* ─── Variables ──────────────────────────────────────────── */
+/*
+ * Taste pass (taste-skill, redesign-preserve): бренд остаётся фиолетовым
+ * (override «LILA RULE» — акцент задан брендом, а не выбран по умолчанию),
+ * но исполняется системно:
+ *   - один акцент на всю страницу, один угол градиента;
+ *   - лестница поверхностей вместо двух неразличимых почти-чёрных;
+ *   - тени тонируются в фон, чистого чёрного нет нигде;
+ *   - одна шкала радиусов: интерактив = пилюля, карточки = 20, мелочь = 12.
+ * Шрифты не трогаем — это отдельное требование.
+ */
 :root {
+  /* Surface ladder: чем выше элемент, тем светлее подложка */
   --bg:           #05010f;
-  --nav-bg:       #150F25;
-  --hero-r-bg:    #150f25;
-  --card-bg:      #060114;
+  --surface-1:    #0a0518;   /* карточки на фоне страницы */
+  --surface-2:    #100a20;   /* приподнятые блоки: навбар, hero-карта */
+  --surface-3:    #171029;   /* поповеры, диалоги */
+  --nav-bg:       var(--surface-2);
+  --hero-r-bg:    var(--surface-2);
+  --card-bg:      var(--surface-1);
+
   --text:         #f6f5fd;
   --text-80:      rgba(246,245,253,.8);
   --text-60:      rgba(246,245,253,.6);
   --text-40:      rgba(246,245,253,.4);
+
+  /* Линии и подсветки — тонированы акцентом, не белым */
+  --line:         rgba(139,111,230,.16);
+  --line-strong:  rgba(139,111,230,.32);
+
   --g-start:      rgba(139,111,230,1);   /* #8b6fe6 */
   --g-end:        rgba(95, 66,185,1);    /* #5f42b9 */
   --accent:       #5f42b9;
   --accent-80:    rgba(95,66,185,.8);
   --accent-20:    rgba(95,66,185,.2);
   --pill-border:  #8b6fe6;
+  --accent-soft:  #b99cff;               /* фокус-кольцо и ссылки на тёмном */
 
+  /* Один градиент на весь сайт (был разнобой 90/142/175deg) */
+  --grad:         linear-gradient(142deg, var(--g-start) 0%, var(--g-end) 100%);
+
+  /* Тени нейтральные: цветного (фиолетового) свечения под контейнерами нет.
+     Тон берётся от фона страницы, чистый чёрный не используется. */
+  --shadow-1: 0 1px 2px rgba(5,1,15,.5),  0 10px 24px -16px rgba(5,1,15,.7);
+  --shadow-2: 0 2px 6px rgba(5,1,15,.55), 0 24px 60px -30px rgba(5,1,15,.75);
+  --shadow-3: 0 4px 10px rgba(5,1,15,.6), 0 40px 100px -42px rgba(5,1,15,.8);
+
+  /* Радиусы: одна шкала, r15 сведён к r12 */
   --r20:  20px;
-  --r15:  15px;
+  --r15:  12px;
   --r12:  12px;
   --r40:  40px;
 
@@ -39,11 +70,18 @@
 
   --container: 1440px;
   --side:      120px;
+
+  /* Вертикальный ритм: один шаг вместо 160/163/165px вразнобой */
+  --section-gap: clamp(104px, 11vw, 168px);
+
+  --ease:      cubic-bezier(.22,.61,.36,1);
+  --dur-fast:  .16s;
+  --dur:       .28s;
 }
 
 /* ─── Gradient text utility ──────────────────────────────── */
 .gradient-text {
-  background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
+  background: var(--grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -198,7 +236,7 @@ a    { text-decoration: none; color: inherit; }
   font-size: 24px;
   font-weight: 400;
   z-index: 1;
-  background: linear-gradient(142deg, var(--g-start) 0%, var(--g-end) 100%);
+  background: var(--grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -253,7 +291,7 @@ a    { text-decoration: none; color: inherit; }
   height: 70px;
   padding: 0 40px;
   border-radius: var(--r40);
-  background: linear-gradient(90deg, var(--g-start) 0%, var(--g-end) 100%);
+  background: var(--grad);
   color: var(--text);
   font-family: var(--font);
   font-size: 24px;
@@ -358,7 +396,7 @@ a    { text-decoration: none; color: inherit; }
   position: relative;
   top: 1px;
   white-space: nowrap;
-  background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
+  background: var(--grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -590,7 +628,7 @@ a    { text-decoration: none; color: inherit; }
 .eyebrow {
   font-size: 24px;
   font-weight: 400;
-  background: linear-gradient(175deg, var(--g-start) 0%, var(--g-end) 100%);
+  background: var(--grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -909,7 +947,7 @@ a    { text-decoration: none; color: inherit; }
   border-radius: 20px;
   font-size: 14px;
   font-weight: 400;
-  background: linear-gradient(147deg, var(--g-start) 0%, var(--g-end) 100%);
+  background: var(--grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1157,7 +1195,7 @@ a    { text-decoration: none; color: inherit; }
 .feat-tag--accent span {
   font-size: 24px;
   font-weight: 350;
-  background: linear-gradient(132deg, var(--g-start) 0%, var(--g-end) 100%);
+  background: var(--grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1258,7 +1296,7 @@ a    { text-decoration: none; color: inherit; }
 }
 /* Blast column header is gradient */
 .feat-compare-blast .feat-compare-name {
-  background: linear-gradient(176deg, var(--g-start) 0%, var(--g-end) 100%);
+  background: var(--grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1354,7 +1392,7 @@ a    { text-decoration: none; color: inherit; }
   font-family: var(--font-deco);
   font-size: 420px;
   font-weight: 400;
-  background: linear-gradient(176deg, var(--g-start) 0%, var(--g-end) 100%);
+  background: var(--grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -2066,7 +2104,8 @@ a    { text-decoration: none; color: inherit; }
   border-radius: 999px;
   background: rgba(15,13,23,.42);
 }
-.language-switch--desktop { margin-left: auto; margin-right: 18px; }
+/* Переключатель языка живёт рядом с логотипом, а не у правого края */
+.language-switch--desktop { margin-left: 32px; margin-right: 0; }
 .language-switch--mobile { display: none; }
 .language-switch button {
   min-width: 34px;
@@ -2084,7 +2123,6 @@ a    { text-decoration: none; color: inherit; }
 }
 .language-switch button:hover { color: var(--text); }
 .language-switch button.is-active { color: var(--text); background: rgba(246,245,253,.12); }
-.navbar .language-switch + .navbar-cta { margin-left: 0; }
 
 .footer-cookie-settings {
   padding: 0;
@@ -2133,7 +2171,7 @@ a    { text-decoration: none; color: inherit; }
 .cookie-button:hover { opacity: .84; }
 .cookie-button:active { transform: translateY(1px); }
 .cookie-button--secondary { background: rgba(255,255,255,.06); }
-.cookie-button--primary { border-color: transparent; background: linear-gradient(142deg, var(--g-start), var(--g-end)); color: #120f1a; font-weight: 600; }
+.cookie-button--primary { border-color: transparent; background: var(--grad); color: #120f1a; font-weight: 600; }
 
 .cookie-dialog { position: fixed; z-index: 900; inset: 0; display: grid; place-items: center; padding: 20px; }
 .cookie-dialog__backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: rgba(5,4,9,.76); cursor: default; }
@@ -2153,8 +2191,7 @@ a    { text-decoration: none; color: inherit; }
 
 @media (max-width: 768px) {
   .language-switch--desktop { display: none; }
-  .language-switch--mobile { display: flex; margin-left: auto; }
-  .navbar .language-switch + .navbar-cta { margin-left: 10px; }
+  .language-switch--mobile { display: flex; margin-left: 16px; }
   .language-switch button { min-width: 28px; height: 24px; padding: 0 5px; font-size: 10px; }
   .cookie-banner { right: 12px; bottom: 12px; left: 12px; align-items: stretch; flex-direction: column; gap: 14px; padding: 16px; border-radius: 16px; }
   .cookie-banner__actions { display: grid; grid-template-columns: 1fr 1fr; }
@@ -2163,4 +2200,114 @@ a    { text-decoration: none; color: inherit; }
   .cookie-dialog__panel h2 { font-size: 23px; }
   .cookie-dialog__actions { align-items: stretch; flex-direction: column-reverse; }
   .cookie-dialog__actions .cookie-button { width: 100%; }
+}
+/* ════════════════════════════════════════════════════════════
+   TASTE PASS — калибровка глубины, ритма и состояний
+   (taste-skill, режим «redesign / preserve»: IA, копирайт, шрифты
+   и разметка не менялись; правится только визуальный слой)
+
+   Что делает этот блок:
+   1. Глубина — поверхности реально отличаются друг от друга,
+      тени тонированы в фон, чистого чёрного нет.
+   2. Ритм — один вертикальный шаг между секциями вместо 160/163/165px.
+   3. Состояния — hover/active/focus у всего интерактива (§4.5),
+      уважение к prefers-reduced-motion (§6.B).
+   ════════════════════════════════════════════════════════════ */
+
+/* ─── 1. Глубина ─────────────────────────────────────────── */
+.navbar {
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+}
+.hero-right,
+.steps-card,
+.feat-card,
+.cta-card {
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-2);
+}
+.example-slide {
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-1);
+}
+.hero-badge { box-shadow: var(--shadow-1); }
+
+/* Секционные разделители вместо «карточка ради карточки» (§4.4) */
+.social  { border-bottom: 1px solid var(--line); padding-bottom: 28px; }
+.footer  { border-top: 1px solid var(--line); }
+
+::selection { background: rgba(139,111,230,.32); color: var(--text); }
+.examples-scroll::-webkit-scrollbar-thumb { background: var(--line-strong); }
+
+/* ─── 2. Ритм ────────────────────────────────────────────── */
+.section-block,
+#how-it-works,
+.cta-section { margin-top: var(--section-gap); }
+.footer      { margin-top: var(--section-gap); }
+.social      { margin-top: clamp(56px, 6vw, 100px); }
+
+/* ─── 3. Состояния ───────────────────────────────────────── */
+/* Тактильный отклик: кнопка проваливается под пальцем, а не «замирает» */
+.btn {
+  transition: transform var(--dur-fast) var(--ease),
+              box-shadow var(--dur) var(--ease),
+              filter var(--dur) var(--ease);
+  box-shadow: var(--shadow-1);
+}
+.btn:hover  { opacity: 1; filter: brightness(1.06); transform: translateY(-2px); box-shadow: var(--shadow-2); }
+.btn:active { transform: translateY(0) scale(.985); box-shadow: var(--shadow-1); filter: brightness(.98); }
+
+.navbar-cta { transition: opacity var(--dur) var(--ease), transform var(--dur-fast) var(--ease); }
+.navbar-cta:hover  { opacity: .85; }
+.navbar-cta:active { transform: scale(.98); }
+
+.navbar-links a { transition: opacity var(--dur) var(--ease), color var(--dur) var(--ease); }
+
+.example-slide { transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.example-slide:hover { transform: translateY(-6px); box-shadow: var(--shadow-3); border-color: var(--line-strong); }
+
+.footer-social a,
+.footer-legal a,
+.footer-legal-link { transition: opacity var(--dur) var(--ease), color var(--dur) var(--ease); }
+
+.cookie-button { transition: transform var(--dur-fast) var(--ease), filter var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.cookie-button:active { transform: scale(.98); }
+
+:where(a, button, input, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* Диалог cookie — та же лестница поверхностей и тонированные тени */
+.cookie-banner { box-shadow: var(--shadow-3); border-color: var(--line); }
+.cookie-dialog__panel {
+  background: var(--surface-3);
+  border-color: var(--line);
+  box-shadow: var(--shadow-3);
+}
+
+/* ─── 4. Reduced motion (обязательно, §6.B) ──────────────── */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .load-fade { opacity: 1; }
+  .reveal    { opacity: 1; transform: none; }
+  .example-slide:hover { transform: none; }
+  .btn:hover { transform: none; }
+}
+
+/* ─── 5. Мобильный навбар ────────────────────────────────── */
+/* Один CTA-лейбл на весь сайт («Загрузить трек») длиннее прежнего
+   «Попробовать», поэтому на 375px подтягиваем внутренние отступы:
+   строка навигации обязана оставаться однострочной и не вылезать
+   за карточку навбара. */
+@media (max-width: 768px) {
+  .navbar { padding: 0 12px; border-radius: var(--r12); }
+  .navbar-cta { font-size: 13px; white-space: nowrap; }
 }
