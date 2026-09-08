@@ -198,7 +198,10 @@ class Settings:
     # Recovery timeouts
     # ------------------------------------------------------------------ #
     # Hours before a stuck PROCESSING chat is automatically reset.
-    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 2.0)
+    # Dispatch may legitimately wait up to roughly four hours for a saturated
+    # render node. Keep bot recovery beyond that budget so it cannot abandon a
+    # job that the orchestrator is still processing.
+    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 6.0)
     # Hours before a stuck WAITING_REFERRAL chat is automatically reset.
     bot_referral_timeout_h: float = _float_env("BOT_REFERRAL_TIMEOUT_H", 48.0)
 

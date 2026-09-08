@@ -342,7 +342,10 @@ def create_app() -> FastAPI:
 
     def _render_capacity_snapshot() -> Dict[str, Any]:
         urls = _windows_pool().get_active_urls(default_urls=_default_windows_urls())
-        return probe_render_capacity(urls)
+        return probe_render_capacity(
+            urls,
+            timeout_s=max(0.2, float(SETTINGS.windows_render_health_timeout_s)),
+        )
 
     def _ensure_render_capacity(request_payload: Dict[str, Any]) -> None:
         if str(request_payload.get("render_engine") or "ae").strip().lower() != "ae":

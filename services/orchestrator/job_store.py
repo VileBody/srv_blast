@@ -90,13 +90,17 @@ if stage_arg ~= '' then
   end
 end
 
-if status == 'QUEUED' and not obj.queued_at then
+local function is_nullish(value)
+  return value == nil or value == cjson.null
+end
+
+if status == 'QUEUED' and is_nullish(obj.queued_at) then
   obj.queued_at = now
 end
-if status == 'RUNNING' and not obj.started_at then
+if status == 'RUNNING' and is_nullish(obj.started_at) then
   obj.started_at = now
 end
-if (status == 'SUCCEEDED' or status == 'FAILED') and not obj.finished_at then
+if (status == 'SUCCEEDED' or status == 'FAILED') and is_nullish(obj.finished_at) then
   obj.finished_at = now
 end
 
