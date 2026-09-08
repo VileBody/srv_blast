@@ -588,6 +588,10 @@ async def api_me() -> dict[str, Any]:
         telegram_bot.configured() and auth_store.chat_id_for_user(store.current_user_id() or "")
     )
     data["mock"] = RUNTIME.backend == "mock"
+    data["isAdmin"] = bool(
+        store.current_user_id() in ADMIN_USER_IDS
+        or (not ADMIN_USER_IDS and not RUNTIME.production)
+    )
     data["capabilities"] = {
         "customSources": True,
         # Кандидаты дропа есть в обоих режимах: в моке — фикстура, в проде —
@@ -2033,12 +2037,16 @@ def _require_admin() -> None:
 
 
 @app.get("/api/admin/analytics", tags=["admin"])
-def api_admin_analytics(days: int = 30, weeks: int = 4) -> dict[str, Any]:
-    """Сводка, воронка и удержание для раздела аналитики."""
+async def api_admin_analytics(
+    days: int = 30,
+    weeks: int = 4,
+    source: Literal["site", "bot", "all"] = "site",
+) -> dict[str, Any]:
+    """Analytics for the site, the Telegram bot, or both channels combined."""
     _require_admin()
     if not 1 <= days <= 365:
         raise HTTPException(status_code=422, detail="days: 1..365")
-    return {
+    site_payload = {
         "summary": analytics.summary(days),
         "funnel": analytics.funnel(days),
         "retention": analytics.retention(weeks),
@@ -2050,6 +2058,136 @@ def api_admin_analytics(days: int = 30, weeks: int = 4) -> dict[str, Any]:
         "web": analytics.web_product_metrics(days),
         "journeys": analytics.user_journeys(days)[:100],
         "recent": analytics.recent(30),
+        "source": "site",
+        "isAdmin": True,
+    }
+    if source == "site":
+        return site_payload
+    if RUNTIME.backend != "production":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "bot_analytics_unavailable", "message": "Bot analytics require the production billing database"},
+        )
+
+    bot_raw = await _billing_backend().admin_bot_analytics(days)
+    bot_events = bot_raw["events"]
+
+    def bot_ids(*names: str) -> set[str]:
+        result: set[str] = set()
+        for name in names:
+            result.update((bot_events.get(name) or {}).get("userIds") or set())
+        return result
+
+    def bot_count(*names: str) -> int:
+        return sum(int((bot_events.get(name) or {}).get("events") or 0) for name in names)
+
+    paying_ids = bot_ids("payment_confirmed", "subscription_charged", "admin_activate")
+    bot_signups = bot_ids("start")
+    bot_started = bot_count("generation_started")
+    bot_failed = bot_count("generation_failed")
+    bot_summary = {
+        "days": days,
+        "activeUsers": len(bot_raw["activeUserIds"]),
+        "signups": len(bot_signups),
+        "payingUsers": len(paying_ids),
+        "conversionToPaid": round(len(paying_ids & bot_signups) / len(bot_signups) * 100, 1) if bot_signups else 0.0,
+        "videosGenerated": bot_count("generation_done"),
+        "videosPosted": 0,
+        "generationFailRate": round(bot_failed / (bot_started + bot_failed) * 100, 1) if bot_started + bot_failed else 0.0,
+        "paymentFailures": bot_count("subscription_charge_failed"),
+        "cancellations": bot_count("cancel_subscription_request"),
+        "limitHits": bot_count("no_credits"),
+        "events": sum(int(row.get("events") or 0) for row in bot_events.values()),
+    }
+
+    def funnel_rows(steps: list[tuple[str, set[str]]]) -> list[dict[str, Any]]:
+        first = len(steps[0][1]) if steps else 0
+        previous = first
+        rows: list[dict[str, Any]] = []
+        for step, identities in steps:
+            count = len(identities)
+            rows.append({
+                "step": step,
+                "users": count,
+                "fromPrev": round(count / previous * 100, 1) if previous else 0.0,
+                "fromStart": round(count / first * 100, 1) if first else 0.0,
+            })
+            previous = count or previous
+        return rows
+
+    bot_funnel_steps = [
+        ("bot_start", bot_ids("start")),
+        ("bot_subscription", bot_ids("subscription_ok")),
+        ("track_uploaded", bot_ids("audio_uploaded")),
+        ("generation_started", bot_ids("generation_started")),
+        ("generation_completed", bot_ids("generation_done")),
+        ("plan_purchased", paying_ids),
+    ]
+    bot_actions = [
+        {"name": name, "events": int(row["events"]), "users": int(row["users"])}
+        for name, row in bot_events.items()
+    ]
+    bot_actions.sort(key=lambda row: (row["users"], row["events"]), reverse=True)
+    bot_payload = {
+        "summary": bot_summary,
+        "funnel": funnel_rows(bot_funnel_steps),
+        "bot": {"actions": bot_actions, "recent": bot_raw["recent"]},
+        "recent": bot_raw["recent"],
+        "source": "bot",
+        "isAdmin": True,
+    }
+    if source == "bot":
+        return bot_payload
+
+    site_raw = analytics.channel_snapshot(days)
+
+    def canonical_site(values: set[str]) -> set[str]:
+        result: set[str] = set()
+        for user_id in values:
+            chat_id = auth_store.chat_id_for_user(user_id)
+            result.add(f"tg:{int(chat_id)}" if chat_id is not None else f"web:{user_id}")
+        return result
+
+    def site_ids(*names: str) -> set[str]:
+        values: set[str] = set()
+        for name in names:
+            values.update((site_raw["events"].get(name) or {}).get("userIds") or set())
+        return canonical_site(values)
+
+    def site_count(*names: str) -> int:
+        return sum(int((site_raw["events"].get(name) or {}).get("events") or 0) for name in names)
+
+    combined_signups = site_ids("signup_completed") | bot_ids("start")
+    combined_paying = site_ids("plan_purchased") | paying_ids
+    combined_started = site_count("generation_started") + bot_started
+    combined_failed = site_count("generation_failed") + bot_failed
+    combined_summary = {
+        "days": days,
+        "activeUsers": len(canonical_site(site_raw["activeUserIds"]) | bot_raw["activeUserIds"]),
+        "signups": len(combined_signups),
+        "payingUsers": len(combined_paying),
+        "conversionToPaid": round(len(combined_paying & combined_signups) / len(combined_signups) * 100, 1) if combined_signups else 0.0,
+        "videosGenerated": int(site_payload["summary"]["videosGenerated"]) + bot_count("generation_done"),
+        "videosPosted": int(site_payload["summary"]["videosPosted"]),
+        "generationFailRate": round(combined_failed / (combined_started + combined_failed) * 100, 1) if combined_started + combined_failed else 0.0,
+        "paymentFailures": site_count("payment_failed") + bot_count("subscription_charge_failed"),
+        "cancellations": site_count("subscription_canceled") + bot_count("cancel_subscription_request"),
+        "limitHits": site_count("limit_hit") + bot_count("no_credits"),
+        "events": int(site_payload["summary"]["events"]) + int(bot_summary["events"]),
+    }
+    combined_funnel = funnel_rows([
+        ("audience_entered", site_ids("app_entry", "signup_started", "signup_completed") | bot_ids("start")),
+        ("activated", site_ids("signup_completed") | bot_ids("subscription_ok")),
+        ("track_uploaded", site_ids("track_uploaded") | bot_ids("audio_uploaded")),
+        ("generation_started", site_ids("generation_started") | bot_ids("generation_started")),
+        ("generation_completed", site_ids("generation_completed") | bot_ids("generation_done")),
+        ("plan_purchased", combined_paying),
+    ])
+    return {
+        "summary": combined_summary,
+        "funnel": combined_funnel,
+        "channels": {"site": site_payload["summary"], "bot": bot_summary},
+        "source": "all",
         "isAdmin": True,
     }
 

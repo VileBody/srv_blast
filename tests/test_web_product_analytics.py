@@ -68,6 +68,25 @@ def test_track_once_deduplicates_reconciled_milestone(monkeypatch) -> None:
     assert len(analytics.EVENTS) == 1
 
 
+def test_channel_snapshot_keeps_identity_sets_for_cross_channel_dedupe(monkeypatch) -> None:
+    monkeypatch.setattr(
+        analytics,
+        "EVENTS",
+        [
+            _event("app_entry", "u1"),
+            _event("generation_started", "u1"),
+            _event("generation_started", "u1"),
+            _event("generation_started", "u2"),
+        ],
+    )
+
+    result = analytics.channel_snapshot(30)
+
+    assert result["activeUserIds"] == {"u1", "u2"}
+    assert result["events"]["generation_started"]["events"] == 3
+    assert result["events"]["generation_started"]["userIds"] == {"u1", "u2"}
+
+
 def test_track_once_retries_after_persistence_failure(monkeypatch) -> None:
     attempts = 0
 

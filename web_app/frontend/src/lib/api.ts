@@ -163,7 +163,8 @@ export const api = {
   unlinkGoogle: () => request<{ ok: boolean }>('/api/auth/google/link', { method: 'DELETE' }),
 
   /** Аналитика админки: сводка + воронка + удержание */
-  adminAnalytics: (days = 30) => request<AnalyticsResponse>(`/api/admin/analytics?days=${days}`),
+  adminAnalytics: (days = 30, source: 'site' | 'bot' | 'all' = 'all') =>
+    request<AnalyticsResponse>(`/api/admin/analytics?days=${days}&source=${source}`),
   /** Клиентское событие воронки (то, чего не видно на бэке) */
   trackEvent: (name: string, props: Record<string, unknown> = {}) =>
     request<{ ok: boolean; id: string }>('/api/analytics/track', { method: 'POST', body: JSON.stringify({ name, props }) }),

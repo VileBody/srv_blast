@@ -14,6 +14,7 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
  */
 
 const PERIODS = [7, 30, 90] as const;
+const SOURCES = ['all', 'site', 'bot'] as const;
 
 function StatTile({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
   return (
@@ -82,9 +83,10 @@ function ActivityTable({
 export function AdminAnalyticsPage() {
   const { t } = useTranslation();
   const [days, setDays] = useState<number>(30);
+  const [source, setSource] = useState<(typeof SOURCES)[number]>('site');
   const query = useQuery({
-    queryKey: ['admin-analytics', days],
-    queryFn: () => api.adminAnalytics(days),
+    queryKey: ['admin-analytics', days, source],
+    queryFn: () => api.adminAnalytics(days, source),
     retry: (count, error) => !(error instanceof ApiError && error.status === 403) && count < 1
   });
 
@@ -111,19 +113,35 @@ export function AdminAnalyticsPage() {
       <section className="card-2 shrink-0 p-[40px]">
         <div className="flex flex-wrap items-center justify-between gap-space-4">
           <h1 className="text-[32px] font-[400] leading-none text-text">{t('admin.title')}</h1>
-          <div className="flex items-center gap-[8px]">
-            {PERIODS.map((period) => (
-              <button
-                key={period}
-                type="button"
-                onClick={() => setDays(period)}
-                className={`h-[36px] rounded-r10 px-[14px] text-[15px] leading-none transition focus-visible:outline-none ${
-                  days === period ? 'bg-accent text-text' : 'bg-grad-soft-10 text-text-60 hover:text-text'
-                }`}
-              >
-                {t('admin.days', { count: period })}
-              </button>
-            ))}
+          <div className="flex flex-wrap items-center justify-end gap-[12px]">
+            <div className="flex items-center gap-[6px] rounded-r10 bg-grad-soft-10 p-[3px]">
+              {SOURCES.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => setSource(item)}
+                  className={`h-[32px] rounded-[8px] px-[14px] text-[14px] leading-none transition focus-visible:outline-none ${
+                    source === item ? 'bg-accent text-text' : 'text-text-60 hover:text-text'
+                  }`}
+                >
+                  {t(`admin.sources.${item}`)}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-[8px]">
+              {PERIODS.map((period) => (
+                <button
+                  key={period}
+                  type="button"
+                  onClick={() => setDays(period)}
+                  className={`h-[36px] rounded-r10 px-[14px] text-[15px] leading-none transition focus-visible:outline-none ${
+                    days === period ? 'bg-accent text-text' : 'bg-grad-soft-10 text-text-60 hover:text-text'
+                  }`}
+                >
+                  {t('admin.days', { count: period })}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -154,6 +172,54 @@ export function AdminAnalyticsPage() {
         </div>
       </section>
 
+      {source === 'all' && data?.channels && (
+        <section className="card-2 shrink-0 p-[40px]">
+          <h2 className="text-[24px] font-[350] leading-none text-text">{t('admin.channelComparison')}</h2>
+          <div className="mt-[24px] grid gap-[16px] lg:grid-cols-2">
+            {(['site', 'bot'] as const).map((channel) => {
+              const item = data.channels?.[channel];
+              return (
+                <div key={channel} className="rounded-r15 bg-grad-soft-10 p-space-5">
+                  <h3 className="text-[18px] text-text">{t(`admin.sources.${channel}`)}</h3>
+                  <div className="mt-[18px] grid grid-cols-2 gap-[14px] sm:grid-cols-4">
+                    <StatTile label={t('admin.activeUsers')} value={item?.activeUsers ?? 0} />
+                    <StatTile label={t('admin.signups')} value={item?.signups ?? 0} />
+                    <StatTile label={t('admin.videosGenerated')} value={item?.videosGenerated ?? 0} />
+                    <StatTile label={t('admin.paying')} value={item?.payingUsers ?? 0} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {source === 'bot' && (
+        <section className="card-2 shrink-0 p-[40px]">
+          <h2 className="text-[24px] font-[350] leading-none text-text">{t('admin.botActions')}</h2>
+          <p className="mt-[8px] text-[14px] leading-[19px] text-text-60">{t('admin.botActionsHint')}</p>
+          <div className="mt-[24px] grid gap-[16px] lg:grid-cols-2">
+            <ActivityTable
+              title={t('admin.actions')}
+              rows={(data?.bot?.actions ?? []).map((row) => ({ key: row.name, events: row.events, users: row.users }))}
+              label={(key) => t(`admin.botActionsMap.${key}`, { defaultValue: key })}
+            />
+            <div className="min-w-0 rounded-r15 bg-grad-soft-10 p-space-5">
+              <h3 className="text-[18px] font-[400] text-text">{t('admin.recentEvents')}</h3>
+              <div className="mt-[14px] divide-y divide-[rgba(246,245,253,.08)]">
+                {(data?.bot?.recent ?? []).slice(0, 16).map((row) => (
+                  <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_110px] gap-[12px] py-[10px] text-[14px]">
+                    <span className="truncate text-text-80">{t(`admin.botActionsMap.${row.name}`, { defaultValue: row.name })}</span>
+                    <span className="text-right text-text-40">{new Date(row.ts).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {source === 'site' && <>
       <section className="card-2 shrink-0 p-[40px]">
         <h2 className="text-[24px] font-[350] leading-none text-text">{t('admin.webJourney')}</h2>
         <p className="mt-[8px] text-[14px] leading-[19px] text-text-60">{t('admin.webJourneyHint')}</p>
@@ -325,6 +391,7 @@ export function AdminAnalyticsPage() {
           </div>
         )}
       </section>
+      </>}
     </div>
   );
 }

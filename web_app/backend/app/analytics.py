@@ -261,6 +261,25 @@ def recent(limit: int = 50) -> list[dict[str, Any]]:
     return list(reversed(EVENTS[-limit:]))
 
 
+def channel_snapshot(days: int = 30) -> dict[str, Any]:
+    """Identity and raw-count view used to combine web and bot analytics.
+
+    This stays server-side: the public admin response receives aggregate
+    numbers, while exact identities are used only to de-duplicate the same
+    Telegram account across the two event stores.
+    """
+    events = _within(days)
+    by_name: dict[str, dict[str, Any]] = {}
+    for event in events:
+        bucket = by_name.setdefault(event["name"], {"events": 0, "userIds": set()})
+        bucket["events"] += 1
+        bucket["userIds"].add(event["userId"])
+    return {
+        "activeUserIds": {event["userId"] for event in events},
+        "events": by_name,
+    }
+
+
 def _median(values: list[float]) -> float:
     if not values:
         return 0.0

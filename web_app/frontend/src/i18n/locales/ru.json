@@ -4,6 +4,7 @@
     "projects": "Проекты",
     "generate": "Генерация",
     "stats": "Статистика",
+    "adminAnalytics": "Админ-аналитика",
     "profile": "Профиль",
     "openMenu": "Открыть меню"
   },
@@ -53,6 +54,15 @@
   },
   "admin": {
     "title": "Аналитика",
+    "sources": {
+      "all": "Вместе",
+      "site": "Сайт",
+      "bot": "Бот"
+    },
+    "channelComparison": "Сравнение каналов",
+    "botActions": "Действия в боте",
+    "botActionsHint": "События Telegram-бота считаются отдельно от действий внутри сайта.",
+    "recentEvents": "Последние события",
     "days": "{{count}} дн.",
     "activeUsers": "Активные юзеры",
     "signups": "Регистрации",
@@ -85,13 +95,36 @@
     "forbidden": "Раздел недоступен",
     "forbiddenText": "Аналитика открыта только администраторам.",
     "steps": {
+      "audience_entered": "Вошёл в продукт",
+      "activated": "Активировался",
+      "bot_start": "Запустил бота",
+      "bot_subscription": "Прошёл подписку",
       "signup_started": "Начал регистрацию",
       "signup_completed": "Подтвердил в Telegram",
       "project_created": "Создал проект",
       "track_uploaded": "Загрузил трек",
       "generation_started": "Запустил генерацию",
       "generation_completed": "Получил ролики",
-      "video_posted": "Опубликовал в TikTok"
+      "video_posted": "Опубликовал в TikTok",
+      "plan_purchased": "Оплатил тариф"
+    },
+    "botActionsMap": {
+      "start": "Запустил бота",
+      "subscription_ok": "Подтвердил подписку",
+      "audio_uploaded": "Загрузил трек",
+      "generation_started": "Запустил генерацию",
+      "generation_done": "Получил ролик",
+      "generation_failed": "Ошибка генерации",
+      "rate_video": "Оценил ролик",
+      "sales_pitch": "Посмотрел предложение",
+      "view_packages": "Открыл тарифы",
+      "select_package": "Выбрал тариф",
+      "purchase_intent": "Начал оплату",
+      "payment_confirmed": "Оплата подтверждена",
+      "subscription_charged": "Продление оплачено",
+      "subscription_charge_failed": "Ошибка продления",
+      "cancel_subscription_request": "Запросил отмену",
+      "no_credits": "Закончились генерации"
     },
     "routes": {
       "dashboard": "Главная",

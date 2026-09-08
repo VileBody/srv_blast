@@ -288,6 +288,7 @@ export interface MeResponse {
   /** бот настроен И чат привязан — только тогда можно обещать «пришлём в Telegram» */
   telegramNotifications?: boolean;
   billingLinkRequired?: boolean;
+  isAdmin?: boolean;
   capabilities?: {
     customSources: boolean;
     analyzedDrops: boolean;
@@ -416,13 +417,19 @@ export interface WebProductMetrics {
 }
 
 export interface AnalyticsResponse {
+  source: 'site' | 'bot' | 'all';
   summary: AnalyticsSummary;
   funnel: FunnelRow[];
-  retention: RetentionRow[];
-  delivery: DeliverySummary;
-  flow: FlowMetrics;
-  web: WebProductMetrics;
-  journeys: UserJourney[];
-  recent: { id: string; name: string; userId: string; ts: string; props: Record<string, unknown> }[];
+  retention?: RetentionRow[];
+  delivery?: DeliverySummary;
+  flow?: FlowMetrics;
+  web?: WebProductMetrics;
+  bot?: {
+    actions: Array<{ name: string; events: number; users: number }>;
+    recent: { id: string; name: string; userId: string; ts: string; props: Record<string, unknown> }[];
+  };
+  channels?: { site: AnalyticsSummary; bot: AnalyticsSummary };
+  journeys?: UserJourney[];
+  recent?: { id: string; name: string; userId: string; ts: string; props: Record<string, unknown> }[];
   isAdmin: boolean;
 }

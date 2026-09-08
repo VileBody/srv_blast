@@ -4,6 +4,7 @@
     "projects": "Projects",
     "generate": "Generate",
     "stats": "Analytics",
+    "adminAnalytics": "Admin analytics",
     "profile": "Profile",
     "openMenu": "Open menu"
   },
@@ -52,6 +53,15 @@
   },
   "admin": {
     "title": "Analytics",
+    "sources": {
+      "all": "Combined",
+      "site": "Site",
+      "bot": "Bot"
+    },
+    "channelComparison": "Channel comparison",
+    "botActions": "Bot activity",
+    "botActionsHint": "Telegram bot events are counted separately from activity inside the site.",
+    "recentEvents": "Recent events",
     "days": "{{count}}d",
     "activeUsers": "Active users",
     "signups": "Signups",
@@ -84,13 +94,36 @@
     "forbidden": "Section unavailable",
     "forbiddenText": "Analytics is limited to admins.",
     "steps": {
+      "audience_entered": "Entered the product",
+      "activated": "Activated",
+      "bot_start": "Started the bot",
+      "bot_subscription": "Confirmed subscription",
       "signup_started": "Started signup",
       "signup_completed": "Confirmed in Telegram",
       "project_created": "Created a project",
       "track_uploaded": "Uploaded a track",
       "generation_started": "Started generation",
       "generation_completed": "Got videos",
-      "video_posted": "Posted to TikTok"
+      "video_posted": "Posted to TikTok",
+      "plan_purchased": "Purchased a plan"
+    },
+    "botActionsMap": {
+      "start": "Started the bot",
+      "subscription_ok": "Confirmed subscription",
+      "audio_uploaded": "Uploaded a track",
+      "generation_started": "Started generation",
+      "generation_done": "Received a video",
+      "generation_failed": "Generation failed",
+      "rate_video": "Rated a video",
+      "sales_pitch": "Viewed the offer",
+      "view_packages": "Opened pricing",
+      "select_package": "Selected a plan",
+      "purchase_intent": "Started checkout",
+      "payment_confirmed": "Payment confirmed",
+      "subscription_charged": "Renewal charged",
+      "subscription_charge_failed": "Renewal failed",
+      "cancel_subscription_request": "Requested cancellation",
+      "no_credits": "Ran out of generations"
     },
     "routes": {
       "dashboard": "Dashboard",

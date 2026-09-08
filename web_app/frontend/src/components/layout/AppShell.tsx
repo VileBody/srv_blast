@@ -54,11 +54,17 @@ function useAppViewport() {
   };
 }
 
-const nav = [
+const baseNav = [
   { href: '/app/projects', label: 'nav.projects', icon: '/assets/figma/nav-projects.svg', size: 37 },
   { href: '/app/generate', label: 'nav.generate', icon: '/assets/figma/nav-generate.svg', size: 34 },
   { href: '/app/stats', label: 'nav.stats', icon: '/assets/figma/nav-stats.svg', size: 34, locked: true }
 ];
+
+function navigation(isAdmin = false) {
+  return isAdmin
+    ? [...baseNav, { href: '/app/admin/analytics', label: 'nav.adminAnalytics', icon: '/assets/figma/nav-stats.svg', size: 34 }]
+    : baseNav;
+}
 
 function Avatar({ name, avatarUrl }: { name?: string; avatarUrl?: string }) {
   const { t } = useTranslation();
@@ -82,7 +88,7 @@ function Avatar({ name, avatarUrl }: { name?: string; avatarUrl?: string }) {
   );
 }
 
-function Sidebar({ activeJobId, userName, avatarUrl }: { activeJobId?: string; userName?: string; avatarUrl?: string }) {
+function Sidebar({ activeJobId, userName, avatarUrl, isAdmin }: { activeJobId?: string; userName?: string; avatarUrl?: string; isAdmin?: boolean }) {
   const { t } = useTranslation();
   return (
     <aside className="sidebar">
@@ -90,7 +96,7 @@ function Sidebar({ activeJobId, userName, avatarUrl }: { activeJobId?: string; u
         <img src="/assets/figma/logo-star.svg" width="60" height="60" alt="Blast" />
       </NavLink>
       <nav className="mt-[clamp(48px,calc(var(--app-layout-h,100vh)*.1),107px)] flex flex-col items-center gap-space-7">
-        {nav.map((item) => (
+        {navigation(isAdmin).map((item) => (
           <NavLink
             key={item.href}
             to={item.href === '/app/generate' && activeJobId ? `/app/processing/${activeJobId}` : item.href}
@@ -140,7 +146,7 @@ function MobileHeader({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-function Drawer({ open, onClose, activeJobId }: { open: boolean; onClose: () => void; activeJobId?: string }) {
+function Drawer({ open, onClose, activeJobId, isAdmin }: { open: boolean; onClose: () => void; activeJobId?: string; isAdmin?: boolean }) {
   const { t } = useTranslation();
   if (!open) return null;
   return (
@@ -152,7 +158,7 @@ function Drawer({ open, onClose, activeJobId }: { open: boolean; onClose: () => 
           <Button variant="ghost" size="sm" onClick={onClose}>×</Button>
         </div>
         <nav className="flex flex-col gap-space-3">
-          {nav.map((item) => (
+          {navigation(isAdmin).map((item) => (
             <NavLink
               key={item.href}
               to={item.href === '/app/generate' && activeJobId ? `/app/processing/${activeJobId}` : item.href}
@@ -223,8 +229,8 @@ export function AppShell() {
       <AppAnalytics />
       <div className="app-scale-viewport">
         <div className="app-frame" style={frameStyle}>
-          <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl ?? undefined} />
-        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} />
+          <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl ?? undefined} isAdmin={meQuery.data?.isAdmin} />
+        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} isAdmin={meQuery.data?.isAdmin} />
         {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
         <main className="with-sidebar min-w-0 flex-1">

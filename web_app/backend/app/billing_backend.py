@@ -156,6 +156,60 @@ class BillingBackend:
             if await conn.fetchval("SELECT 1") != 1:
                 raise BillingError("billing database healthcheck failed")
 
+    async def admin_bot_analytics(self, days: int) -> dict[str, Any]:
+        """Aggregate the bot event stream for the web admin analytics page.
+
+        The bot and web app intentionally keep separate event logs.  This read
+        joins neither database and therefore keeps attribution explicit; the
+        API layer may combine the returned identity sets with the web sets when
+        the operator selects the combined view.
+        """
+        period_days = max(1, min(int(days), 365))
+        pool = self._db._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT event, COUNT(*)::BIGINT AS events, "
+                "COUNT(DISTINCT tg_id)::BIGINT AS users, "
+                "ARRAY_AGG(DISTINCT tg_id) AS user_ids "
+                "FROM activity_log "
+                "WHERE created_at >= NOW() - ($1::INT * INTERVAL '1 day') "
+                "GROUP BY event ORDER BY events DESC, event",
+                period_days,
+            )
+            recent_rows = await conn.fetch(
+                "SELECT id, tg_id, event, detail, created_at "
+                "FROM activity_log "
+                "WHERE created_at >= NOW() - ($1::INT * INTERVAL '1 day') "
+                "ORDER BY created_at DESC, id DESC LIMIT 30",
+                period_days,
+            )
+
+        events: dict[str, dict[str, Any]] = {}
+        active_ids: set[str] = set()
+        for row in rows:
+            user_ids = {f"tg:{int(value)}" for value in (row["user_ids"] or [])}
+            active_ids.update(user_ids)
+            events[str(row["event"] or "")] = {
+                "events": int(row["events"] or 0),
+                "users": int(row["users"] or 0),
+                "userIds": user_ids,
+            }
+        return {
+            "days": period_days,
+            "activeUserIds": active_ids,
+            "events": events,
+            "recent": [
+                {
+                    "id": f"bot:{int(row['id'])}",
+                    "name": str(row["event"] or ""),
+                    "userId": f"tg:{int(row['tg_id'])}",
+                    "ts": _iso(row["created_at"]) or "",
+                    "props": {"detail": str(row["detail"] or "")},
+                }
+                for row in recent_rows
+            ],
+        }
+
     async def ensure_user(self, tg_id: int, username: str = "") -> None:
         await self._db.ensure_user(int(tg_id), username)
 
