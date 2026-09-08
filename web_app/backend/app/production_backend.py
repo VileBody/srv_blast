@@ -950,7 +950,8 @@ class ProductionBackend:
                 raise ProductionBackendError("sound hook requires an uploaded sound URL")
 
         f6_fields: dict[str, Any] = {}
-        if family:
+        hook_enabled = bool(family and family != "none")
+        if hook_enabled:
             drop = hook.get("dropTime")
             if start is None or end is None or drop is None:
                 raise ProductionBackendError("Для хука нужны отрывок и тайминг дропа")
@@ -994,7 +995,7 @@ class ProductionBackend:
             "subtitles_mode": subtitles_mode,
             "user_clip_start_sec": float(start) if start is not None else None,
             "user_clip_end_sec": float(end) if end is not None else None,
-            "hook_enabled": bool(family),
+            "hook_enabled": hook_enabled,
             "user_drop_t": hook.get("dropTime"),
             "f4_device": f4_device,
             "hook_device": hook_device,

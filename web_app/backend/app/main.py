@@ -5,14 +5,13 @@ import logging
 import os
 import secrets
 import tempfile
-import httpx
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
@@ -577,51 +576,6 @@ async def api_me() -> dict[str, Any]:
         "subscriptionBonuses": True,
     }
     return data
-
-
-@app.get("/api/resources/tiktok-methodology", tags=["resources"])
-async def api_tiktok_methodology(download: bool = False) -> Response:
-    """Serve the exact PDF used by the public Telegram bot.
-
-    Telegram file ids belong to the bot that uploaded them, so the public bot
-    token is required explicitly. A missing token or stale file id is surfaced
-    as an error instead of silently serving a different document.
-    """
-    token = str(os.getenv("TG_BOT_PUBLIC_TOKEN") or "").strip()
-    if not token:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "methodology_not_configured", "message": "TG_BOT_PUBLIC_TOKEN is required"},
-        )
-    file_id = "BQACAgIAAxkBAAECeVhqclv0ETyVJrrzHMKlXzJS8AvbaAACZaMAArDMkEuxB7oCr9RDTj0E"
-    try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            meta_response = await client.get(
-                f"https://api.telegram.org/bot{token}/getFile",
-                params={"file_id": file_id},
-            )
-            meta_response.raise_for_status()
-            meta = meta_response.json()
-            file_path = str(((meta.get("result") or {}).get("file_path") or "")).strip()
-            if not meta.get("ok") or not file_path:
-                raise RuntimeError("Telegram returned no file path for the methodology")
-            file_response = await client.get(f"https://api.telegram.org/file/bot{token}/{file_path}")
-            file_response.raise_for_status()
-    except (httpx.HTTPError, RuntimeError, ValueError) as exc:
-        logger.warning("methodology_download_failed error=%s", str(exc))
-        raise HTTPException(
-            status_code=502,
-            detail={"code": "methodology_unavailable", "message": "TikTok methodology is temporarily unavailable"},
-        ) from exc
-    disposition = "attachment" if download else "inline"
-    return Response(
-        content=file_response.content,
-        media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'{disposition}; filename="blast-tiktok-guide.pdf"',
-            "Cache-Control": "private, max-age=3600",
-        },
-    )
 
 
 # ------------------------- Projects -------------------------

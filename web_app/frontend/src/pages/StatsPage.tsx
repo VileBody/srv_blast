@@ -480,7 +480,7 @@ export function StatsPage() {
         {/* Небольшой нахлёст соединяет пилы визуально, но заканчивается внутри скругления:
             кнопка больше не перекрывает номер итерации. */}
         <div className="mt-[28px] flex h-[60px] items-center rounded-r15 bg-grad-soft-10 pr-[20px]">
-          <span className="relative z-10 flex h-[60px] shrink-0 items-center whitespace-nowrap rounded-r15 border-2 border-accent-light bg-grad-soft-20 px-[21px] text-[24px] font-[400] leading-[29px] text-text">
+          <span className="relative z-10 flex h-[60px] shrink-0 items-center whitespace-nowrap rounded-r15 border-2 border-accent-light px-[21px] text-[24px] font-[400] leading-[29px] text-text" style={{ background: '#34245d' }}>
             {t('stats.iterationN', { n: iterationNumber })}
           </span>
           {/* Кнопка остаётся на месте даже до накопления данных: меняется доступность,

@@ -356,6 +356,26 @@ def test_f1_and_f5_hooks_use_orchestrator_contract(monkeypatch: pytest.MonkeyPat
     assert payload["reuse_text_job_id"] == "orch-1"
 
 
+def test_no_hook_does_not_require_drop_timing(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module(monkeypatch)
+    backend = _backend(module, _config(module))
+    job = _job()
+    variation = job["renderJob"]["variations"][0]
+    variation["hook"] = {
+        "family": "none",
+        "dropTime": None,
+        "resolved": {"transition": "snap_wipe", "extra": "analog_glitch", "extraFull": True},
+        "config": {"effectGlue": "Щелчок", "effectStyle": "Глитч"},
+    }
+
+    payload = backend._request_payload(job=job, variation=variation, index=1, total=1, master_id=None)
+
+    assert payload["hook_enabled"] is False
+    assert "user_drop_t" not in payload
+    assert payload["effect_transition"] == "snap_wipe"
+    assert payload["effect_extra"] == "analog_glitch"
+
+
 @pytest.mark.parametrize("media_type", ["video", "photo"])
 def test_semantic_ranking_preserves_preview_order_and_rejects_catalog_drift(monkeypatch, media_type):
     module = _module(monkeypatch)

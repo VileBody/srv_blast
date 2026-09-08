@@ -143,7 +143,10 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
    * нужен четвёртый месяц. Раньше у текущего сегмента брался месяц i+1, а у будущих — i,
    * и первые два сегмента показывали один и тот же месяц.
    */
-  const availableIn = (index: number) => monthName(index + 1);
+  const availableIn = (index: number) => {
+    const date = new Date(start.getFullYear(), start.getMonth() + index + 1, 1);
+    return t(`profile.monthLocative.${date.getMonth()}`);
+  };
   const rewards = [t('profile.bonusTrack'), t('profile.bonusTrack'), t('profile.bonusUnlimited')];
   const CURRENT_BG = 'bg-[linear-gradient(179deg,#6b52c4_0%,#463086_100%)]'; // чуть темнее grad-main
   /*

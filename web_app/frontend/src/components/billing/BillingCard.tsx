@@ -25,12 +25,6 @@ function formatDate(iso: string | null | undefined, locale: string): string {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-const PLAN_LOGO: Record<Exclude<Subscription['tier'], 'TRIAL'>, string> = {
-  BLAST: '/assets/figma/pr-logo-blast.svg',
-  GLOW: '/assets/figma/pr-logo-glow.svg',
-  IMPULSE: '/assets/figma/pr-logo-impulse.svg'
-};
-
 export function BillingCard({ subscription }: { subscription: Subscription }) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith('en') ? 'en-GB' : 'ru-RU';
@@ -57,13 +51,10 @@ export function BillingCard({ subscription }: { subscription: Subscription }) {
         ? { title: t('billing.canceledTitle'), text: renews ? t('billing.canceledText', { date: renews }) : t('billing.canceledTextNoDate'), tone: 'muted' }
         : { title: t('billing.activeTitle'), text: renews ? t('billing.activeText', { date: renews }) : '', tone: 'ok' };
   const payments = subscription.payments ?? [];
-  const planLogo = PLAN_LOGO[subscription.tier as Exclude<Subscription['tier'], 'TRIAL'>];
-
   return <section className="card-2 shrink-0 p-[40px]">
     <h2 className="text-[24px] font-[350] leading-none text-text">{t('billing.title')}</h2>
     <div className="mt-[28px] grid gap-[20px] lg:grid-cols-[minmax(280px,.8fr)_minmax(420px,1.2fr)]">
-      <div className="relative flex min-h-[190px] flex-col rounded-r15 border border-[rgba(139,111,230,.28)] bg-[rgba(16,9,34,.32)] p-[24px] pr-[112px]">
-        <img src={planLogo} alt="" aria-hidden="true" className="pointer-events-none absolute right-[24px] top-[24px] h-[56px] w-[64px] object-contain opacity-75" />
+      <div className="relative flex min-h-[190px] flex-col rounded-r15 border border-[rgba(139,111,230,.28)] bg-[rgba(16,9,34,.32)] p-[24px]">
         <span className="relative z-[1] text-[14px] text-text-40">{t('billing.currentPlan')}</span>
         <strong className="relative z-[1] mt-[14px] text-[24px] font-[400] text-text">{view.title}</strong>
         {view.text && <p className="relative z-[1] mt-[8px] text-[15px] leading-[21px] text-text-60">{view.text}</p>}

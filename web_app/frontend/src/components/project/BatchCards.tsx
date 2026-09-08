@@ -419,8 +419,8 @@ export function GenerationsCard({
           /* Прячем строки прозрачностью, а не цветной накладкой. Тогда сквозь
              фейд всегда виден фактический многослойный фон card-2 без шва. */
           style={{
-            maskImage: 'linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%)',
-            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 18px), transparent 100%)',
+            maskImage: 'linear-gradient(to bottom, transparent 0, #000 2px, #000 calc(100% - 12px), transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 2px, #000 calc(100% - 12px), transparent 100%)',
           }}
         >
           {videos.length === 0 && !loading ? (
@@ -625,18 +625,18 @@ export function ProcessingAside({ done, total, activeVideo, renderFormat, telegr
 
       {/* главное сообщение экрана: ждать необязательно */}
       <div className="mt-[20px] shrink-0 rounded-r15 border border-accent-light bg-grad-soft-10 px-[20px] py-[16px]">
-        <p className="text-[18px] leading-none text-text">{t('processing.closeTabTitle')}</p>
-        <p className="mt-[8px] text-[15px] leading-[19px] text-text-60">{t(telegram ? 'processing.closeTabText' : 'processing.closeTabTextNoBot')}</p>
+        <p className="text-[16px] leading-none text-text">{t('processing.closeTabTitle')}</p>
+        <p className="mt-[8px] text-[14px] leading-[18px] text-text-60">{t(telegram ? 'processing.closeTabText' : 'processing.closeTabTextNoBot')}</p>
       </div>
 
       <div className="mt-[10px] flex shrink-0 items-center justify-between gap-[16px] rounded-r15 bg-grad-soft-10 px-[20px] py-[14px]">
         <span className="min-w-0">
           <span className="block truncate text-[16px] leading-none text-text">{t('processing.guideTitle')}</span>
-          <span className="mt-[6px] block text-[13px] leading-none text-text-60">PDF · {t('processing.guideCaption')}</span>
+          <span className="mt-[6px] block text-[14px] leading-[18px] text-text-60">PDF · {t('processing.guideCaption')}</span>
         </span>
         <span className="flex shrink-0 items-center gap-[8px]">
-          <a href="/api/resources/tiktok-methodology" target="_blank" rel="noreferrer" className="rounded-r10 border border-[rgba(246,245,253,.18)] px-[12px] py-[8px] text-[13px] text-text-80 transition hover:border-accent-light hover:text-text">{t('common.view')}</a>
-          <a href="/api/resources/tiktok-methodology?download=1" className="rounded-r10 border border-accent bg-grad-soft-20 px-[12px] py-[8px] text-[13px] text-text-80 transition hover:text-text">{t('common.download')}</a>
+          <a href="/assets/resources/blast-tiktok-guide.pdf" target="_blank" rel="noreferrer" className="rounded-r10 border border-[rgba(246,245,253,.18)] px-[12px] py-[8px] text-[14px] text-text-80 transition hover:border-accent-light hover:text-text">{t('common.view')}</a>
+          <a href="/assets/resources/blast-tiktok-guide.pdf" download className="rounded-r10 border border-accent bg-grad-soft-20 px-[12px] py-[8px] text-[14px] text-text-80 transition hover:text-text">{t('common.download')}</a>
         </span>
       </div>
 
