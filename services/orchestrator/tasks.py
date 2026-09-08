@@ -3904,7 +3904,12 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
     return summary
 
 
-@celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)
+# Dispatch waits out node saturation via retries: the render node accepts one
+# AE job at a time and answers 503 while busy, so the retry loop *is* the
+# queue. With backoff capped at 120s, 120 retries ≈ 4h of waiting, which
+# covers a realistic backlog. It stays finite on purpose: a node that is
+# actually dead must still end in FAILED so the alert fires.
+@celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=120)
 def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     store = JobStore.from_env()
     st = store.get(job_id)
