@@ -1091,6 +1091,24 @@ class CreditsDB:
             )
         return int(value or 0)
 
+    async def get_generation_usage(self, tg_id: int) -> int:
+        """Return net video credits spent across bot and web generations.
+
+        Reservations count immediately, while explicit failure refunds cancel
+        the matching spend. Payment and admin balance changes are deliberately
+        excluded because they change capacity, not usage.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            net = await conn.fetchval(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+                "WHERE tg_id = $1 AND reason IN "
+                "('generation', 'generation_failed_refund', "
+                "'web_generation_reserve', 'web_generation_refund')",
+                int(tg_id),
+            )
+        return max(0, -int(net or 0))
+
     async def count_earned_web_subscription_bonuses(self, tg_id: int) -> int:
         """Return Blast rewards backed by both elapsed time and paid renewals.
 

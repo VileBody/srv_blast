@@ -77,6 +77,17 @@ def _iso(value: Any) -> str | None:
     return str(value)
 
 
+def credit_usage_view(base_total: int | None, balance: int, spent: int) -> tuple[int | None, int]:
+    """Build a truthful meter for the cumulative shared credit balance."""
+    used = max(0, int(spent))
+    if base_total is None:
+        return None, used
+    # Unused credits roll over between purchases. Their grants may make the
+    # real pool larger than the nominal allowance of the latest product.
+    total = max(int(base_total), max(0, int(balance)) + used)
+    return total, used
+
+
 class BillingBackend:
     def __init__(self) -> None:
         if SETTINGS.backend != "production":
@@ -152,6 +163,7 @@ class BillingBackend:
         tg_id = int(tg_id)
         await self.ensure_user(tg_id)
         balance = await self._db.get_balance(tg_id)
+        generation_usage = await self._db.get_generation_usage(tg_id)
         track_balance = await self._db.get_track_balance(tg_id)
         track_unlimited = await self._db.is_track_unlimited(tg_id)
         bonuses_claimed = await self._db.count_web_subscription_bonuses(tg_id)
@@ -200,10 +212,11 @@ class BillingBackend:
                 except ValueError:
                     expires_at = None
 
+        total, generation_usage = credit_usage_view(total, balance, generation_usage)
         return {
             "tier": tier,
             "creditsTotal": total,
-            "creditsUsed": 0 if total is None else max(0, total - balance),
+            "creditsUsed": generation_usage,
             "creditsLeft": balance,
             "tracksTotal": None if track_unlimited else max(tracks_total, tracks_used + track_balance),
             "tracksUsed": tracks_used,

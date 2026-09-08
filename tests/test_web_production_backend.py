@@ -673,3 +673,12 @@ def test_web_tariffs_match_public_payment_credit_grants(monkeypatch: pytest.Monk
     assert credits.package_video_credits("15") == 100
     assert credits.package_video_credits("30") == 400
     assert credits.package_video_credits("50") == 100_000
+
+
+def test_credit_usage_meter_counts_spend_even_with_rolled_over_balance(monkeypatch: pytest.MonkeyPatch) -> None:
+    _module(monkeypatch)
+    billing = importlib.import_module("app.billing_backend")
+
+    assert billing.credit_usage_view(100, balance=180, spent=20) == (200, 20)
+    assert billing.credit_usage_view(100, balance=80, spent=20) == (100, 20)
+    assert billing.credit_usage_view(None, balance=10_000, spent=23) == (None, 23)
