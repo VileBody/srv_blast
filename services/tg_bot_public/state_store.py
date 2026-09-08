@@ -642,6 +642,7 @@ class RedisChatStateStore:
         existing.colors_done = False
         existing.subtitle_color_hex = ""
         existing.accent_color_hex = ""
+        existing.frame_id = ""
         existing.versions_count = 1
         existing.referral_tag = ""
         existing.referral_wait_started_at = 0.0
