@@ -601,6 +601,7 @@ class AeRenderer:
             # 2) serialize only the AE session itself.
             if result is None:
                 backend = self._render_backend()
+                render_status_path = job_dir / "ae_status.txt"
                 log.info("AE render backend job_id=%s backend=%s", spec.job_id, backend)
                 with _RENDER_LOCK:
                     self._maybe_reset_ae_project(tag=f"{spec.job_id}_pre")
@@ -609,6 +610,7 @@ class AeRenderer:
                         try:
                             run_jsx_path = jsx_path
                             if backend == "afterfx_queue":
+                                render_status_path = job_dir / "work" / "render_queue_status.txt"
                                 run_jsx_path = self._write_afterfx_queue_wrapper(
                                     job_dir=job_dir,
                                     source_jsx_path=jsx_path,
@@ -621,6 +623,7 @@ class AeRenderer:
                                 job_id=spec.job_id,
                                 entry_comp=spec.entry_comp,
                                 output_relpath=spec.output_relpath,
+                                status_path=render_status_path,
                             )
                         except Exception as e:
                             log.exception("AfterFX error for job %s", spec.job_id)
@@ -630,7 +633,23 @@ class AeRenderer:
                         aep_path: Optional[str] = None
                         comp_name: Optional[str] = None
                         if result is None:
-                            ok, aep_path, comp_name, status_msg = self._wait_for_status(job_dir, spec.job_id)
+                            status_timeout_seconds = 300
+                            if backend == "afterfx_queue":
+                                status_timeout_seconds = max(
+                                    300,
+                                    int(
+                                        self._env_float(
+                                            "AFTERFX_STATUS_TIMEOUT_S",
+                                            self._env_float("AFTERFX_RUN_TIMEOUT_S", 600.0),
+                                        )
+                                    ),
+                                )
+                            ok, aep_path, comp_name, status_msg = self._wait_for_status(
+                                job_dir,
+                                spec.job_id,
+                                timeout_seconds=status_timeout_seconds,
+                                status_path=render_status_path,
+                            )
                             if not ok:
                                 result = _fail(status_msg)
 
@@ -655,8 +674,19 @@ class AeRenderer:
 
                         # wait output while AE is still the active owner
                         if result is None:
-                            if not self._wait_for_output(output_path):
-                                result = _fail(f"output file {output_path} did not appear or is not stable in time")
+                            min_output_bytes = max(
+                                1,
+                                int(self._env_float("AE_OUTPUT_MIN_BYTES", 64 * 1024)),
+                            )
+                            if not self._wait_for_output(
+                                output_path,
+                                min_bytes=min_output_bytes,
+                            ):
+                                actual_size = output_path.stat().st_size if output_path.exists() else 0
+                                result = _fail(
+                                    f"output file {output_path} did not become stable and complete in time "
+                                    f"(size={actual_size}, min_bytes={min_output_bytes})"
+                                )
                     except Exception as e:
                         log.exception("Unexpected AE-session error for job %s", spec.job_id)
                         result = _fail(f"unexpected AE-session error: {e}")
@@ -810,7 +840,8 @@ class AeRenderer:
         wrapper_path.parent.mkdir(parents=True, exist_ok=True)
         cfg = {
             "source_jsx_path": str(source_jsx_path),
-            "status_path": str(job_dir / "ae_status.txt"),
+            "builder_status_path": str(job_dir / "ae_status.txt"),
+            "status_path": str(job_dir / "work" / "render_queue_status.txt"),
             "entry_comp": entry_comp,
             "output_path": str(job_dir / output_relpath),
             "output_module_template": (os.getenv("AE_AFTERFX_QUEUE_OUTPUT_MODULE_TEMPLATE") or "").strip(),
@@ -880,7 +911,7 @@ class AeRenderer:
 
         writeStatus("RUNNING", "wrapper started");
         $.evalFile(new File(CFG.source_jsx_path));
-        var st = parseStatus(readText(CFG.status_path));
+        var st = parseStatus(readText(CFG.builder_status_path));
         if (st.status !== "OK") {
             throw new Error("builder status=" + st.status + " " + st.message);
         }
@@ -938,7 +969,15 @@ class AeRenderer:
         )
         return wrapper_path
 
-    def _run_afterfx(self, job_dir: Path, jsx_path: Path, job_id: str, entry_comp: str, output_relpath: str) -> None:
+    def _run_afterfx(
+        self,
+        job_dir: Path,
+        jsx_path: Path,
+        job_id: str,
+        entry_comp: str,
+        output_relpath: str,
+        status_path: Optional[Path] = None,
+    ) -> None:
         self._ensure_ae_scripting_writes_allowed()
         self._ensure_ae_render_only_flag()
         env = os.environ.copy()
@@ -956,7 +995,7 @@ class AeRenderer:
         watchdog_poll_s = max(0.1, self._env_float("AFTERFX_WATCHDOG_POLL_S", 2.0))
 
         cmd = [self.afterfx_bin, "-r", str(jsx_path)]
-        status_path = job_dir / "ae_status.txt"
+        status_path = status_path or (job_dir / "ae_status.txt")
         output_path = job_dir / output_relpath
         project_path = job_dir / "work" / "project.aep"
         started_at = time.time()
@@ -1018,8 +1057,14 @@ class AeRenderer:
                 f"logs={stdout_log_path};{stderr_log_path}"
             )
 
-    def _wait_for_status(self, job_dir: Path, job_id: str, timeout_seconds: int = 300) -> Tuple[bool, Optional[str], Optional[str], str]:
-        status_path = job_dir / "ae_status.txt"
+    def _wait_for_status(
+        self,
+        job_dir: Path,
+        job_id: str,
+        timeout_seconds: int = 300,
+        status_path: Optional[Path] = None,
+    ) -> Tuple[bool, Optional[str], Optional[str], str]:
+        status_path = status_path or (job_dir / "ae_status.txt")
         start = time.time()
         while True:
             if status_path.exists():
@@ -1042,7 +1087,7 @@ class AeRenderer:
                     if status == "ERROR":
                         return False, None, None, f"AE script reported ERROR: {msg}"
             if time.time() - start > timeout_seconds:
-                return False, None, None, f"Timeout waiting for ae_status.txt for job {job_id}"
+                return False, None, None, f"Timeout waiting for {status_path} for job {job_id}"
             time.sleep(0.5)
 
     @staticmethod
@@ -1257,7 +1302,13 @@ class AeRenderer:
                 f"logs={stdout_log_path};{stderr_log_path}"
             )
 
-    def _wait_for_output(self, output_path: Path, timeout_seconds: int = 1800, stable_seconds: int = 3) -> bool:
+    def _wait_for_output(
+        self,
+        output_path: Path,
+        timeout_seconds: int = 1800,
+        stable_seconds: int = 5,
+        min_bytes: int = 64 * 1024,
+    ) -> bool:
         start = time.time()
         last_size = -1
         last_change = time.time()
@@ -1272,7 +1323,7 @@ class AeRenderer:
                     last_size = size
                     last_change = time.time()
                 else:
-                    if size > 0 and (time.time() - last_change) >= stable_seconds:
+                    if size >= min_bytes and (time.time() - last_change) >= stable_seconds:
                         return True
 
             if time.time() - start > timeout_seconds:
