@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -59,30 +60,56 @@ def request_local_alignment(
             "ALIGNMENT_MODEL_UNAVAILABLE",
             "ALIGNMENT_SERVICE_URL is empty",
         )
-    try:
-        # This is a Docker-internal service call. Proxy environment variables
-        # are for external egress and must never intercept the private hostname.
-        with httpx.Client(timeout=float(timeout_s), trust_env=False) as client:
-            response = client.post(
-                f"{base_url}/align",
-                json={
-                    "audio_path": str(Path(audio_path).resolve()),
-                    "target_fragment": str(target_fragment),
-                    "clip_start_abs": float(clip_start_abs),
-                    "clip_end_abs": float(clip_end_abs),
-                    "request_id": str(request_id or ""),
-                },
+    request_payload = {
+        "audio_path": str(Path(audio_path).resolve()),
+        "target_fragment": str(target_fragment),
+        "clip_start_abs": float(clip_start_abs),
+        "clip_end_abs": float(clip_end_abs),
+        "request_id": str(request_id or ""),
+    }
+    max_attempts = 3
+    response: httpx.Response | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            # This is a Docker-internal service call. Proxy environment variables
+            # are for external egress and must never intercept the private hostname.
+            with httpx.Client(timeout=float(timeout_s), trust_env=False) as client:
+                response = client.post(f"{base_url}/align", json=request_payload)
+            break
+        except httpx.TimeoutException as exc:
+            raise AlignmentServiceError(
+                "ALIGNMENT_TIMEOUT",
+                f"alignment service request exceeded {float(timeout_s):.1f}s",
+            ) from exc
+        except httpx.TransportError as exc:
+            if attempt >= max_attempts:
+                raise AlignmentServiceError(
+                    "ALIGNMENT_MODEL_UNAVAILABLE",
+                    f"alignment service request failed after {max_attempts} attempts: "
+                    f"{type(exc).__name__}",
+                ) from exc
+            delay_s = float(2 ** (attempt - 1))
+            log.warning(
+                "alignment_service_transport_retry request_id=%s attempt=%d/%d "
+                "delay_s=%.1f error=%s",
+                str(request_id or ""),
+                attempt,
+                max_attempts,
+                delay_s,
+                type(exc).__name__,
             )
-    except httpx.TimeoutException as exc:
-        raise AlignmentServiceError(
-            "ALIGNMENT_TIMEOUT",
-            f"alignment service request exceeded {float(timeout_s):.1f}s",
-        ) from exc
-    except httpx.HTTPError as exc:
+            time.sleep(delay_s)
+        except httpx.HTTPError as exc:
+            raise AlignmentServiceError(
+                "ALIGNMENT_MODEL_UNAVAILABLE",
+                f"alignment service request failed: {type(exc).__name__}",
+            ) from exc
+
+    if response is None:
         raise AlignmentServiceError(
             "ALIGNMENT_MODEL_UNAVAILABLE",
-            f"alignment service request failed: {type(exc).__name__}",
-        ) from exc
+            "alignment service request produced no response",
+        )
 
     try:
         payload = response.json()

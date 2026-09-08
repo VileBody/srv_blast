@@ -44,5 +44,24 @@ def test_afterfx_queue_wrapper_renders_inside_full_ae(tmp_path: Path) -> None:
     wrapper = wrapper_path.read_text(encoding="utf-8-sig")
 
     assert "$.evalFile(new File(CFG.source_jsx_path))" in wrapper
+    assert '"builder_status_path"' in wrapper
+    assert "ae_status.txt" in wrapper
+    assert '"status_path"' in wrapper
+    assert "render_queue_status.txt" in wrapper
+    assert "parseStatus(readText(CFG.builder_status_path))" in wrapper
     assert "app.project.renderQueue.items.add(comp)" in wrapper
     assert "app.project.renderQueue.render()" in wrapper
+
+
+def test_render_output_rejects_mp4_header_only(tmp_path: Path) -> None:
+    renderer = AeRenderer(base_dir=tmp_path)
+    output_path = tmp_path / "output.mp4"
+    output_path.write_bytes(
+        bytes.fromhex("00000018667479706d703432000000006d7034326d703431")
+    )
+
+    assert not renderer._wait_for_output(
+        output_path,
+        timeout_seconds=0,
+        stable_seconds=0,
+    )
