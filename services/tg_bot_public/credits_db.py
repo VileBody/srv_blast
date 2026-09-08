@@ -19,6 +19,14 @@ _PAID_REASONS = ("payment", "admin_activate", "manual_activation")
 
 _PARTNER_PWD_ITERATIONS = 210_000
 
+# Core-team accounts are seeded into `admins` on every startup and are excluded
+# from every partner-facing number: they buy for testing, and that would both
+# pollute a partner's funnel and pay them commission on our own purchases.
+# Two spellings because some queries alias the users table and some do not;
+# both start with a space so they can be concatenated straight after `$1`.
+_NO_ADMINS = " AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
+_NO_ADMINS_BARE = " AND tg_id NOT IN (SELECT tg_id FROM admins)"
+
 
 def hash_partner_password(password: str) -> str:
     """PBKDF2-HMAC-SHA256, stdlib only (no bcrypt dep in this image)."""
@@ -4852,7 +4860,7 @@ class CreditsDB:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT tg_id FROM users WHERE partner_id = $1 ORDER BY created_at DESC",
+                "SELECT tg_id FROM users WHERE partner_id = $1 " + _NO_ADMINS_BARE + " ORDER BY created_at DESC",
                 int(partner_id),
             )
         return [int(r["tg_id"]) for r in rows]
@@ -4862,7 +4870,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT tg_id, username, credits, created_at, partner_link_code "
-                "FROM users WHERE partner_id = $1 "
+                "FROM users WHERE partner_id = $1 " + _NO_ADMINS_BARE + " "
                 "ORDER BY created_at DESC LIMIT $2 OFFSET $3",
                 int(partner_id), int(limit), int(offset),
             )
@@ -4885,7 +4893,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT tg_id, username, credits, created_at, partner_link_code, partner_attributed_at "
-                "FROM users WHERE tg_id = $1 AND partner_id = $2",
+                "FROM users WHERE tg_id = $1 AND partner_id = $2" + _NO_ADMINS_BARE,
                 int(tg_id), int(partner_id),
             )
         if not row:
@@ -4902,7 +4910,7 @@ class CreditsDB:
     async def count_partner_users(self, partner_id: int) -> int:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
-            val = await conn.fetchval("SELECT COUNT(*) FROM users WHERE partner_id = $1", int(partner_id))
+            val = await conn.fetchval("SELECT COUNT(*) FROM users WHERE partner_id = $1" + _NO_ADMINS_BARE, int(partner_id))
         return int(val or 0)
 
     async def partner_commission_summary(self, partner_id: int) -> Dict[str, Any]:
@@ -4916,7 +4924,7 @@ class CreditsDB:
                 "  SELECT p.amount_rub, "
                 "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn "
                 "  FROM payments p JOIN users u ON u.tg_id = p.tg_id "
-                "  WHERE u.partner_id = $1 AND UPPER(p.status) = 'CONFIRMED'"
+                "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
                 ") "
                 "SELECT "
                 "  COALESCE(SUM(CASE WHEN rn = 1 THEN amount_rub ELSE 0 END), 0)::BIGINT AS first_revenue_rub, "
@@ -4960,7 +4968,9 @@ class CreditsDB:
                 "                     WHEN r.rn > 1 THEN r.amount_rub * 0.2 ELSE 0 END), 0)::BIGINT AS commission_rub, "
                 "  COUNT(DISTINCT r.tg_id)::BIGINT AS paying_users "
                 "FROM partner_links l "
-                "LEFT JOIN users u ON u.partner_link_code = l.code "
+                # Filter in the JOIN, not the WHERE: a link whose only visitor
+                # was a team account must still be listed, showing zero.
+                "LEFT JOIN users u ON u.partner_link_code = l.code" + _NO_ADMINS + " "
                 "LEFT JOIN ranked r ON r.tg_id = u.tg_id "
                 "WHERE l.partner_id = $1 "
                 "GROUP BY l.code, l.label, l.created_at "
@@ -4984,10 +4994,10 @@ class CreditsDB:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT d::date AS day, "
-                "  COALESCE((SELECT COUNT(*) FROM users u WHERE u.partner_id = $1 "
+                "  COALESCE((SELECT COUNT(*) FROM users u WHERE u.partner_id = $1" + _NO_ADMINS + " "
                 "            AND u.created_at::date = d::date), 0)::BIGINT AS starts, "
                 "  COALESCE((SELECT COUNT(*) FROM payments p JOIN users u ON u.tg_id = p.tg_id "
-                "            WHERE u.partner_id = $1 AND UPPER(p.status) = 'CONFIRMED' "
+                "            WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED' "
                 "            AND p.created_at::date = d::date), 0)::BIGINT AS purchases "
                 "FROM generate_series(CURRENT_DATE - ($2::int - 1), CURRENT_DATE, INTERVAL '1 day') AS d "
                 "ORDER BY day ASC",
@@ -5007,7 +5017,7 @@ class CreditsDB:
                 "  SELECT p.tg_id, p.amount_rub, p.created_at,"
                 "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
                 "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
-                "  WHERE u.partner_id = $1 AND UPPER(p.status) = 'CONFIRMED'"
+                "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
                 "    AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
                 ") "
                 "SELECT u.tg_id, u.username, u.partner_link_code,"
@@ -5044,7 +5054,7 @@ class CreditsDB:
                 "  SELECT p.tg_id, p.amount_rub,"
                 "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
                 "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
-                "  WHERE u.partner_id = $1 AND UPPER(p.status) = 'CONFIRMED'"
+                "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
                 "    AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
                 ") "
                 "SELECT COUNT(DISTINCT tg_id)::BIGINT AS clients,"
@@ -5079,11 +5089,11 @@ class CreditsDB:
                 "  SELECT p.amount_rub, p.created_at,"
                 "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
                 "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
-                "  WHERE u.partner_id = $1 AND UPPER(p.status) = 'CONFIRMED'"
+                "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
                 ") "
                 "SELECT "
                 "  (SELECT COUNT(*) FROM users u, bounds b "
-                "    WHERE u.partner_id = $1 AND u.created_at >= b.lo AND u.created_at < b.hi)::BIGINT AS starts,"
+                "    WHERE u.partner_id = $1" + _NO_ADMINS + " AND u.created_at >= b.lo AND u.created_at < b.hi)::BIGINT AS starts,"
                 "  (SELECT COUNT(*) FROM ranked r, bounds b "
                 "    WHERE r.created_at >= b.lo AND r.created_at < b.hi)::BIGINT AS purchases,"
                 "  (SELECT COALESCE(SUM(CASE WHEN r.rn = 1 THEN r.amount_rub * 0.5 ELSE r.amount_rub * 0.2 END), 0) "
@@ -5133,7 +5143,7 @@ class CreditsDB:
                 f"SELECT gr.run_id, gr.status, gr.versions_total, gr.current_stage, "
                 f"gr.created_at, gr.updated_at, u.username, u.tg_id "
                 f"FROM generation_runs gr JOIN users u ON u.tg_id = gr.chat_id "
-                f"WHERE u.partner_id = $1 {status_filter} "
+                f"WHERE u.partner_id = $1{_NO_ADMINS} {status_filter} "
                 f"ORDER BY gr.updated_at DESC LIMIT $2 OFFSET $3",
                 int(partner_id), int(limit), int(offset),
             )
@@ -5157,7 +5167,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             val = await conn.fetchval(
                 f"SELECT COUNT(*) FROM generation_runs gr JOIN users u ON u.tg_id = gr.chat_id "
-                f"WHERE u.partner_id = $1 {status_filter}",
+                f"WHERE u.partner_id = $1{_NO_ADMINS} {status_filter}",
                 int(partner_id),
             )
         return int(val or 0)
@@ -5169,7 +5179,7 @@ class CreditsDB:
             rows = await conn.fetch(
                 "SELECT a.id, a.tg_id, a.event, a.detail, a.created_at, u.username "
                 "FROM activity_log a JOIN users u ON u.tg_id = a.tg_id "
-                "WHERE u.partner_id = $1 "
+                "WHERE u.partner_id = $1" + _NO_ADMINS + " "
                 "ORDER BY a.created_at DESC, a.id DESC LIMIT $2 OFFSET $3",
                 int(partner_id), int(limit), int(offset),
             )
@@ -5190,7 +5200,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             val = await conn.fetchval(
                 "SELECT COUNT(*) FROM activity_log a JOIN users u ON u.tg_id = a.tg_id "
-                "WHERE u.partner_id = $1",
+                "WHERE u.partner_id = $1" + _NO_ADMINS,
                 int(partner_id),
             )
         return int(val or 0)
@@ -5201,7 +5211,7 @@ class CreditsDB:
             rows = await conn.fetch(
                 "SELECT gr.status, COUNT(*)::BIGINT AS cnt "
                 "FROM generation_runs gr JOIN users u ON u.tg_id = gr.chat_id "
-                "WHERE u.partner_id = $1 GROUP BY gr.status",
+                "WHERE u.partner_id = $1" + _NO_ADMINS + " GROUP BY gr.status",
                 int(partner_id),
             )
         return {str(r["status"]): int(r["cnt"]) for r in rows}
