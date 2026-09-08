@@ -58,6 +58,8 @@ export interface WizardStateData {
   timingTo: string;
   /** вводные трека перенесены из прошлого батча — визард один раз это проговаривает */
   carriedOverInputs: boolean;
+  /** Максимальный пройденный этап как индекс в STAGE_ORDER. */
+  reachedIndex: number;
   /**
    * Разделы фона настраиваются параллельно; пилюли пула — производные от настроенности.
    * «+» в футере не коммитит, а переводит к следующему разделу (правка UX).
@@ -207,6 +209,17 @@ interface WizardStore extends WizardStateData {
   stageData: () => Record<string, unknown>;
 }
 
+/**
+ * Порядок прохождения визарда: Трек → Фон → Текст → Хук → Пул. Живёт здесь, а не в
+ * странице: по нему считают и «Продолжить/Назад», и доступность табов.
+ */
+export const STAGE_ORDER: number[] = [1, 2, 4, 3, 5];
+
+export function stageIndex(stage: number): number {
+  const index = STAGE_ORDER.indexOf(stage);
+  return index < 0 ? 0 : index;
+}
+
 /** Вводные трека заполнены — без них генерировать нечего (это lyric-video). */
 export function hasTrackInput(state: Pick<WizardStateData, 'track' | 'lyrics'>): boolean {
   return Boolean(state.track && state.lyrics.trim());
@@ -222,6 +235,11 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   timingFrom: '',
   timingTo: '',
   carriedOverInputs: false,
+  // Докуда человек уже дошёл (индекс в STAGE_ORDER). Настройки этапов и так лежат в
+  // сторе целиком, но без этой метки таб-бар считал пройденными только этапы ЛЕВЕЕ
+  // текущего: вернувшись из Пула в Фон, обратно приходилось идти «Продолжить» через
+  // Текст и FX, подтверждая каждый уже настроенный шаг заново.
+  reachedIndex: 0,
   background: { mode: 'footage', footage: [], footageType: DEFAULT_FOOTAGE_TYPE, uploads: [], sourceVideos: [], photo: [], photoEffects: false, photoStyle: undefined, color: undefined, strobe: false, glue: undefined },
   hooks: { dropTime: undefined, kind: undefined, configs: {} },
   subtitles: { color: '#f6f5fd', pool: [] },
@@ -234,7 +252,10 @@ export const useWizardStore = create<WizardStore>()(
     (set, get) => ({
       ...initialData(),
       stage: 1,
-      setStage: (stage) => set({ stage: Math.max(1, Math.min(5, stage)) }),
+      setStage: (stage) => set((state) => {
+        const next = Math.max(1, Math.min(5, stage));
+        return { stage: next, reachedIndex: Math.max(state.reachedIndex, stageIndex(next)) };
+      }),
       // Смена проекта = смена черновика. Стор персистится и чистится только успешным
       // сабмитом, поэтому без сброса трек и выбор проекта A утекали в проект B.
       setProjectId: (projectId) => set((state) => (
@@ -242,7 +263,13 @@ export const useWizardStore = create<WizardStore>()(
           ? { ...initialData(projectId), stage: 1 }
           : { projectId }
       )),
-      setTrack: (track) => set({ track, hooks: initialData().hooks }),
+      setTrack: (track) => set((state) => (
+        // Другой трек = другой дроп: хуки сбрасываются, поэтому и пройденность
+        // откатывается к «Треку». Повторная установка того же трека ничего не трогает.
+        state.track?.id && track?.id === state.track.id
+          ? { track }
+          : { track, hooks: initialData().hooks, reachedIndex: 0 }
+      )),
       setField: (key, value) => set({ [key]: value } as Partial<WizardStore>),
       setBackground: (patch) => set((state) => ({ background: { ...state.background, ...patch } })),
       toggleVibe: (vibe, format) => set((state) => {
@@ -326,7 +353,8 @@ export const useWizardStore = create<WizardStore>()(
           subtitles: { ...fresh.subtitles, ...((raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {}) },
           allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },
           final: { ...fresh.final, ...((raw.final as Partial<WizardStateData['final']>) ?? {}) },
-          stage: Math.max(1, Math.min(5, Number(stage) || 1))
+          stage: Math.max(1, Math.min(5, Number(stage) || 1)),
+          reachedIndex: stageIndex(Math.max(1, Math.min(5, Number(stage) || 1)))
         };
       }),
       stageData: () => {
@@ -378,7 +406,8 @@ export const useWizardStore = create<WizardStore>()(
         subtitles: state.subtitles,
         allocation: state.allocation,
         final: state.final,
-        stage: state.stage
+        stage: state.stage,
+        reachedIndex: state.reachedIndex
       })
     }
   )

@@ -31,7 +31,8 @@ export function StageTabs() {
   const { t } = useTranslation();
   const stage = useWizardStore((state) => state.stage);
   const setStage = useWizardStore((state) => state.setStage);
-  // Порядок прохождения = порядок табов (Фон → Текст → Хук), «пройденность» — по индексу
+  const reachedIndex = useWizardStore((state) => state.reachedIndex);
+  // Порядок прохождения = порядок табов (Фон → Текст → Хук)
   const currentIndex = tabs.findIndex((tab) => tab.stage === stage);
   // Прогресс-подложка: заполняется от старта бара до правого края активного пила
   const fillPct = ((currentIndex + 1) / tabs.length) * 100;
@@ -44,7 +45,13 @@ export function StageTabs() {
       />
       {tabs.map((tab, index) => {
         const current = tab.stage === stage;
-        const passed = index < currentIndex;
+        /*
+         * Кликается всё, где человек уже был, — и левее, и правее текущего этапа.
+         * Раньше «пройденным» считалось только то, что левее: вернувшись из Пула в Фон,
+         * вперёд можно было идти лишь кнопкой «Продолжить», заново подтверждая уже
+         * настроенные Текст и FX. Сами настройки при этом никуда не девались.
+         */
+        const passed = !current && index <= Math.max(currentIndex, reachedIndex);
         return (
           <button
             key={tab.stage}

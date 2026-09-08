@@ -13,7 +13,7 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
-import { hasTrackInput, hookPills, selectedEffectStyles } from '../stores/wizardStore';
+import { hasTrackInput, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
@@ -528,8 +528,7 @@ export function WizardPage() {
     return ready;
   }, [ready, stage]);
 
-  // Порядок прохождения этапов по макету: Трек → Фон → Текст → Хук → Пул
-  const STAGE_ORDER = [1, 2, 4, 3, 5];
+
 
   /*
    * Метрики прохождения визарда (из ревью): сколько времени человек проводит на этапе —
@@ -555,8 +554,6 @@ export function WizardPage() {
       back: STAGE_ORDER.indexOf(stage) < STAGE_ORDER.indexOf(previous.stage)
     });
     stageEnteredRef.current = { stage, at: Date.now() };
-    // STAGE_ORDER — константа модуля по смыслу, пересобирается каждый рендер
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage]);
 
   const next = async () => {
