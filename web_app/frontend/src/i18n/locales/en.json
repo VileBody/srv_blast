@@ -77,6 +77,7 @@
     "events": "Events",
     "webJourney": "Journey inside the web app",
     "webJourneyHint": "Which screens users open, how far they get in the wizard, and what they do next.",
+    "acquisition": "Entry sources",
     "pages": "Pages",
     "wizardStages": "Wizard stages",
     "actions": "Actions",

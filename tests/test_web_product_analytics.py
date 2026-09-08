@@ -34,6 +34,8 @@ def test_web_product_metrics_group_pages_stages_and_actions(monkeypatch) -> None
         "EVENTS",
         [
             _event("page_view", "u1", route="dashboard"),
+            _event("app_entry", "u1", source="telegram", medium="social", campaign="release"),
+            _event("app_entry", "u2", source="telegram", medium="social", campaign="release"),
             _event("page_view", "u1", route="wizard"),
             _event("page_view", "u2", route="wizard"),
             _event("wizard_stage_view", "u1", stage=2),
@@ -46,6 +48,9 @@ def test_web_product_metrics_group_pages_stages_and_actions(monkeypatch) -> None
     result = analytics.web_product_metrics(30)
 
     assert result["pages"][0] == {"route": "wizard", "events": 2, "users": 2}
+    assert result["attribution"][0] == {
+        "source": "telegram", "medium": "social", "campaign": "release", "events": 2, "users": 2
+    }
     assert [row["stage"] for row in result["wizardStages"]] == ["1", "2"]
     assert result["actions"] == [{"name": "video_previewed", "events": 1, "users": 1}]
 

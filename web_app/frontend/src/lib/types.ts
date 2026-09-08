@@ -409,6 +409,7 @@ export interface FlowMetrics {
 }
 
 export interface WebProductMetrics {
+  attribution: Array<{ source: string; medium: string; campaign: string; events: number; users: number }>;
   pages: Array<{ route: string; events: number; users: number }>;
   wizardStages: Array<{ stage: string; events: number; users: number }>;
   actions: Array<{ name: string; events: number; users: number }>;

@@ -40,6 +40,7 @@ EXTRA_EVENTS = {
 # as payments and completed renders are deliberately absent: the browser must
 # not be able to forge conversion or delivery numbers.
 CLIENT_EVENTS = {
+    "app_entry",
     "page_view",
     "wizard_stage_view",
     "wizard_stage_time",
@@ -56,6 +57,7 @@ CLIENT_EVENTS = {
 # Browser payloads must stay both useful and privacy-safe. Unknown fields are
 # rejected instead of being stored indefinitely in the analytics event log.
 CLIENT_EVENT_PROPS: dict[str, set[str]] = {
+    "app_entry": {"source", "medium", "campaign", "content", "term", "referrer"},
     "page_view": {"route", "from", "language", "viewport"},
     "wizard_stage_view": {"stage"},
     "wizard_stage_time": {"stage", "seconds", "back"},
@@ -328,7 +330,30 @@ def web_product_metrics(days: int = 30) -> dict[str, Any]:
         rows.sort(key=lambda row: (row["users"], row["events"]), reverse=True)
         return rows
 
-    hidden = {"page_view", "wizard_stage_view", "wizard_stage_time"}
+    attribution_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        if event["name"] != "app_entry":
+            continue
+        props = event.get("props", {})
+        key = (
+            str(props.get("source") or props.get("referrer") or "direct"),
+            str(props.get("medium") or ""),
+            str(props.get("campaign") or ""),
+        )
+        attribution_groups[key].append(event)
+    attribution = [
+        {
+            "source": key[0],
+            "medium": key[1],
+            "campaign": key[2],
+            "events": len(items),
+            "users": len({item["userId"] for item in items}),
+        }
+        for key, items in attribution_groups.items()
+    ]
+    attribution.sort(key=lambda row: (row["users"], row["events"]), reverse=True)
+
+    hidden = {"app_entry", "page_view", "wizard_stage_view", "wizard_stage_time"}
     action_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for event in events:
         if event["name"] not in hidden:
@@ -345,6 +370,7 @@ def web_product_metrics(days: int = 30) -> dict[str, Any]:
     wizard_stages = rows_for("wizard_stage_view", "stage")
     wizard_stages.sort(key=lambda row: int(row["stage"]) if str(row["stage"]).isdigit() else 999)
     return {
+        "attribution": attribution,
         "pages": rows_for("page_view", "route"),
         "wizardStages": wizard_stages,
         "actions": actions,

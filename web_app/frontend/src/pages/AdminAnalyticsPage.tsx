@@ -157,7 +157,16 @@ export function AdminAnalyticsPage() {
       <section className="card-2 shrink-0 p-[40px]">
         <h2 className="text-[24px] font-[350] leading-none text-text">{t('admin.webJourney')}</h2>
         <p className="mt-[8px] text-[14px] leading-[19px] text-text-60">{t('admin.webJourneyHint')}</p>
-        <div className="mt-[24px] grid gap-[16px] lg:grid-cols-3">
+        <div className="mt-[24px] grid gap-[16px] lg:grid-cols-2 xl:grid-cols-4">
+          <ActivityTable
+            title={t('admin.acquisition')}
+            rows={(web?.attribution ?? []).map((row) => ({
+              key: [row.source, row.medium, row.campaign].filter(Boolean).join(' / '),
+              events: row.events,
+              users: row.users
+            }))}
+            label={(key) => key}
+          />
           <ActivityTable
             title={t('admin.pages')}
             rows={(web?.pages ?? []).map((row) => ({ key: row.route, events: row.events, users: row.users }))}
