@@ -461,6 +461,7 @@ def test_reset_to_wait_audio_clears_previous_visual_choices() -> None:
             colors_done=True,
             subtitle_color_hex="#ffffff",
             accent_color_hex="#ff0000",
+            frame_id="rounded",
         ))
 
         reset = await store.reset_to_wait_audio(601)
@@ -474,5 +475,6 @@ def test_reset_to_wait_audio_clears_previous_visual_choices() -> None:
         assert reset.colors_done is False
         assert reset.subtitle_color_hex == ""
         assert reset.accent_color_hex == ""
+        assert reset.frame_id == ""
 
     asyncio.run(_run())
