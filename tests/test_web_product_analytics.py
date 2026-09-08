@@ -87,6 +87,18 @@ def test_channel_snapshot_keeps_identity_sets_for_cross_channel_dedupe(monkeypat
     assert result["events"]["generation_started"]["userIds"] == {"u1", "u2"}
 
 
+def test_shared_web_events_attach_telegram_identity_when_available(monkeypatch) -> None:
+    monkeypatch.setattr(main.auth_store, "chat_id_for_user", lambda user_id: 42 if user_id == "u1" else None)
+
+    rows = main._shared_web_events([
+        _event("page_view", "u1", route="dashboard"),
+        _event("page_view", "u2", route="pricing"),
+    ])
+
+    assert rows[0]["tgId"] == 42
+    assert "tgId" not in rows[1]
+
+
 def test_track_once_retries_after_persistence_failure(monkeypatch) -> None:
     attempts = 0
 

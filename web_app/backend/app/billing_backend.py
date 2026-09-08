@@ -210,6 +210,9 @@ class BillingBackend:
             ],
         }
 
+    async def sync_web_activity(self, events: list[dict[str, Any]]) -> int:
+        return await self._db.sync_web_activity(events)
+
     async def ensure_user(self, tg_id: int, username: str = "") -> None:
         await self._db.ensure_user(int(tg_id), username)
 

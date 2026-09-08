@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -27,6 +28,31 @@ from .runtime import SETTINGS as RUNTIME
 
 
 logger = logging.getLogger(__name__)
+_web_analytics_sync_task: asyncio.Task[None] | None = None
+
+
+def _shared_web_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        row = dict(event)
+        chat_id = auth_store.chat_id_for_user(str(event.get("userId") or ""))
+        if chat_id is not None:
+            row["tgId"] = int(chat_id)
+        rows.append(row)
+    return rows
+
+
+async def _sync_web_analytics_loop() -> None:
+    while True:
+        await asyncio.sleep(10)
+        try:
+            await _billing_backend().sync_web_activity(
+                _shared_web_events(analytics.EVENTS[-2000:])
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("shared web analytics sync failed")
 
 
 def _production_backend():
@@ -210,6 +236,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def _restore_state() -> None:
     """Поднять сохранённое состояние. До этого рестарт стирал проекты, батчи и подписку."""
+    global _web_analytics_sync_task
     persistence.load_all()
     auth_store.purge_expired_tokens()
     # Бот поднимается СРАЗУ, а не по первому «Войти через Telegram». Раньше между выдачей
@@ -220,6 +247,10 @@ async def _restore_state() -> None:
         # unhealthy.  Do not accept uploads and silently leave jobs stranded.
         await run_in_threadpool(_production_backend().healthcheck)
         await _billing_backend().init()
+        await _billing_backend().sync_web_activity(_shared_web_events(analytics.EVENTS))
+        _web_analytics_sync_task = asyncio.create_task(
+            _sync_web_analytics_loop(), name="shared-web-analytics-sync"
+        )
         await _billing_backend().healthcheck()
         await run_in_threadpool(security.healthcheck)
         await run_in_threadpool(telegram_bot.healthcheck)
@@ -230,7 +261,15 @@ async def _restore_state() -> None:
 
 @app.on_event("shutdown")
 async def _close_dependencies() -> None:
+    global _web_analytics_sync_task
     if RUNTIME.backend == "production":
+        if _web_analytics_sync_task is not None:
+            _web_analytics_sync_task.cancel()
+            try:
+                await _web_analytics_sync_task
+            except asyncio.CancelledError:
+                pass
+            _web_analytics_sync_task = None
         from . import production_monitor
         await production_monitor.stop()
         from .production_backend import close_backend

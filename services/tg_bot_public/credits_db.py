@@ -104,6 +104,19 @@ CREATE INDEX IF NOT EXISTS idx_act_tg_event   ON activity_log(tg_id, event);
 CREATE INDEX IF NOT EXISTS idx_act_tg_event_created ON activity_log(tg_id, event, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_act_tg_created ON activity_log(tg_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS web_activity_log (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    tg_id       BIGINT,
+    event       TEXT NOT NULL,
+    props       JSONB NOT NULL DEFAULT '{}'::JSONB,
+    created_at  TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_act_created_at ON web_activity_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_web_act_event ON web_activity_log(event);
+CREATE INDEX IF NOT EXISTS idx_web_act_tg_id ON web_activity_log(tg_id);
+
 CREATE TABLE IF NOT EXISTS payments (
     id            BIGSERIAL PRIMARY KEY,
     order_id      TEXT      NOT NULL UNIQUE,
@@ -1823,6 +1836,104 @@ class CreditsDB:
             }
             for r in rows
         ]
+
+    async def sync_web_activity(self, events: List[Dict[str, Any]]) -> int:
+        """Idempotently copy the web app event stream into the shared analytics DB."""
+        if not events:
+            return 0
+        values = []
+        for event in events:
+            event_id = str(event.get("id") or "").strip()
+            user_id = str(event.get("userId") or "").strip()
+            name = str(event.get("name") or "").strip()
+            created_at = event.get("ts")
+            if not event_id or not user_id or not name or not created_at:
+                raise ValueError("web activity event requires id, userId, name and ts")
+            tg_id = event.get("tgId")
+            values.append((
+                event_id,
+                user_id,
+                int(tg_id) if tg_id is not None else None,
+                name,
+                json.dumps(event.get("props") or {}, ensure_ascii=False),
+                created_at,
+            ))
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.executemany(
+                "INSERT INTO web_activity_log(id, user_id, tg_id, event, props, created_at) "
+                "VALUES($1,$2,$3,$4,$5::JSONB,$6::TIMESTAMP) ON CONFLICT(id) DO NOTHING",
+                values,
+            )
+        return len(values)
+
+    async def product_activity(
+        self,
+        channel: str,
+        date_from: datetime,
+        date_to: datetime,
+        *,
+        recent_limit: int = 20,
+    ) -> Dict[str, Any]:
+        """Read site, bot or de-duplicated combined product activity."""
+        selected = str(channel or "").strip().lower()
+        if selected not in {"site", "bot", "all"}:
+            raise ValueError("channel must be site, bot or all")
+        df = date_from.replace(tzinfo=None) if date_from.tzinfo else date_from
+        dt = date_to.replace(tzinfo=None) if date_to.tzinfo else date_to
+        bot_sql = (
+            "SELECT 'tg:' || tg_id::TEXT AS identity, event, detail, created_at, 'bot' AS channel "
+            "FROM activity_log WHERE created_at >= $1 AND created_at < $2"
+        )
+        site_sql = (
+            "SELECT CASE WHEN tg_id IS NULL THEN 'web:' || user_id ELSE 'tg:' || tg_id::TEXT END AS identity, "
+            "event, props::TEXT AS detail, created_at, 'site' AS channel "
+            "FROM web_activity_log WHERE created_at >= $1 AND created_at < $2"
+        )
+        source_sql = bot_sql if selected == "bot" else site_sql if selected == "site" else f"{bot_sql} UNION ALL {site_sql}"
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            grouped = await conn.fetch(
+                "WITH events AS (" + source_sql + ") "
+                "SELECT event, COUNT(*)::BIGINT AS events, COUNT(DISTINCT identity)::BIGINT AS users, "
+                "ARRAY_AGG(DISTINCT identity) AS identities FROM events "
+                "GROUP BY event ORDER BY events DESC, event",
+                df,
+                dt,
+            )
+            recent = await conn.fetch(
+                "WITH events AS (" + source_sql + ") "
+                "SELECT identity, event, detail, created_at, channel FROM events "
+                "ORDER BY created_at DESC LIMIT $3",
+                df,
+                dt,
+                max(1, min(int(recent_limit), 100)),
+            )
+        rows = [
+            {
+                "event": str(row["event"] or ""),
+                "events": int(row["events"] or 0),
+                "users": int(row["users"] or 0),
+                "identities": {str(value) for value in (row["identities"] or [])},
+            }
+            for row in grouped
+        ]
+        return {
+            "channel": selected,
+            "activeUsers": len({identity for row in rows for identity in row["identities"]}),
+            "events": sum(row["events"] for row in rows),
+            "byEvent": rows,
+            "recent": [
+                {
+                    "identity": str(row["identity"] or ""),
+                    "event": str(row["event"] or ""),
+                    "detail": str(row["detail"] or ""),
+                    "created_at": _fmt_ts(row["created_at"]),
+                    "channel": str(row["channel"] or ""),
+                }
+                for row in recent
+            ],
+        }
 
     # Payments
 
