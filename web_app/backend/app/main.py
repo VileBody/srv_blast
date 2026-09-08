@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import secrets
@@ -63,6 +64,26 @@ def _telegram_chat_id() -> int:
 
 async def _sync_billing_bundle(data: dict[str, Any]) -> dict[str, Any]:
     snapshot = await _billing_backend().snapshot(_telegram_chat_id())
+    user_id = store.current_user_id()
+    for payment in snapshot.get("payments") or []:
+        status = str(payment.get("status") or "").upper()
+        order_id = str(payment.get("orderId") or "")
+        props = {
+            "orderId": order_id,
+            "tier": str(payment.get("package") or "").upper(),
+            "amountRub": int(payment.get("amountRub") or 0),
+        }
+        if not order_id:
+            continue
+        try:
+            if status == "CONFIRMED":
+                analytics.track_once("plan_purchased", user_id, f"payment:{order_id}:confirmed", props)
+            elif status in {"REJECTED", "DEADLINE_EXPIRED", "AUTH_FAIL"}:
+                analytics.track_once("payment_failed", user_id, f"payment:{order_id}:{status.lower()}", props)
+        except Exception:
+            # Analytics retries on the next billing snapshot and must never
+            # make the balance/profile endpoint unavailable to the customer.
+            logger.exception("billing analytics reconciliation failed order=%s", order_id)
     subscription = data["subscription"]
     subscription.update({key: value for key, value in snapshot.items() if key not in {"creditsLeft", "tracksLeft"}})
     data["creditsLeft"] = snapshot["creditsLeft"]
@@ -264,7 +285,7 @@ class RatePayload(BaseModel):
 
 
 class TrackPayload(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=64, pattern="^[a-z][a-z0-9_]*$")
     props: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1362,6 +1383,11 @@ def api_rate_job(job_id: str, payload: RatePayload) -> dict[str, Any]:
     job["rating"] = payload.rating
     job["feedback"] = payload.feedback
     persistence.save_job(job_id)
+    analytics.track(
+        "generation_rated",
+        store.current_user_id(),
+        {"jobId": job_id, "rating": payload.rating, "hasFeedback": bool(payload.feedback)},
+    )
     return {"ok": True, "job": store.get_job(job_id), "mock": RUNTIME.backend == "mock"}
 
 
@@ -1391,6 +1417,11 @@ def api_create_iteration(project_id: str, payload: IterationPayload) -> dict[str
         iteration, job = store.create_iteration(project_id, payload.videosToGenerate, payload.testParameter)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    analytics.track(
+        "iteration_started",
+        store.current_user_id(),
+        {"projectId": project_id, "videos": payload.videosToGenerate, "parameter": payload.testParameter},
+    )
     return {
         "iteration": iteration,
         "job": job,
@@ -1993,7 +2024,11 @@ ADMIN_USER_IDS = {uid.strip() for uid in os.getenv("BLAST_ADMIN_USER_IDS", "").s
 
 
 def _require_admin() -> None:
-    if ADMIN_USER_IDS and store.current_user_id() not in ADMIN_USER_IDS:
+    if not ADMIN_USER_IDS:
+        if RUNTIME.production:
+            raise HTTPException(status_code=403, detail="Администраторы не настроены")
+        return
+    if store.current_user_id() not in ADMIN_USER_IDS:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
 
 
@@ -2011,6 +2046,8 @@ def api_admin_analytics(days: int = 30, weeks: int = 4) -> dict[str, Any]:
         "delivery": analytics.delivery_summary(days),
         # прохождение: отвал на ожидании, время на «Пуле», возвраты назад
         "flow": analytics.flow_metrics(days),
+        # маркетинговый путь внутри web app: страницы, этапы визарда и действия
+        "web": analytics.web_product_metrics(days),
         "journeys": analytics.user_journeys(days)[:100],
         "recent": analytics.recent(30),
         "isAdmin": True,
@@ -2020,6 +2057,13 @@ def api_admin_analytics(days: int = 30, weeks: int = 4) -> dict[str, Any]:
 @app.post("/api/analytics/track", tags=["analytics"])
 def api_track(payload: TrackPayload) -> dict[str, Any]:
     """Событие с фронта (клиентские шаги воронки, которых не видно на бэке)."""
+    if payload.name not in analytics.CLIENT_EVENTS:
+        raise HTTPException(status_code=422, detail="Unsupported analytics event")
+    unexpected = set(payload.props) - analytics.CLIENT_EVENT_PROPS[payload.name]
+    if unexpected:
+        raise HTTPException(status_code=422, detail="Unsupported analytics properties")
+    if len(json.dumps(payload.props, ensure_ascii=False).encode("utf-8")) > 4096:
+        raise HTTPException(status_code=422, detail="Analytics properties are too large")
     event = analytics.track(payload.name, store.current_user_id(), payload.props)
     return {"ok": True, "id": event["id"]}
 

@@ -11,6 +11,7 @@ import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../../contexts/ToastContext';
 import { SvgMaskIcon } from './SvgMaskIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { AppAnalytics } from '../analytics/AppAnalytics';
 
 // The desktop screens were laid out for a 1600x900 canvas. Scaling from 1280x800
 // left a 1280x720 laptop at 90%, while the same page at browser zoom 80% got the
@@ -218,9 +219,11 @@ export function AppShell() {
   } as React.CSSProperties;
 
   return (
-    <div className="app-scale-viewport">
-      <div className="app-frame" style={frameStyle}>
-        <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl ?? undefined} />
+    <>
+      <AppAnalytics />
+      <div className="app-scale-viewport">
+        <div className="app-frame" style={frameStyle}>
+          <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl ?? undefined} />
         <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} />
         {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
@@ -244,7 +247,8 @@ export function AppShell() {
             )}
           </div>
         </main>
+        </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -44,6 +44,41 @@ function FunnelBar({ step, users, fromPrev, fromStart, label }: {
   );
 }
 
+function ActivityTable({
+  title,
+  rows,
+  label
+}: {
+  title: string;
+  rows: Array<{ key: string; events: number; users: number }>;
+  label: (key: string) => string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="min-w-0 rounded-r15 bg-grad-soft-10 p-space-5">
+      <h3 className="text-[18px] font-[400] text-text">{title}</h3>
+      {rows.length === 0 ? (
+        <p className="mt-[16px] text-[14px] text-text-40">{t('admin.noActivity')}</p>
+      ) : (
+        <div className="mt-[14px] divide-y divide-[rgba(246,245,253,.08)]">
+          {rows.map((row) => (
+            <div key={row.key} className="grid grid-cols-[minmax(0,1fr)_64px_64px] items-center gap-[10px] py-[10px] text-[14px]">
+              <span className="truncate text-text-80" title={label(row.key)}>{label(row.key)}</span>
+              <span className="text-right text-text">{row.users}</span>
+              <span className="text-right text-text-60">{row.events}</span>
+            </div>
+          ))}
+          <div className="grid grid-cols-[minmax(0,1fr)_64px_64px] gap-[10px] pt-[9px] text-[12px] text-text-40">
+            <span />
+            <span className="text-right">{t('admin.users')}</span>
+            <span className="text-right">{t('admin.events')}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AdminAnalyticsPage() {
   const { t } = useTranslation();
   const [days, setDays] = useState<number>(30);
@@ -69,6 +104,7 @@ export function AdminAnalyticsPage() {
   const s = data?.summary;
   const d = data?.delivery;
   const f = data?.flow;
+  const web = data?.web;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-[20px] pb-space-6">
@@ -115,6 +151,28 @@ export function AdminAnalyticsPage() {
           {(data?.funnel ?? []).map((row) => (
             <FunnelBar key={row.step} {...row} label={t(`admin.steps.${row.step}`)} />
           ))}
+        </div>
+      </section>
+
+      <section className="card-2 shrink-0 p-[40px]">
+        <h2 className="text-[24px] font-[350] leading-none text-text">{t('admin.webJourney')}</h2>
+        <p className="mt-[8px] text-[14px] leading-[19px] text-text-60">{t('admin.webJourneyHint')}</p>
+        <div className="mt-[24px] grid gap-[16px] lg:grid-cols-3">
+          <ActivityTable
+            title={t('admin.pages')}
+            rows={(web?.pages ?? []).map((row) => ({ key: row.route, events: row.events, users: row.users }))}
+            label={(key) => t(`admin.routes.${key}`, { defaultValue: key })}
+          />
+          <ActivityTable
+            title={t('admin.wizardStages')}
+            rows={(web?.wizardStages ?? []).map((row) => ({ key: row.stage, events: row.events, users: row.users }))}
+            label={(key) => t(`admin.wizard.${key}`, { defaultValue: `${t('flow.stage')} ${key}` })}
+          />
+          <ActivityTable
+            title={t('admin.actions')}
+            rows={(web?.actions ?? []).slice(0, 16).map((row) => ({ key: row.name, events: row.events, users: row.users }))}
+            label={(key) => t(`admin.actionsMap.${key}`, { defaultValue: key })}
+          />
         </div>
       </section>
 

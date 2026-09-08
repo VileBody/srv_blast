@@ -10,7 +10,7 @@ import logging
 
 from starlette.concurrency import run_in_threadpool
 
-from . import auth_store, notifications, persistence
+from . import analytics, auth_store, notifications, persistence
 from . import mock_store as store
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,31 @@ async def sync_job(job: dict) -> None:
 
     async with _lock:
         await run_in_threadpool(get_backend().sync_job, job)
+        if job.get("status") in {"COMPLETED", "FAILED"}:
+            owner = str(job.get("userId") or "")
+            completed = sum(video.get("status") == "COMPLETED" for video in job.get("videos", []))
+            failed = sum(video.get("status") == "FAILED" for video in job.get("videos", []))
+            try:
+                if completed:
+                    await run_in_threadpool(
+                        analytics.track_once,
+                        "generation_completed",
+                        owner,
+                        f"job:{job['id']}:completed",
+                        {"jobId": job["id"], "videos": completed, "projectId": job.get("projectId")},
+                    )
+                if failed:
+                    await run_in_threadpool(
+                        analytics.track_once,
+                        "generation_failed",
+                        owner,
+                        f"job:{job['id']}:failed",
+                        {"jobId": job["id"], "videos": failed, "projectId": job.get("projectId")},
+                    )
+            except Exception:
+                # A failed analytics write is retried on the next poll. Refunds,
+                # user-visible status and notifications must still advance.
+                log.exception("production_monitor: analytics reconciliation failed job=%s", job.get("id"))
         if job.get("status") == "FAILED" and not job.get("failedCreditsRefunded"):
             failed = sum(v.get("status") == "FAILED" for v in job.get("videos", []))
             chat_id = auth_store.chat_id_for_user(job.get("userId") or "")

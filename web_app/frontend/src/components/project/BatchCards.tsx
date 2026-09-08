@@ -7,6 +7,7 @@ import { FigIcon } from '../ui/FigIcon';
 import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
+import { api } from '../../lib/api';
 
 /*
  * Общая оболочка батча: W36 (готовый батч) и W51 (идёт генерация) — ОДИН макет.
@@ -168,6 +169,7 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
       <a
         href={video.downloadUrl ?? '#'}
         download=""
+        onClick={() => { if (video.downloadUrl) void api.trackEvent('video_downloaded', { videoId: video.id }).catch(() => {}); }}
         aria-label={t('common.download')}
         className={`ml-[12px] shrink-0 transition-opacity hover:opacity-70 ${video.downloadUrl ? '' : 'pointer-events-none opacity-40'}`}
       >
@@ -366,6 +368,7 @@ export function GenerationsCard({
   const activePending = pending.find((video) => video.status === 'PROCESSING' || video.stage !== 'waiting_previous') ?? pending[0];
   // Браузер блокирует пачку одновременных скачиваний — разносим по времени
   const downloadAll = () => {
+    void api.trackEvent('video_download_all', { videos: downloadable.length }).catch(() => {});
     downloadable.forEach((video, index) => {
       setTimeout(() => {
         const link = document.createElement('a');
@@ -498,6 +501,7 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
     }
     void element.play();
     setPlaying(true);
+    void api.trackEvent('video_previewed', { videoId: video?.id }).catch(() => {});
   };
 
   return (
@@ -635,8 +639,8 @@ export function ProcessingAside({ done, total, activeVideo, renderFormat, telegr
           <span className="mt-[6px] block text-[14px] leading-[18px] text-text-60">PDF · {t('processing.guideCaption')}</span>
         </span>
         <span className="flex shrink-0 items-center gap-[8px]">
-          <a href="/assets/resources/blast-tiktok-guide.pdf" target="_blank" rel="noreferrer" className="rounded-r10 border border-[rgba(246,245,253,.18)] px-[12px] py-[8px] text-[14px] text-text-80 transition hover:border-accent-light hover:text-text">{t('common.view')}</a>
-          <a href="/assets/resources/blast-tiktok-guide.pdf" download className="rounded-r10 border border-accent bg-grad-soft-20 px-[12px] py-[8px] text-[14px] text-text-80 transition hover:text-text">{t('common.download')}</a>
+          <a href="/assets/resources/blast-tiktok-guide.pdf" target="_blank" rel="noreferrer" onClick={() => { void api.trackEvent('guide_opened').catch(() => {}); }} className="rounded-r10 border border-[rgba(246,245,253,.18)] px-[12px] py-[8px] text-[14px] text-text-80 transition hover:border-accent-light hover:text-text">{t('common.view')}</a>
+          <a href="/assets/resources/blast-tiktok-guide.pdf" download onClick={() => { void api.trackEvent('guide_downloaded').catch(() => {}); }} className="rounded-r10 border border-accent bg-grad-soft-20 px-[12px] py-[8px] text-[14px] text-text-80 transition hover:text-text">{t('common.download')}</a>
         </span>
       </div>
 

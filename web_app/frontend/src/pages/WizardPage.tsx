@@ -538,6 +538,13 @@ export function WizardPage() {
    * отдельного «ушёл со страницы» не нужно.
    */
   const stageEnteredRef = useRef<{ stage: number; at: number }>({ stage, at: Date.now() });
+  const trackedStageRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (trackedStageRef.current === stage) return;
+    trackedStageRef.current = stage;
+    void api.trackEvent('wizard_stage_view', { stage }).catch(() => {});
+  }, [stage]);
+
   useEffect(() => {
     const previous = stageEnteredRef.current;
     if (previous.stage === stage) return;

@@ -36,6 +36,39 @@ EXTRA_EVENTS = {
     "limit_hit",
 }
 
+# Events accepted from the authenticated browser. Server-owned milestones such
+# as payments and completed renders are deliberately absent: the browser must
+# not be able to forge conversion or delivery numbers.
+CLIENT_EVENTS = {
+    "page_view",
+    "wizard_stage_view",
+    "wizard_stage_time",
+    "wizard_back",
+    "pricing_viewed",
+    "video_previewed",
+    "video_downloaded",
+    "video_download_all",
+    "guide_opened",
+    "guide_downloaded",
+    "publish_flow_opened",
+}
+
+# Browser payloads must stay both useful and privacy-safe. Unknown fields are
+# rejected instead of being stored indefinitely in the analytics event log.
+CLIENT_EVENT_PROPS: dict[str, set[str]] = {
+    "page_view": {"route", "from", "language", "viewport"},
+    "wizard_stage_view": {"stage"},
+    "wizard_stage_time": {"stage", "seconds", "back"},
+    "wizard_back": {"stage"},
+    "pricing_viewed": set(),
+    "video_previewed": {"videoId"},
+    "video_downloaded": {"videoId"},
+    "video_download_all": {"videos"},
+    "guide_opened": set(),
+    "guide_downloaded": set(),
+    "publish_flow_opened": {"videos"},
+}
+
 MAX_EVENTS = 50_000  # верхняя граница буфера в памяти, чтобы мок не съел RAM
 
 EVENTS: list[dict[str, Any]] = []
@@ -63,7 +96,65 @@ def track(name: str, user_id: str, props: dict[str, Any] | None = None) -> dict[
     # Импорт локальный, иначе цикл: persistence импортирует analytics.
     from . import persistence
 
-    persistence.save_event(event)
+    try:
+        persistence.save_event(event)
+    except Exception:
+        # Keep the process view aligned with the durable event stream.
+        with _lock:
+            if event in EVENTS:
+                EVENTS.remove(event)
+        raise
+    return event
+
+
+def track_once(
+    name: str,
+    user_id: str,
+    dedupe_key: str,
+    props: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist an externally observed milestone once.
+
+    Render polling and billing snapshots are intentionally repeatable. Their
+    analytics must be repeatable too without inflating conversions on every
+    poll or page refresh.
+    """
+    key = str(dedupe_key or "").strip()
+    if not key:
+        raise ValueError("analytics dedupe key is required")
+    with _lock:
+        existing = next(
+            (
+                event
+                for event in EVENTS
+                if event["name"] == name
+                and event["userId"] == user_id
+                and event.get("props", {}).get("dedupeKey") == key
+            ),
+            None,
+        )
+        if existing is not None:
+            return existing
+        event = {
+            "id": f"ev_{uuid4().hex[:10]}",
+            "name": name,
+            "userId": user_id,
+            "ts": _now().isoformat(),
+            "props": {**(props or {}), "dedupeKey": key},
+        }
+        EVENTS.append(event)
+        if len(EVENTS) > MAX_EVENTS:
+            del EVENTS[: len(EVENTS) - MAX_EVENTS]
+    from . import persistence
+
+    try:
+        persistence.save_event(event)
+    except Exception:
+        # The next billing/render reconciliation must be able to retry it.
+        with _lock:
+            if event in EVENTS:
+                EVENTS.remove(event)
+        raise
     return event
 
 
@@ -211,6 +302,52 @@ def flow_metrics(days: int = 30) -> dict[str, Any]:
         # возвраты назад
         "backClicks": len(backs),
         "backByStage": dict(sorted(back_by_stage.items())),
+    }
+
+
+def web_product_metrics(days: int = 30) -> dict[str, Any]:
+    """Page, wizard and action activity inside the authenticated web app."""
+    events = _within(days)
+
+    def rows_for(name: str, prop: str) -> list[dict[str, Any]]:
+        grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for event in events:
+            if event["name"] != name:
+                continue
+            value = str(event.get("props", {}).get(prop) or "").strip()
+            if value:
+                grouped[value].append(event)
+        rows = [
+            {
+                prop: value,
+                "events": len(items),
+                "users": len({item["userId"] for item in items}),
+            }
+            for value, items in grouped.items()
+        ]
+        rows.sort(key=lambda row: (row["users"], row["events"]), reverse=True)
+        return rows
+
+    hidden = {"page_view", "wizard_stage_view", "wizard_stage_time"}
+    action_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for event in events:
+        if event["name"] not in hidden:
+            action_groups[event["name"]].append(event)
+    actions = [
+        {
+            "name": name,
+            "events": len(items),
+            "users": len({item["userId"] for item in items}),
+        }
+        for name, items in action_groups.items()
+    ]
+    actions.sort(key=lambda row: (row["users"], row["events"]), reverse=True)
+    wizard_stages = rows_for("wizard_stage_view", "stage")
+    wizard_stages.sort(key=lambda row: int(row["stage"]) if str(row["stage"]).isdigit() else 999)
+    return {
+        "pages": rows_for("page_view", "route"),
+        "wizardStages": wizard_stages,
+        "actions": actions,
     }
 
 

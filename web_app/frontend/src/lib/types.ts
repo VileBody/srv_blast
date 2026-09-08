@@ -408,12 +408,19 @@ export interface FlowMetrics {
   backByStage: Record<string, number>;
 }
 
+export interface WebProductMetrics {
+  pages: Array<{ route: string; events: number; users: number }>;
+  wizardStages: Array<{ stage: string; events: number; users: number }>;
+  actions: Array<{ name: string; events: number; users: number }>;
+}
+
 export interface AnalyticsResponse {
   summary: AnalyticsSummary;
   funnel: FunnelRow[];
   retention: RetentionRow[];
   delivery: DeliverySummary;
   flow: FlowMetrics;
+  web: WebProductMetrics;
   journeys: UserJourney[];
   recent: { id: string; name: string; userId: string; ts: string; props: Record<string, unknown> }[];
   isAdmin: boolean;
