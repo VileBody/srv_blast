@@ -3568,12 +3568,9 @@ class BlastBotApp:
                 await self._handle_wait_audio(message, st)
                 return
 
-            if st.stage == STAGE_WAIT_LYRICS_CHOICE:
-                await self._handle_wait_lyrics_choice(message, st)
-                return
-
-            if st.stage == STAGE_WAIT_LYRICS_TEXT:
-                await self._handle_wait_lyrics_text(message, st)
+            if st.stage in {STAGE_WAIT_LYRICS_CHOICE, STAGE_WAIT_LYRICS_TEXT}:
+                # Removed step, kept only to rescue in-flight sessions.
+                await self._handle_legacy_lyrics_stage(message, st)
                 return
 
             if st.stage == STAGE_WAIT_FRAGMENT_CHOICE:
@@ -4133,17 +4130,10 @@ class BlastBotApp:
         return artist_id
 
     @staticmethod
-    def _has_forced_alignment_reference_text(st: ChatState) -> bool:
-        return bool(str(st.lyrics_text or st.target_fragment or "").strip())
-
-    @staticmethod
-    def _has_local_alignment_inputs(st: ChatState) -> bool:
+    def _has_timing_window(st: ChatState) -> bool:
         start = float(st.user_clip_start_sec or 0.0)
         end = float(st.user_clip_end_sec or 0.0)
-        return bool(
-            str(st.target_fragment or "").strip()
-            and end > start >= 0.0
-        )
+        return end > start >= 0.0
 
     def _needs_explicit_local_alignment_fragment(self, st: ChatState) -> bool:
         backend = str(
@@ -4152,47 +4142,83 @@ class BlastBotApp:
         ).strip().lower()
         return backend == "local_ctc" and not bool(st.target_fragment_explicit)
 
-    async def _ask_explicit_local_alignment_fragment(
+    def _timing_label(self, st: ChatState) -> str:
+        start = float(st.user_clip_start_sec or 0.0)
+        end = float(st.user_clip_end_sec or 0.0)
+        if end > start >= 0.0:
+            return f"{self._fmt_timing(start)}-{self._fmt_timing(end)}"
+        return "выбранном тайминге"
+
+    async def _ask_fragment_text(
         self,
         message: Message,
         st: ChatState,
+        *,
+        prefix: str = "",
+        with_back: bool = True,
     ) -> None:
-        start = float(st.user_clip_start_sec or 0.0)
-        end = float(st.user_clip_end_sec or 0.0)
-        timing = (
-            f"{self._fmt_timing(start)}-{self._fmt_timing(end)}"
-            if end > start >= 0.0
-            else "выбранном тайминге"
-        )
+        """The single text step: exact lines that sound inside the chosen
+        window. The full-lyrics step was removed — these lines are the whole
+        reference text the aligner gets."""
         st.target_fragment = ""
         st.target_fragment_explicit = False
         st.stage = STAGE_WAIT_FRAGMENT_TEXT
         await self.store.set(st)
         await message.answer(
-            "Сохранённый трек готов. Для своей модели пришли только точные "
-            f"строки, которые звучат в {timing}. Полный текст песни повторять "
-            "не нужно — каждое лишнее слово сдвигает расшифровку.",
-            reply_markup=ReplyKeyboardRemove(),
+            f"{prefix}Пришли текст отрывка — только те точные строки, которые "
+            f"звучат в {self._timing_label(st)}. Скопируй их прямо из текста "
+            "песни, без пояснительных слов типа «куплет:» и т.п.\n\n"
+            "Важно: строки должны точно совпадать с тем, что звучит в отрезке. "
+            "Полный текст песни присылать не нужно — каждое лишнее слово "
+            "сдвигает расшифровку, и субтитры уедут по таймингу.",
+            reply_markup=_kb([BTN_BACK]) if with_back else ReplyKeyboardRemove(),
         )
 
-    async def _ask_timing_choice(self, message: Message, st: ChatState) -> None:
+    async def _ask_explicit_local_alignment_fragment(
+        self,
+        message: Message,
+        st: ChatState,
+    ) -> None:
+        # Reuse-input path: the window is already stored, so only the lines are
+        # missing. «Назад» is off here — there is no timing step to return to.
+        await self._ask_fragment_text(
+            message,
+            st,
+            prefix="Сохранённый трек готов. ",
+            with_back=False,
+        )
+
+    async def _ask_timing_choice(
+        self,
+        message: Message,
+        st: ChatState,
+        *,
+        prefix: str = "",
+    ) -> None:
         # No fork: the "let AI decide" option was removed — the timing is now
         # always user-supplied. Go straight to the input step.
+        #
+        # This is also the FIRST step of the flow (it used to sit after the
+        # text steps), so there is nothing to go back to: no «Назад» button.
+        # The fragment is cleared here because the next step always re-asks it
+        # — a new window must be paired with lines that match it.
         st.stage = STAGE_WAIT_TIMING_INPUT
         st.user_clip_start_sec = 0.0
         st.user_clip_end_sec = 0.0
+        st.target_fragment = ""
+        st.target_fragment_explicit = False
         await self.store.set(st)
         await message.answer(
-            "Укажи конкретный тайминг трека для клипа следующим образом: "
+            f"{prefix}Укажи отрезок трека для клипа следующим образом: "
             "1:20-1:50 (минуты:секунды).\n\n"
             "Можно точнее — с долями секунды через точку: 1:20.5-1:33.2. "
             "Так проще поставить границу между словами, а не посреди слова.\n\n"
-            "Проверь, что отрывок текста и тайминг — сходятся.\n\n"
+            "Дальше пришлёшь строки, которые звучат в этом отрезке.\n\n"
             "<b>Максимальный тайминг: 15с.</b> Это строгое ограничение — если "
             "поставишь больше, задача вернётся с ошибкой и придётся заполнять "
             "заново.",
             parse_mode="HTML",
-            reply_markup=_kb([BTN_BACK]),
+            reply_markup=ReplyKeyboardRemove(),
         )
 
     async def _handle_wait_timing_choice(self, message: Message, st: ChatState) -> None:
@@ -4217,16 +4243,9 @@ class BlastBotApp:
     async def _handle_wait_timing_input(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
-            # Тайминг и строки должны совпадать, поэтому назад ведёт к строкам.
-            st.target_fragment = ""
-            st.target_fragment_explicit = False
-            st.stage = STAGE_WAIT_FRAGMENT_TEXT
-            await self.store.set(st)
-            await message.answer(
-                "Пришли строки из текста песни ещё раз — те слова, которые "
-                "хочешь видеть в клипе.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
+            # Timing is the first step of the flow now, so «Назад» (only
+            # reachable from a stale keyboard) just re-asks it.
+            await self._ask_timing_choice(message, st)
             return
         if not text:
             await message.answer("Отправь тайминг текстом, например: 1:20-1:50")
@@ -4252,17 +4271,10 @@ class BlastBotApp:
                 "покороче, например 1:20-1:33."
             )
             return
-        # The fragment is collected before the timing here, so this is where an
-        # impossible text/window pair is caught: the aligner would reject it
-        # mid-build, after the credits are spent.
-        density_error = self._alignment_density_error(
-            fragment=str(st.target_fragment or ""),
-            clip_start_sec=start_sec,
-            clip_end_sec=end_sec,
-        )
-        if density_error:
-            await message.answer(density_error)
-            return
+        # No density check here any more: the window is chosen BEFORE the
+        # lines, so there is nothing to weigh it against yet. The impossible
+        # text/window pair is caught on the fragment step instead — still
+        # before the credits are spent.
         st.user_clip_start_sec = round(start_sec, 3)
         st.user_clip_end_sec = round(end_sec, 3)
         await self.store.set(st)
@@ -4274,7 +4286,7 @@ class BlastBotApp:
             f"Тайминг установлен: {self._fmt_timing_precise(start_sec)} - "
             f"{self._fmt_timing_precise(end_sec)} ({duration:.1f} сек)."
         )
-        await self._ask_bg_mode(message, st)
+        await self._ask_fragment_text(message, st)
 
     async def _ask_bg_mode(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_BG_MODE
@@ -6630,14 +6642,11 @@ class BlastBotApp:
         st.active_job_id = ""
         st.active_job_ids = []
         st.completed_job_ids = []
-        st.stage = STAGE_WAIT_LYRICS_TEXT
-        await self.store.set(st)
-
-        await message.answer(
-            "Трек готов! Пришли текст песни обычным сообщением. "
-            "Он нужен для точной синхронизации субтитров с аудио.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+        # The old «пришли весь текст песни» step is gone: under the local_ctc
+        # aligner only the fragment is used as reference text, so the full
+        # lyrics were collected and thrown away. Timing comes first now — the
+        # user picks the window, then copies the lines that sound in it.
+        await self._ask_timing_choice(message, st, prefix="Трек готов! ")
 
     async def _ensure_prepared_audio_for_confirm(self, *, message: Message, st: ChatState) -> Path | None:
         prepared_raw = str(st.prepared_audio_local_path or "").strip()
@@ -6704,92 +6713,27 @@ class BlastBotApp:
         log.info("prepared_audio_recover_ok chat=%s path=%s", chat_id, recovered_path)
         return recovered_path
 
-    async def _handle_wait_lyrics_choice(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if text and text not in {BTN_SEND_LYRICS, BTN_SKIP_LYRICS} and not _is_control_button_text(text):
-            await self._handle_wait_lyrics_text(message, st)
-            return
-
-        if text == BTN_SEND_LYRICS:
-            st.stage = STAGE_WAIT_LYRICS_TEXT
-            await self.store.set(st)
-            await message.answer(
-                "Пришли текст песни обычным сообщением (не кнопкой).",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            return
-
-        if text == BTN_SKIP_LYRICS:
-            st.stage = STAGE_WAIT_LYRICS_TEXT
-            await self.store.set(st)
-            await message.answer(
-                "Теперь запускаем генерацию только с текстом песни — пришли его обычным сообщением.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            return
-
-        st.stage = STAGE_WAIT_LYRICS_TEXT
-        await self.store.set(st)
-        await message.answer(
-            "Пришли текст песни обычным сообщением.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-
-    async def _handle_wait_lyrics_text(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if not text:
-            await message.answer("Жду текст песни сообщением.")
-            return
-        if _is_control_button_text(text):
-            await message.answer("Нужен именно текст песни сообщением. После этого перейду к следующему шагу.")
-            return
-
-        st.lyrics_text = text
-        st.target_fragment = ""
-        st.target_fragment_explicit = False
-        # No fork: go straight to the "paste the lines" step (the "let AI decide"
-        # branch was removed — the fragment is now always user-supplied).
-        st.stage = STAGE_WAIT_FRAGMENT_TEXT
-        await self.store.set(st)
-        # Phase 2b: kick off the footage-bucket ranker in the background now that
-        # we have lyrics. By the time the user reaches the "Футажи" step the
-        # ranked shortlist is ready (zero added latency). No-op when flow is off.
-        await self._trigger_vibe_ranker_task(st)
-        await message.answer(
-            "Скопируй и пришли нужные строки прямо из текста песни — те слова, "
-            "которые хочешь видеть в клипе. Например — припев трека, без "
-            "пояснительных слов типа «куплет:» и т.п.\n\n"
-            "Важно: строки должны точно совпадать с тем, что звучит в отрезке, "
-            "который ты укажешь дальше. Лишние слова сдвинут расшифровку — "
-            "субтитры уедут по таймингу.",
-            reply_markup=ReplyKeyboardRemove(),
+    async def _handle_legacy_lyrics_stage(self, message: Message, st: ChatState) -> None:
+        """Sessions parked at the removed «пришли весь текст песни» step when
+        the new flow shipped. There is no lyrics step any more, so restart at
+        the first step of the current flow (timing)."""
+        await self._ask_timing_choice(
+            message,
+            st,
+            prefix="Шаги обновились: полный текст песни больше не нужен. ",
         )
 
     async def _handle_wait_fragment_choice(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if text == BTN_SEND_FRAGMENT:
-            st.stage = STAGE_WAIT_FRAGMENT_TEXT
-            await self.store.set(st)
-            await message.answer(
-                "Скопируй и пришли нужные строки прямо из текста песни — те слова, которые хочешь видеть в клипе. "
-                "Например — припев трека.\n\n"
-                "Важно: строки должны точно совпадать с тем, что звучит в "
-                "выбранном отрезке. Лишние слова сдвинут расшифровку — "
-                "субтитры уедут по таймингу.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            return
-
-        if text == BTN_SKIP_FRAGMENT:
-            st.target_fragment = ""
-            st.target_fragment_explicit = False
-            await self._ask_timing_choice(message, st)
-            return
-
-        await message.answer("Выбери кнопку: «Указать строки из текста» или «На усмотрение ИИ».")
+        # Legacy stage, reachable only from a session parked on it. There is no
+        # fork any more (the lines are mandatory under local_ctc), so whatever
+        # the user pressed, ask for the lines.
+        await self._ask_fragment_text(message, st)
 
     async def _handle_wait_fragment_text(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_timing_choice(message, st)
+            return
         if not text:
             await message.answer("Жду интересующий фрагмент обычным текстовым сообщением.")
             return
@@ -6808,14 +6752,21 @@ class BlastBotApp:
 
         st.target_fragment = text
         st.target_fragment_explicit = True
+        # The full-lyrics step is gone: these lines ARE the reference text for
+        # the aligner and the input the footage ranker reads, so they are kept
+        # in lyrics_text too (everything downstream still reads that field).
+        st.lyrics_text = text
         st.stage = STAGE_WAIT_CONFIRM_TEXT
         await self.store.set(st)
+        # Phase 2b: kick off the footage-bucket ranker in the background now
+        # that we have the lines. By the time the user reaches the "Футажи"
+        # step the ranked shortlist is ready. No-op when the flow is off.
+        await self._trigger_vibe_ranker_task(st)
 
-        lyrics_preview = st.lyrics_text[:200] + ("…" if len(st.lyrics_text) > 200 else "")
         await message.answer(
-            f"Подтвердить текст?\n\n"
-            f"*Текст песни:*\n{lyrics_preview}\n\n"
-            f"*Строки из текста:*\n{st.target_fragment}",
+            f"Всё верно?\n\n"
+            f"*Отрезок:* {self._timing_label(st)}\n\n"
+            f"*Строки:*\n{st.target_fragment}",
             reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]),
             parse_mode="Markdown",
         )
@@ -6823,18 +6774,11 @@ class BlastBotApp:
     async def _handle_wait_confirm_text(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM_YES:
-            await self._ask_timing_choice(message, st)
+            await self._ask_bg_mode(message, st)
             return
         if text == BTN_CONFIRM_BACK:
             st.lyrics_text = ""
-            st.target_fragment = ""
-            st.target_fragment_explicit = False
-            st.stage = STAGE_WAIT_LYRICS_TEXT
-            await self.store.set(st)
-            await message.answer(
-                "Пришли текст песни обычным сообщением.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
+            await self._ask_fragment_text(message, st)
             return
         await message.answer("Выбери: «Да» или «Вернуться назад».", reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]))
 
@@ -7304,11 +7248,13 @@ class BlastBotApp:
 
         chat_id = int(message.chat.id)
         user_id = message.from_user.id if message.from_user else chat_id
-        if not self._has_forced_alignment_reference_text(st):
-            st.stage = STAGE_WAIT_LYRICS_TEXT
+        # Order mirrors the flow: window first, lines second.
+        if not self._has_timing_window(st):
+            st.stage = STAGE_WAIT_TIMING_INPUT
             await self.store.set(st)
             await message.answer(
-                "Для запуска нужен текст песни. Пришли его обычным сообщением.",
+                "Для точной синхронизации укажи тайминг отрывка, например: "
+                "1:20-1:35.",
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
@@ -7323,15 +7269,6 @@ class BlastBotApp:
             return
         if self._needs_explicit_local_alignment_fragment(st):
             await self._ask_explicit_local_alignment_fragment(message, st)
-            return
-        if not self._has_local_alignment_inputs(st):
-            st.stage = STAGE_WAIT_TIMING_INPUT
-            await self.store.set(st)
-            await message.answer(
-                "Для точной синхронизации укажи тайминг этих строк, например: "
-                "1:20-1:35.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
             return
 
         try:

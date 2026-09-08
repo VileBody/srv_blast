@@ -238,7 +238,10 @@ def test_versions_back_returns_to_frame_step() -> None:
     asyncio.run(_run())
 
 
-def test_timing_input_back_returns_to_fragment_text() -> None:
+def test_timing_input_back_reasks_timing_because_it_is_the_first_step() -> None:
+    """Timing now opens the flow, so «Назад» there (stale keyboard only) has
+    nowhere to go — it re-asks the window and drops any stale lines."""
+
     async def _run() -> None:
         app = _new_app()
         st = ChatState(
@@ -250,8 +253,27 @@ def test_timing_input_back_returns_to_fragment_text() -> None:
 
         await public_app.BlastBotApp._handle_wait_timing_input(app, _Message(BACK), st)
 
-        assert st.stage == STAGE_WAIT_FRAGMENT_TEXT
+        assert st.stage == STAGE_WAIT_TIMING_INPUT
         assert st.target_fragment == ""
         assert st.target_fragment_explicit is False
+
+    asyncio.run(_run())
+
+
+def test_fragment_text_back_returns_to_timing() -> None:
+    async def _run() -> None:
+        app = _new_app()
+        st = ChatState(
+            chat_id=1,
+            stage=STAGE_WAIT_FRAGMENT_TEXT,
+            user_clip_start_sec=80.0,
+            user_clip_end_sec=92.0,
+        )
+
+        await public_app.BlastBotApp._handle_wait_fragment_text(app, _Message(BACK), st)
+
+        assert st.stage == STAGE_WAIT_TIMING_INPUT
+        assert st.user_clip_start_sec == 0.0
+        assert st.user_clip_end_sec == 0.0
 
     asyncio.run(_run())
