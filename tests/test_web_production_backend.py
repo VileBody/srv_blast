@@ -431,6 +431,32 @@ def test_web_solid_palette_maps_to_renderer_planes(
     assert payload["bg_solid_color"] == renderer_color
 
 
+def test_web_strobe_reaches_orchestrator_as_solid_strobe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module(monkeypatch)
+    backend = _backend(module, _config(module))
+    job = _job()
+    variation = job["renderJob"]["variations"][0]
+    variation["background"] = {
+        "mode": "color",
+        "groups": [],
+        "color": "#f6f5fd",
+        "strobe": True,
+    }
+
+    payload = backend._request_payload(
+        job=job,
+        variation=variation,
+        index=1,
+        total=2,
+        master_id=None,
+    )
+
+    assert payload["bg_mode"] == "solid_strobe"
+    assert payload["bg_solid_color"] == "white"
+
+
 def test_catalog_parsing_keeps_and_validates_selector(monkeypatch: pytest.MonkeyPatch) -> None:
     """`selector` обязан пережить разбор каталога.
 

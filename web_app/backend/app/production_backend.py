@@ -888,7 +888,12 @@ class ProductionBackend:
         bg_mode = "photo" if background_mode == "photo" else "footage"
         bg_solid_color = ""
         if background_mode == "color":
-            bg_mode = "solid"
+            # The wizard represents both a static plane and the B/W strobe as
+            # the same `color` background, with `strobe` carrying the actual
+            # render mode. Preserve that flag at the web -> orchestrator
+            # boundary; otherwise a selected strobe is rendered as one static
+            # white frame for the whole video.
+            bg_mode = "solid_strobe" if bool(background.get("strobe")) else "solid"
             # Solid scene boundaries are built by the renderer without an artist.
             color = str(background.get("color") or "").lower()
             # The web palette uses the product's near-white/near-black design
