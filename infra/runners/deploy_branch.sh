@@ -455,6 +455,25 @@ require_prebuilt_image_env() {
   fi
 }
 
+persist_prebuilt_image_refs() {
+  if ! is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
+    return 0
+  fi
+
+  local key
+  for key in \
+    BLAST_RUNTIME_IMAGE \
+    BLAST_ALIGNMENT_IMAGE \
+    BLAST_TG_BOT_IMAGE \
+    BLAST_TG_BOT_PUBLIC_IMAGE \
+    BLAST_ASSET_UI_IMAGE \
+    BLAST_FINANCE_BOT_IMAGE
+  do
+    set_env_file_value "$REPO_DIR/.env" "$key" "${!key}"
+  done
+  echo "[deploy] persisted deployed prebuilt image refs in $REPO_DIR/.env"
+}
+
 docker_registry_login_if_needed() {
   local registry_token
   if [[ -z "$BLAST_IMAGE_REGISTRY" ]]; then
@@ -515,6 +534,7 @@ deploy_root_services_prebuilt() {
     echo "[deploy] docker compose up -d --no-build ${services[*]}"
     docker compose up -d --no-build "${services[@]}"
   fi
+  persist_prebuilt_image_refs
 }
 
 deploy_prod_path_services() {
@@ -544,6 +564,7 @@ deploy_prod_path_services() {
       reclaim_disk_for_pull
     fi
     prod_path_rollout
+    persist_prebuilt_image_refs
     remove_root_services tg-bot-public
     return 0
   fi
@@ -574,6 +595,7 @@ deploy_prod_path_services() {
     reclaim_disk_for_pull
   fi
   prod_path_rollout
+  persist_prebuilt_image_refs
   remove_root_services tg-bot-public
 }
 
