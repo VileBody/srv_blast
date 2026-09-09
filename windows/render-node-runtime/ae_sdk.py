@@ -1452,12 +1452,20 @@ class AeRenderer:
                 if rc is not None:
                     break
 
+                # hb.txt and run_live.log are the builder's own heartbeat and
+                # phase log, and they are the ONLY things that move while it is
+                # assembling the project. The other four only appear near the
+                # end: the status file when the wrapper finishes, project.aep at
+                # save, output.mp4 once rendering starts. Watching just those
+                # made a long build look idle and got healthy jobs killed.
                 progress_sig = (
                     self._file_progress_sig(stdout_log_path),
                     self._file_progress_sig(stderr_log_path),
                     self._file_progress_sig(status_path),
                     self._file_progress_sig(project_path),
                     self._file_progress_sig(output_path),
+                    self._file_progress_sig(job_dir / "hb.txt"),
+                    self._file_progress_sig(job_dir / "run_live.log"),
                 )
                 if progress_sig != last_progress_sig:
                     last_progress_sig = progress_sig
