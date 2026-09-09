@@ -871,7 +871,12 @@ def build_footage_layers(
             continue
         if str(it.get("type")) not in {"footage", "overlay", "audio_only"}:
             continue
-        original_name = str(it.get("file_name") or "").strip()
+        # Resolve the media name from the REAL object, not the pool identity:
+        # virtual segments of one long source share a file, and feeding their
+        # distinct identities here would mint a safe name per segment and make
+        # the node download the same object once per cut. `_resolve_safe_media_name`
+        # already returns one name per original, so sharing it collapses them.
+        original_name = str(it.get("media_file_name") or it.get("file_name") or "").strip()
         if not original_name:
             continue
         it["_safe_file_name"] = _resolve_safe_media_name(
@@ -964,6 +969,13 @@ def build_footage_layers(
             pre.props["tf_rotation"] = PropertyData("ADBE Rotate Z", value=precomp_placement["rotationZ"])
         if precomp_placement.get("opacity") is not None:
             pre.props["tf_opacity"] = PropertyData("ADBE Opacity", value=precomp_placement["opacity"])
+        if precomp_placement.get("collapseTransformation") is not None:
+            # Non-vertical geometries need the nested 1080-wide subtitle comp to
+            # stop rasterizing at its own bounds, or wide text is cut at 1080
+            # inside a wider frame. Absent/False keeps the vertical behaviour.
+            pre.text_data["layer_meta"]["collapseTransformation"] = bool(
+                precomp_placement["collapseTransformation"]
+            )
 
     out.append(pre)
 

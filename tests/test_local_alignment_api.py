@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -17,6 +19,7 @@ from mlcore.alignment.core import (
     ERROR_WINDOW_MISMATCH,
 )
 from mlcore.alignment.contracts import (
+    ERROR_PRONUNCIATION_UNAVAILABLE,
     ERROR_SEPARATOR_UNAVAILABLE,
     ERROR_SOURCE_SEPARATION_FAILED,
 )
@@ -101,6 +104,7 @@ def test_alignment_api_returns_stable_error_code() -> None:
             failure=AlignmentFailure(
                 "ALIGNMENT_UNSUPPORTED_TEXT",
                 "unsupported",
+                details={"hard_valid_candidate_count": 0},
             )
         )
     )
@@ -116,12 +120,16 @@ def test_alignment_api_returns_stable_error_code() -> None:
         )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "ALIGNMENT_UNSUPPORTED_TEXT"
+    assert response.json()["error"]["details"] == {
+        "hard_valid_candidate_count": 0
+    }
 
 
 @pytest.mark.parametrize(
     ("code", "expected_status"),
     [
         (ERROR_SEPARATOR_UNAVAILABLE, 503),
+        (ERROR_PRONUNCIATION_UNAVAILABLE, 503),
         (ERROR_SOURCE_SEPARATION_FAILED, 500),
     ],
 )
@@ -167,8 +175,17 @@ def _settings(tmp_path: Path, *, timeout_s: float = 5.0) -> AlignmentSettings:
         padding_right_sec=0.5,
         min_word_confidence=0.05,
         pause_min_gap_sec=0.35,
+        dynamic_window_max_adjust_sec=2.0,
+        dynamic_window_step_sec=0.5,
+        dynamic_window_min_edge_clearance_sec=0.12,
+        dynamic_window_stability_tolerance_sec=0.12,
+        dynamic_window_min_consensus_candidates=3,
+        dynamic_window_score_tolerance=0.12,
+        dynamic_window_min_boundary_duration_ratio=0.15,
+        dynamic_window_boundary_overflow_tolerance_sec=0.2,
         max_window_sec=120.0,
         max_reference_words=400,
+        max_reference_frame_budget_ratio=0.8,
         torch_threads=1,
         audio_preprocessor="demucs",
         demucs_model_repo=tmp_path / "demucs",
@@ -177,6 +194,12 @@ def _settings(tmp_path: Path, *, timeout_s: float = 5.0) -> AlignmentSettings:
         demucs_package_version="4.1.0",
         demucs_segment_sec=7.0,
         demucs_overlap=0.25,
+        pronunciation_mode="espeak_en_to_ru",
+        espeak_bin="espeak-ng",
+        espeak_voice="en-us",
+        espeak_expected_version="1.51",
+        espeak_timeout_s=2.0,
+        pronunciation_overrides_path=tmp_path / "pronunciations.json",
     )
 
 
@@ -187,11 +210,25 @@ def test_alignment_runtime_reports_missing_model_and_invalid_path(
     runtime._load_model()
     assert runtime.ready is False
     assert "model directory is missing" in runtime.load_error
+    assert runtime.status()["dynamic_window"]["max_adjust_sec"] == 2.0
 
     runtime._ready = True
     with pytest.raises(AlignmentFailure) as path_error:
         runtime.resolve_audio_path(str(tmp_path / "outside.mp3"))
     assert path_error.value.code == ERROR_INTERNAL
+
+
+def test_alignment_runtime_rejects_invalid_dynamic_window_policy(
+    tmp_path: Path,
+) -> None:
+    settings = replace(_settings(tmp_path), dynamic_window_max_adjust_sec=0.0)
+    runtime = AlignmentRuntime(settings)
+
+    runtime._load_model()
+
+    assert runtime.ready is False
+    assert runtime.status()["load_error_code"] == ERROR_INTERNAL
+    assert "max adjustment must be positive" in runtime.load_error
 
 
 def test_alignment_runtime_rejects_window_and_times_out(tmp_path: Path) -> None:
@@ -243,12 +280,21 @@ def test_alignment_runtime_stays_unready_until_all_timed_out_jobs_finish(
 ) -> None:
     runtime = AlignmentRuntime(_settings(tmp_path, timeout_s=0.01))
     runtime._ready = True
+    call_lock = threading.Lock()
+    call_index = 0
+    release_jobs = [threading.Event(), threading.Event()]
+    started_jobs = [threading.Event(), threading.Event()]
 
-    def slow_align(**_kwargs):
-        time.sleep(0.05)
+    def controlled_align(**_kwargs):
+        nonlocal call_index
+        with call_lock:
+            index = call_index
+            call_index += 1
+        started_jobs[index].set()
+        assert release_jobs[index].wait(timeout=2.0)
         return AlignmentResult(_payload(), {}, {})
 
-    runtime._align_sync = slow_align  # type: ignore[method-assign]
+    runtime._align_sync = controlled_align  # type: ignore[method-assign]
 
     async def run() -> None:
         async def request() -> AlignmentResult:
@@ -265,14 +311,20 @@ def test_alignment_runtime_stays_unready_until_all_timed_out_jobs_finish(
             for result in results
         )
         assert runtime.ready is False
-        await asyncio.sleep(0.06)
+
+        release_jobs[0].set()
+        assert await asyncio.to_thread(started_jobs[1].wait, 1.0)
         assert runtime.ready is False
-        await asyncio.sleep(0.06)
+
+        release_jobs[1].set()
+        for _ in range(100):
+            if runtime.ready:
+                break
+            await asyncio.sleep(0.01)
         assert runtime.ready is True
         await runtime.close()
 
     asyncio.run(run())
-
 
 def test_alignment_runtime_fails_when_model_is_not_ready(tmp_path: Path) -> None:
     runtime = AlignmentRuntime(_settings(tmp_path))

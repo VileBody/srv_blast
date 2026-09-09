@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -14,6 +16,32 @@ log = logging.getLogger("credits_db")
 
 _UTM_KEYS = ("source", "medium", "campaign", "content", "term")
 _PAID_REASONS = ("payment", "admin_activate", "manual_activation")
+
+_PARTNER_PWD_ITERATIONS = 210_000
+
+# Core-team accounts are seeded into `admins` on every startup and are excluded
+# from every partner-facing number: they buy for testing, and that would both
+# pollute a partner's funnel and pay them commission on our own purchases.
+# Two spellings because some queries alias the users table and some do not;
+# both start with a space so they can be concatenated straight after `$1`.
+_NO_ADMINS = " AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
+_NO_ADMINS_BARE = " AND tg_id NOT IN (SELECT tg_id FROM admins)"
+
+
+def hash_partner_password(password: str) -> str:
+    """PBKDF2-HMAC-SHA256, stdlib only (no bcrypt dep in this image)."""
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), _PARTNER_PWD_ITERATIONS)
+    return f"{salt}${digest.hex()}"
+
+
+def verify_partner_password(password: str, stored: str) -> bool:
+    try:
+        salt, hex_digest = str(stored or "").split("$", 1)
+    except ValueError:
+        return False
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), _PARTNER_PWD_ITERATIONS)
+    return secrets.compare_digest(digest.hex(), hex_digest)
 
 
 class _TrackQuotaExhausted(Exception):
@@ -249,6 +277,29 @@ def normalize_package_code(value: str) -> str:
     if s in {"5", "15", "30", "50"}:
         return s
     return ""
+
+
+_PACKAGE_VIDEO_CREDITS = {
+    "5": 5,
+    "15": 100,
+    "30": 400,
+    # The current bot represents the unlimited annual tariff with a high
+    # sentinel so the existing integer balance contract remains unchanged.
+    "50": 100_000,
+}
+
+
+def package_video_credits(value: str) -> int:
+    """Return the current video allowance for any persisted package spelling.
+
+    Payment rows created by older bot versions contain numeric tariff codes,
+    while current rows contain Russian labels.  Unknown products fail loudly:
+    silently granting the old five-credit default would under-credit a sale.
+    """
+    code = normalize_package_code(value)
+    if not code:
+        raise ValueError(f"unknown payment package: {value!r}")
+    return _PACKAGE_VIDEO_CREDITS[code]
 
 
 def _clean_utm(utm: Optional[Dict[str, str]]) -> Dict[str, str]:
@@ -551,6 +602,68 @@ class CreditsDB:
             ")"
         )
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_tracks_tg_id ON user_tracks(tg_id)")
+
+        # Post-generation survey — one row per user, answers merged into a JSONB
+        # map keyed by question id. Kept out of `users` because it is pure
+        # marketing segmentation data with its own lifecycle.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS survey_responses ("
+            "tg_id BIGINT PRIMARY KEY,"
+            "answers JSONB NOT NULL DEFAULT '{}'::jsonb,"
+            "branch_q2 TEXT NOT NULL DEFAULT '',"
+            "branch_q3 TEXT NOT NULL DEFAULT '',"
+            "completed_at TIMESTAMP,"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "updated_at TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_survey_responses_completed "
+            "ON survey_responses(completed_at)"
+        )
+
+        # ── Partner cabinet ──────────────────────────────────────────
+        # Traffic partners get their own login + read-only cabinet with
+        # attribution-scoped stats. Attribution is first-touch and permanent:
+        # once a user is linked to a partner via a `p_<code>` /start deep
+        # link, every future purchase (incl. subscription rebills, which are
+        # their own CONFIRMED `payments` rows) is credited to that partner.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS partners ("
+            "id            BIGSERIAL PRIMARY KEY,"
+            "login         TEXT NOT NULL UNIQUE,"
+            "name          TEXT NOT NULL DEFAULT '',"
+            "password_hash TEXT NOT NULL,"
+            "status        TEXT NOT NULL DEFAULT 'active',"
+            "created_at    TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "updated_at    TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS partner_links ("
+            "id           BIGSERIAL PRIMARY KEY,"
+            "partner_id   BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,"
+            "code         TEXT NOT NULL UNIQUE,"
+            "label        TEXT NOT NULL DEFAULT '',"
+            "created_at   TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_links_partner ON partner_links(partner_id)")
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS partner_payouts ("
+            "id           BIGSERIAL PRIMARY KEY,"
+            "partner_id   BIGINT NOT NULL REFERENCES partners(id) ON DELETE CASCADE,"
+            "amount_rub   INTEGER NOT NULL,"
+            "note         TEXT NOT NULL DEFAULT '',"
+            "created_by   TEXT NOT NULL DEFAULT '',"
+            "created_at   TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_partner_payouts_partner ON partner_payouts(partner_id)")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_id BIGINT")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_link_code TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_attributed_at TIMESTAMP")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_partner_id ON users(partner_id)")
 
         # One-time migration ledger — guards backfills that must run exactly
         # once (unlike the idempotent CREATE/ALTER statements above).
@@ -1427,6 +1540,97 @@ class CreditsDB:
                 str(event or ""),
                 str(detail or ""),
             )
+
+    async def count_events(self, tg_id: int, event: str) -> int:
+        """How many times `event` was logged for this user (all time).
+
+        The post-generation funnel uses count_events(tg_id, "generation_started")
+        as the "is this the first generation?" counter — that row is written
+        exactly once per launched batch, so no extra flag is needed."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT COUNT(*) FROM activity_log WHERE tg_id = $1 AND event = $2",
+                int(tg_id),
+                str(event or ""),
+            )
+        return int(row or 0)
+
+    # Post-generation survey
+
+    async def save_survey_answer(
+        self,
+        tg_id: int,
+        *,
+        question_id: str,
+        answer_id: str,
+        answer_label: str,
+        branch_q2: str = "",
+        branch_q3: str = "",
+        completed: bool = False,
+    ) -> None:
+        """Merge one answer into the user's survey row (upsert, idempotent).
+
+        Branch fields are only overwritten when a non-empty value is passed, and
+        completed_at is never moved once set — a re-answered question keeps the
+        original completion timestamp."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO survey_responses (tg_id, answers, branch_q2, branch_q3, completed_at)
+                VALUES (
+                    $1,
+                    jsonb_build_object(
+                        $2::text,
+                        jsonb_build_object('id', $3::text, 'label', $4::text)
+                    ),
+                    $5, $6,
+                    CASE WHEN $7::boolean THEN NOW() ELSE NULL END
+                )
+                ON CONFLICT (tg_id) DO UPDATE SET
+                    answers      = survey_responses.answers || EXCLUDED.answers,
+                    branch_q2    = CASE WHEN EXCLUDED.branch_q2 <> ''
+                                        THEN EXCLUDED.branch_q2 ELSE survey_responses.branch_q2 END,
+                    branch_q3    = CASE WHEN EXCLUDED.branch_q3 <> ''
+                                        THEN EXCLUDED.branch_q3 ELSE survey_responses.branch_q3 END,
+                    completed_at = COALESCE(survey_responses.completed_at, EXCLUDED.completed_at),
+                    updated_at   = NOW()
+                """,
+                int(tg_id),
+                str(question_id or ""),
+                str(answer_id or ""),
+                _norm_text(answer_label, max_len=200),
+                str(branch_q2 or ""),
+                str(branch_q3 or ""),
+                bool(completed),
+            )
+
+    async def get_survey_response(self, tg_id: int) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT tg_id, answers, branch_q2, branch_q3, completed_at, created_at, updated_at "
+                "FROM survey_responses WHERE tg_id = $1",
+                int(tg_id),
+            )
+        if row is None:
+            return None
+        raw_answers = row["answers"]
+        if isinstance(raw_answers, str):
+            try:
+                raw_answers = json.loads(raw_answers)
+            except (TypeError, ValueError):
+                raw_answers = {}
+        return {
+            "tg_id": int(row["tg_id"]),
+            "answers": dict(raw_answers or {}),
+            "branch_q2": str(row["branch_q2"] or ""),
+            "branch_q3": str(row["branch_q3"] or ""),
+            "completed_at": _fmt_ts(row["completed_at"]),
+            "created_at": _fmt_ts(row["created_at"]),
+            "updated_at": _fmt_ts(row["updated_at"]),
+        }
 
     async def get_activity(self, tg_id: int = 0, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         pool = self._pool_or_fail()
@@ -4536,5 +4740,478 @@ class CreditsDB:
                 "SELECT status, COUNT(*)::BIGINT AS cnt FROM tier_outreach "
                 "WHERE tier = $1 GROUP BY status",
                 str(tier),
+            )
+        return {str(r["status"]): int(r["cnt"]) for r in rows}
+
+    # ── Partner cabinet ──────────────────────────────────────────────
+
+    async def create_partner(self, login: str, password: str, name: str = "") -> int:
+        pool = self._pool_or_fail()
+        pwd_hash = hash_partner_password(password)
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO partners (login, password_hash, name) VALUES ($1, $2, $3) RETURNING id",
+                _norm_text(login, max_len=64).lower(),
+                pwd_hash,
+                _norm_text(name, max_len=128),
+            )
+        return int(row["id"])
+
+    async def get_partner_by_login(self, login: str) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM partners WHERE login = $1",
+                _norm_text(login, max_len=64).lower(),
+            )
+        return dict(row) if row else None
+
+    async def get_partner(self, partner_id: int) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT * FROM partners WHERE id = $1", int(partner_id))
+        return dict(row) if row else None
+
+    async def list_partners(self) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT p.*, "
+                "(SELECT COUNT(*) FROM users u WHERE u.partner_id = p.id)::BIGINT AS users_count, "
+                "(SELECT COUNT(*) FROM partner_links l WHERE l.partner_id = p.id)::BIGINT AS links_count "
+                "FROM partners p ORDER BY p.created_at DESC"
+            )
+        return [dict(r) for r in rows]
+
+    async def set_partner_password(self, partner_id: int, password: str) -> None:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE partners SET password_hash = $1, updated_at = NOW() WHERE id = $2",
+                hash_partner_password(password),
+                int(partner_id),
+            )
+
+    async def set_partner_status(self, partner_id: int, status: str) -> None:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE partners SET status = $1, updated_at = NOW() WHERE id = $2",
+                str(status),
+                int(partner_id),
+            )
+
+    async def create_partner_link(self, partner_id: int, code: str, label: str = "") -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO partner_links (partner_id, code, label) VALUES ($1, $2, $3) RETURNING id",
+                int(partner_id),
+                _norm_text(code, max_len=64),
+                _norm_text(label, max_len=128),
+            )
+        return int(row["id"])
+
+    async def list_partner_links(self, partner_id: int) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT l.*, "
+                "(SELECT COUNT(*) FROM users u WHERE u.partner_link_code = l.code)::BIGINT AS starts_count "
+                "FROM partner_links l WHERE l.partner_id = $1 ORDER BY l.created_at DESC",
+                int(partner_id),
+            )
+        return [dict(r) for r in rows]
+
+    async def get_partner_link_by_code(self, code: str) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT * FROM partner_links WHERE code = $1",
+                _norm_text(code, max_len=64),
+            )
+        return dict(row) if row else None
+
+    async def attribute_partner_from_code(self, tg_id: int, code: str) -> bool:
+        """First-touch, permanent partner attribution. No-op if the user is
+        already attributed (to this or any other partner) or the code is
+        unknown. Returns True if a fresh attribution was made."""
+        link = await self.get_partner_link_by_code(code)
+        if not link:
+            return False
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "INSERT INTO users (tg_id, username) VALUES ($1, '') ON CONFLICT (tg_id) DO NOTHING",
+                    int(tg_id),
+                )
+                result = await conn.execute(
+                    "UPDATE users SET partner_id = $1, partner_link_code = $2, "
+                    "partner_attributed_at = NOW(), updated_at = NOW() "
+                    "WHERE tg_id = $3 AND partner_id IS NULL",
+                    int(link["partner_id"]),
+                    str(link["code"]),
+                    int(tg_id),
+                )
+        return _rowcount_from_tag(result) > 0
+
+    async def list_partner_user_ids(self, partner_id: int) -> List[int]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT tg_id FROM users WHERE partner_id = $1 " + _NO_ADMINS_BARE + " ORDER BY created_at DESC",
+                int(partner_id),
+            )
+        return [int(r["tg_id"]) for r in rows]
+
+    async def partner_users(self, partner_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT tg_id, username, credits, created_at, partner_link_code "
+                "FROM users WHERE partner_id = $1 " + _NO_ADMINS_BARE + " "
+                "ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+                int(partner_id), int(limit), int(offset),
+            )
+        return [
+            {
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "credits": int(r["credits"]),
+                "created_at": _fmt_ts(r["created_at"]),
+                "partner_link_code": str(r["partner_link_code"] or ""),
+            }
+            for r in rows
+        ]
+
+    async def get_partner_user(self, partner_id: int, tg_id: int) -> Optional[Dict[str, Any]]:
+        """Scoped user lookup for the partner cabinet — returns None if the
+        user isn't attributed to this partner, so a partner can never browse
+        another partner's (or the general) user base by guessing tg_ids."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT tg_id, username, credits, created_at, partner_link_code, partner_attributed_at "
+                "FROM users WHERE tg_id = $1 AND partner_id = $2" + _NO_ADMINS_BARE,
+                int(tg_id), int(partner_id),
+            )
+        if not row:
+            return None
+        return {
+            "tg_id": int(row["tg_id"]),
+            "username": str(row["username"] or ""),
+            "credits": int(row["credits"]),
+            "created_at": _fmt_ts(row["created_at"]),
+            "partner_link_code": str(row["partner_link_code"] or ""),
+            "partner_attributed_at": _fmt_ts(row["partner_attributed_at"]),
+        }
+
+    async def count_partner_users(self, partner_id: int) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            val = await conn.fetchval("SELECT COUNT(*) FROM users WHERE partner_id = $1" + _NO_ADMINS_BARE, int(partner_id))
+        return int(val or 0)
+
+    async def partner_commission_summary(self, partner_id: int) -> Dict[str, Any]:
+        """Commission rule: 50% of a referred user's FIRST confirmed payment,
+        20% of every confirmed payment after that (manual repurchase or
+        subscription rebill alike, every rebill is its own CONFIRMED row)."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "WITH ranked AS ("
+                "  SELECT p.amount_rub, "
+                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn "
+                "  FROM payments p JOIN users u ON u.tg_id = p.tg_id "
+                "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
+                ") "
+                "SELECT "
+                "  COALESCE(SUM(CASE WHEN rn = 1 THEN amount_rub ELSE 0 END), 0)::BIGINT AS first_revenue_rub, "
+                "  COALESCE(SUM(CASE WHEN rn > 1 THEN amount_rub ELSE 0 END), 0)::BIGINT AS repeat_revenue_rub, "
+                "  COALESCE(SUM(CASE WHEN rn = 1 THEN 1 ELSE 0 END), 0)::BIGINT AS first_count, "
+                "  COALESCE(SUM(CASE WHEN rn > 1 THEN 1 ELSE 0 END), 0)::BIGINT AS repeat_count "
+                "FROM ranked",
+                int(partner_id),
+            )
+            paid_row = await conn.fetchrow(
+                "SELECT COALESCE(SUM(amount_rub), 0)::BIGINT AS paid_rub FROM partner_payouts WHERE partner_id = $1",
+                int(partner_id),
+            )
+        first_revenue = int(row["first_revenue_rub"])
+        repeat_revenue = int(row["repeat_revenue_rub"])
+        earned_rub = int(round(first_revenue * 0.5 + repeat_revenue * 0.2))
+        paid_rub = int(paid_row["paid_rub"])
+        return {
+            "first_revenue_rub": first_revenue,
+            "repeat_revenue_rub": repeat_revenue,
+            "first_count": int(row["first_count"]),
+            "repeat_count": int(row["repeat_count"]),
+            "earned_rub": earned_rub,
+            "paid_rub": paid_rub,
+            "due_rub": max(0, earned_rub - paid_rub),
+        }
+
+    async def partner_link_stats(self, partner_id: int) -> List[Dict[str, Any]]:
+        """Per-link starts / paying users / commission, for the leaderboard."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "WITH ranked AS ("
+                "  SELECT p.tg_id, p.amount_rub, "
+                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn "
+                "  FROM payments p WHERE UPPER(p.status) = 'CONFIRMED'"
+                ") "
+                "SELECT l.code, l.label, l.created_at, "
+                "  COUNT(u.tg_id)::BIGINT AS starts_count, "
+                "  COALESCE(SUM(CASE WHEN r.rn = 1 THEN r.amount_rub * 0.5 "
+                "                     WHEN r.rn > 1 THEN r.amount_rub * 0.2 ELSE 0 END), 0)::BIGINT AS commission_rub, "
+                "  COUNT(DISTINCT r.tg_id)::BIGINT AS paying_users "
+                "FROM partner_links l "
+                # Filter in the JOIN, not the WHERE: a link whose only visitor
+                # was a team account must still be listed, showing zero.
+                "LEFT JOIN users u ON u.partner_link_code = l.code" + _NO_ADMINS + " "
+                "LEFT JOIN ranked r ON r.tg_id = u.tg_id "
+                "WHERE l.partner_id = $1 "
+                "GROUP BY l.code, l.label, l.created_at "
+                "ORDER BY commission_rub DESC, starts_count DESC",
+                int(partner_id),
+            )
+        return [
+            {
+                "code": str(r["code"]),
+                "label": str(r["label"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+                "starts_count": int(r["starts_count"]),
+                "paying_users": int(r["paying_users"]),
+                "commission_rub": int(r["commission_rub"]),
+            }
+            for r in rows
+        ]
+
+    async def partner_revenue_timeseries(self, partner_id: int, days: int = 30) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT d::date AS day, "
+                "  COALESCE((SELECT COUNT(*) FROM users u WHERE u.partner_id = $1" + _NO_ADMINS + " "
+                "            AND u.created_at::date = d::date), 0)::BIGINT AS starts, "
+                "  COALESCE((SELECT COUNT(*) FROM payments p JOIN users u ON u.tg_id = p.tg_id "
+                "            WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED' "
+                "            AND p.created_at::date = d::date), 0)::BIGINT AS purchases "
+                "FROM generate_series(CURRENT_DATE - ($2::int - 1), CURRENT_DATE, INTERVAL '1 day') AS d "
+                "ORDER BY day ASC",
+                int(partner_id), int(days),
+            )
+        return [{"day": r["day"].isoformat(), "starts": int(r["starts"]), "purchases": int(r["purchases"])} for r in rows]
+
+    async def partner_clients(self, partner_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Attributed users who actually paid, with the partner's own commission
+        per client. Core-team accounts are filtered out via the `admins` table,
+        the same exclusion the CRM/clients views use, so test purchases from the
+        team do not show up as someone's clients."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "WITH ranked AS ("
+                "  SELECT p.tg_id, p.amount_rub, p.created_at,"
+                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
+                "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
+                "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
+                "    AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
+                ") "
+                "SELECT u.tg_id, u.username, u.partner_link_code,"
+                "  COUNT(*)::BIGINT AS purchases,"
+                "  COALESCE(SUM(CASE WHEN r.rn = 1 THEN r.amount_rub * 0.5 "
+                "                    ELSE r.amount_rub * 0.2 END), 0)::BIGINT AS earned_rub,"
+                "  MIN(r.created_at) AS first_purchase_at,"
+                "  MAX(r.created_at) AS last_purchase_at "
+                "FROM ranked r JOIN users u ON u.tg_id = r.tg_id "
+                "GROUP BY u.tg_id, u.username, u.partner_link_code "
+                "ORDER BY earned_rub DESC, last_purchase_at DESC "
+                "LIMIT $2 OFFSET $3",
+                int(partner_id), int(limit), int(offset),
+            )
+        return [
+            {
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "partner_link_code": str(r["partner_link_code"] or ""),
+                "purchases": int(r["purchases"]),
+                "earned_rub": int(r["earned_rub"]),
+                "first_purchase_at": _fmt_ts(r["first_purchase_at"]),
+                "last_purchase_at": _fmt_ts(r["last_purchase_at"]),
+            }
+            for r in rows
+        ]
+
+    async def partner_clients_summary(self, partner_id: int) -> Dict[str, int]:
+        """Client count and the commission they add up to, admins excluded."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "WITH ranked AS ("
+                "  SELECT p.tg_id, p.amount_rub,"
+                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
+                "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
+                "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
+                "    AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
+                ") "
+                "SELECT COUNT(DISTINCT tg_id)::BIGINT AS clients,"
+                "  COUNT(*)::BIGINT AS purchases,"
+                "  COALESCE(SUM(CASE WHEN rn = 1 THEN amount_rub * 0.5 "
+                "                    ELSE amount_rub * 0.2 END), 0)::BIGINT AS earned_rub "
+                "FROM ranked",
+                int(partner_id),
+            )
+        return {
+            "clients": int(row["clients"]),
+            "purchases": int(row["purchases"]),
+            "earned_rub": int(row["earned_rub"]),
+        }
+
+    async def partner_period_totals(self, partner_id: int, *, days: int, shift: int = 0) -> Dict[str, int]:
+        """Starts / purchases / commission for a window of `days`, shifted back
+        by `shift` whole windows (shift=1 is the preceding period, used for the
+        change indicators).
+
+        The 50/20 split is ranked over each user's FULL payment history and only
+        then filtered to the window, so a repeat purchase inside the window is
+        still charged at 20% even when the first one happened before it.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "WITH bounds AS ("
+                "  SELECT (CURRENT_DATE - ($2::int * ($3::int + 1) - 1))::timestamp AS lo,"
+                "         (CURRENT_DATE - ($2::int * $3::int) + 1)::timestamp AS hi"
+                "), ranked AS ("
+                "  SELECT p.amount_rub, p.created_at,"
+                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
+                "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
+                "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
+                ") "
+                "SELECT "
+                "  (SELECT COUNT(*) FROM users u, bounds b "
+                "    WHERE u.partner_id = $1" + _NO_ADMINS + " AND u.created_at >= b.lo AND u.created_at < b.hi)::BIGINT AS starts,"
+                "  (SELECT COUNT(*) FROM ranked r, bounds b "
+                "    WHERE r.created_at >= b.lo AND r.created_at < b.hi)::BIGINT AS purchases,"
+                "  (SELECT COALESCE(SUM(CASE WHEN r.rn = 1 THEN r.amount_rub * 0.5 ELSE r.amount_rub * 0.2 END), 0) "
+                "    FROM ranked r, bounds b "
+                "    WHERE r.created_at >= b.lo AND r.created_at < b.hi)::BIGINT AS earned_rub",
+                int(partner_id), int(days), int(shift),
+            )
+        return {
+            "starts": int(row["starts"]),
+            "purchases": int(row["purchases"]),
+            "earned_rub": int(row["earned_rub"]),
+        }
+
+    async def add_partner_payout(self, partner_id: int, amount_rub: int, note: str = "", created_by: str = "") -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "INSERT INTO partner_payouts (partner_id, amount_rub, note, created_by) "
+                "VALUES ($1, $2, $3, $4) RETURNING id",
+                int(partner_id), int(amount_rub), _norm_text(note, max_len=300), _norm_text(created_by, max_len=128),
+            )
+        return int(row["id"])
+
+    async def list_partner_payouts(self, partner_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM partner_payouts WHERE partner_id = $1 ORDER BY created_at DESC LIMIT $2",
+                int(partner_id), int(limit),
+            )
+        return [
+            {
+                "id": int(r["id"]),
+                "amount_rub": int(r["amount_rub"]),
+                "note": str(r["note"] or ""),
+                "created_by": str(r["created_by"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    async def partner_jobs(self, partner_id: int, *, active_only: bool = False, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        status_filter = "AND gr.status NOT IN ('succeeded', 'failed', 'cancelled')" if active_only else ""
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"SELECT gr.run_id, gr.status, gr.versions_total, gr.current_stage, "
+                f"gr.created_at, gr.updated_at, u.username, u.tg_id "
+                f"FROM generation_runs gr JOIN users u ON u.tg_id = gr.chat_id "
+                f"WHERE u.partner_id = $1{_NO_ADMINS} {status_filter} "
+                f"ORDER BY gr.updated_at DESC LIMIT $2 OFFSET $3",
+                int(partner_id), int(limit), int(offset),
+            )
+        return [
+            {
+                "run_id": str(r["run_id"]),
+                "status": str(r["status"]),
+                "versions_total": int(r["versions_total"]),
+                "current_stage": str(r["current_stage"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+                "updated_at": _fmt_ts(r["updated_at"]),
+                "username": str(r["username"] or ""),
+                "tg_id": int(r["tg_id"]),
+            }
+            for r in rows
+        ]
+
+    async def count_partner_jobs(self, partner_id: int, *, active_only: bool = False) -> int:
+        pool = self._pool_or_fail()
+        status_filter = "AND gr.status NOT IN ('succeeded', 'failed', 'cancelled')" if active_only else ""
+        async with pool.acquire() as conn:
+            val = await conn.fetchval(
+                f"SELECT COUNT(*) FROM generation_runs gr JOIN users u ON u.tg_id = gr.chat_id "
+                f"WHERE u.partner_id = $1{_NO_ADMINS} {status_filter}",
+                int(partner_id),
+            )
+        return int(val or 0)
+
+    async def partner_activity(self, partner_id: int, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+        """Event feed across every user attributed to this partner."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT a.id, a.tg_id, a.event, a.detail, a.created_at, u.username "
+                "FROM activity_log a JOIN users u ON u.tg_id = a.tg_id "
+                "WHERE u.partner_id = $1" + _NO_ADMINS + " "
+                "ORDER BY a.created_at DESC, a.id DESC LIMIT $2 OFFSET $3",
+                int(partner_id), int(limit), int(offset),
+            )
+        return [
+            {
+                "id": int(r["id"]),
+                "tg_id": int(r["tg_id"]),
+                "username": str(r["username"] or ""),
+                "event": str(r["event"] or ""),
+                "detail": str(r["detail"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
+
+    async def count_partner_activity(self, partner_id: int) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            val = await conn.fetchval(
+                "SELECT COUNT(*) FROM activity_log a JOIN users u ON u.tg_id = a.tg_id "
+                "WHERE u.partner_id = $1" + _NO_ADMINS,
+                int(partner_id),
+            )
+        return int(val or 0)
+
+    async def partner_jobs_summary(self, partner_id: int) -> Dict[str, int]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT gr.status, COUNT(*)::BIGINT AS cnt "
+                "FROM generation_runs gr JOIN users u ON u.tg_id = gr.chat_id "
+                "WHERE u.partner_id = $1" + _NO_ADMINS + " GROUP BY gr.status",
+                int(partner_id),
             )
         return {str(r["status"]): int(r["cnt"]) for r in rows}

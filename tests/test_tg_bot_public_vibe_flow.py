@@ -175,7 +175,7 @@ def _make_app(monkeypatch, ranked):
         def __init__(self):
             self.rank_calls = 0
 
-        async def rank_buckets(self, *, lyrics, mood="", top=0, media_type="video"):
+        async def rank_buckets(self, *, lyrics, mood="", top=0, media_type="video", pool="vibes"):
             self.rank_calls += 1
             return {
                 "buckets": [
@@ -309,7 +309,7 @@ def test_ensure_vibe_ranked_retries_transient_failures(monkeypatch):
     calls = {"n": 0}
     real_rank_buckets = app.orchestrator.rank_buckets
 
-    async def _flaky_rank_buckets(*, lyrics, mood="", top=0, media_type="video"):
+    async def _flaky_rank_buckets(*, lyrics, mood="", top=0, media_type="video", pool="vibes"):
         calls["n"] += 1
         if calls["n"] < 3:
             raise ConnectionError("simulated transient failure")

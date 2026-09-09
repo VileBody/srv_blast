@@ -52,10 +52,17 @@ STAGE_WAIT_EFFECT_EXTRA_FULL = "WAIT_EFFECT_EXTRA_FULL"
 STAGE_WAIT_EFFECT_EXTEND = "WAIT_EFFECT_EXTEND"
 STAGE_WAIT_VISUAL_TRANSITION = "WAIT_VISUAL_TRANSITION"
 STAGE_WAIT_VISUAL_STYLE = "WAIT_VISUAL_STYLE"
+STAGE_WAIT_STYLE_SKIP_CONFIRM = "WAIT_STYLE_SKIP_CONFIRM"
 # F2 «Объект» single sub-picker (5 shape buttons). Mirror of tg_bot_botapi.
 STAGE_WAIT_F2_SHAPE = "WAIT_F2_SHAPE"
+# «Прогрев» — развилка звук/видео. Mirror of tg_bot_botapi.
+STAGE_WAIT_WARMUP_KIND = "WAIT_WARMUP_KIND"
 # F1 «Звук» — wait for user-uploaded pre-drop sound. Mirror of tg_bot_botapi.
 STAGE_WAIT_F1_SOUND = "WAIT_F1_SOUND"
+# F6 «Видео» — wait for the user-uploaded warm-up clip. Mirror of tg_bot_botapi.
+STAGE_WAIT_F6_VIDEO = "WAIT_F6_VIDEO"
+# F6 «Видео», ветка ссылки — тайминги отрезка. Mirror of tg_bot_botapi.
+STAGE_WAIT_F6_YT_RANGE = "WAIT_F6_YT_RANGE"
 # F1 «Звук» — wait for optional subtitle text (or skip). Mirror of tg_bot_botapi.
 STAGE_WAIT_F1_TEXT = "WAIT_F1_TEXT"
 # Photo flow (bg_mode == "photo", behind PHOTO_FLOW_ENABLED). Same slot as the
@@ -67,11 +74,20 @@ STAGE_WAIT_BATTERY_SOUND = "WAIT_BATTERY_SOUND"
 STAGE_WAIT_BATTERY_F4_DROP = "WAIT_BATTERY_F4_DROP"
 # Footage precision flow (Phase 2b): ranked-shortlist vibe picker (multi-select).
 # Mirror of tg_bot_botapi — UX gated behind FOOTAGE_VIBE_FLOW_ENABLED (off here).
+# Which footage plane the vibe shortlist should draw from: the semantic 9:16
+# vibes, or one folder-scoped collection kind (films / …).
+STAGE_WAIT_FOOTAGE_KIND = "WAIT_FOOTAGE_KIND"
 STAGE_WAIT_VIBE = "WAIT_VIBE"
 # Customization color pickers. Mirror of tg_bot_botapi.
 STAGE_WAIT_SUBTITLE_COLOR = "WAIT_SUBTITLE_COLOR"
 STAGE_WAIT_ACCENT_COLOR = "WAIT_ACCENT_COLOR"
+# Рамка: PNG-маска поверх всех слоёв. Отдельный шаг (не хук) — идёт
+# непосредственно перед выбором числа версий, доступен на любом пути.
+STAGE_WAIT_FRAME = "WAIT_FRAME"
 STAGE_WAIT_VERSIONS = "WAIT_VERSIONS"
+# Free tier only: a pick that burns >=80% of the free quota needs an explicit
+# confirmation before it reaches the final confirm screen.
+STAGE_WAIT_VERSIONS_WARNING = "WAIT_VERSIONS_WARNING"
 STAGE_WAIT_CONFIRM = "WAIT_CONFIRM"
 STAGE_PROCESSING = "PROCESSING"
 STAGE_WAIT_NEXT = "WAIT_NEXT"
@@ -206,14 +222,33 @@ class ChatState(BaseModel):
     visual_transition: str = ""
     visual_style: str = ""
     visuals_done: bool = False
+    # Temporary origin while the user confirms skipping a stylization step.
+    # Values are internal routing ids, never sent to the render pipeline.
+    style_skip_origin: str = ""
     # F2 «Объект» selection when hook_category == "object" (mirror of tg_bot_botapi).
     # Single shape pick — the rest of the combo (hook_light at drop + seeded-random
     # F3 transition on post-drop cuts) is forced server-side.
     f2_shape: str = ""           # "" | rhomb | square | star1 | star2 | elipse
+    # Рамка (шаг перед версиями, не хук). "" => ещё не спрашивали;
+    # "none" => юзер явно отказался; иначе id из каталога рамок.
+    frame_id: str = ""           # "" | none | rounded | soft_bars | letterbox
     # F1 «Звук»: S3/HTTP URL of user-uploaded pre-drop sound. Mirror of tg_bot_botapi.
     f1_sound_url: str = ""
     # F1 «Звук»: optional subtitle text for the sound. Mirror of tg_bot_botapi.
     f1_sound_text: str = ""
+    # «Прогрев»: что юзер кладёт в окно до дропа — "sound" (F1) или "video"
+    # (F6). Категория хука в обоих случаях "sound". Mirror of tg_bot_botapi.
+    warmup_kind: str = ""
+    # F6 «Видео»: URL нормализованной вырезки + параметры ffprobe (размеры для
+    # cover-скейла, длительность для окна). Mirror of tg_bot_botapi.
+    f6_video_url: str = ""
+    f6_video_width: int = 0
+    f6_video_height: int = 0
+    f6_video_duration: float = 0.0
+    # Есть ли звук в вырезке. Немая (gif) => трек не глушим.
+    f6_video_has_audio: bool = True
+    # Ссылка на источник, пока ждём тайминги отрезка. "" => грузили файлом.
+    f6_source_url: str = ""
     # Customization colors (hex). Mirror of tg_bot_botapi.
     subtitle_color_hex: str = ""
     accent_color_hex: str = ""
@@ -227,6 +262,10 @@ class ChatState(BaseModel):
     battery_f4_drop: Optional[float] = None
     # Footage precision flow (Phase 2b) — mirror of tg_bot_botapi for state
     # round-trip parity. UX gated behind FOOTAGE_VIBE_FLOW_ENABLED (off here).
+    # Footage plane behind the shortlist: "vertical" = the 9:16 vibe catalog,
+    # "films" = the untagged film collections. Decides which catalog is ranked
+    # and, downstream, whether the job runs on the collection inventory.
+    footage_kind: str = "vertical"
     vibe_ranked_ids: List[str] = Field(default_factory=list)
     vibe_labels_by_id: Dict[str, str] = Field(default_factory=dict)
     vibe_page: int = 0
@@ -603,6 +642,7 @@ class RedisChatStateStore:
         existing.colors_done = False
         existing.subtitle_color_hex = ""
         existing.accent_color_hex = ""
+        existing.frame_id = ""
         existing.versions_count = 1
         existing.referral_tag = ""
         existing.referral_wait_started_at = 0.0

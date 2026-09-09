@@ -1,0 +1,27 @@
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/app:/app/web_app/backend
+
+WORKDIR /app/web_app/backend
+
+COPY web_app/backend/requirements.txt ./requirements.txt
+RUN python -m pip install --upgrade pip && \
+    python -m pip install -r requirements.txt
+
+COPY web_app/backend/ ./
+COPY web_app/frontend/src/data/effects-registry.json /app/web_app/frontend/src/data/effects-registry.json
+COPY services/__init__.py /app/services/__init__.py
+COPY services/tg_bot_public/__init__.py /app/services/tg_bot_public/__init__.py
+COPY services/tg_bot_public/credits_db.py /app/services/tg_bot_public/credits_db.py
+COPY services/tg_bot_public/tbank_client.py /app/services/tg_bot_public/tbank_client.py
+COPY services/tg_bot_public/certs/ /app/services/tg_bot_public/certs/
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=20s --timeout=12s --start-period=20s --retries=6 \
+  CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=10)"
+
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*"]

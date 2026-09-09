@@ -158,6 +158,14 @@ class Settings:
     tg_state_prefix: str = _env("TG_STATE_PREFIX", "blast:tg:chat_state")
 
     ffmpeg_bin: str = _env("FFMPEG_BIN", "ffmpeg")
+    # F6 «Прогрев видео»: размеры/длительность вырезки снимаются ffprobe —
+    # по ним build-сторона запекает cover-скейл и подрезает окно.
+    ffprobe_bin: str = _env("FFPROBE_BIN", "ffprobe")
+    # F6 «Прогрев видео», ветка ссылки на YouTube. Тот же env, что читает
+    # оркестратор: реальный гейт — там (у него yt-dlp и прокси), а здесь флаг
+    # решает только, предлагать ли юзеру ссылку. Один переключатель на два
+    # сервиса, чтобы бот не звал заведомо выключенный эндпоинт.
+    external_video_source_enabled: bool = _bool_env("EXTERNAL_VIDEO_SOURCE_ENABLED", False)
 
     s3_endpoint_url: str = _env("S3_ENDPOINT_URL", "")
     s3_access_key_id: str = _env("S3_ACCESS_KEY_ID", "")
@@ -190,7 +198,10 @@ class Settings:
     # Recovery timeouts
     # ------------------------------------------------------------------ #
     # Hours before a stuck PROCESSING chat is automatically reset.
-    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 2.0)
+    # Dispatch may legitimately wait up to roughly four hours for a saturated
+    # render node. Keep bot recovery beyond that budget so it cannot abandon a
+    # job that the orchestrator is still processing.
+    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 6.0)
     # Hours before a stuck WAITING_REFERRAL chat is automatically reset.
     bot_referral_timeout_h: float = _float_env("BOT_REFERRAL_TIMEOUT_H", 48.0)
 

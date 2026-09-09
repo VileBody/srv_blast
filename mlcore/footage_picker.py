@@ -365,17 +365,22 @@ def load_picker_assets_from_inventory(inv: Dict[str, Any]) -> List[Dict[str, Any
             continue
         seen.add(file_name)
 
-        out.append(
-            {
-                "file_name": file_name,
-                "genre": genre,
-                "tag": tag,
-                "duration_sec": float(duration_sec),
-                "is_reusable_still": reusable_still,
-                "src_w": src_w,
-                "src_h": src_h,
-            }
-        )
+        row = {
+            "file_name": file_name,
+            "genre": genre,
+            "tag": tag,
+            "duration_sec": float(duration_sec),
+            "is_reusable_still": reusable_still,
+            "src_w": src_w,
+            "src_h": src_h,
+        }
+        # Virtual segment of a long source (see mlcore.footage_segments): the
+        # duration above is the WINDOW's, and every offset inside it is measured
+        # from segment_base_sec into the real file named by media_file_name.
+        if it.get("segment_base_sec") is not None:
+            row["segment_base_sec"] = float(it.get("segment_base_sec") or 0.0)
+            row["media_file_name"] = str(it.get("media_file_name") or file_name)
+        out.append(row)
 
     if not out:
         raise RuntimeError("No valid assets in inventory for footage picker")
@@ -414,9 +419,19 @@ def validate_style_pick_in_groups(style_pick: FootageStylePickPayload, style_gro
             pool_keys.add((g, t))
     key = (str(style_pick.genre).strip(), str(style_pick.tag).strip())
     if key not in pool_keys:
+        near = sorted(
+            f"{g}/{t}"
+            for g, t in pool_keys
+            if g.lower() == key[0].lower() or t.lower() == key[1].lower()
+        )[:5]
+        # The pick is not always an LLM answer any more — the precision and
+        # collection paths resolve it deterministically — so do not name a
+        # culprit. Casing is the usual cause (S3 folders get re-uploaded
+        # capitalised), and a case-insensitive near miss says so outright.
         raise RuntimeError(
-            "Gemini style pick is not present in style pool: "
+            "style pick is not present in style pool: "
             f"genre={style_pick.genre!r} tag={style_pick.tag!r}"
+            + (f" — case-insensitive matches in pool: {near}" if near else "")
         )
 
 
@@ -688,7 +703,15 @@ def _deterministic_choose(
     avoid = str(avoid_file_name or "").strip()
     pool = list(candidates)
     if avoid and len(pool) > 1:
-        pool = [it for it in pool if str(it.get("file_name") or "") != avoid] or list(candidates)
+        # Compare the SOURCE file, not the pool identity: two virtual segments of
+        # one long file are different clips to the no-repeat matcher but the same
+        # footage on screen, and back to back they read as a jump cut inside a
+        # single shot. For a normal asset this is just its own name.
+        pool = [
+            it
+            for it in pool
+            if _segment_base_name(it, str(it.get("file_name") or "")) != avoid
+        ] or list(candidates)
 
     scores = [_score(it) for it in pool]
     pick_idx = _softmax_pick_index(
@@ -842,11 +865,92 @@ def _deterministic_file_name_order(
     return [head, *rest_sorted]
 
 
+# Clips delivered as clip_001..clip_NNN are cut SEQUENTIALLY out of one source,
+# so neighbouring ordinals are neighbouring moments of the same shot. Unique
+# file names therefore do not guarantee a visible cut: clip-041 followed by
+# clip-042 reads as the same frame twice. Keep picked ordinals this far apart
+# when the pool exposes them.
+_COLLECTION_KINDS = frozenset({"films", "people", "cine16x9"})
+_SOURCE_NEIGHBOUR_MIN_GAP = 4
+_ORDINAL_RE = re.compile(r"(\d+)(?!.*\d)")
+
+
+def _source_ordinal(file_name: str) -> Optional[int]:
+    """Trailing number of a sequentially-cut clip, or None if it has none."""
+    m = _ORDINAL_RE.search(str(file_name or "").rsplit(".", 1)[0])
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def _is_collection_pool(pool: List[Dict[str, Any]]) -> bool:
+    """True when this pool is a folder-scoped collection.
+
+    Read off the assets rather than passed down: the tagged pool's ids are
+    18-digit Pinterest numbers, where a trailing-number 'ordinal' is
+    meaningless and the separation would be noise.
+    """
+    for it in pool or []:
+        if str(it.get("genre") or "").strip().lower() in _COLLECTION_KINDS:
+            return True
+    return False
+
+
+def _separate_source_neighbours(
+    names: List[str],
+    *,
+    pool_names: List[str],
+    min_gap: int = _SOURCE_NEIGHBOUR_MIN_GAP,
+) -> List[str]:
+    """Reorder the assigned clips so consecutive ones are not neighbouring moments.
+
+    Rebuilt greedily rather than repaired in place: swapping one offending pair
+    tends to create another, and a single pass then leaves the order worse than
+    it looks. Walking the sequence and taking, at each step, the first remaining
+    clip far enough from the one just emitted converges in one go.
+
+    Only the ORDER changes — every name stays used exactly once, so the no-repeat
+    guarantee holds. Safe here because a collection's clips are interchangeable in
+    length (they were cut to the same size), which is why this is not applied to
+    the tagged pool, where a clip is chosen for the interval it fits.
+
+    When nothing is far enough, the furthest available is taken: a small gap beats
+    dropping the interval.
+    """
+    ordinals = {n: _source_ordinal(n) for n in pool_names}
+    if not any(v is not None for v in ordinals.values()):
+        return list(names)
+
+    def _gap(a: Optional[str], b: str) -> float:
+        if a is None:
+            return float("inf")
+        oa, ob = ordinals.get(a), ordinals.get(b)
+        if oa is None or ob is None:
+            return float("inf")
+        return float(abs(oa - ob))
+
+    remaining = list(names)
+    out: List[str] = []
+    prev: Optional[str] = None
+    while remaining:
+        pick = next((n for n in remaining if _gap(prev, n) >= min_gap), None)
+        if pick is None:
+            pick = max(remaining, key=lambda n: (_gap(prev, n), n))
+        remaining.remove(pick)
+        out.append(pick)
+        prev = pick
+    return out
+
+
 def _assign_unique_file_names_for_intervals(
     *,
     intervals: List[Tuple[float, float]],
     pool: List[Dict[str, Any]],
     seed_value: int,
+    separate_source_neighbours: bool = False,
 ) -> List[str]:
     if not intervals:
         raise RuntimeError("No intervals were built from switch points")
@@ -911,6 +1015,8 @@ def _assign_unique_file_names_for_intervals(
         out[i] = nm
     if any(not x for x in out):
         raise RuntimeError("internal matching failure for strict no-repeat policy")
+    if separate_source_neighbours:
+        out = _separate_source_neighbours(out, pool_names=list(by_name.keys()))
     return out
 
 
@@ -960,8 +1066,12 @@ def _build_raw_pool(
     pool: List[Dict[str, Any]] = []
     visual_contract = None
     photo_contract = None
+    collection_contract = None
     contract_theme = str(raw_pick.theme or "").strip()
-    if contract_theme == "visual":
+    if contract_theme == "collection":
+        from mlcore.footage_collection_catalog import find_collection
+        collection_contract = find_collection(str(raw_pick.tags_group or "").strip())
+    elif contract_theme == "visual":
         from mlcore.footage_visual_catalog import load_visual_catalog
         wanted = f"visual:{str(raw_pick.tags_group or '').strip()}"
         visual_contract = next((x for x in load_visual_catalog() if x.bucket_id == wanted), None)
@@ -981,6 +1091,23 @@ def _build_raw_pool(
                 continue
             if str(it.get("tag") or "").strip() != str(style_tag).strip():
                 continue
+        if collection_contract is not None:
+            # Folder identity is the whole gate. No tags, colors, people or mood
+            # are consulted — a collection makes no claim about its contents
+            # beyond "these files were uploaded together". Every member scores
+            # the same, so ordering falls through to the picker's seeded order
+            # (a uniform score is below the quality-band floor by design: there
+            # is no relevance signal here to rank by, and pretending otherwise
+            # would just be noise).
+            from mlcore.footage_collection_catalog import evaluate as _collection_evaluate
+            ok, stage = _collection_evaluate(collection_contract, it)
+            if not ok:
+                continue
+            row = dict(it)
+            row[_SELECTION_RANK_SCORE_KEY] = 1.0
+            row["_collection"] = {"bucket_id": collection_contract.bucket_id, "stage": stage}
+            pool.append(row)
+            continue
         if photo_contract is not None:
             from mlcore.photo_bucket_catalog import evaluate, representative_score
             ok, stage = evaluate(photo_contract, it)
@@ -1060,6 +1187,46 @@ def _deterministic_source_offset(
     h = int(hashlib.sha256(material.encode("utf-8")).hexdigest()[:16], 16)
     frac = h / (2 ** 64)
     return round(frac * max_offset, 3)
+
+
+def _source_offset_for_asset(
+    *,
+    asset: Dict[str, Any],
+    file_name: str,
+    interval_len: float,
+    seed_value: int,
+    interval_idx: int,
+    offset_enabled: bool,
+) -> float:
+    """Where inside the SOURCE FILE this clip starts playing.
+
+    For a virtual segment the window does not begin at the file's start, so
+    `segment_base_sec` is the floor: even with the random offset switched off the
+    clip must open inside its own window, otherwise every segment of a long
+    source would play the same opening frames.
+    """
+    base = float((asset or {}).get("segment_base_sec") or 0.0)
+    asset_dur = float((asset or {}).get("duration_sec") or 0.0)
+    if not offset_enabled or asset_dur <= 0 or _is_reusable_still(asset or {}):
+        return base
+    jitter = _deterministic_source_offset(
+        file_name=file_name,
+        asset_duration_sec=asset_dur,
+        interval_len=float(interval_len),
+        seed_value=seed_value,
+        interval_idx=interval_idx,
+    )
+    return round(base + jitter, 3)
+
+
+def _segment_base_name(asset: Dict[str, Any] | None, file_name: str) -> str:
+    """Identity for ADJACENCY checks: the real file behind a virtual segment.
+
+    No-repeat matching works on `file_name` (that is the point — N segments are N
+    pickable clips), but two segments of the same film landing back to back read
+    on screen as a jump cut inside one shot. Adjacency has to compare the source.
+    """
+    return str((asset or {}).get("media_file_name") or file_name or "").strip()
 
 
 def _compute_pool_stats(
@@ -1163,7 +1330,14 @@ def _assign_rotation_file_names(
                 )
             repeats_used = True
             block_assigned = []
-            prev: Optional[str] = all_assigned[-1] if all_assigned else None
+            # Adjacency is about the SOURCE, not the pool identity (see
+            # _segment_base_name): consecutive segments of one long file are
+            # distinct clips here but one continuous shot on screen.
+            _by_name = {str(it.get("file_name") or ""): it for it in fallback_pool}
+            _last = all_assigned[-1] if all_assigned else None
+            prev: Optional[str] = (
+                _segment_base_name(_by_name.get(_last), _last) if _last else None
+            )
             for gi, (a, b) in enumerate(block_intervals):
                 need = float(b - a)
                 candidates = [it for it in fallback_pool if _fits_interval(it, interval_len=need)]
@@ -1178,7 +1352,7 @@ def _assign_rotation_file_names(
                 )
                 nm = str(chosen["file_name"])
                 block_assigned.append(nm)
-                prev = nm
+                prev = _segment_base_name(chosen, nm)
 
         all_assigned.extend(block_assigned)
 
@@ -1507,17 +1681,13 @@ def pick_footage_clips_by_intervals_deterministic(
         clips: List[Dict[str, Any]] = []
         for idx, (a, b) in enumerate(intervals):
             chosen_name = str(selected_file_names[idx])
-            asset_dur = float((all_assets_by_name.get(chosen_name) or {}).get("duration_sec") or 0.0)
-            src_off = (
-                _deterministic_source_offset(
-                    file_name=chosen_name,
-                    asset_duration_sec=asset_dur,
-                    interval_len=float(b - a),
-                    seed_value=seed_value,
-                    interval_idx=idx,
-                )
-                if offset_enabled and asset_dur > 0 and not _is_reusable_still(all_assets_by_name.get(chosen_name) or {})
-                else 0.0
+            src_off = _source_offset_for_asset(
+                asset=all_assets_by_name.get(chosen_name) or {},
+                file_name=chosen_name,
+                interval_len=float(b - a),
+                seed_value=seed_value,
+                interval_idx=idx,
+                offset_enabled=offset_enabled,
             )
             clips.append(
                 {
@@ -1633,6 +1803,10 @@ def pick_footage_clips_by_intervals_deterministic(
                 intervals=intervals,
                 pool=pool,
                 seed_value=seed_value,
+                # Collection folders are cut sequentially out of one
+                # source, so neighbouring ordinals are neighbouring
+                # moments — unique names alone do not make a visible cut.
+                separate_source_neighbours=_is_collection_pool(pool),
             )
         except RuntimeError as e:
             assignment_err = str(e)
@@ -1692,17 +1866,13 @@ def pick_footage_clips_by_intervals_deterministic(
                 avoid_file_name=prev_file_name,
             )
             chosen_name = str(chosen["file_name"])
-            asset_dur = float(chosen.get("duration_sec") or 0.0)
-            src_off = (
-                _deterministic_source_offset(
-                    file_name=chosen_name,
-                    asset_duration_sec=asset_dur,
-                    interval_len=need,
-                    seed_value=seed_value,
-                    interval_idx=idx,
-                )
-                if offset_enabled and asset_dur > 0 and not _is_reusable_still(chosen)
-                else 0.0
+            src_off = _source_offset_for_asset(
+                asset=chosen,
+                file_name=chosen_name,
+                interval_len=need,
+                seed_value=seed_value,
+                interval_idx=idx,
+                offset_enabled=offset_enabled,
             )
             clips.append(
                 {
@@ -1715,24 +1885,20 @@ def pick_footage_clips_by_intervals_deterministic(
                     "start_time": float(a) - src_off,
                 }
             )
-            prev_file_name = chosen_name
+            prev_file_name = _segment_base_name(chosen, chosen_name)
             assigned_file_names = [str(c["file_name"]) for c in clips]
     else:
         for idx, (a, b) in enumerate(intervals):
             chosen_name = str(assigned_file_names[idx])
             if chosen_name not in by_name:
                 raise RuntimeError(f"assigned file_name not present in selected pool: {chosen_name!r}")
-            asset_dur = float((by_name.get(chosen_name) or {}).get("duration_sec") or 0.0)
-            src_off = (
-                _deterministic_source_offset(
-                    file_name=chosen_name,
-                    asset_duration_sec=asset_dur,
-                    interval_len=float(b - a),
-                    seed_value=seed_value,
-                    interval_idx=idx,
-                )
-                if offset_enabled and asset_dur > 0 and not _is_reusable_still(by_name.get(chosen_name) or {})
-                else 0.0
+            src_off = _source_offset_for_asset(
+                asset=by_name.get(chosen_name) or {},
+                file_name=chosen_name,
+                interval_len=float(b - a),
+                seed_value=seed_value,
+                interval_idx=idx,
+                offset_enabled=offset_enabled,
             )
             clips.append(
                 {
@@ -1927,7 +2093,15 @@ def map_inventory_assets_with_style_metadata(
     *,
     assets: List[Dict[str, Any]],
     metadata_index: Dict[str, Dict[str, Any]],
+    require_metadata: bool = True,
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Join inventory assets with their tag metadata.
+
+    require_metadata=False is the COLLECTION plane: those clips are deliberately
+    never tagged, so "no metadata" is their normal state rather than a defect.
+    They still pass through (with empty meta fields — the collection gate reads
+    the folder, not tags) and are reported in `unmapped` for diagnostics.
+    """
     mapped: List[Dict[str, Any]] = []
     unmapped: List[str] = []
     for it in list(assets or []):
@@ -1940,6 +2114,8 @@ def map_inventory_assets_with_style_metadata(
         meta = metadata_index.get(str(clip_id or "").strip()) if clip_id else None
         if not isinstance(meta, dict):
             unmapped.append(file_name)
+            if not require_metadata:
+                mapped.append({**it, "clip_id": str(clip_id or ""), "meta_theme_tags": []})
             continue
         mapped.append(
             {
@@ -1955,6 +2131,81 @@ def map_inventory_assets_with_style_metadata(
     return mapped, unmapped
 
 
+def _resolve_collection_pick(
+    *,
+    raw_pick: FootageStyleRawPayload,
+    mapped_assets: List[Dict[str, Any]],
+    total: int,
+    unmapped_assets: int,
+    metadata_rows_merged: int,
+) -> Tuple[FootageStylePickPayload, FootageStyleRawAdapterDiagnostics]:
+    """Resolve a COLLECTION bucket to its (genre, tag) — no scoring involved.
+
+    The tag-based resolution below cannot be reused here, and not merely as an
+    optimisation: it filters candidates by `meta_mood` first, and collection
+    assets are deliberately never tagged, so every one of them would be dropped
+    before the grouping even ran. The folder IS the answer — it was chosen by the
+    user, not inferred — so we assert the pool is non-empty and return it.
+    """
+    from mlcore.footage_collection_catalog import find_collection
+
+    bucket = find_collection(str(raw_pick.tags_group or "").strip())
+    members = [
+        it
+        for it in mapped_assets
+        if str(it.get("genre") or "").strip().lower() == bucket.kind
+        and str(it.get("tag") or "").strip().lower() == bucket.folder.strip().lower()
+    ]
+    if not members:
+        raise RuntimeError(
+            "collection_pool_empty: no assets in the selected collection folder "
+            f"bucket={bucket.bucket_id!r} expected_path={bucket.kind}/{bucket.folder} "
+            f"mapped_assets={len(mapped_assets)}"
+        )
+
+    duration = sum(min(_effective_asset_duration(it), _MAX_SWITCH_SEC) for it in members)
+    # Name the folder exactly as the INVENTORY spells it, not as the registry
+    # does. Membership above is matched case-insensitively (S3 folders get
+    # re-uploaded with different casing), but everything downstream — the
+    # pool filter and validate_style_pick_in_groups — compares the pick
+    # against groups built from these very assets, with exact strings.
+    actual_genre = str(members[0].get("genre") or "").strip()
+    actual_tag = str(members[0].get("tag") or "").strip()
+    pick = FootageStylePickPayload.model_validate(
+        {"genre": actual_genre, "tag": actual_tag}
+    )
+    diag = FootageStyleRawAdapterDiagnostics(
+        total_assets=int(total),
+        metadata_rows_merged=int(metadata_rows_merged),
+        mapped_assets=int(len(mapped_assets)),
+        unmapped_assets=int(unmapped_assets),
+        mood_filtered_out=0,
+        exclude_filtered_out=0,
+        scored_assets=int(len(members)),
+        selected_genre=actual_genre,
+        selected_tag=actual_tag,
+        selected_group_score=0.0,
+        selected_group_duration_sec=float(duration),
+        selected_group_assets_count=int(len(members)),
+        requested_style_id="",
+        requested_style_genre_key="",
+        resolved_style_genre_key="",
+        resolved_similarity_rank=0,
+        similarity_fallback_used=False,
+        similarity_chain=[],
+        top_groups=[
+            {
+                "genre": bucket.kind,
+                "tag": bucket.folder,
+                "score": 0.0,
+                "duration_sec": float(duration),
+                "assets_count": int(len(members)),
+            }
+        ],
+    )
+    return pick, diag
+
+
 def resolve_style_pick_from_raw_filters(
     *,
     raw_pick: FootageStyleRawPayload,
@@ -1968,6 +2219,15 @@ def resolve_style_pick_from_raw_filters(
     total = int(total_assets if total_assets is not None else len(list(mapped_assets or [])))
     if total <= 0:
         raise RuntimeError("No mapped assets available for raw Stage2B adapter")
+
+    if str(raw_pick.theme or "").strip() == "collection":
+        return _resolve_collection_pick(
+            raw_pick=raw_pick,
+            mapped_assets=mapped_assets,
+            total=total,
+            unmapped_assets=unmapped_assets,
+            metadata_rows_merged=metadata_rows_merged,
+        )
 
     mood = _normalize_mood(raw_pick.mood)
     candidates_mood = [it for it in mapped_assets if _normalize_mood(it.get("meta_mood")) == mood]

@@ -401,6 +401,30 @@ def _build_interval_line_tags(
         return None
 
 
+def _collection_plane_active() -> bool:
+    """True when this job draws from a folder-scoped collection.
+
+    Read from the rotation theme rather than a flag of its own so it cannot drift
+    from what actually routes the picker.
+    """
+    return str(os.environ.get("FOOTAGE_ROTATION_THEME") or "").strip() == "collection"
+
+
+def load_style_metadata_index(*, root: Path, collection_plane: bool) -> Dict[str, Any]:
+    """Tag metadata for the picker, or an empty index on the collection plane.
+
+    Collections are never tagged — the folder is the whole selector — so there is
+    nothing to load. The job env says so by carrying an EMPTY db-path list, but
+    `_resolve_style_metadata_db_paths` treats an empty list as a misconfigured
+    env and raises; that guard is right for the tagged pools and must stay, so
+    the collection plane skips the resolver instead of loosening it.
+    """
+    if collection_plane:
+        return {}
+    paths = _resolve_style_metadata_db_paths(root=root)
+    return merge_footage_style_metadata_rows(load_footage_style_metadata_rows(db_paths=paths))
+
+
 def _resolve_style_metadata_db_paths(*, root: Path) -> List[Path]:
     raw = (os.environ.get("FOOTAGE_STYLE_METADATA_DB_PATHS_JSON") or "").strip()
     if raw:
@@ -1188,11 +1212,18 @@ def _words_in_window(
     start_abs: float,
     end_abs: float,
 ) -> List[TranscriptWord]:
+    # API/JSON round-trips can move the same hand-picked boundary by a few
+    # microseconds (54.869 -> 54.869002 in a real F6 job). One millisecond is
+    # far below a video frame and prevents a boundary word being discarded.
+    boundary_tolerance_sec = 0.001
     out: List[TranscriptWord] = []
     for w in words:
         ts = float(w.t_start)
         te = float(w.t_end)
-        if ts >= float(start_abs) - 1e-6 and te <= float(end_abs) + 1e-6:
+        if (
+            ts >= float(start_abs) - boundary_tolerance_sec
+            and te <= float(end_abs) + boundary_tolerance_sec
+        ):
             out.append(w)
     return out
 
@@ -1470,6 +1501,46 @@ def _build_stage1_plan_from_selected_fragment(
             ),
         }
     )
+
+
+def _adopt_alignment_clip_window(
+    *,
+    stage1_asr: Stage1AsrPayload,
+    user_clip_window: Tuple[float, float],
+    logger: logging.Logger,
+) -> Tuple[float, float]:
+    """Widen the user window to the one the aligner actually produced.
+
+    The aligner may keep a boundary syllable that spills a few frames outside
+    the requested window (bounded by
+    ``ALIGNMENT_DYNAMIC_WINDOW_BOUNDARY_OVERFLOW_TOLERANCE_SEC``) and reports
+    the window that contains every aligned word. Everything downstream filters
+    transcript words by full containment in ``user_clip_window``, so without
+    adopting it the tolerated boundary word is dropped from the render.
+
+    Only ever widens: the aligner's window is a superset of the request.
+    """
+    fragment = stage1_asr.selected_fragment
+    if fragment is None:
+        return user_clip_window
+    effective = (
+        min(float(fragment.audio.clip_start_abs), float(user_clip_window[0])),
+        max(float(fragment.audio.clip_end_abs), float(user_clip_window[1])),
+    )
+    left_delta = float(user_clip_window[0]) - effective[0]
+    right_delta = effective[1] - float(user_clip_window[1])
+    if left_delta > 1e-6 or right_delta > 1e-6:
+        logger.info(
+            "alignment_clip_window_widened requested=%.3f..%.3f "
+            "effective=%.3f..%.3f left_delta=%.3f right_delta=%.3f",
+            float(user_clip_window[0]),
+            float(user_clip_window[1]),
+            effective[0],
+            effective[1],
+            left_delta,
+            right_delta,
+        )
+    return effective
 
 
 def _apply_user_clip_window_to_stage1(
@@ -2588,12 +2659,17 @@ def build_all_via_gemini_one_call(
     inv = _load_footage_inventory(inv_path)
     picker_assets = load_picker_assets_from_inventory(inv)
     style_groups = build_style_groups_from_assets(picker_assets)
-    style_metadata_paths = _resolve_style_metadata_db_paths(root=ROOT)
-    style_metadata_rows = load_footage_style_metadata_rows(db_paths=style_metadata_paths)
-    style_metadata_index = merge_footage_style_metadata_rows(style_metadata_rows)
+    # Collection jobs run on an untagged pool by design, so "has no metadata"
+    # must not disqualify a clip there — otherwise the mapping empties and
+    # Stage2 dies on style_rotation_requires_mapped_inventory_assets.
+    _collection_plane = _collection_plane_active()
+    style_metadata_index = load_style_metadata_index(
+        root=ROOT, collection_plane=_collection_plane
+    )
     mapped_picker_assets, unmapped_picker_file_names = map_inventory_assets_with_style_metadata(
         assets=picker_assets,
         metadata_index=style_metadata_index,
+        require_metadata=not _collection_plane,
     )
 
     out_dir = Path(os.environ.get("OUT_DIR", str(ROOT / "out"))).resolve()
@@ -2603,19 +2679,19 @@ def build_all_via_gemini_one_call(
 
     if not mapped_picker_assets:
         logger.warning(
-            "style_metadata_empty_mapping inventory_assets=%d metadata_rows=%d db_files=%s",
+            "style_metadata_empty_mapping inventory_assets=%d merged_ids=%d collection=%s",
             len(picker_assets),
-            len(style_metadata_rows),
-            [str(p) for p in style_metadata_paths],
+            len(style_metadata_index),
+            _collection_plane,
         )
     logger.info(
-        "style_metadata_loaded db_files=%s rows=%d merged_ids=%d inventory_assets=%d mapped=%d unmapped=%d",
-        [str(p) for p in style_metadata_paths],
-        len(style_metadata_rows),
+        "style_metadata_loaded merged_ids=%d inventory_assets=%d mapped=%d unmapped=%d "
+        "collection_plane=%s",
         len(style_metadata_index),
         len(picker_assets),
         len(mapped_picker_assets),
         len(unmapped_picker_file_names),
+        _collection_plane,
     )
     resume_state = _load_resume_state(resume_state_path, logger=logger)
     if resume_state:
@@ -2845,6 +2921,15 @@ def build_all_via_gemini_one_call(
                         stage1_asr=stage1_asr,
                         user_clip_window=user_clip_window,
                     )
+                    if use_local_alignment:
+                        # Same adoption as a fresh alignment, otherwise a
+                        # resumed job silently drops a boundary word the first
+                        # attempt kept.
+                        user_clip_window = _adopt_alignment_clip_window(
+                            stage1_asr=stage1_asr,
+                            user_clip_window=user_clip_window,
+                            logger=logger,
+                        )
                     logger.info("llm_resume_hit stage=stage1a_asr")
                 except _Stage1AUserClipEmptyError as e:
                     logger.warning(
@@ -2877,6 +2962,11 @@ def build_all_via_gemini_one_call(
                 request_id=str(os.environ.get("JOB_ID") or ""),
             )
             stage1_asr = local_response.stage1_asr
+            user_clip_window = _adopt_alignment_clip_window(
+                stage1_asr=stage1_asr,
+                user_clip_window=user_clip_window,
+                logger=logger,
+            )
             backend_info = dict(local_response.backend)
             expected_backend_identity = {
                 "algorithm_version": expected_alignment_algorithm,
@@ -3163,8 +3253,8 @@ def build_all_via_gemini_one_call(
         )
         frag_srt = [
             s for s in stage1_asr.srt_items
-            if float(s.start) >= float(user_start) - 1e-6
-            and float(s.end) <= float(user_end) + 1e-6
+            if float(s.start) >= float(user_start) - 0.001
+            and float(s.end) <= float(user_end) + 0.001
         ]
         asr_dict = stage1_asr.model_dump(mode="json")
         asr_dict["selected_fragment"] = {
@@ -3732,10 +3822,17 @@ def build_all_via_gemini_one_call(
                 _theme, _group,
             )
         elif (
-            _stage2b_deterministic_enabled()
-            and rotation_theme_override
+            rotation_theme_override
             and rotation_group_override
-            and (not footage_artist_id or rotation_theme_override == "visual")
+            # STAGE2B_DETERMINISTIC rolls the TAG-bucket optimisation back onto
+            # the LLM. A collection has nothing for an LLM to decide — its clips
+            # are the folder — so that rollback must not reach it, or the flag
+            # would turn a deterministic slot into a hallucinated one.
+            and (rotation_theme_override == "collection" or _stage2b_deterministic_enabled())
+            and (
+                not footage_artist_id
+                or rotation_theme_override in ("visual", "collection")
+            )
         ):
             # Exact-slot precision path: build the style filters straight from the
             # bucket catalog — NO Stage2B LLM call. On this path the LLM only
@@ -4199,6 +4296,35 @@ def build_all_via_gemini_one_call(
                 float(hook_analysis.drop_candidates[0].t)
                 if hook_analysis.drop_candidates else None
             )
+            # A collection is a fixed set of PRE-CUT clips, so the pool has a hard
+            # ceiling on how long one shot can run. The timing must respect it:
+            # every interval is covered by exactly one clip, and the strict
+            # no-repeat matcher cannot stitch two short clips into a long
+            # interval — an interval longer than the shortest clip fails the job
+            # outright ("no asset can cover interval"). Capping the hold keeps the
+            # cuts musical (still chosen on beats, just sooner).
+            _timing_params = None
+            _interval_cap = 0.0
+            if _collection_plane:
+                _durs = [
+                    float(a.get("duration_sec") or 0.0)
+                    for a in picker_assets
+                    if float(a.get("duration_sec") or 0.0) > 0.0
+                ]
+                if _durs:
+                    from mlcore.switch_timing_deterministic import SwitchTimingParams
+
+                    # Leave a frame of slack: a clip exactly as long as the
+                    # interval is a rounding error away from not fitting.
+                    _interval_cap = max(0.5, min(_durs) - 0.05)
+                    _defaults = SwitchTimingParams()
+                    if _interval_cap < _defaults.max_hold_sec:
+                        _timing_params = SwitchTimingParams(max_hold_sec=_interval_cap)
+                        logger.info(
+                            "stage2_collection_interval_cap max_hold=%.2fs "
+                            "(shortest clip %.2fs, pool=%d)",
+                            _interval_cap, min(_durs), len(_durs),
+                        )
             _det = generate_switch_points(
                 onsets_classified=_onsets,
                 beats=[float(b) for b in hook_analysis.beats],
@@ -4206,6 +4332,7 @@ def build_all_via_gemini_one_call(
                 drop_t=_drop_t,
                 clip_start=clip_start_abs,
                 clip_end=clip_end_abs,
+                params=_timing_params,
             )
             switch_points = normalize_switch_points(
                 raw_cut_timings=list(_det.switch_points_abs),
@@ -4215,6 +4342,25 @@ def build_all_via_gemini_one_call(
                 min_segment_sec=0.3,
                 compact_short_segments=True,
             )
+            if _interval_cap > 0.0:
+                # max_hold only bounds the holds the generator CHOOSES. The tail
+                # from the last cut to the end of the clip is bounded by nothing,
+                # and normalize_ can merge cuts back together — so enforce the
+                # ceiling on the final points.
+                from mlcore.switch_timing_deterministic import enforce_max_interval
+
+                _before = len(switch_points)
+                switch_points = enforce_max_interval(
+                    switch_points,
+                    clip_start=clip_start_abs,
+                    clip_end=clip_end_abs,
+                    max_interval_sec=_interval_cap,
+                )
+                if len(switch_points) != _before:
+                    logger.info(
+                        "stage2_collection_interval_split cuts=%d -> %d (cap=%.2fs)",
+                        _before, len(switch_points), _interval_cap,
+                    )
             logger.info(
                 "stage2_deterministic_cuts cuts=%d bpm=%.1f drop=%s",
                 len(switch_points), float(_det.bpm),
@@ -4734,28 +4880,30 @@ def build_all_via_gemini_one_call(
     #    Хук — опциональное усиление, НЕ должен ронять основной рендер. Любая
     #    ошибка F5 (Gemini 5xx, короткий TTS, focal out-of-bounds, S3, ffmpeg…)
     #    логируется с трейсбеком, и джоб рендерится БЕЗ хука (f5_block=None).
-    _emit(progress_cb, "f5_hook")
     f5_block = None
-    try:
-        from mlcore.hooks.f5_cognition.orchestrator_hook import build_f5_block_if_requested
+    _f5_device = (os.environ.get("F5_HOOK_DEVICE") or "").strip()
+    if _f5_device:
+        _emit(progress_cb, "f5_hook")
+        try:
+            from mlcore.hooks.f5_cognition.orchestrator_hook import build_f5_block_if_requested
 
-        f5_block = build_f5_block_if_requested(
-            track_path=str(audio_files[0]) if audio_files else "",
-            lyrics=str(stage1_json.get("lyrics_text") or ""),
-            clip_start_abs_sec=_hook_clip_start,
-            out_dir=out_dir,
-            job_tag=(os.environ.get("JOB_ID") or out_dir.name),
-            transcript_words=stage1_json.get("transcript_words"),
-            is_prod=(mode == MODE_PROD),
-        )
-    except Exception:
-        logger.exception(
-            "f5.hook FAILED — продолжаю рендер БЕЗ хука "
-            "(device=%s job=%s)",
-            os.environ.get("F5_HOOK_DEVICE") or "<none>",
-            os.environ.get("JOB_ID") or out_dir.name,
-        )
-        f5_block = None
+            f5_block = build_f5_block_if_requested(
+                track_path=str(audio_files[0]) if audio_files else "",
+                lyrics=str(stage1_json.get("lyrics_text") or ""),
+                clip_start_abs_sec=_hook_clip_start,
+                out_dir=out_dir,
+                job_tag=(os.environ.get("JOB_ID") or out_dir.name),
+                transcript_words=stage1_json.get("transcript_words"),
+                is_prod=(mode == MODE_PROD),
+            )
+        except Exception:
+            logger.exception(
+                "f5.hook FAILED — продолжаю рендер БЕЗ хука "
+                "(device=%s job=%s)",
+                _f5_device,
+                os.environ.get("JOB_ID") or out_dir.name,
+            )
+            f5_block = None
 
     # ── F4 Cognition («Движение»): visual engagement-bait overlay. If env
     #    F4_HOOK_DEVICE is set, emit a block {device, bpm} that
@@ -4866,6 +5014,8 @@ def build_all_via_gemini_one_call(
                     or os.environ.get("JOB_ID")
                     or out_dir.name
                 )
+                # тот же seed уезжает в overlay: порядок глитч-клипов blackwhite
+                f3_block["seed"] = str(_seed)
                 _resolved = _f3_resolve_assets(
                     hook=_f3_hook or None,
                     transition=_f3_trans or None,
@@ -4890,6 +5040,34 @@ def build_all_via_gemini_one_call(
                 os.environ.get("JOB_ID") or out_dir.name,
             )
             f3_block = None
+
+    # ── Рамка: PNG-маска поверх всех слоёв. НЕ хук — отдельный шаг бота,
+    #    доступен на любом пути. Env FRAME_ID (id из каталога рамок); пусто или
+    #    "none" => блока нет. Ассет резолвится в S3-url + relpath (media[]).
+    frame_block = None
+    _frame_id = (os.environ.get("FRAME_ID") or "").strip().lower()
+    if _frame_id and _frame_id != "none":
+        try:
+            from mlcore.hooks.frames.catalog import FRAME_IDS, resolve_frame_asset
+            if _frame_id not in FRAME_IDS:
+                raise RuntimeError(f"unknown FRAME_ID={_frame_id!r}")
+            _asset = resolve_frame_asset(_frame_id)
+            if _asset:
+                frame_block = {
+                    "frame_id": _frame_id,
+                    "relpath": _asset["relpath"],
+                    "url": _asset["url"],
+                }
+                logger.info("frame block id=%s relpath=%s", _frame_id, _asset["relpath"])
+            else:
+                # нет FX_ASSETS_S3_BUCKET — рамку положить нечем
+                logger.warning("frame skipped: asset unresolved (id=%s)", _frame_id)
+        except Exception:
+            logger.exception(
+                "frame FAILED — render without frame (job=%s)",
+                os.environ.get("JOB_ID") or out_dir.name,
+            )
+            frame_block = None
 
     # ── F2 «Объект»: packaged-combo overlay (shape на pre-drop склейках +
     #    hook_light на дропе + рандомный F3-переход на post-drop склейках).
@@ -4980,6 +5158,73 @@ def build_all_via_gemini_one_call(
             )
             f1_block = None
 
+    # ── F6 «Видео»: pre-drop прогрев из видео юзера + переходы после дропа.
+    #    Env F6_VIDEO_URL — S3/HTTP ссылка на нормализованный (h264+aac)
+    #    mp4; F6_VIDEO_WIDTH/HEIGHT/DURATION — метаданные ffprobe с бота (нужны,
+    #    чтобы запечь cover-скейл числами и подрезать окно по факту). drop_time
+    #    COMP-relative (= USER_DROP_T − clip_start). Любая ошибка → лог + рендер
+    #    БЕЗ f6 (ролик выйдет обычным, а не упадёт).
+    f6_block = None
+    _f6_video = (os.environ.get("F6_VIDEO_URL") or "").strip()
+    if _f6_video:
+        try:
+            _cs = _hook_clip_start
+            _udt = (os.environ.get("USER_DROP_T") or "").strip()
+            if not _udt:
+                raise RuntimeError("F6 video requires USER_DROP_T (drop anchor)")
+            _source_drop_rel_f6 = float(_udt) - _cs
+            if _source_drop_rel_f6 < 0.0:
+                raise RuntimeError(
+                    f"F6 source drop_rel must be >= 0 (USER_DROP_T={_udt}, clip_start={_cs})"
+                )
+            _f6_w = int(float((os.environ.get("F6_VIDEO_WIDTH") or "0").strip() or 0))
+            _f6_h = int(float((os.environ.get("F6_VIDEO_HEIGHT") or "0").strip() or 0))
+            if _f6_w <= 0 or _f6_h <= 0:
+                raise RuntimeError(
+                    f"F6 requires F6_VIDEO_WIDTH/HEIGHT from ffprobe (got {_f6_w}x{_f6_h})"
+                )
+            _f6_dur_raw = (os.environ.get("F6_VIDEO_DURATION") or "").strip()
+            _f6_dur = float(_f6_dur_raw) if _f6_dur_raw else None
+            if _f6_dur is not None and _f6_dur <= 0.0:
+                raise RuntimeError(f"F6_VIDEO_DURATION must be > 0 (got {_f6_dur_raw!r})")
+            # If the track has less room before the drop than the uploaded
+            # video, keep the whole video by adding silent composition pre-roll.
+            # The source audio still starts at t=0; every authored visual timing
+            # is shifted right by this amount during deterministic postprocess.
+            from mlcore.hooks.f6_video.inject import f6_timeline_with_preroll
+            _f6_pre_roll, _drop_rel_f6 = f6_timeline_with_preroll(
+                _source_drop_rel_f6, _f6_dur,
+            )
+            _seed_env_f6 = (os.environ.get("F2_SEED") or "").strip()
+            if _seed_env_f6:
+                _f6_seed = int(_seed_env_f6) & 0xFFFFFFFF
+            else:
+                _seed_src_f6 = os.environ.get("JOB_ID") or out_dir.name
+                _f6_seed = zlib.crc32(("f6:" + str(_seed_src_f6)).encode("utf-8")) & 0xFFFFFFFF
+            f6_block = {
+                "video_url": _f6_video,
+                "drop_time": _drop_rel_f6,
+                "seed": int(_f6_seed),
+                "source_width": _f6_w,
+                "source_height": _f6_h,
+                "duration": _f6_dur,
+                "pre_roll_sec": _f6_pre_roll,
+                "source_drop_time": _source_drop_rel_f6,
+                "has_audio": (os.environ.get("F6_VIDEO_HAS_AUDIO") or "1").strip() != "0",
+            }
+            logger.info(
+                "f6.video block url=%s source_drop_rel=%.3f pre_roll=%.3f "
+                "drop_rel=%.3f seed=%d src=%dx%d dur=%s",
+                _f6_video[:80], _source_drop_rel_f6, _f6_pre_roll, _drop_rel_f6,
+                _f6_seed, _f6_w, _f6_h, _f6_dur,
+            )
+        except Exception:
+            logger.exception(
+                "f6.video FAILED — render without f6 (job=%s)",
+                os.environ.get("JOB_ID") or out_dir.name,
+            )
+            f6_block = None
+
     # ── 5th-template JSX subtitles (trendy/brat): raw ASR word-timings →
     #    injected AE generator (NO LLM subtitle stage). Comp-relative to the
     #    render clip window (_hook_clip_start). brat uses the stage2 `bpm`.
@@ -5032,6 +5277,24 @@ def build_all_via_gemini_one_call(
                     "jsx_subtitles voice-spliced window=%.2f..%.2f phrase=%r",
                     _voice_win[0], _voice_win[1], _voice_win[2][:40],
                 )
+            # F6 «Видео»: кадр в pre-drop окне занят чужой вырезкой — слова
+            # трека там не рисуем (в text_layers-режимах это делает
+            # clear_track_subtitles_under_video, здесь — по word-timings).
+            if f6_block:
+                from app.jsx_subtitles_builder import clear_words_in_window
+                from mlcore.hooks.f6_video.inject import f6_video_window
+                _f6_in, _f6_out = f6_video_window(
+                    float(f6_block.get("source_drop_time", f6_block["drop_time"])),
+                    f6_block.get("duration"),
+                )
+                _before = len(_word_timings)
+                _word_timings = clear_words_in_window(
+                    _word_timings, window_start=_f6_in, window_end=_f6_out,
+                )
+                logger.info(
+                    "jsx_subtitles f6-cleared window=%.2f..%.2f words %d→%d",
+                    _f6_in, _f6_out, _before, len(_word_timings),
+                )
             jsx_subtitles_block = {
                 "mode": subtitles_mode,
                 "word_timings": _word_timings,
@@ -5060,6 +5323,8 @@ def build_all_via_gemini_one_call(
         f3_block=f3_block,
         f2_block=f2_block,
         f1_block=f1_block,
+        f6_block=f6_block,
+        frame_block=frame_block,
         jsx_subtitles_block=jsx_subtitles_block,
     )
 

@@ -1,0 +1,193 @@
+# -*- coding: utf-8 -*-
+"""The footage fork: which plane the vibe shortlist draws from.
+
+After «Футажи» the user now picks between the semantic 9:16 vibes and a film
+collection. The two catalogs share no bucket ids, live in different inventories
+and reach the picker through different code paths, so the choice has to travel
+with the chat — and it has to exist in BOTH bots or the parity gate breaks the
+public one the next time the team bot moves.
+
+Only two options are live on purpose. The catalog also carries 16:9 and
+«Личности» kinds, but offering a button for a pool nobody has filled would
+strand the user on an empty shortlist.
+"""
+from __future__ import annotations
+
+import importlib
+import inspect
+
+import pytest
+
+BOTS = ("services.tg_bot_botapi.app", "services.tg_bot_public.app")
+
+
+def _mod(name: str):
+    return importlib.import_module(name)
+
+
+def _src(mod, attr: str) -> str:
+    """Source of a bot METHOD — both bots expose the flow on BlastBotApp."""
+    return inspect.getsource(getattr(mod.BlastBotApp, attr))
+
+
+# --------------------------------------------------------------------------- #
+# both bots carry the same fork
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_stage_and_state_field_exist(bot: str) -> None:
+    app = _mod(bot)
+    store = importlib.import_module(bot.rsplit(".", 1)[0] + ".state_store")
+    assert store.STAGE_WAIT_FOOTAGE_KIND == "WAIT_FOOTAGE_KIND"
+    assert store.ChatState(chat_id=1).footage_kind == app.FOOTAGE_KIND_VERTICAL
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_filled_kinds_are_offered_and_the_empty_one_is_not(bot: str) -> None:
+    app = _mod(bot)
+    src = _src(app, "_ask_footage_kind")
+    keyboard = src.split("reply_markup=", 1)[1]
+    assert "BTN_FOOTAGE_KIND_VERTICAL" in keyboard
+    assert "BTN_FOOTAGE_KIND_CINE" in keyboard
+    assert "BTN_FOOTAGE_KIND_FILMS" in keyboard
+    # «Личности» has no uploads, so it must stay unreachable — a button for an
+    # empty pool strands the user on an empty shortlist. The docstring may name
+    # it, the keyboard may not.
+    assert "Личности" not in keyboard
+    assert "people" not in keyboard
+    assert app.BTN_FOOTAGE_KIND_VERTICAL == "9:16"
+    assert app.BTN_FOOTAGE_KIND_CINE == "16:9"
+    assert app.BTN_FOOTAGE_KIND_FILMS == "Фильмы"
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_handler_accepts_both_and_rejects_anything_else(bot: str) -> None:
+    src = _src(_mod(bot), "_handle_wait_footage_kind")
+    assert "FOOTAGE_KIND_VERTICAL" in src
+    assert "FOOTAGE_KIND_CINE" in src
+    assert "FOOTAGE_KIND_FILMS" in src
+    assert "await self._ask_vibe_shortlist(message, st)" in src
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_switching_planes_drops_the_old_shortlist(bot: str) -> None:
+    # The two catalogs share no ids, so a kept shortlist would be entirely stale
+    # and every button on it would resolve to a bucket the new plane lacks.
+    src = _src(_mod(bot), "_handle_wait_footage_kind")
+    assert "st.vibe_ranked_ids = []" in src
+    assert "st.vibe_selected_ids = []" in src
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_stage_is_dispatched(bot: str) -> None:
+    # A stage nothing routes to is a dead end: the user taps and nothing happens.
+    src = inspect.getsource(_mod(bot))
+    assert "if st.stage == STAGE_WAIT_FOOTAGE_KIND:" in src
+    assert "await self._handle_wait_footage_kind(message, st)" in src
+
+
+# --------------------------------------------------------------------------- #
+# the plane reaches the ranker and the staleness check
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("bot", BOTS)
+def test_kind_maps_to_the_ranker_pool(bot: str) -> None:
+    app = _mod(bot)
+    assert app._pool_for_footage_kind(app.FOOTAGE_KIND_VERTICAL) == "vibes"
+    assert app._pool_for_footage_kind(app.FOOTAGE_KIND_FILMS) == "films"
+    assert app._pool_for_footage_kind(app.FOOTAGE_KIND_CINE) == "cine16x9"
+    # An unknown kind must fall back to the vibes catalog, never to a collection
+    # pool the chat did not choose.
+    assert app._pool_for_footage_kind("") == "vibes"
+    assert app._pool_for_footage_kind("nonsense") == "vibes"
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_photo_never_inherits_a_collection_pool(bot: str) -> None:
+    app = _mod(bot)
+    for kind in (app.FOOTAGE_KIND_VERTICAL, app.FOOTAGE_KIND_CINE, app.FOOTAGE_KIND_FILMS):
+        assert app._pool_for_background("photo", kind) == "vibes"
+    assert app._pool_for_background("footage", app.FOOTAGE_KIND_CINE) == "cine16x9"
+    assert app._pool_for_background("footage", app.FOOTAGE_KIND_FILMS) == "films"
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_ranker_is_asked_for_the_chosen_pool(bot: str) -> None:
+    src = _src(_mod(bot), "_ensure_vibe_ranked")
+    assert "pool=_pool_for_background(st.bg_mode, st.footage_kind)" in src
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_selecting_photo_clears_a_previous_video_plane(bot: str) -> None:
+    app = _mod(bot)
+    handler = "_handle_wait_bg_info" if bot.endswith("tg_bot_public.app") else "_handle_wait_bg_mode"
+    src = _src(app, handler)
+    assert "st.footage_kind = FOOTAGE_KIND_VERTICAL" in src
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_background_ranker_will_not_overwrite_another_plane(bot: str) -> None:
+    # It starts when the lyrics arrive, before the plane is chosen; landing on a
+    # shortlist for the plane the user has since picked would replace it wholesale.
+    src = _src(_mod(bot), "_run_vibe_ranker_bg")
+    assert "footage_kind" in src
+    assert "return" in src
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_bot_defers_catalog_authority_for_collections(bot: str) -> None:
+    """Collections auto-register from the folders that exist, and that index
+    lives with the orchestrator — the bots mount no data volume. Judging a
+    shortlist against the bot's partial registry copy would call every
+    auto-registered group "retired" and re-rank on every message, so the bot
+    returns no opinion and the plane check decides."""
+    app = _mod(bot)
+    for kind in (app.FOOTAGE_KIND_FILMS, app.FOOTAGE_KIND_CINE):
+        assert app._live_bucket_ids("footage", kind) == set()
+    # The vibe catalog ships in full and stays authoritative.
+    assert app._live_bucket_ids("footage", app.FOOTAGE_KIND_VERTICAL)
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_a_vibe_shortlist_is_stale_on_the_films_fork(bot: str) -> None:
+    app = _mod(bot)
+    assert app._stale_vibe_shortlist_reason(
+        ["visual:anything"], "footage", app.FOOTAGE_KIND_FILMS
+    )
+
+
+@pytest.mark.parametrize("bot", BOTS)
+def test_the_client_forwards_the_pool(bot: str) -> None:
+    client = importlib.import_module(bot.rsplit(".", 1)[0] + ".orchestrator_client")
+    sig = inspect.signature(client.OrchestratorClient.rank_buckets)
+    assert "pool" in sig.parameters
+    assert sig.parameters["pool"].default == "vibes"
+
+
+# --------------------------------------------------------------------------- #
+# what the fork hands the backend
+# --------------------------------------------------------------------------- #
+def test_a_film_bucket_id_resolves_to_the_collection_plane() -> None:
+    # This is the whole contract with the backend: the id the bot ships becomes
+    # rotation_theme="collection", which is what routes the job to the collection
+    # inventory instead of the tagged pool.
+    from mlcore.footage_batch_distribution import resolve_bucket_slot
+    from mlcore.footage_collection_catalog import load_collection_catalog
+
+    for bucket in load_collection_catalog():
+        theme, group = resolve_bucket_slot(bucket.bucket_id, catalog=[])
+        assert theme == "collection"
+        assert group == bucket.slug
+
+
+def test_each_kind_renders_in_the_geometry_it_promises() -> None:
+    # Films are delivered vertical — frames will handle their aspect mismatch —
+    # while a group literally named 16:9 must render horizontally, or the button
+    # says one thing and the render does another.
+    from mlcore.footage_collection_catalog import load_collection_catalog
+
+    by_kind = {"films": "vertical", "cine16x9": "wide"}
+    for bucket in load_collection_catalog():
+        expected = by_kind.get(bucket.kind)
+        if expected is None:
+            continue
+        assert bucket.formats == (expected,), bucket.slug
+        assert bucket.default_format == expected

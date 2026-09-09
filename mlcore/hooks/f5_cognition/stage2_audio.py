@@ -1,6 +1,6 @@
 # mlcore/hooks/f5_cognition/stage2_audio.py
 """
-Stage 2 — синтез голоса через Gemini TTS.
+Stage 2 — синтез голоса через выбранный TTS provider.
 
 Контракт:
   VoiceSpec → bytes (WAV/PCM, моно ≥24kHz)
@@ -23,7 +23,12 @@ from mlcore.hooks.f5_cognition._gemini import (
     parse_audio_mime,
     pcm_to_wav_bytes,
 )
-from mlcore.hooks.f5_cognition.errors import F5GeminiTimeout, F5TtsTooShort
+from mlcore.hooks.f5_cognition._openrouter import synthesize_pcm16
+from mlcore.hooks.f5_cognition.errors import (
+    F5GeminiTimeout,
+    F5ProviderError,
+    F5TtsTooShort,
+)
 from mlcore.hooks.f5_cognition.models import VoiceSpec
 
 logger = logging.getLogger(__name__)
@@ -142,6 +147,59 @@ def _call_gemini_tts(prompt: str, *, spec: VoiceSpec, model: str) -> bytes:
     return pcm_to_wav_bytes(pcm, rate=rate, width=width, channels=1)
 
 
+def _provider() -> str:
+    provider = (os.environ.get("F5_TTS_PROVIDER") or "gemini").strip().lower()
+    if provider not in {"gemini", "openrouter"}:
+        raise RuntimeError(
+            f"unsupported F5_TTS_PROVIDER={provider!r}; expected gemini|openrouter"
+        )
+    return provider
+
+
+def _model(provider: str) -> str:
+    if provider == "gemini":
+        return os.getenv("GEMINI_MODEL_F5_TTS", "gemini-3.1-flash-tts-preview").strip()
+    model = (os.environ.get("OPENROUTER_MODEL_F5_TTS") or "").strip()
+    if not model:
+        raise RuntimeError(
+            "OPENROUTER_MODEL_F5_TTS is required when F5_TTS_PROVIDER=openrouter"
+        )
+    return model
+
+
+def _call_tts(
+    prompt: str,
+    *,
+    spec: VoiceSpec,
+    provider: str,
+    model: str,
+) -> bytes:
+    if provider == "gemini":
+        return _call_gemini_tts(prompt, spec=spec, model=model)
+    voice = (os.environ.get("OPENROUTER_F5_TTS_VOICE") or "alloy").strip()
+    try:
+        sample_rate = int(os.environ.get("OPENROUTER_F5_TTS_SAMPLE_RATE", "24000"))
+    except ValueError as exc:
+        raise RuntimeError("OPENROUTER_F5_TTS_SAMPLE_RATE must be an integer") from exc
+    try:
+        max_tokens = int(os.environ.get("OPENROUTER_F5_TTS_MAX_TOKENS", "96"))
+        max_stream_seconds = float(
+            os.environ.get("OPENROUTER_F5_TTS_MAX_STREAM_SECONDS", "6")
+        )
+    except ValueError as exc:
+        raise RuntimeError(
+            "OPENROUTER_F5_TTS_MAX_TOKENS and MAX_STREAM_SECONDS must be numeric"
+        ) from exc
+    return synthesize_pcm16(
+        prompt,
+        model=model,
+        voice=voice,
+        sample_rate=sample_rate,
+        max_tokens=max_tokens,
+        max_stream_seconds=max_stream_seconds,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Главная точка входа
 # ─────────────────────────────────────────────────────────────────────────────
@@ -158,13 +216,12 @@ def synthesize_voice(spec: VoiceSpec) -> tuple[bytes, int]:
         модель так и не уложилась — берём САМУЮ короткую из длинных попыток
         (минимум на отрез) и отдаём в mixer cut+fade.
     """
-    # Дефолт — 3.1 TTS (gemini-3.1-flash-tts-preview). Откат на 2.5
-    # (gemini-2.5-flash-preview-tts) = смена env GEMINI_MODEL_F5_TTS, без правок кода.
-    model = os.getenv("GEMINI_MODEL_F5_TTS", "gemini-3.1-flash-tts-preview")
+    provider = _provider()
+    model = _model(provider)
 
     last_audio: bytes | None = None
     last_duration_ms: int = 0
-    last_blocked_err: F5GeminiTimeout | None = None
+    last_blocked_err: F5ProviderError | None = None
     best_long_audio: bytes | None = None   # shortest over-4s take (least to cut)
     best_long_ms: int = 0
 
@@ -184,14 +241,24 @@ def synthesize_voice(spec: VoiceSpec) -> tuple[bytes, int]:
             )
 
         prompt = build_voice_prompt(spec, retry_hint=retry_hint)
-        logger.info("f5.stage2 attempt=%d model=%s", attempt, model)
+        logger.info(
+            "f5.stage2 attempt=%d provider=%s model=%s",
+            attempt,
+            provider,
+            model,
+        )
 
         # A blocked/empty TTS response (HTTP 200 but content=None) is retryable:
         # re-call rather than aborting F5 entirely. Keep the last error so we can
         # surface a clear reason if every attempt is blocked.
         try:
-            audio_bytes = _call_gemini_tts(prompt, spec=spec, model=model)
-        except F5GeminiTimeout as e:
+            audio_bytes = _call_tts(
+                prompt,
+                spec=spec,
+                provider=provider,
+                model=model,
+            )
+        except F5ProviderError as e:
             last_blocked_err = e
             logger.warning("f5.stage2 attempt=%d blocked/empty: %s", attempt, e)
             continue
@@ -222,8 +289,8 @@ def synthesize_voice(spec: VoiceSpec) -> tuple[bytes, int]:
     # No usable audio after all attempts. If we never got ANY audio (every call
     # was blocked/empty), surface the block reason; otherwise it was too short.
     if last_audio is None:
-        raise last_blocked_err or F5GeminiTimeout(
-            f"Gemini TTS returned no audio after {MAX_TTS_RETRIES + 1} attempts"
+        raise last_blocked_err or F5ProviderError(
+            f"F5 TTS returned no audio after {MAX_TTS_RETRIES + 1} attempts"
         )
     raise F5TtsTooShort(
         f"TTS too short after {MAX_TTS_RETRIES + 1} attempts: "

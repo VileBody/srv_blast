@@ -505,7 +505,12 @@ function addBlinker(tcomp, spanIn, spanOut){
             td.text = wordText;
             probeSource.setValue(td);
             var mr = probe.sourceRectAtTime(0, false);
-            return { width: Math.max(1, mr.width), height: Math.max(1, mr.height) };
+            return {
+                width: Math.max(1, mr.width),
+                height: Math.max(1, mr.height),
+                top: mr.top,
+                bottom: mr.top + mr.height
+            };
         }
 
         var wordBlurCount = 0, plateCount = 0;
@@ -555,7 +560,14 @@ function addBlinker(tcomp, spanIn, spanOut){
                     var wordCompDuration = Math.max(visibleDuration, blurDuration);
                     var pad = CONFIG.transitionBlurLength + 12;
                     var wordCompW = Math.max(4, Math.ceil(metrics[wi].width + pad * 2));
-                    var wordCompH = Math.max(4, Math.ceil(metrics[wi].height + pad * 2));
+                    // sourceRect differs vertically per word (ascenders,
+                    // descenders, punctuation).  Size the precomp around the
+                    // text baseline, not around each glyph box, so every word
+                    // nested at rowY shares the exact same baseline.
+                    var ascent = Math.max(0, -metrics[wi].top);
+                    var descent = Math.max(0, metrics[wi].bottom);
+                    var baselineHalfH = Math.max(ascent, descent) + pad;
+                    var wordCompH = Math.max(4, Math.ceil(baselineHalfH * 2));
                     var wc = app.project.items.addComp(
                         CONFIG.textCompName + " / BRAT WORD " + (b + 1) + "." + (row + 1) + "." + (wi + 1),
                         wordCompW, wordCompH, srcComp.pixelAspect,
@@ -571,7 +583,11 @@ function addBlinker(tcomp, spanIn, spanOut){
                         styleText(L, ParagraphJustification.LEFT_JUSTIFY, fitFontSize);
                         var wr = L.sourceRectAtTime(0, false);
                         var wtg = L.property("ADBE Transform Group");
-                        wtg.property("ADBE Anchor Point").setValue([wr.left + wr.width / 2, wr.top + wr.height / 2, 0]);
+                        // Point-text layer space has y=0 on the baseline.  Keep
+                        // that origin at the vertical centre of every word
+                        // precomp.  Centering by wr.top + wr.height/2 made words
+                        // with descenders float relative to neighbours.
+                        wtg.property("ADBE Anchor Point").setValue([wr.left + wr.width / 2, 0, 0]);
                         wtg.property("ADBE Position").setValue([wordCompW / 2, wordCompH / 2, 0]);
 
                         var fx = L.property("ADBE Effect Parade");

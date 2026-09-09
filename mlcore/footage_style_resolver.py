@@ -65,6 +65,9 @@ def find_bucket(
             if contract.bucket_id == wanted:
                 return contract  # type: ignore[return-value]
         raise RuntimeError(f"photo contract not found: {wanted!r}")
+    if t == "collection":
+        from mlcore.footage_collection_catalog import find_collection
+        return find_collection(g)  # type: ignore[return-value]
     buckets = catalog if catalog is not None else build_buckets()
     for b in buckets:
         if b.theme == t and b.tags_group == g:
@@ -83,7 +86,11 @@ def bucket_to_style_raw(bucket: Bucket) -> FootageStyleRawPayload:
     """
     is_visual = str(bucket.bucket_id).startswith("visual:")
     is_photo = str(bucket.bucket_id).startswith("photo:")
-    is_contract = is_visual or is_photo
+    # A collection carries no semantics at all (no mood, no tags, no color), so it
+    # is a contract in the same sense: the raw payload is a carrier, and the real
+    # gate is the folder-membership check in the picker.
+    is_collection = str(bucket.bucket_id).startswith("collection:")
+    is_contract = is_visual or is_photo or is_collection
     if not bucket.mood and not is_contract:
         raise RuntimeError(
             f"deterministic Stage2B: bucket {bucket.bucket_id!r} has no mood "

@@ -10,7 +10,7 @@
     ['Как работает', 'How it works'], ['Примеры', 'Examples'], ['Преимущества', 'Benefits'], ['Попробовать', 'Try it'], ['Меню', 'Menu'],
     ['Сделай трек', 'Make your track'], ['— вирусным', '— go viral'], ['за 60 секунд!', 'in 60 seconds!'],
     ['Co-pilot в продвижении музыки', 'Your music promotion co-pilot'], ['Blast — AI-агент для артистов:', 'Blast is an AI agent for artists:'], ['создаёт контент под трек с нуля', 'it creates track-ready content from scratch'],
-    ['Попробуй бесплатно:', 'Try it for free:'], ['Пришли трек в тг-бот', 'Send your track to the Telegram bot'], ['— получи 3 видео!', '— get 3 videos!'], ['Загрузить трек', 'Upload a track'],
+    ['Попробуй бесплатно:', 'Try it for free:'], ['Загрузи трек на сайте', 'Upload your track on the website'], ['— получи 5 видео!', '— get 5 videos!'], ['Загрузить трек', 'Upload a track'],
     ['Нам доверяют:', 'Trusted by:'], ['артистов', 'artists'], ['лейблов, студий и партнёров', 'labels, studios and partners'], ['лейблов и партнёров', 'labels and partners'],
     ['Создавай видео — без съёмки', 'Create videos — without filming'], ['Как работает генерация?', 'How does generation work?'], ['Загрузи трек.', 'Upload your track.'], ['Настрой видео.', 'Set up your video.'], ['Получи контент.', 'Get your content.'],
     ['Шаг 1', 'Step 1'], ['Шаг 2', 'Step 2'], ['Шаг 3', 'Step 3'], ['Видео А', 'Video A'], ['Видео Б', 'Video B'], ['Просмотры', 'Views'], ['Лайков', 'Likes'], ['Удержание, %', 'Retention, %'],
@@ -39,9 +39,9 @@
     privacy: { ru: ['Политика конфиденциальности — Blast', 'Политика конфиденциальности и обработки персональных данных сервиса Blast.'], en: ['Privacy Policy — Blast', 'Privacy and personal data processing policy for the Blast service.'] },
     terms: { ru: ['Условия использования — Blast', 'Условия использования сервиса Blast.'], en: ['Terms of Service — Blast', 'Terms governing use of the Blast service.'] },
     cookies: { ru: ['Политика cookie — Blast', 'Информация об использовании cookie на сайте Blast.'], en: ['Cookie Policy — Blast', 'Information about the use of cookies on the Blast website.'] },
-    offer: { ru: ['Публичная оферта — Blast', 'Рабочий черновик публичной оферты сервиса Blast.'], en: ['Public Offer — Blast', 'Working draft of the Blast public offer.'] },
+    offer: { ru: ['Публичная оферта — Blast', 'Публичная оферта сервиса Blast: тарифы, оплата, возврат и права на материалы.'], en: ['Public Offer — Blast', 'The Blast public offer: plans, payment, refunds and rights to materials.'] },
     contacts: { ru: ['Контакты — Blast', 'Контакты, поддержка и реквизиты сервиса Blast.'], en: ['Contacts — Blast', 'Blast service contacts, support details and legal information.'] },
-    consent: { ru: ['Согласие на обработку персональных данных — Blast', 'Рабочий черновик согласия на обработку персональных данных.'], en: ['Personal Data Consent — Blast', 'Working draft of consent to personal data processing.'] }
+    consent: { ru: ['Согласие на обработку персональных данных — Blast', 'Согласие на обработку персональных данных сервиса Blast.'], en: ['Personal Data Consent — Blast', 'Consent to personal data processing for the Blast service.'] }
   };
 
   const byText = new Map();

@@ -13,17 +13,45 @@ import { ActivateBaseButton } from './ActivateBaseButton';
 
 type Panel = 'export' | 'import' | null;
 
+/** One selectable pool.
+ *
+ * The three ingest planes (video / photo / collection) are a backend concept;
+ * an operator thinks in terms of what the material IS. The collection plane
+ * therefore appears as one tab per kind rather than as a single "collections"
+ * entry the operator would then have to filter by hand — with five pools a
+ * cycling button gives no way to tell where you are without clicking through.
+ */
+type Pool = {
+  id: string;
+  label: string;
+  mediaType: MediaType;
+  /** Collection kind — also the S3 genre this pool is scoped to. */
+  genre?: string;
+};
+
+const POOLS: Pool[] = [
+  { id: 'video', label: '9:16', mediaType: 'video' },
+  { id: 'photo', label: 'Фото', mediaType: 'photo' },
+  { id: 'cine16x9', label: '16:9', mediaType: 'collection', genre: 'cine16x9' },
+  { id: 'films', label: 'Фильмы', mediaType: 'collection', genre: 'films' },
+  { id: 'people', label: 'Личности', mediaType: 'collection', genre: 'people' },
+];
+
 export function AssetBrowser() {
   // Asset pool the browser + ingest controls operate on. The browse list is
-  // scoped to this pool — photos and footage never mix; an empty photo pool
-  // shows nothing.
-  const [mediaType, setMediaType] = useState<MediaType>('video');
+  // scoped to this pool — the pools never mix; an empty one shows nothing.
+  const [poolId, setPoolId] = useState<string>(POOLS[0].id);
+  const pool = POOLS.find((p) => p.id === poolId) ?? POOLS[0];
+  const mediaType = pool.mediaType;
   // Bucket (vibe) browser: '' = all clips, otherwise browse exactly that bucket.
   const [bucket, setBucket] = useState<string>('');
   const [buckets, setBuckets] = useState<BucketOption[]>([]);
-  const { current, index, total, loading, next, prev, remove, reload } = useAssets(
-    undefined,
-    undefined,
+  // Collection pools: '' = every folder in this kind, otherwise one collection.
+  const [folder, setFolder] = useState<string>('');
+  const [folders, setFolders] = useState<string[]>([]);
+  const { assets, current, index, total, loading, next, prev, remove, reload } = useAssets(
+    pool.genre,
+    folder || undefined,
     mediaType,
     bucket || undefined,
   );
@@ -35,9 +63,23 @@ export function AssetBrowser() {
     if (mediaType === 'video') {
       fetchBuckets().then(setBuckets).catch((e) => console.error('fetchBuckets', e));
     } else {
-      setBucket('');  // buckets are footage vibes; the photo pool has none
+      setBucket('');  // buckets are footage vibes; the other pools have none
     }
   }, [mediaType]);
+
+  // Switching pools must clear the folder filter, or a films folder would stay
+  // applied to the people pool and silently show nothing.
+  useEffect(() => { setFolder(''); }, [poolId]);
+
+  // The folder list is captured from the UNFILTERED load, so picking one folder
+  // does not shrink the menu you picked it from.
+  useEffect(() => {
+    if (folder) return;
+    const seen = Array.from(
+      new Set(assets.map((a) => String(a.tag || '').trim()).filter(Boolean)),
+    ).sort();
+    setFolders(seen);
+  }, [assets, folder]);
 
   // Keyboard navigation — disabled while a bulk panel is open so typing in
   // inputs doesn't move through the asset list.
@@ -68,14 +110,25 @@ export function AssetBrowser() {
         <button className="toolbar-btn" onClick={() => setPanel('import')}>
           ⬆ Импорт
         </button>
-        <button
-          className="toolbar-btn"
-          title="Пул ассетов для импорта/разметки/активации"
-          onClick={() => setMediaType((m) => (m === 'video' ? 'photo' : 'video'))}
-        >
-          {mediaType === 'photo' ? '🖼 Пул: фото' : '🎞 Пул: видео'}
-        </button>
-        <TagUntaggedButton onDone={reload} mediaType={mediaType} />
+        <div className="pool-tabs" role="tablist" aria-label="Пул ассетов">
+          {POOLS.map((p) => (
+            <button
+              key={p.id}
+              role="tab"
+              aria-selected={p.id === poolId}
+              className={`pool-tab${p.id === poolId ? ' active' : ''}`}
+              title={`Пул «${p.label}» — импорт, просмотр и активация идут в него`}
+              onClick={() => setPoolId(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+        {/* Collections are selected by folder, never by tags — there is nothing
+            for the tagger to add, so the control is absent rather than inert. */}
+        {mediaType !== 'collection' && (
+          <TagUntaggedButton onDone={reload} mediaType={mediaType} />
+        )}
         <ActivateBaseButton onDone={reload} mediaType={mediaType} />
         {mediaType === 'video' && (
           <select
@@ -92,11 +145,26 @@ export function AssetBrowser() {
             ))}
           </select>
         )}
+        {mediaType === 'collection' && (
+          <select
+            className="toolbar-btn"
+            title="Смотреть клипы одной коллекции"
+            value={folder}
+            onChange={(e) => setFolder(e.target.value)}
+          >
+            <option value="">📁 Все коллекции</option>
+            {folders.map((f) => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
+        )}
         <span className="toolbar-spacer" />
         <span className="toolbar-counter">
           {bucket
             ? `Бакет: ${total} · совпало тегов: ${(current as { _overlap?: number } | null)?._overlap ?? '—'}`
-            : `Всего: ${total}`}
+            : mediaType === 'collection' && !folder
+              ? `Всего: ${total} · коллекций: ${folders.length}`
+              : `Всего: ${total}`}
         </span>
       </div>
       <div className="asset-browser">
@@ -111,7 +179,12 @@ export function AssetBrowser() {
           />
         </div>
         <div className="side-column">
-          <AssetInfo asset={current} taxonomy={taxonomy} onSaved={reload} />
+          <AssetInfo
+            asset={current}
+            taxonomy={taxonomy}
+            onSaved={reload}
+            mediaType={mediaType}
+          />
         </div>
       </div>
 
@@ -126,6 +199,7 @@ export function AssetBrowser() {
             onClose={() => setPanel(null)}
             onUploaded={reload}
             mediaType={mediaType}
+            presetGenre={pool.genre}
           />
         </div>
       )}

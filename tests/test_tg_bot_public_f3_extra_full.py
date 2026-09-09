@@ -55,3 +55,55 @@ def test_overlay_extra_full_uses_null_duration():
     pre = build_overlay_jsx(extra="xerox", extra_full=False, drop_time=3.0)
     assert "duration: null" in full
     assert "duration: (__f3_drop>0?__f3_drop:null)" in pre
+
+
+# ---------- always-full стилизации (blackwhite) ----------
+
+
+def test_always_full_set_mirrors_the_manifest():
+    """Список «всегда на весь ролик» в ботах = manifest.full_window."""
+    import json
+    from pathlib import Path
+
+    from services.tg_bot_public import app as pub
+    from services.tg_bot_botapi import app as team
+
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[1]
+         / "mlcore" / "hooks" / "f3_effect" / "manifest.json").read_text(encoding="utf-8")
+    )
+    from_manifest = {
+        str(e["id"]) for e in manifest["effects"] if e.get("full_window")
+    }
+    assert from_manifest == {"blackwhite"}
+    assert set(pub.FX_EXTRA_ALWAYS_FULL) == from_manifest
+    assert set(team.FX_EXTRA_ALWAYS_FULL) == from_manifest
+
+
+def test_blackwhite_skips_the_window_question_in_both_bots():
+    """Спрашивать окно у ЧБ бессмысленно: build-side форсит полное окно, и
+    ответ «до дропа» был бы молча проигнорирован."""
+    import inspect
+
+    from services.tg_bot_public import app as pub
+    from services.tg_bot_botapi import app as team
+
+    for mod in (pub, team):
+        bot_cls = next(
+            obj for _, obj in vars(mod).items()
+            if inspect.isclass(obj) and hasattr(obj, "_handle_wait_effect_extra")
+        )
+        src = inspect.getsource(bot_cls._handle_wait_effect_extra)
+        assert "FX_EXTRA_ALWAYS_FULL" in src
+        assert "effect_extra_full = True" in src
+
+
+def test_build_side_forces_the_full_window_for_blackwhite():
+    """Даже если бот прислал extra_full=False, окно всё равно полное."""
+    from mlcore.hooks.f3_effect.overlay import build_overlay_jsx
+
+    js = build_overlay_jsx(extra="blackwhite", extra_full=False, drop_time=4.2)
+    assert "duration: null" in js
+    # у обычного грейда окно по-прежнему обрезается дропом
+    other = build_overlay_jsx(extra="wave", extra_full=False, drop_time=4.2)
+    assert "duration: (__f3_drop>0?__f3_drop:null)" in other

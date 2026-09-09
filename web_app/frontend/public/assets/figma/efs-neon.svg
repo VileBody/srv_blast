@@ -1,0 +1,17 @@
+<svg preserveAspectRatio="none" width="100%" height="100%" overflow="visible" style="display: block;" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Frame 959">
+<g clip-path="url(#clip0_713_2106)">
+<rect id="$ROR632K 1" width="40" height="40" rx="20" fill="var(--fill-0, #5F42B9)"/>
+<path id="Rectangle 587" d="M14.5591 13H23.5669L31 20.3241L29.7271 20.5221C28.256 20.7508 26.8352 21.2312 25.527 21.942L25.3273 22.0505C24.3894 22.5601 23.5279 23.1994 22.7682 23.9493C22.0234 24.6846 21.3837 25.5193 20.8673 26.4296L19.9764 28H11L11.3441 27.227C11.8049 26.1919 12.4215 25.2336 13.1725 24.3852C14.0888 23.35 15.1905 22.4952 16.4209 21.8648L16.5105 21.8188C17.4933 21.3153 18.5427 20.9543 19.6272 20.7467L21.8346 20.3241L14.5591 13Z" fill="url(#paint0_linear_713_2106)"/>
+</g>
+</g>
+<defs>
+<linearGradient id="paint0_linear_713_2106" x1="50.6296" y1="69.25" x2="18.5838" y2="6.42138" gradientUnits="userSpaceOnUse">
+<stop stop-color="#F6F5FD" stop-opacity="0"/>
+<stop offset="1" stop-color="#F6F5FD"/>
+</linearGradient>
+<clipPath id="clip0_713_2106">
+<rect width="40" height="40" rx="20" fill="white"/>
+</clipPath>
+</defs>
+</svg>

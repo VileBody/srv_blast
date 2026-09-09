@@ -38,6 +38,18 @@ services:
       MKL_NUM_THREADS: "1"
       NUMBA_NUM_THREADS: "1"
       NUMBA_THREADING_LAYER: workqueue
+
+      # F6 «Прогрев видео», ветка ссылки на YouTube (/media/fetch_external).
+      # Выключено по умолчанию: без прокси датацентровый IP ловит бот-детект
+      # сразу же, и юзер получал бы только ошибки.
+      EXTERNAL_VIDEO_SOURCE_ENABLED: ${EXTERNAL_VIDEO_SOURCE_ENABLED:-0}
+      # Резидентный прокси. Без него ветку включать бессмысленно.
+      YTDLP_PROXY: ${YTDLP_PROXY:-}
+      # Сайдкар-генератор PO-токенов (см. сервис ytdlp-pot ниже). С 2025 YouTube
+      # требует proof-of-origin: без токена — 403 или пустой список форматов.
+      YTDLP_POT_BASE_URL: ${YTDLP_POT_BASE_URL:-http://ytdlp-pot:4416}
+      YTDLP_COOKIES_FILE: ${YTDLP_COOKIES_FILE:-}
+      YTDLP_TIMEOUT_S: ${YTDLP_TIMEOUT_S:-300}
     volumes:
       - ./work:/app/work
       - ./output:/app/output
@@ -89,7 +101,7 @@ services:
       ALIGNMENT_SERVICE_URL: ${ALIGNMENT_SERVICE_URL:-http://alignment-api:8000}
       ALIGNMENT_TIMEOUT_S: ${ALIGNMENT_TIMEOUT_S:-600}
       ALIGNMENT_MODEL_REVISION: ${ALIGNMENT_MODEL_REVISION:-2329100508896c6d9b157019803ab5601e6f3406}
-      ALIGNMENT_ALGORITHM_VERSION: local-ctc-viterbi-v6-demucs-4.1.0
+      ALIGNMENT_ALGORITHM_VERSION: local-ctc-viterbi-v19-bounded-boundary-overflow-demucs-4.1.0
       ALIGNMENT_AUDIO_PREPROCESSOR: demucs
       ALIGNMENT_DEMUCS_MODEL_NAME: htdemucs
       ALIGNMENT_DEMUCS_MODEL_REVISION: 8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4
@@ -124,6 +136,39 @@ services:
       bash -lc "python footage_config.py && celery -A services.orchestrator.celery_app:celery_app worker -l INFO --concurrency=${WORKER_BUILD_CONCURRENCY:-4} -Q ${CELERY_QUEUE_BUILD:-build}"
     restart: unless-stopped
 
+  worker-alignment-smoke:
+    image: ${BLAST_RUNTIME_IMAGE:-blast_final-runtime:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    container_name: worker-alignment-smoke
+    env_file:
+      - .env
+    depends_on:
+      alignment-api:
+        condition: service_healthy
+    environment:
+      WORK_DIR: /app/work
+      OUTPUT_DIR: /app/output
+      ALIGNMENT_SERVICE_URL: ${ALIGNMENT_SERVICE_URL:-http://alignment-api:8000}
+      ALIGNMENT_TIMEOUT_S: ${ALIGNMENT_TIMEOUT_S:-600}
+      NUMBA_DISABLE_JIT: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      NUMBA_NUM_THREADS: "1"
+      NUMBA_THREADING_LAYER: workqueue
+    volumes:
+      - ./work:/app/work
+      - ./output:/app/output
+    command: >
+      bash -lc "celery -A services.orchestrator.celery_app:celery_app worker
+      -l INFO
+      --concurrency=1
+      -Q ${CELERY_QUEUE_BUILD:-build}.alignment-smoke"
+    restart: unless-stopped
+
   alignment-api:
     image: ${BLAST_ALIGNMENT_IMAGE:-blast_final-alignment:local}
     build:
@@ -154,9 +199,24 @@ services:
       ALIGNMENT_PADDING_RIGHT_SEC: ${ALIGNMENT_PADDING_RIGHT_SEC:-0.5}
       ALIGNMENT_MIN_WORD_CONFIDENCE: ${ALIGNMENT_MIN_WORD_CONFIDENCE:-0.05}
       ALIGNMENT_PAUSE_MIN_GAP_SEC: ${ALIGNMENT_PAUSE_MIN_GAP_SEC:-0.35}
+      ALIGNMENT_DYNAMIC_WINDOW_MAX_ADJUST_SEC: ${ALIGNMENT_DYNAMIC_WINDOW_MAX_ADJUST_SEC:-1.0}
+      ALIGNMENT_DYNAMIC_WINDOW_STEP_SEC: ${ALIGNMENT_DYNAMIC_WINDOW_STEP_SEC:-0.25}
+      ALIGNMENT_DYNAMIC_WINDOW_MIN_EDGE_CLEARANCE_SEC: ${ALIGNMENT_DYNAMIC_WINDOW_MIN_EDGE_CLEARANCE_SEC:-0.12}
+      ALIGNMENT_DYNAMIC_WINDOW_STABILITY_TOLERANCE_SEC: ${ALIGNMENT_DYNAMIC_WINDOW_STABILITY_TOLERANCE_SEC:-0.12}
+      ALIGNMENT_DYNAMIC_WINDOW_MIN_CONSENSUS_CANDIDATES: ${ALIGNMENT_DYNAMIC_WINDOW_MIN_CONSENSUS_CANDIDATES:-3}
+      ALIGNMENT_DYNAMIC_WINDOW_SCORE_TOLERANCE: ${ALIGNMENT_DYNAMIC_WINDOW_SCORE_TOLERANCE:-0.12}
+      ALIGNMENT_DYNAMIC_WINDOW_MIN_BOUNDARY_DURATION_RATIO: ${ALIGNMENT_DYNAMIC_WINDOW_MIN_BOUNDARY_DURATION_RATIO:-0.15}
+      ALIGNMENT_DYNAMIC_WINDOW_BOUNDARY_OVERFLOW_TOLERANCE_SEC: ${ALIGNMENT_DYNAMIC_WINDOW_BOUNDARY_OVERFLOW_TOLERANCE_SEC:-0.2}
       ALIGNMENT_MAX_WINDOW_SEC: ${ALIGNMENT_MAX_WINDOW_SEC:-120}
       ALIGNMENT_MAX_REFERENCE_WORDS: ${ALIGNMENT_MAX_REFERENCE_WORDS:-400}
+      ALIGNMENT_MAX_REFERENCE_FRAME_BUDGET_RATIO: ${ALIGNMENT_MAX_REFERENCE_FRAME_BUDGET_RATIO:-0.8}
       ALIGNMENT_TORCH_THREADS: ${ALIGNMENT_TORCH_THREADS:-4}
+      ALIGNMENT_PRONUNCIATION_MODE: espeak_en_to_ru
+      ALIGNMENT_ESPEAK_BIN: espeak-ng
+      ALIGNMENT_ESPEAK_VOICE: en-us
+      ALIGNMENT_ESPEAK_EXPECTED_VERSION: "1.51"
+      ALIGNMENT_ESPEAK_TIMEOUT_S: ${ALIGNMENT_ESPEAK_TIMEOUT_S:-2}
+      ALIGNMENT_PRONUNCIATION_OVERRIDES_PATH: /app/config/alignment_pronunciations.json
       OMP_NUM_THREADS: ${ALIGNMENT_TORCH_THREADS:-4}
       MKL_NUM_THREADS: ${ALIGNMENT_TORCH_THREADS:-4}
       HF_HUB_OFFLINE: "1"
@@ -286,6 +346,16 @@ services:
     environment:
       # Team/public switches are intentionally independent.
       PHOTO_FLOW_ENABLED: ${PHOTO_FLOW_ENABLED_TEAM:-1}
+      # Шаг «Рамка». В команде включён сразу; в public — после заливки PNG
+      # на S3 и смоука (FRAME_FLOW_ENABLED_PUBLIC=1), выключается без деплоя.
+      FRAME_FLOW_ENABLED: ${FRAME_FLOW_ENABLED_TEAM:-1}
+      # Видео-рукав «Прогрева» (F6). В команде — на смоук; в public включаем
+      # после него (WARMUP_VIDEO_ENABLED_PUBLIC=1), без деплоя.
+      WARMUP_VIDEO_ENABLED: ${WARMUP_VIDEO_ENABLED_TEAM:-1}
+      # F6 «Прогрев видео», ветка ссылки на YouTube. Здесь флаг решает только,
+      # предлагать ли юзеру ссылку; реальный гейт — тот же env у оркестратора,
+      # где живёт yt-dlp. Держать их врозь = обещать в UI то, чего нет.
+      EXTERNAL_VIDEO_SOURCE_ENABLED: ${EXTERNAL_VIDEO_SOURCE_ENABLED:-0}
       TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_TEST_BOT_TOKEN: ${TG_TEST_BOT_TOKEN:-}
       TG_TEST_CREDITS_DB_URL: ${TG_TEST_CREDITS_DB_URL:-}
@@ -314,6 +384,12 @@ services:
       # (subtitle mode -> transition -> stylization -> colours, hooks skipped).
       # Set PHOTO_FLOW_ENABLED_PUBLIC=0 in .env to pull it back without a deploy.
       PHOTO_FLOW_ENABLED: ${PHOTO_FLOW_ENABLED_PUBLIC:-1}
+      # Рамки включены в public; явный 0 оставляет аварийный kill switch.
+      FRAME_FLOW_ENABLED: ${FRAME_FLOW_ENABLED_PUBLIC:-1}
+      WARMUP_VIDEO_ENABLED: ${WARMUP_VIDEO_ENABLED_PUBLIC:-1}
+      # F6, ветка ссылки на YouTube. В public включаем ПОСЛЕ прокси и смоука
+      # в команде: без прокси юзер получит только ошибку.
+      EXTERNAL_VIDEO_SOURCE_ENABLED: ${EXTERNAL_VIDEO_SOURCE_ENABLED_PUBLIC:-0}
       TG_BOT_API_ENV: ${TG_BOT_API_ENV:-prod}
       TG_BOT_TOKEN: ${TG_BOT_PUBLIC_TOKEN}
       TG_BOT_USERNAME: ${TG_BOT_USERNAME:-blast808bot}
@@ -362,7 +438,8 @@ services:
       POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-prefer}
       ADMIN_PANEL_PORT: ${ADMIN_PANEL_PORT:-8080}
       ADMIN_PANEL_PASSWORD: ${ADMIN_PANEL_PASSWORD:-changeme}
-      INITIAL_CREDITS: ${INITIAL_CREDITS:-2}
+      INITIAL_CREDITS: ${INITIAL_CREDITS:-5}
+      RESEND_METHODOLOGY_EVERY_GENERATION: ${RESEND_METHODOLOGY_EVERY_GENERATION:-0}
       MANAGER_CHAT_ID: ${MANAGER_CHAT_ID:-0}
       ADMIN_PANEL_PUBLIC_URL: ${ADMIN_PANEL_PUBLIC_URL:-}
       SURVEY_URL: ${SURVEY_URL:-https://forms.yandex.ru/u/69c52ce695add5c0264676e3}
@@ -416,7 +493,8 @@ services:
       POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-prefer}
       ADMIN_PANEL_PORT: ${ADMIN_PANEL_PORT:-8080}
       ADMIN_PANEL_PASSWORD: ${ADMIN_PANEL_PASSWORD:-changeme}
-      INITIAL_CREDITS: ${INITIAL_CREDITS:-2}
+      INITIAL_CREDITS: ${INITIAL_CREDITS:-5}
+      RESEND_METHODOLOGY_EVERY_GENERATION: ${RESEND_METHODOLOGY_EVERY_GENERATION:-0}
       MANAGER_CHAT_ID: ${MANAGER_CHAT_ID:-0}
       ADMIN_PANEL_PUBLIC_URL: ${ADMIN_PANEL_PUBLIC_URL:-}
       SURVEY_URL: ${SURVEY_URL:-https://forms.yandex.ru/u/69c52ce695add5c0264676e3}
@@ -466,6 +544,18 @@ services:
       - ./finance_bot_data:/app/data
     ports:
       - "127.0.0.1:18082:8080"
+    restart: unless-stopped
+
+  # Генератор PO-токенов для yt-dlp (F6, ветка ссылки на YouTube). Отдельный
+  # контейнер, потому что токены считает JS-рантайм botguard — тащить его в
+  # питоновский образ незачем. Профиль: поднимается только когда ветка нужна.
+  ytdlp-pot:
+    image: brainicism/bgutil-ytdlp-pot-provider:latest
+    container_name: ytdlp-pot
+    init: true
+    profiles: ["youtube"]
+    expose:
+      - "4416"
     restart: unless-stopped
 
   minio:

@@ -1,0 +1,23 @@
+{
+  "_note": "ЕДИНЫЙ реестр FX-эффектов (source of truth). Добавил эффект сюда → появляется чип в визарде (HookPanel/BackgroundPanel) И резолвится в manifestId для рендера (backend/app/effect_map.py). label = значение, которое хранит стор v4. manifestId = id в АЕ/Хуки/Эффекты/manifest.json. icon = файл в public/assets/figma/. inner = глиф в CSS-круге (не baked). altId = id для общей склейки футажа (GLUE_TYPES).",
+  "schema": "blast.effects_registry/1",
+  "hook": [
+    { "label": "Молния", "manifestId": "hook_light", "icon": "efh-molniya.svg", "inner": false, "branding": false },
+    { "label": "Затвор", "manifestId": "shutter_effect", "icon": "efh-zatvor.svg", "inner": false, "branding": "built_in" },
+    { "label": "Слоу-шаттер", "manifestId": "flash_slow_shutter", "icon": "efh-slow-inner.svg", "inner": true, "branding": "stamp_flash" },
+    { "label": "Негатив зум", "manifestId": "negative_zoom", "icon": "efh-negativ.svg", "inner": false, "branding": false }
+  ],
+  "glue": [
+    { "label": "Щелчок", "manifestId": "snap_wipe", "icon": "efg-shchelchok.svg", "inner": false, "altId": "snap-wipe" },
+    { "label": "Минимакс", "manifestId": "minimax", "icon": "efg-minimaks-inner.svg", "inner": true, "altId": "minimax" },
+    { "label": "Экстракт", "manifestId": "extract_flash", "icon": "efg-ekstrakt.svg", "inner": false, "altId": "extract" },
+    { "label": "Инверт", "manifestId": "invert_flash", "icon": "efg-invert.svg", "inner": false, "altId": "invert" },
+    { "label": "Вспышка", "manifestId": "flash_on_cuts", "icon": "efg-vspyshka.svg", "inner": false }
+  ],
+  "style": [
+    { "label": "Ксерокс", "manifestId": "xerox", "icon": "efs-xerox-inner.svg", "inner": true },
+    { "label": "Глитч", "manifestId": "analog_glitch", "icon": "efs-glitch.svg", "inner": false },
+    { "label": "Неон", "manifestId": "neon_extract", "icon": "efs-neon.svg", "inner": false },
+    { "label": "Старая камера", "manifestId": "old_camera", "icon": "efs-oldcam.svg", "inner": false }
+  ]
+}

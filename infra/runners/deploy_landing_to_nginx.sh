@@ -121,10 +121,20 @@ if [[ -n "$LANDING_NGINX_RELOAD_CMD" ]]; then
   eval "$LANDING_NGINX_RELOAD_CMD"
 fi
 
+# Маркер версии ассетов берём из исходного index.html, а не хардкодим:
+# cache-busting-суффикс меняется при каждой правке лендинга, и захардкоженное
+# значение роняло деплой на ровном месте. Смысл проверки тот же — убедиться,
+# что в докруте лежит именно свежесинхронизированный файл.
+ASSET_MARKER="$(grep -o 'js/i18n\.js?v=[A-Za-z0-9._-]*' "$SRC_DIR/index.html" | head -n 1 || true)"
+if [[ -z "$ASSET_MARKER" ]]; then
+  echo "[landing-nginx] source index has no versioned js/i18n.js reference: $SRC_DIR/index.html"
+  exit 1
+fi
+
 required_markers=(
   'https://www.instagram.com/impulsemarketing/'
   'href="terms.html"'
-  'js/i18n.js?v=20260729-i18n1'
+  "$ASSET_MARKER"
 )
 
 if [[ "$SYNC_MODE" == "docker-host" ]]; then

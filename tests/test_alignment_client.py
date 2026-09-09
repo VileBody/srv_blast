@@ -20,6 +20,7 @@ def test_internal_alignment_request_ignores_proxy_environment(monkeypatch) -> No
                 "error": {
                     "code": "ALIGNMENT_MODEL_UNAVAILABLE",
                     "message": "not ready",
+                    "details": {"hard_valid_candidate_count": 0},
                 }
             }
 
@@ -43,7 +44,7 @@ def test_internal_alignment_request_ignores_proxy_environment(monkeypatch) -> No
     with pytest.raises(
         alignment_client.AlignmentServiceError,
         match="ALIGNMENT_MODEL_UNAVAILABLE: not ready",
-    ):
+    ) as exc:
         alignment_client.request_local_alignment(
             service_url="http://alignment-api:8000",
             timeout_s=600.0,
@@ -54,6 +55,7 @@ def test_internal_alignment_request_ignores_proxy_environment(monkeypatch) -> No
             request_id="job",
         )
 
+    assert exc.value.details == {"hard_valid_candidate_count": 0}
     assert observed["client_kwargs"] == {"timeout": 600.0, "trust_env": False}
     assert observed["url"] == "http://alignment-api:8000/align"
 
@@ -71,3 +73,59 @@ def test_alignment_service_error_survives_pickle() -> None:
     assert restored.code == "ALIGNMENT_TIMEOUT"
     assert restored.message == "inference timed out"
     assert str(restored) == "ALIGNMENT_TIMEOUT: inference timed out"
+
+
+def test_alignment_transport_disconnect_is_retried(monkeypatch) -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    class _Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {
+                "stage1_asr": {
+                    "transcript_words": [
+                        {"text": "тест", "t_start": 1.0, "t_end": 2.0}
+                    ]
+                },
+                "diagnostics": {"word_count": 1},
+                "backend": {"type": "local_ctc_viterbi"},
+            }
+
+    class _Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, *, json):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise alignment_client.httpx.RemoteProtocolError(
+                    "server disconnected without sending a response"
+                )
+            return _Response()
+
+    monkeypatch.setattr(alignment_client.httpx, "Client", _Client)
+    monkeypatch.setattr(alignment_client.time, "sleep", delays.append)
+
+    result = alignment_client.request_local_alignment(
+        service_url="http://alignment-api:8000",
+        timeout_s=600.0,
+        audio_path=Path("/app/work/jobs/job/audio.mp3"),
+        target_fragment="тест",
+        clip_start_abs=1.0,
+        clip_end_abs=2.0,
+        request_id="job",
+    )
+
+    assert attempts == 2
+    assert delays == [1.0]
+    assert result.stage1_asr.transcript_words[0].text == "тест"

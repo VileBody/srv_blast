@@ -31,6 +31,19 @@ def _is_audio_by_ext(file_name: str) -> bool:
     return Path(file_name).suffix.lower() in _AUDIO_EXTS
 
 
+# Видео-контейнеры: слой с audioEnabled — ещё не аудио. Прогрев F6 «Видео» —
+# это mp4 со своим звуком, и по мете он выглядел как аудио-слой, из-за чего
+# уезжал в media/audio/, а JSX ищет видео строго в media/video/ (путь там
+# резолвится ПО РАСШИРЕНИЮ). Для известных видео-расширений расширение и решает.
+_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
+
+
+def _is_audio_layer(layer: Dict[str, Any], file_name: str) -> bool:
+    if Path(file_name).suffix.lower() in _VIDEO_EXTS:
+        return False
+    return _is_audio_by_meta(layer) or _is_audio_by_ext(file_name)
+
+
 def _expected_audio_name_from_payload(footage_layers: List[Dict[str, Any]]) -> str:
     for layer in footage_layers:
         if not isinstance(layer, dict):
@@ -40,7 +53,7 @@ def _expected_audio_name_from_payload(footage_layers: List[Dict[str, Any]]) -> s
         fn = str(src.get("file_name") or "").strip()
         if not fn:
             continue
-        if _is_audio_by_meta(layer) or _is_audio_by_ext(fn):
+        if _is_audio_layer(layer, fn):
             return fn
     return ""
 
@@ -88,7 +101,7 @@ def collect_media_urls_from_render_payload(
         remote_url = str(src.get("remote_url") or "").strip()
         file_path = str(src.get("file_path") or "").strip()
 
-        if _is_audio_by_meta(layer) or _is_audio_by_ext(fn):
+        if _is_audio_layer(layer, fn):
             # The main track is fetched separately via `audio_url` (above) and
             # its layer carries no remote source — skip it here. Any *extra*
             # audio layer that does carry a remote source (e.g. the F5 «Мысль»

@@ -303,6 +303,19 @@ PY
   echo "[deploy] set TG_WEBHOOK_IP_ADDRESS=$ip for Telegram webhook DNS pin"
 }
 
+bootstrap_prod_fx_assets_env() {
+  local bucket
+  bucket="$(env_file_value S3_BUCKET_ASSET_STORAGE)"
+  if [[ -z "$bucket" ]]; then
+    echo "[deploy] S3_BUCKET_ASSET_STORAGE is required to configure FX assets"
+    return 1
+  fi
+
+  set_env_file_value "$REPO_DIR/.env" FX_ASSETS_S3_BUCKET "$bucket"
+  set_env_file_value "$REPO_DIR/.env" FX_ASSETS_S3_PREFIX "fx_assets/"
+  echo "[deploy] configured FX assets bucket and prefix for prod-path"
+}
+
 if [[ -z "$BRANCH" ]]; then
   echo "Branch is not specified. Pass it as the first argument."
   exit 1
@@ -442,6 +455,25 @@ require_prebuilt_image_env() {
   fi
 }
 
+persist_prebuilt_image_refs() {
+  if ! is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
+    return 0
+  fi
+
+  local key
+  for key in \
+    BLAST_RUNTIME_IMAGE \
+    BLAST_ALIGNMENT_IMAGE \
+    BLAST_TG_BOT_IMAGE \
+    BLAST_TG_BOT_PUBLIC_IMAGE \
+    BLAST_ASSET_UI_IMAGE \
+    BLAST_FINANCE_BOT_IMAGE
+  do
+    set_env_file_value "$REPO_DIR/.env" "$key" "${!key}"
+  done
+  echo "[deploy] persisted deployed prebuilt image refs in $REPO_DIR/.env"
+}
+
 docker_registry_login_if_needed() {
   local registry_token
   if [[ -z "$BLAST_IMAGE_REGISTRY" ]]; then
@@ -502,6 +534,7 @@ deploy_root_services_prebuilt() {
     echo "[deploy] docker compose up -d --no-build ${services[*]}"
     docker compose up -d --no-build "${services[@]}"
   fi
+  persist_prebuilt_image_refs
 }
 
 deploy_prod_path_services() {
@@ -521,7 +554,8 @@ deploy_prod_path_services() {
   if ! is_true "$DEPLOY_ORCHESTRATOR_HA"; then
     PROD_PATH_COMPOSE_ARGS=()
     PROD_PATH_SERVICES=(
-      orchestrator-api alignment-api worker-build worker-render worker-render-poll
+      orchestrator-api alignment-api worker-build worker-alignment-smoke
+      worker-render worker-render-poll
     )
     PROD_PATH_USE_PREBUILT="$DEPLOY_USE_PREBUILT_IMAGES"
     if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
@@ -530,6 +564,7 @@ deploy_prod_path_services() {
       reclaim_disk_for_pull
     fi
     prod_path_rollout
+    persist_prebuilt_image_refs
     remove_root_services tg-bot-public
     return 0
   fi
@@ -550,7 +585,8 @@ deploy_prod_path_services() {
   echo "[deploy] orchestrator-ha enabled compose=$compose_ha"
   PROD_PATH_COMPOSE_ARGS=(-f docker-compose.yml -f "$compose_ha")
   PROD_PATH_SERVICES=(
-    orchestrator-api orchestrator-api-2 alignment-api worker-build worker-render worker-render-poll
+    orchestrator-api orchestrator-api-2 alignment-api worker-build
+    worker-alignment-smoke worker-render worker-render-poll
   )
   PROD_PATH_USE_PREBUILT="$DEPLOY_USE_PREBUILT_IMAGES"
   if is_true "$DEPLOY_USE_PREBUILT_IMAGES"; then
@@ -559,6 +595,7 @@ deploy_prod_path_services() {
     reclaim_disk_for_pull
   fi
   prod_path_rollout
+  persist_prebuilt_image_refs
   remove_root_services tg-bot-public
 }
 
@@ -872,6 +909,7 @@ case "$DEPLOY_STACK" in
     ;;
   prod-path)
     bootstrap_tg_webhook_ip_env
+    bootstrap_prod_fx_assets_env
     deploy_prod_path_services
     dozzle_agent_status=0
     dozzle_agent_env_is_ready || dozzle_agent_status=$?
@@ -893,7 +931,7 @@ case "$DEPLOY_STACK" in
     mapfile -t services < <(infra_app_services)
     deploy_root_services "${services[@]}"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      remove_root_services orchestrator-api orchestrator-api-2 alignment-api worker-build worker-render worker-render-poll
+      remove_root_services orchestrator-api orchestrator-api-2 alignment-api worker-build worker-alignment-smoke worker-render worker-render-poll
     fi
     ;;
   infra-ops)
@@ -913,7 +951,7 @@ case "$DEPLOY_STACK" in
     deploy_runner_compose_if_present "$RUNNERS_DIR/docker-compose.observability.yml" "$RUNNERS_DIR/.env.observability"
     deploy_github_runner_compose_if_allowed "$RUNNERS_DIR/docker-compose.github-runner.yml" "$RUNNERS_DIR/.env.github-runner"
     if is_true "$DEPLOY_PRUNE_OTHER_STACK"; then
-      remove_root_services orchestrator-api orchestrator-api-2 alignment-api worker-build worker-render worker-render-poll
+      remove_root_services orchestrator-api orchestrator-api-2 alignment-api worker-build worker-alignment-smoke worker-render worker-render-poll
     fi
     ;;
   *)

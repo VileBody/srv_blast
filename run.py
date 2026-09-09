@@ -261,6 +261,7 @@ def main() -> int:
                 full_edit_config_path=subtitle_cfg_path,
                 footage_config_path=footage_config_path,
                 out_dir=subtitle_build_dir,
+                brat_blinker_enabled=False,
             )
             # The effects the user picked are the SAME library footage uses; they
             # belong to the comp that owns the photos.

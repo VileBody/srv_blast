@@ -45,6 +45,15 @@ def test_can_reuse_input_checks_file_id_and_prepared_path_source() -> None:
     assert "Path(prepared_raw).expanduser().resolve().exists()" in src
 
 
+def test_reuse_selection_clears_previous_frame() -> None:
+    src = _app_source()
+    start = src.index("def _reset_reuse_selection(")
+    tail = src[start:]
+    end = tail.index("async def _handle_wait_audio(")
+
+    assert 'st.frame_id = ""' in tail[:end]
+
+
 # ── bigtest parity: public bot must carry the flag + stub ────────────────────
 
 def test_bigtest_disabled_in_public_bot_source() -> None:

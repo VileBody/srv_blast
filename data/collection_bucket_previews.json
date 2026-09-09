@@ -1,0 +1,269 @@
+{
+  "version": 1,
+  "previews": {
+    "collection:cine16x9__Asaka": {
+      "bucket_id": "collection:cine16x9__Asaka",
+      "label": "Осака",
+      "description": "японский город, неон, узкие улицы",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__Asaka.mp4",
+      "file_id": "BAACAgIAAxkDAAI4eWqKPtf2XlH8DjpMBi36YcPf109-AALSpgACYe5RSLM41wyLGE19PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp3xqij7bU0Eif2Di-O8lFCsxVgk5nAACFLAAAsfmUEhwBluJYxHusD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__BMW": {
+      "bucket_id": "collection:cine16x9__BMW",
+      "label": "BMW",
+      "description": "BMW",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__BMW.mp4",
+      "file_id": "BAACAgIAAxkDAAI4emqKPt7Rc_IXJqFr8UGcIA0EKJJ9AALTpgACYe5RSP6G-oq3KnunPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp31qij7hUYN8OMGW1Z_wK6CVsMROwQACFbAAAsfmUEhAdEwOmDzgVj0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__Boston": {
+      "bucket_id": "collection:cine16x9__Boston",
+      "label": "Boston",
+      "description": "Boston",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__Boston.mp4",
+      "file_id": "BAACAgIAAxkDAAI4e2qKPuWQvE2FUuHsLwnCBoxM4BK5AALUpgACYe5RSEQZeKefi1zcPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp35qij7o1JIo-G8nbAd5UljR3DPEsAACFrAAAsfmUEhkYJaZhmHCVT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__JDM": {
+      "bucket_id": "collection:cine16x9__JDM",
+      "label": "JDM",
+      "description": "JDM",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__JDM.mp4",
+      "file_id": "BAACAgIAAxkDAAI4fGqKPuvYMoBCLTMn4eqF_sgFczu6AALVpgACYe5RSN3LRg1i7pthPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp39qij7v2Fn9-hrMET1CDlSRZYF7BAACF7AAAsfmUEgfo7K5rcuYXz0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__Kyoto": {
+      "bucket_id": "collection:cine16x9__Kyoto",
+      "label": "Киото",
+      "description": "храмы, сады, тихая созерцательность",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__Kyoto.mp4",
+      "file_id": "BAACAgIAAxkDAAI4fWqKPvLoo1_4Ht6A_3BTT0OX7iibAALWpgACYe5RSBgO0GbyWZKgPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4Bqij71kZRX5cXMm3D6M2pyvBwCtAACGLAAAsfmUEie9UZxXoxZKD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__Lisbon": {
+      "bucket_id": "collection:cine16x9__Lisbon",
+      "label": "Lisbon",
+      "description": "Lisbon",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__Lisbon.mp4",
+      "file_id": "BAACAgIAAxkDAAI4fmqKPvn7vPgGDHtSCNjkAuoCEy14AALXpgACYe5RSHHa3TNswBEOPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4Fqij78kLvQQoOGJH24fnWVVvKGcgACGbAAAsfmUEg62fYeugYcUz0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__Los_Angels": {
+      "bucket_id": "collection:cine16x9__Los_Angels",
+      "label": "Лос-Анджелес",
+      "description": "пальмы, шоссе, закатное золото",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__Los_Angels.mp4",
+      "file_id": "BAACAgIAAxkDAAI4f2qKPv-E5QSVsBrEjnBJYeSUX0DrAALYpgACYe5RSElwA1OVc-Q1PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4Jqij8Dkqepiw7ZvnOJMTh4gCS4eAACG7AAAsfmUEgtzsVk3nv6wz0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__Miami": {
+      "bucket_id": "collection:cine16x9__Miami",
+      "label": "Майами",
+      "description": "океан, неон, ночная жизнь",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__Miami.mp4",
+      "file_id": "BAACAgIAAxkDAAI4gGqKPwaVWVHeYScR-VHYXrg0CsKhAALZpgACYe5RSHnqOHW1q9nOPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4Nqij8K6bzMfM0xRNUxKqWgEc6tCgACHLAAAsfmUEi8hcduMEX77T0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__New_York": {
+      "bucket_id": "collection:cine16x9__New_York",
+      "label": "Нью-Йорк",
+      "description": "город, улицы, огни, движение",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__New_York.mp4",
+      "file_id": "BAACAgIAAxkDAAI4gWqKPw10wjSQz8PaZ4GgznBNOvoHAALapgACYe5RSBfp-BOqOpPIPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4Rqij8Q7LeUyffGj_PAYqNkazOMGwACHbAAAsfmUEiS1aV6GNd_oj0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__Paris": {
+      "bucket_id": "collection:cine16x9__Paris",
+      "label": "Paris",
+      "description": "Paris",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__Paris.mp4",
+      "file_id": "BAACAgIAAxkDAAI4gmqKPxSFMfePuQxGZipfDavrB0TuAALbpgACYe5RSOeW8jeH315OPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4Vqij8XJ8UpAAEXNxqY6ksZPevmyxcAAh6wAALH5lBIDBuRbsqNs0Y9BA",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__Porsche": {
+      "bucket_id": "collection:cine16x9__Porsche",
+      "label": "Porsche",
+      "description": "Porsche",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__Porsche.mp4",
+      "file_id": "BAACAgIAAxkDAAI4g2qKPxrcFN_rwz4HW8lExcO5nbQzAALcpgACYe5RSAjcEuAI7zHKPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4Zqij8eDvCiB3-04dHF1VogIitm4AACH7AAAsfmUEg4XajKoFcjoD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:cine16x9__Sqd": {
+      "bucket_id": "collection:cine16x9__Sqd",
+      "label": "Sqd",
+      "description": "Sqd",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__cine16x9__Sqd.mp4",
+      "file_id": "BAACAgIAAxkDAAI4hGqKPyHPyIHQ5uo1fFHrvYvV659XAALdpgACYe5RSOUpWo6LmVHIPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4dqij8ktBc42KjrGkrk3eIb-ZzPPgACILAAAsfmUEh5PDc8w3Hz7T0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__бойцовский клуб": {
+      "bucket_id": "collection:films__бойцовский клуб",
+      "label": "Бойцовский клуб",
+      "description": "тёмная агрессия, распад, подвалы и неон",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__бойцовский клуб.mp4",
+      "file_id": "BAACAgIAAxkDAAI4hWqKPygCi3JdRphYe1Jo4hm0seyHAALepgACYe5RSL2YHqrl2bC2PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4hqij8rdeaPRGYksJ1NpsOmCjMh6AACIbAAAsfmUEiOfmiaSKt72j0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__брат": {
+      "bucket_id": "collection:films__брат",
+      "label": "Брат",
+      "description": "90-е, серый город, холодная решимость",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__брат.mp4",
+      "file_id": "BAACAgIAAxkDAAI4hmqKPy7I1lqST9O5VPpYbonGzBkEAALfpgACYe5RSIX75BBFPFotPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4lqij8yetD7Qd_uJkASujkFGdnONQACIrAAAsfmUEigN7hVErvxxT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__бумер": {
+      "bucket_id": "collection:films__бумер",
+      "label": "Бумер",
+      "description": "дорога, трасса, пацанская романтика 2000-х",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__бумер.mp4",
+      "file_id": "BAACAgIAAxkDAAI4h2qKPzX3xEfWboAjcz71IDZ4xCWNAALgpgACYe5RSHUIhFyPvCt9PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4pqij84BFX5TAnLzt9ZinDSB79wPwACI7AAAsfmUEihamUrmNg7ED0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__великий гэтсби": {
+      "bucket_id": "collection:films__великий гэтсби",
+      "label": "Великий Гэтсби",
+      "description": "роскошь, вечеринки, недостижимая любовь",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__великий гэтсби.mp4",
+      "file_id": "BAACAgIAAxkDAAI4iGqKPzthWWIbeglOmVNstKuEvFEPAALhpgACYe5RSJOW5LBQfHo6PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4tqij8_Wpht3IzAAAFWUPyoZI2Hr08AAiSwAALH5lBIlA9xXHE0Zec9BA",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__волк с уолл-стрит": {
+      "bucket_id": "collection:films__волк с уолл-стрит",
+      "label": "Волк с Уолл-стрит",
+      "description": "деньги, кураж, безудержный подъём",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__волк с уолл-стрит.mp4",
+      "file_id": "BAACAgIAAxkDAAI4iWqKP0JTYrZZHBfsG6F0nRutCGz_AALipgACYe5RSIFT4J57mlI5PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp4xqij9Fw-5QpvEDWWEOyOc15Ojc7AACJbAAAsfmUEjkVDqk4gvoJz0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__до встречи с тобой": {
+      "bucket_id": "collection:films__до встречи с тобой",
+      "label": "До встречи с тобой",
+      "description": "светлая нежность и расставание",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__до встречи с тобой.mp4",
+      "file_id": "BAACAgIAAxkDAAI4imqKP0n9e9CLV8CsjRk0NWp5POyDAALjpgACYe5RSMF9Utj-zyYSPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp41qij9OLymVOE78xR2PJCVpZQ6pLgACJrAAAsfmUEgdFe-hBVsEQT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__дом gucci": {
+      "bucket_id": "collection:films__дом gucci",
+      "label": "Дом Gucci",
+      "description": "богатство, интриги, ревность",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__дом gucci.mp4",
+      "file_id": "BAACAgIAAxkDAAI4i2qKP1X_a-AujplWCUOy956Ub6m0AALkpgACYe5RSNFwkp9NuNpkPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp45qij9aqiiqW7eOcAIbKDXOPPtbqAACKLAAAsfmUEjE-IvZb5wDET0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__дьявол носит прада": {
+      "bucket_id": "collection:films__дьявол носит прада",
+      "label": "Дьявол носит Прада",
+      "description": "карьера, стиль, город и амбиции",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__дьявол носит прада.mp4",
+      "file_id": "BAACAgIAAxkDAAI4jGqKP12poQLjfHsGwPJhqK-Wq7LIAALlpgACYe5RSDM3pwnOnvPVPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp49qikGl4NL49AYAASBMh-oHUMiSjYMAAi2wAALH5lBIeCvfHEnZIgs9BA",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__жмурки": {
+      "bucket_id": "collection:films__жмурки",
+      "label": "Жмурки",
+      "description": "чёрный юмор, криминал, 90-е",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__жмурки.mp4",
+      "file_id": "BAACAgIAAxkDAAI4jWqKQajrKZEB_01P_n3s1iv3_4sUAALqpgACYe5RSEoOUnZSmMW4PQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp5BqikGsu2IAAS_gS90s7nPVGSbVTuAAAi6wAALH5lBIGoh2cDH3Zz89BA",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__проект х": {
+      "bucket_id": "collection:films__проект х",
+      "label": "Проект Х",
+      "description": "вечеринка без тормозов, молодость",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__проект х.mp4",
+      "file_id": "BAACAgIAAxkDAAI4jmqKQbBk8MNo4yHNpxUNxzd3n0E5AALspgACYe5RSEzqccYW-2sNPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp5FqikG0swEaElw4yFl8seY4FMVTWAACL7AAAsfmUEinc4_oxN2dGT0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__реквием по мечте": {
+      "bucket_id": "collection:films__реквием по мечте",
+      "label": "Реквием по мечте",
+      "description": "распад, зависимость, ускользающая мечта",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__реквием по мечте.mp4",
+      "file_id": "BAACAgIAAxkDAAI4j2qKQbfA4XVeQvf-oMbVDlzazYf7AALtpgACYe5RSAqQIWlCclDwPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp5JqikG7IrSK3yPTueK45kpGJyFvRAACMLAAAsfmUEgJdSJC8x6Qnj0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    },
+    "collection:films__токийский дрифт": {
+      "bucket_id": "collection:films__токийский дрифт",
+      "label": "Токийский дрифт",
+      "description": "ночные гонки, дрифт, огни Токио",
+      "s3_url": "s3://f7cef916-asset-storage/collection_bucket_previews/collection__films__токийский дрифт.mp4",
+      "file_id": "BAACAgIAAxkDAAI4kGqKQb9jW7FCPqLyE87OxbToKOn3AALupgACYe5RSMXve6HAH3iVPQQ",
+      "file_id_public": "BAACAgIAAxkDAAECp5NqikHCqHK_xTITTpoCbwcJ9y2q3AACMbAAAsfmUEg11C2FiejSMD0E",
+      "clip_ids": [],
+      "status": "ok",
+      "built_at": "2026-08-23T00:43:22Z"
+    }
+  }
+}

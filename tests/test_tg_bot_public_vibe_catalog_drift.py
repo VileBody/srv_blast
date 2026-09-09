@@ -68,9 +68,17 @@ def test_an_unreadable_catalog_keeps_the_stored_shortlist(
     """No opinion must not mean "everything is stale" — that would re-rank every
     chat on every message."""
     app = _mod(bot)
-    monkeypatch.setattr(app, "_live_bucket_ids", lambda _bg: set())
+    monkeypatch.setattr(app, "_live_bucket_ids", lambda _bg, _kind=None: set())
     assert app._stale_vibe_shortlist_reason(["photo:whatever_it_was"], "photo") == ""
     assert app._stale_vibe_shortlist_reason(["visual:x"], "photo") == "wrong_plane"
+    # The plane check covers collections too: a films shortlist belongs to
+    # the films fork and nowhere else.
+    assert app._stale_vibe_shortlist_reason(
+        ["collection:films__x"], "footage", app.FOOTAGE_KIND_FILMS
+    ) == ""
+    assert app._stale_vibe_shortlist_reason(
+        ["visual:x"], "footage", app.FOOTAGE_KIND_FILMS
+    ) == "wrong_plane"
 
 
 @pytest.mark.parametrize("bot", BOTS)

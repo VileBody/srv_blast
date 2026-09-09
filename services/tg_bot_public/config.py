@@ -227,7 +227,10 @@ class Settings:
     tg_webhook_delete_on_shutdown: bool = _bool_env("TG_WEBHOOK_DELETE_ON_SHUTDOWN", False)
     bot_status_update_interval_s: float = _float_env("BOT_STATUS_UPDATE_INTERVAL_S", 20.0)
     bot_recovery_poll_interval_s: float = _float_env("BOT_RECOVERY_POLL_INTERVAL_S", 60.0)
-    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 4.0)
+    # Dispatch may legitimately wait up to roughly four hours for a saturated
+    # render node. Keep bot recovery beyond that budget so it cannot abandon a
+    # job that the orchestrator is still processing.
+    bot_job_timeout_h: float = _float_env("BOT_JOB_TIMEOUT_H", 6.0)
     bot_referral_timeout_h: float = _float_env("BOT_REFERRAL_TIMEOUT_H", 72.0)
     tg_state_ttl_h: float = _float_env("TG_STATE_TTL_H", 720.0)
     tg_state_cleanup_interval_s: float = _float_env("TG_STATE_CLEANUP_INTERVAL_S", 900.0)
@@ -277,6 +280,14 @@ class Settings:
     tg_state_prefix: str = _env("TG_STATE_PREFIX", "blast:tg:public:chat_state")
 
     ffmpeg_bin: str = _env("FFMPEG_BIN", "ffmpeg")
+    # F6 «Прогрев видео»: размеры/длительность вырезки снимаются ffprobe —
+    # по ним build-сторона запекает cover-скейл и подрезает окно.
+    ffprobe_bin: str = _env("FFPROBE_BIN", "ffprobe")
+    # F6 «Прогрев видео», ветка ссылки на YouTube. Тот же env, что читает
+    # оркестратор: реальный гейт — там (у него yt-dlp и прокси), а здесь флаг
+    # решает только, предлагать ли юзеру ссылку. Один переключатель на два
+    # сервиса, чтобы бот не звал заведомо выключенный эндпоинт.
+    external_video_source_enabled: bool = _bool_env("EXTERNAL_VIDEO_SOURCE_ENABLED", False)
 
     s3_endpoint_url: str = _env("S3_ENDPOINT_URL", "")
     s3_access_key_id: str = _env("S3_ACCESS_KEY_ID", "")
@@ -307,8 +318,15 @@ class Settings:
     season_redis_prefix: str = _env("SEASON_REDIS_PREFIX", "blast:season")
     admin_panel_enable_donor_restart: bool = _bool_env("ADMIN_PANEL_ENABLE_DONOR_RESTART", False)
     dozzle_base_url: str = _env("DOZZLE_BASE_URL", "")
-    initial_credits: int = _int_env("INITIAL_CREDITS", 2)
+    # Free-tier generation quota. Doubles as the denominator for the free
+    # version-picker warnings (4/5 => 80%, 5/5 => 100%) in marketing_texts.
+    initial_credits: int = _int_env("INITIAL_CREDITS", 5)
     initial_track_credits: int = _int_env("INITIAL_TRACK_CREDITS", 1)
+    # Post-generation methodology: True re-sends the doc on EVERY later
+    # generation, False (default) sends it once more, on the second one.
+    resend_methodology_every_generation: bool = _bool_env(
+        "RESEND_METHODOLOGY_EVERY_GENERATION", False
+    )
     jobstore_prefix: str = _env("JOBSTORE_PREFIX", "blast")
     windows_render_url: str = _env("WINDOWS_RENDER_URL", "")
     windows_donor_host: str = _env("WINDOWS_DONOR_HOST", "")

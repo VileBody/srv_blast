@@ -193,7 +193,10 @@ export interface TaggingStatus {
   updated_at?: number;
 }
 
-export type MediaType = 'video' | 'photo';
+// 'collection' is the untagged, folder-scoped plane (films / people / cine16x9):
+// browse and upload work the same way, but it is never tagged — one upload
+// folder is one selectable group, so there is nothing for the tagger to add.
+export type MediaType = 'video' | 'photo' | 'collection';
 
 export async function startTagUntagged(
   limit = 0,

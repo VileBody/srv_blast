@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ssl
 from typing import Any
 
 import httpx
@@ -25,11 +26,12 @@ class _FakeAsyncClient:
     """Stands in for httpx.AsyncClient and records the posted body."""
 
     captured: list[tuple[str, dict[str, Any]]] = []
+    init_kwargs: list[dict[str, Any]] = []
     payload: Any = []
     status_code: int = 200
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        pass
+        type(self).init_kwargs.append(dict(kwargs))
 
     async def __aenter__(self) -> "_FakeAsyncClient":
         return self
@@ -45,6 +47,7 @@ class _FakeAsyncClient:
 @pytest.fixture(autouse=True)
 def _patch_httpx(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeAsyncClient.captured = []
+    _FakeAsyncClient.init_kwargs = []
     _FakeAsyncClient.payload = []
     _FakeAsyncClient.status_code = 200
     monkeypatch.setattr(httpx, "AsyncClient", _FakeAsyncClient)
@@ -64,6 +67,7 @@ def test_get_card_list_sends_customer_key_and_token() -> None:
     assert body["CustomerKey"] == "777"
     assert body["TerminalKey"] == "term-1"
     assert body["Token"]
+    assert isinstance(_FakeAsyncClient.init_kwargs[0]["verify"], ssl.SSLContext)
 
 
 def test_find_rebill_id_prefers_active_card_then_newest() -> None:
@@ -102,3 +106,18 @@ def test_get_card_list_returns_empty_on_http_error() -> None:
     _FakeAsyncClient.payload = {}
 
     assert asyncio.run(_client().get_card_list("777")) == []
+
+
+def test_check_order_returns_latest_payment() -> None:
+    _FakeAsyncClient.payload = {
+        "Success": True,
+        "Payments": [{"PaymentId": "10"}, {"PaymentId": "11", "Status": "CONFIRMED"}],
+    }
+
+    result = asyncio.run(_client().check_order("order-1"))
+
+    assert result == {"PaymentId": "11", "Status": "CONFIRMED"}
+    url, body = _FakeAsyncClient.captured[0]
+    assert url.endswith("/v2/CheckOrder")
+    assert body["OrderId"] == "order-1"
+    assert body["Token"]

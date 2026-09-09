@@ -41,6 +41,9 @@
       "type": "footage",
       "name": {{ c.file_name | tojson }},
       "file_name": {{ c.file_name | tojson }},
+      {# Real media object behind this clip. Differs from file_name only for a
+         virtual segment of a long source, where N clips share one file. #}
+      "media_file_name": {{ (assets_map[c.file_name].media_file_name | default(c.file_name)) | tojson }},
       "file_path": {{ assets_map[c.file_name].file_path | tojson }},
 
       "src_w": {{ assets_map[c.file_name].src_w }},

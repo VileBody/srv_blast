@@ -703,6 +703,46 @@ def normalize_subtitle_flow_to_clip_zero(
     )
 
 
+def trim_subtitle_flow_across_f6_boundary(
+    flow: SubtitleFlowPlan,
+    *,
+    video_end_sec: float,
+    margin_sec: float,
+) -> SubtitleFlowPlan:
+    """Keep post-F6 tokens from segments that straddle the video boundary.
+
+    Fully covered segments are intentionally left intact: the existing layer
+    cleanup removes them later. Only a straddling segment needs rebuilding;
+    deleting it wholesale also deletes valid words after the drop.
+    """
+    threshold = float(video_end_sec) + max(0.0, float(margin_sec))
+    segments: List[Dict[str, Any]] = []
+    for seg in flow.segments:
+        raw = seg.model_dump(mode="json", by_alias=True)
+        if float(seg.in_point) < threshold < float(seg.out_point):
+            kept = [t for t in seg.tokens if float(t.t_start) >= threshold - 1e-6]
+            if kept:
+                text = " ".join(str(t.text).strip() for t in kept if str(t.text).strip())
+                raw.update({
+                    "text": text,
+                    "lines": [text],
+                    "in_point": float(kept[0].t_start),
+                    "out_point": float(kept[-1].t_end),
+                    "tokens": [t.model_dump(mode="json") for t in kept],
+                    "focus_word": (
+                        seg.focus_word
+                        if seg.focus_word and any(t.text == seg.focus_word for t in kept)
+                        else None
+                    ),
+                })
+        segments.append(raw)
+    return SubtitleFlowPlan.model_validate({
+        "mode": flow.mode,
+        "clip": flow.clip.model_dump(mode="json"),
+        "segments": segments,
+    })
+
+
 # -------------------------
 # Footage: absolute -> clip-zero (comp) + coverage checks
 # -------------------------
@@ -711,10 +751,12 @@ def _shift_footage_to_clip_zero(
     *,
     clip_start_abs: float,
     clip_end_abs: float,
+    timeline_pre_roll_sec: float = 0.0,
 ) -> FootageSelectionPayload:
     cs = float(clip_start_abs)
     ce = float(clip_end_abs)
-    dur = ce - cs
+    pre_roll = max(0.0, float(timeline_pre_roll_sec))
+    dur = ce - cs + pre_roll
     if dur <= 0:
         raise ValueError(f"Invalid clip window for footage shift: {cs}..{ce}")
 
@@ -723,8 +765,8 @@ def _shift_footage_to_clip_zero(
 
     shifted_clips: List[Dict[str, Any]] = []
     for c in clips_in:
-        in0 = float(c.in_point) - cs
-        out0 = float(c.out_point) - cs
+        in0 = float(c.in_point) - cs + pre_roll
+        out0 = float(c.out_point) - cs + pre_roll
 
         if in0 < -1e-6 or out0 > dur + 1e-6:
             raise ValueError(
@@ -743,6 +785,19 @@ def _shift_footage_to_clip_zero(
                 "start_time": in0 - src_off,
             }
         )
+
+    if pre_roll > 0.0 and shifted_clips:
+        # F6 fully covers this filler. Keeping deterministic footage coverage
+        # avoids teaching the rest of the render pipeline about legal gaps.
+        first = shifted_clips[0]
+        shifted_clips.insert(0, {
+            "file_name": first["file_name"],
+            "fit_mode": first["fit_mode"],
+            "in_point": 0.0,
+            "out_point": pre_roll,
+            "source_offset_sec": first["source_offset_sec"],
+            "start_time": -float(first["source_offset_sec"]),
+        })
 
     payload = {
         "clips": shifted_clips,
@@ -787,7 +842,16 @@ def load_assets_map_from_inventory(footage_inventory_json: Path) -> Dict[str, Di
             sh = it.get("src_h")
             if not fn or not fp or sw is None or sh is None:
                 continue
-            out[fn] = {"file_name": fn, "file_path": fp, "src_w": int(sw), "src_h": int(sh)}
+            out[fn] = {
+                "file_name": fn,
+                "file_path": fp,
+                "src_w": int(sw),
+                "src_h": int(sh),
+                # Virtual segments of one long source share a media file; the
+                # render layer must fetch and import it under the REAL name so
+                # the media manifest dedupes to a single download.
+                "media_file_name": str(it.get("media_file_name") or fn),
+            }
         return out
 
     layers = list(inv.get("layers") or [])
@@ -804,7 +868,13 @@ def load_assets_map_from_inventory(footage_inventory_json: Path) -> Dict[str, Di
         if not fn or not fp or sw is None or sh is None:
             continue
         if fn not in out2:
-            out2[fn] = {"file_name": fn, "file_path": fp, "src_w": int(sw), "src_h": int(sh)}
+            out2[fn] = {
+                "file_name": fn,
+                "file_path": fp,
+                "src_w": int(sw),
+                "src_h": int(sh),
+                "media_file_name": str(it.get("media_file_name") or fn),
+            }
     return out2
 
 
@@ -847,6 +917,8 @@ def render_all_steps(
     f3_block: Dict[str, Any] | None = None,
     f2_block: Dict[str, Any] | None = None,
     f1_block: Dict[str, Any] | None = None,
+    f6_block: Dict[str, Any] | None = None,
+    frame_block: Dict[str, Any] | None = None,
     jsx_subtitles_block: Dict[str, Any] | None = None,
 ) -> Dict[str, Path]:
     repo_root = repo_root.resolve()
@@ -890,7 +962,8 @@ def render_all_steps(
         clip_start = float(flow_abs.clip.start)
         clip_end = float(flow_abs.clip.end)
 
-    clip_dur = clip_end - clip_start
+    pre_roll = max(0.0, float((f6_block or {}).get("pre_roll_sec") or 0.0))
+    clip_dur = clip_end - clip_start + pre_roll
     if clip_dur <= 0:
         raise ValueError(f"Invalid subtitles clip window: {clip_start}..{clip_end}")
 
@@ -909,12 +982,17 @@ def render_all_steps(
         # Never fail Stage3 due to diagnostics.
         pass
 
+    # Keep subtitle authoring on the user's selected window, but fill the F6
+    # timeline extension with the immediately preceding track audio when it
+    # exists. These are deliberately separate coordinate systems.
+    audio_source_start = max(0.0, clip_start - pre_roll)
+    audio_layer_in = max(0.0, pre_roll - clip_start)
     audio_obj = {
         "audio": {
-            "clip_start_abs": clip_start,
+            "clip_start_abs": audio_source_start,
             "clip_end_abs": clip_end,
-            "layer_start_time": -clip_start,
-            "layer_in_point": 0.0,
+            "layer_start_time": audio_layer_in - audio_source_start,
+            "layer_in_point": audio_layer_in,
             "layer_out_point": float(clip_dur),
             "moment_of_interest_sec": plan.audio.moment_of_interest_sec,
         }
@@ -928,7 +1006,7 @@ def render_all_steps(
             raise RuntimeError("legacy subtitles payload is empty at stage3")
         subs_clip_zero = normalize_subtitles_to_clip_zero(
             subs_abs_legacy,
-            clip_start_abs=clip_start,
+            clip_start_abs=clip_start - pre_roll,
             clip_end_abs=clip_end,
         )
 
@@ -947,9 +1025,22 @@ def render_all_steps(
             raise RuntimeError("subtitle flow payload is empty at stage3")
         flow_clip_zero = normalize_subtitle_flow_to_clip_zero(
             flow_abs,
-            clip_start_abs=clip_start,
+            clip_start_abs=clip_start - pre_roll,
             clip_end_abs=clip_end,
         )
+        if f6_block:
+            from mlcore.hooks.f6_video.inject import (
+                F6_SUBTITLE_CLEAR_MARGIN_SEC,
+                f6_video_window,
+            )
+            _f6_in, _f6_out = f6_video_window(
+                float(f6_block["drop_time"]), f6_block.get("duration"),
+            )
+            flow_clip_zero = trim_subtitle_flow_across_f6_boundary(
+                flow_clip_zero,
+                video_end_sec=_f6_out,
+                margin_sec=F6_SUBTITLE_CLEAR_MARGIN_SEC,
+            )
         comp_dur = float(clip_dur)
         full_edit_obj = {
             "composition": {
@@ -968,6 +1059,7 @@ def render_all_steps(
         plan.footage,
         clip_start_abs=clip_start,
         clip_end_abs=clip_end,
+        timeline_pre_roll_sec=pre_roll,
     )
 
     # -------------------------
@@ -1019,10 +1111,17 @@ def render_all_steps(
     else:
         audio_file_path = audio_file_path_local
 
+    # Same geometry the AE comp is created at (app.render_presets is the single
+    # source): footage cover-scale is computed from these, so a mismatch would
+    # mis-scale every clip. Default preset is vertical 1080x1920 — unchanged.
+    from app.render_presets import active_preset as _active_render_preset
+
+    _preset = _active_render_preset()
+
     t3 = env.get_template("step3_template.j2")
     footage_str = t3.render(
-        main_comp_w=1080,
-        main_comp_h=1920,
+        main_comp_w=int(_preset.width),
+        main_comp_h=int(_preset.height),
         main_comp_fps=float(AE_FPS),  # ✅ FIX: was missing (caused UndefinedError)
         text_dur_hint=float(comp_dur),
         adjustment_preset=preset,
@@ -1064,6 +1163,13 @@ def render_all_steps(
         full_edit_obj["f3"] = f3_block
 
     # -------------------------
+    # Рамка: отдельный шаг бота (не хук). Блок {frame_id, relpath, url} —
+    # project_builder кладёт PNG поверх всех слоёв и добавляет url в media[].
+    # -------------------------
+    if frame_block:
+        full_edit_obj["frame"] = frame_block
+
+    # -------------------------
     # F2 «Объект» packaged-combo overlay: если оркестратор сгенерировал блок
     # {shape, drop_time, seed} — вкладываем в full_edit_config.
     # project_builder._build_f2_overlay_js прочитает full_edit_config["f2"] и
@@ -1084,12 +1190,31 @@ def render_all_steps(
         full_edit_obj["f1"] = f1_block
 
     # -------------------------
+    # F6 «Видео»: pre-drop прогрев + post-drop переходы без молнии на дропе.
+    # Блок {video_url, drop_time, seed, source_width, source_height, duration}.
+    # project_builder кладёт footage-слой со звуком, глушит трек и вписывает
+    # визуальный JSX. Нет блока → full_edit_config без изменений (обычный job).
+    # -------------------------
+    if f6_block:
+        full_edit_obj["f6"] = f6_block
+
+    # -------------------------
     # 5th-template JSX subtitles (trendy/brat): {mode, word_timings, bpm}.
     # project_builder._build_jsx_subtitles_js inlines it into the chosen script;
     # normal text_layers are skipped in these modes. Нет блока → обычный job.
     # -------------------------
     if jsx_subtitles_block:
-        full_edit_obj["subtitles_jsx"] = jsx_subtitles_block
+        shifted_jsx = dict(jsx_subtitles_block)
+        if pre_roll > 0.0:
+            shifted_jsx["word_timings"] = [
+                {
+                    **dict(word),
+                    "start": float(word["start"]) + pre_roll,
+                    "end": float(word["end"]) + pre_roll,
+                }
+                for word in (jsx_subtitles_block.get("word_timings") or [])
+            ]
+        full_edit_obj["subtitles_jsx"] = shifted_jsx
 
     # -------------------------
     # Write to DATA_DIR + mirror to OUT_DIR

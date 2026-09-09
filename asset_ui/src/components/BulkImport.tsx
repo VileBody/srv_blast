@@ -5,6 +5,11 @@ interface Props {
   onClose: () => void;
   onUploaded: () => void;
   mediaType?: MediaType;
+  /** Genre fixed by the active pool tab (collection kind). When set, the field
+   *  is shown read-only: the operator already chose it by opening that tab, and
+   *  letting them pick a different one here would upload into a pool they are
+   *  not looking at. */
+  presetGenre?: string;
 }
 
 function fmtSize(bytes: number): string {
@@ -22,10 +27,16 @@ function isAccepted(name: string, exts: string[]): boolean {
   return exts.some((ext) => lower.endsWith(ext));
 }
 
-export function BulkImport({ onClose, onUploaded, mediaType = 'video' }: Props) {
+export function BulkImport({
+  onClose,
+  onUploaded,
+  mediaType = 'video',
+  presetGenre,
+}: Props) {
   const ACCEPTED_EXT = mediaType === 'photo' ? ACCEPTED_EXT_PHOTO : ACCEPTED_EXT_VIDEO;
-  const [genre, setGenre] = useState('');
+  const [genre, setGenre] = useState(presetGenre ?? '');
   const [tag, setTag] = useState('');
+  const isCollection = mediaType === 'collection';
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -112,26 +123,50 @@ export function BulkImport({ onClose, onUploaded, mediaType = 'video' }: Props) 
       <div className="bulk-panel-body">
         <div className="form-row-2col">
           <div className="form-row">
-            <label>Жанр*</label>
-            <input
-              type="text"
-              value={genre}
-              onChange={(e) => setGenre(e.target.value)}
-              placeholder="hiphop"
-              disabled={busy}
-            />
+            <label>{isCollection ? 'Тип*' : 'Жанр*'}</label>
+            {/* Collections live at <prefix>/<kind>/<folder>/: the kind is a fixed
+                set the backend validates, so offer it rather than let a typo
+                create a folder nothing can ever select. */}
+            {isCollection ? (
+              <select
+                value={genre}
+                onChange={(e) => setGenre(e.target.value)}
+                disabled={busy || !!presetGenre}
+              >
+                <option value="">— выбери —</option>
+                <option value="films">Фильмы</option>
+                <option value="people">Личности</option>
+                <option value="cine16x9">Кино-футаж 16:9</option>
+              </select>
+            ) : (
+              <input
+                type="text"
+                value={genre}
+                onChange={(e) => setGenre(e.target.value)}
+                placeholder="hiphop"
+                disabled={busy}
+              />
+            )}
           </div>
           <div className="form-row">
-            <label>Тег*</label>
+            <label>{isCollection ? 'Коллекция*' : 'Тег*'}</label>
             <input
               type="text"
               value={tag}
               onChange={(e) => setTag(e.target.value)}
-              placeholder="street"
+              placeholder={isCollection ? 'interstellar' : 'street'}
               disabled={busy}
             />
           </div>
         </div>
+        {isCollection && (
+          <p className="form-hint">
+            Одна папка — одна группа в боте. Разметка не нужна. Чтобы группа стала
+            видимой, её надо завести в <code>data/footage_collections.json</code>{' '}
+            (русское название + темы трека) — активация покажет, какие папки ещё
+            не заведены.
+          </p>
+        )}
 
         <div
           className={`bulk-dropzone${dragOver ? ' drag-over' : ''}${busy ? ' disabled' : ''}`}

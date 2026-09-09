@@ -1,7 +1,7 @@
-{# templates/photo_template.j2 — standalone 4:3 PHOTO render (does NOT touch the
-   footage template). Ports the founder's build_photos/build_flash logic
-   (cover-fit 1920×1440 + scale anim base→+grow→+punch + flash) and adds a
-   PHOTO_STYLE grade + PHOTO_TRANSITION between photos. Driven by `photo_job`.
+{# templates/photo_template.j2 — standalone PHOTO render in the requested output
+   geometry (does NOT touch the footage template). Ports the founder's
+   build_photos/build_flash logic and adds a PHOTO_STYLE grade plus
+   PHOTO_TRANSITION between photos. Driven by `photo_job`.
    RULE: headless aerender expressions are unreliable — everything is keyframed. #}
 (function () {
   app.beginUndoGroup("AE_PHOTO_FLOW_4x3");
@@ -150,42 +150,6 @@
       return null;
     }
 
-    // Stop every nested comp on the subtitle chain from rasterizing at its own
-    // width, so text composites straight into the 4:3 frame. Recursive: the text
-    // precomp can itself hold further precomps.
-    //
-    // Collapse REPLACES a layer's blending mode and drops its effects, so a layer
-    // that relies on either is left alone — losing a look is worse than a wide
-    // word being trimmed. Adjustment layers are skipped for the opposite reason:
-    // collapsed, they escape their comp and start grading the photos below.
-    function collapseNestedComps(sourceComp, depth) {
-      if (!sourceComp || depth > 3) return;
-      for (var i = 1; i <= sourceComp.numLayers; i++) {
-        var L = sourceComp.layer(i);
-        var src = null;
-        try { src = L.source; } catch (_) { src = null; }
-        if (!src || !(src instanceof CompItem)) continue;
-        if (L.adjustmentLayer === true) continue;
-        var hasFx = false;
-        try {
-          var fx = L.property("ADBE Effect Parade");
-          hasFx = !!(fx && fx.numProperties > 0);
-        } catch (_) {}
-        var plainBlend = true;
-        try { plainBlend = (L.blendingMode === BlendingMode.NORMAL); } catch (_) {}
-        if (!hasFx && plainBlend) {
-          try {
-            if (L.canSetCollapseTransformation) {
-              L.collapseTransformation = true;
-              logLine("INFO", "collapsed nested comp: " + L.name + " (depth " + depth + ")");
-            }
-          } catch (_) {}
-        } else {
-          logLine("INFO", "kept raster for " + L.name + " (fx=" + hasFx + " blend=" + !plainBlend + ")");
-        }
-        collapseNestedComps(src, depth + 1);
-      }
-    }
 
     function addSubtitleOverlay() {
       var subtitleName = String(photo_job.subtitle_comp_name || "");
@@ -214,25 +178,16 @@
       var tr = overlay.property("ADBE Transform Group");
       try { tr.property("ADBE Anchor Point").setValue([subtitleComp.width / 2, subtitleComp.height / 2]); } catch (_) {}
       try { tr.property("ADBE Position").setValue([COMP_W / 2, COMP_H / 2]); } catch (_) {}
-      // Preserve subtitle font size/geometry; use the central 4:3 crop without
+      // Preserve subtitle font size/geometry; centre without
       // horizontally stretching the text.
       try { tr.property("ADBE Scale").setValue([100, 100]); } catch (_) {}
-      // The subtitle comp is 1080 wide inside a 1920-wide frame, and a nested
-      // comp CLIPS at its own bounds. Regular lines fit; the jakson focus word
-      // (the red one, ~2.5x the base size) runs past 1080 and was cut off even
-      // though the 4:3 frame has room to spare on both sides.
-      //
-      // Collapsing the transformation removes that intermediate raster, so the
-      // text is composited straight into this comp and simply extends past the
-      // old boundary. Safe here because the layer carries no effects and no
-      // blending mode — those are what collapse would otherwise disable.
-      try { overlay.collapseTransformation = true; } catch (_) {}
-      // ...and the chain does not stop there. The subtitles themselves sit in a
-      // "Текст" precomp (also 1080 wide) NESTED inside that comp, so collapsing
-      // only the outer layer just moves the clip one level down. Every nested
-      // comp on the way up has to stop rasterizing, or the widest text — the
-      // jakson focus word — keeps getting cut at 1080.
-      collapseNestedComps(subtitleComp, 0);
+      // Never collapse this layer. Collapse Transformations dissolves the
+      // subtitle comp's isolation: Geometry2 adjustment layers inside the nested
+      // "Текст" comp then transform the photos below. The canonical subtitle
+      // build already uses the active output geometry, so no outer collapse is
+      // needed. Keeping the raster boundary is the same safety contract as the
+      // regular footage renderer.
+      try { overlay.collapseTransformation = false; } catch (_) {}
       overlay.moveToBeginning();
       return overlay;
     }

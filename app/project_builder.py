@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from jinja2 import Environment, FileSystemLoader
 
 from app.project_config import AE_PROJECT
+from app.render_presets import active_preset, text_precomp_placement
 from app.footage_comp import build_footage_layers, resolve_text_duration_sec
 from app.render_plan import build_render_plan_v1
 from app.text_comp import build_text_layers
@@ -313,7 +314,126 @@ def _build_f1_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
-def _build_jsx_subtitles_js(full_edit_config: Dict[str, Any]) -> str:
+def _apply_f6_if_present(
+    *,
+    full_edit_config: Dict[str, Any],
+    footage_layers: List[Dict[str, Any]],
+    text_layers: List[Dict[str, Any]],
+    main_comp_name: str,
+    comp_width: int,
+    comp_height: int,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """
+    Если в full_edit_config есть блок "f6" — кладёт видео-прогрев пользователя
+    в окно [0.5, drop−0.5] поверх футажа (со звуком), приглушает ТРЕК под ним и
+    убирает трек-субтитры, перекрытые видео. Визуал (hook_light + post-drop
+    random) идёт отдельно через токен f6_overlay_js. Нет блока => без изменений.
+    """
+    f6_block = full_edit_config.get("f6") if isinstance(full_edit_config, dict) else None
+    if not f6_block or not isinstance(f6_block, dict):
+        return footage_layers, text_layers
+
+    video_url = str(f6_block.get("video_url") or "").strip()
+    if not video_url:
+        raise RuntimeError("f6 block present but 'video_url' is empty")
+    drop_time = f6_block.get("drop_time")
+    if drop_time is None:
+        raise RuntimeError("f6 block present but 'drop_time' is missing")
+    drop_time = float(drop_time)
+    source_width = f6_block.get("source_width")
+    source_height = f6_block.get("source_height")
+    if not source_width or not source_height:
+        raise RuntimeError(
+            "f6 block present but source size is missing "
+            f"(source_width={source_width!r}, source_height={source_height!r})"
+        )
+    duration = f6_block.get("duration")
+    pre_roll_sec = max(0.0, float(f6_block.get("pre_roll_sec") or 0.0))
+
+    from mlcore.hooks.f5_cognition.inject import inject_track_duck
+    from mlcore.hooks.f6_video.inject import (
+        F6_TRACK_DUCK_CURVE,
+        F6_TRACK_DUCK_FROM_PCT,
+        F6_TRACK_RAMP_SEC,
+        F6_TRACK_DUCK_TO_PCT,
+        clear_track_subtitles_under_video,
+        f6_video_window,
+        inject_f6_video,
+    )
+
+    # 1) Приглушаем ТРЕК под вырезку — до того, как добавим её слой, чтобы duck
+    #    попал только в реальное аудио трека (та же последовательность, что у F1).
+    video_in, _video_out = f6_video_window(drop_time, duration)
+    has_audio = bool(f6_block.get("has_audio", True))
+    if has_audio:
+        footage_layers = inject_track_duck(
+            footage_layers,
+            duck_from_sec=max(video_in, pre_roll_sec),
+            duck_to_sec=drop_time,
+            from_pct=F6_TRACK_DUCK_FROM_PCT,
+            to_pct=F6_TRACK_DUCK_TO_PCT,
+            ramp_start_sec=max(pre_roll_sec, drop_time - F6_TRACK_RAMP_SEC),
+            curve=F6_TRACK_DUCK_CURVE,
+        )
+    else:
+        # Немая вырезка (gif/animation): приглушать трек не под что — получилась
+        # бы просто тишина в первые секунды.
+        LOGGER.info("f6 clip has no audio track — track left at full volume")
+
+    # 2) Само видео.
+    footage_layers = inject_f6_video(
+        footage_layers,
+        video_url=video_url,
+        drop_time=drop_time,
+        source_width=float(source_width),
+        source_height=float(source_height),
+        comp_width=int(comp_width),
+        comp_height=int(comp_height),
+        duration=(float(duration) if duration else None),
+        target_comp_name=main_comp_name,
+    )
+
+    # 3) Трек-субтитры под чужим кадром не нужны.
+    text_layers = clear_track_subtitles_under_video(
+        text_layers, drop_time=drop_time, duration=(float(duration) if duration else None),
+    )
+
+    LOGGER.info(
+        "f6 present video=%s drop_time=%s duration=%s src=%sx%s audio=%s",
+        video_url[:80], drop_time, duration, source_width, source_height, has_audio,
+    )
+    return footage_layers, text_layers
+
+
+def _build_f6_overlay_js(full_edit_config: Dict[str, Any]) -> str:
+    """
+    Если в full_edit_config есть блок "f6" — собирает визуальный JSX combo
+    (hook_light на дропе + рандомный F3-переход на post-drop склейках; pre-drop
+    визуала нет — там играет видео). Нет блока => пустая строка.
+    """
+    f6_block = full_edit_config.get("f6") if isinstance(full_edit_config, dict) else None
+    if not f6_block or not isinstance(f6_block, dict):
+        return ""
+
+    drop_time = f6_block.get("drop_time")
+    if drop_time is None:
+        raise RuntimeError("f6 block present but 'drop_time' is missing")
+    seed = f6_block.get("seed")
+    if seed is None:
+        raise RuntimeError("f6 block present but 'seed' is missing")
+
+    from mlcore.hooks.f6_video.overlay import build_overlay_jsx
+
+    overlay = build_overlay_jsx(drop_time=float(drop_time), seed=int(seed))
+    LOGGER.info("f6 overlay present drop_time=%s seed=%s js_len=%d", drop_time, seed, len(overlay))
+    return overlay
+
+
+def _build_jsx_subtitles_js(
+    full_edit_config: Dict[str, Any],
+    *,
+    brat_blinker_enabled: bool = True,
+) -> str:
     """5th-template JSX subtitle generator (trendy/brat).
 
     Orchestrator emits full_edit_config["subtitles_jsx"] = {mode, word_timings,
@@ -342,10 +462,11 @@ def _build_jsx_subtitles_js(full_edit_config: Dict[str, Any]) -> str:
         bpm=(float(bpm) if bpm is not None else None),
         fill_hex=fill_hex,
         subs_blend=subs_blend,
+        brat_blinker_enabled=brat_blinker_enabled,
     )
     LOGGER.info(
-        "jsx subtitles present mode=%s words=%d bpm=%s js_len=%d",
-        mode, len(word_timings), bpm, len(overlay),
+        "jsx subtitles present mode=%s words=%d bpm=%s brat_blinker_enabled=%s js_len=%d",
+        mode, len(word_timings), bpm, brat_blinker_enabled, len(overlay),
     )
     return overlay
 
@@ -439,6 +560,9 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "M
     hook_extend = (str(f3_block.get("hook_extend") or "").strip() or None)
     extra_full = bool(f3_block.get("extra_full"))
     assets = f3_block.get("assets") if isinstance(f3_block.get("assets"), dict) else {}
+    # seed фиксирует порядок мульти-клип слотов (глитчи blackwhite). Оркестратор
+    # кладёт тот же seed, что уходит в asset_picker; нет блока — стабильная строка.
+    seed = str(f3_block.get("seed") or "f3")
 
     from mlcore.hooks.f3_effect.overlay import build_overlay_jsx
 
@@ -450,6 +574,7 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "M
         hook_extend=hook_extend,
         drop_time=float(drop_time),
         assets=assets,
+        seed=seed,
         comp_var=comp_var,
     )
     LOGGER.info(
@@ -457,6 +582,41 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "M
         hook, transition, extra, extra_full, hook_extend, comp_var, len(overlay),
     )
     return overlay
+
+
+def _build_frame_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "MAIN_COMP") -> str:
+    """
+    Блок "frame" (= {"frame_id": ..., "relpath": "media/img/..."}) → JSX-оверлей
+    PNG-рамки поверх всех слоёв. Нет блока / нет ассета => пустая строка.
+
+    Рамка выбирается отдельным шагом бота и не зависит от хуков, поэтому живёт
+    своим ключом, а не внутри f3.
+    """
+    block = full_edit_config.get("frame") if isinstance(full_edit_config, dict) else None
+    if not block or not isinstance(block, dict):
+        return ""
+    frame_id = str(block.get("frame_id") or "").strip().lower()
+    relpath = str(block.get("relpath") or "").strip()
+    if not frame_id or not relpath:
+        return ""
+
+    from mlcore.hooks.frames.overlay import build_overlay_jsx as _build_frame_jsx
+
+    overlay = _build_frame_jsx(frame_id=frame_id, asset_relpath=relpath, comp_var=comp_var)
+    LOGGER.info("frame overlay present id=%s relpath=%s js_len=%d", frame_id, relpath, len(overlay))
+    return overlay
+
+
+def _extract_frame_media(full_edit_config: Dict[str, Any]) -> List[Dict[str, str]]:
+    """Download-запись рамки для media[] ноды. Нет блока / нет url => []."""
+    block = full_edit_config.get("frame") if isinstance(full_edit_config, dict) else None
+    if not isinstance(block, dict):
+        return []
+    url = str(block.get("url") or "").strip()
+    rel = str(block.get("relpath") or "").strip().strip("/")
+    if not url or not rel:
+        return []
+    return [{"url": url, "relpath": rel}]
 
 
 def _extract_f3_media(full_edit_config: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -495,6 +655,7 @@ def build_full_project(
     full_edit_config_path: Path,
     footage_config_path: Path,
     out_dir: Path,
+    brat_blinker_enabled: bool = True,
 ) -> Tuple[Path, Path]:
     repo_root = repo_root.resolve()
     full_edit_config_path = full_edit_config_path.resolve()
@@ -516,6 +677,13 @@ def build_full_project(
     main_comp = dict(AE_PROJECT["main_comp"])
     text_comp = dict(AE_PROJECT["text_comp"])
     mine_comp = dict(AE_PROJECT["mine_comp"])
+
+    # Output geometry. Only the MAIN comp changes shape — the text/mine comps stay
+    # 1080x1920 and get re-framed by the placement below, so the subtitle stack is
+    # identical in every preset. Default is vertical => byte-identical to before.
+    render_preset = active_preset()
+    main_comp["w"] = int(render_preset.width)
+    main_comp["h"] = int(render_preset.height)
 
     main_name = str(main_comp["name"])
     text_name = str(text_comp["name"])
@@ -563,7 +731,11 @@ def build_full_project(
         text_comp_name=text_name,
         composition_dur=comp_dur,
         precomp_z_index=int(AE_PROJECT.get("root_precomp_z_index", 9999)),
-        precomp_placement=AE_PROJECT.get("root_precomp_placement"),
+        precomp_placement=(
+            AE_PROJECT.get("root_precomp_placement")
+            if render_preset.name == "vertical"
+            else text_precomp_placement(render_preset)
+        ),
         subtitles_mode=subtitles_mode,
     )
 
@@ -600,6 +772,18 @@ def build_full_project(
         main_comp_name=main_name,
     )
 
+    # 2.7) F6 «Видео» hook: если в config есть блок "f6" — кладём видео-прогрев
+    #      юзера поверх футажа в окне [0.5, drop−0.5] (со звуком, трек под ним
+    #      приглушён). Визуал идёт через токен f6_overlay_js.
+    footage_layers, text_layers = _apply_f6_if_present(
+        full_edit_config=full_edit_config,
+        footage_layers=footage_layers,
+        text_layers=text_layers,
+        main_comp_name=main_name,
+        comp_width=int(main_comp["w"]),
+        comp_height=int(main_comp["h"]),
+    )
+
     ae_payload: Dict[str, Any] = {
         "project": {"mainCompName": main_name, "subtitlesMode": subtitles_mode},
         "comps": [main_comp, text_comp, mine_comp],
@@ -625,7 +809,10 @@ def build_full_project(
     # F3 ассет-download list (sound/logo S3-URL'ы + relpath под __APP_DIR/media).
     # render_manifest.collect_media_urls_from_render_payload подцепит и положит
     # в Windows-payload.media[] рядом с футажом. Пусто => без звука/лого.
-    f3_media = _extract_f3_media(full_edit_config)
+    # payload["f3_media"] — общий download-список fx-ассетов ноды (звук/лого/
+    # глитчи/рамка), не только f3; ключ оставлен как есть, чтобы не ломать
+    # контракт с рендер-нодой.
+    f3_media = _extract_f3_media(full_edit_config) + _extract_frame_media(full_edit_config)
     render_plan = build_render_plan_v1(
         main_comp_name=main_name,
         subtitles_mode=subtitles_mode,
@@ -645,8 +832,13 @@ def build_full_project(
     f3_overlay_js = _build_f3_overlay_js(ae_overlay_config)
     f2_overlay_js = _build_f2_overlay_js(ae_overlay_config)
     f1_overlay_js = _build_f1_overlay_js(ae_overlay_config)
+    f6_overlay_js = _build_f6_overlay_js(ae_overlay_config)
     f5_overlay_js = _build_f5_overlay_js(ae_overlay_config)
-    jsx_subtitles_js = _build_jsx_subtitles_js(ae_overlay_config)
+    frame_overlay_js = _build_frame_overlay_js(ae_overlay_config)
+    jsx_subtitles_js = _build_jsx_subtitles_js(
+        ae_overlay_config,
+        brat_blinker_enabled=brat_blinker_enabled,
+    )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -679,7 +871,9 @@ def build_full_project(
         f3_overlay_js=f3_overlay_js,
         f2_overlay_js=f2_overlay_js,
         f1_overlay_js=f1_overlay_js,
+        f6_overlay_js=f6_overlay_js,
         f5_overlay_js=f5_overlay_js,
+        frame_overlay_js=frame_overlay_js,
         jsx_subtitles_js=jsx_subtitles_js,
     )
     out_jsx.write_text(jsx, encoding="utf-8")

@@ -1,0 +1,466 @@
+{
+ "$schema": "blast.figma_icon_box/1",
+ "_comment": "АВТОГЕН: npm run icons:box. Реальные viewBox всех figma-ассетов.",
+ "box": {
+  "auth-shape.svg": [
+   1413.14,
+   1044.29
+  ],
+  "avatar-ring.svg": [
+   71.993,
+   71.993
+  ],
+  "bg-step-arrow.svg": [
+   6.691,
+   11.782
+  ],
+  "bg-upload.svg": [
+   20.419,
+   20.419
+  ],
+  "btn-back.svg": [
+   60.0,
+   60.0
+  ],
+  "btn-play.svg": [
+   60.0,
+   60.0
+  ],
+  "btn-preview-nav.svg": [
+   60.0,
+   60.0
+  ],
+  "deco-footage.svg": [
+   60.0,
+   60.0
+  ],
+  "efg-ekstrakt.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-invert.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-minimaks-inner.svg": [
+   14.728,
+   20.0
+  ],
+  "efg-shchelchok.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-vspyshka.svg": [
+   40.0,
+   40.0
+  ],
+  "efh-molniya.svg": [
+   40.0,
+   39.344
+  ],
+  "efh-negativ.svg": [
+   40.0,
+   39.344
+  ],
+  "efh-slow-inner.svg": [
+   22.0,
+   21.639
+  ],
+  "efh-zatvor.svg": [
+   40.0,
+   39.344
+  ],
+  "efs-glitch.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-neon.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-oldcam.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-xerox-inner.svg": [
+   15.847,
+   15.5
+  ],
+  "fx-expand.svg": [
+   22.0,
+   22.0
+  ],
+  "glue-extract.svg": [
+   40.0,
+   40.0
+  ],
+  "glue-invert.svg": [
+   40.0,
+   40.0
+  ],
+  "glue-minimax.svg": [
+   40.0,
+   40.0
+  ],
+  "glue-snapwipe.svg": [
+   40.0,
+   40.0
+  ],
+  "hint-circle.svg": [
+   40.0,
+   40.0
+  ],
+  "home-arrow.svg": [
+   8.782,
+   15.464
+  ],
+  "home-dot-done.svg": [
+   6.0,
+   6.0
+  ],
+  "home-dot-progress.svg": [
+   6.0,
+   6.0
+  ],
+  "home-eye.svg": [
+   20.0,
+   12.951
+  ],
+  "home-lines.svg": [
+   2078.01,
+   728.0
+  ],
+  "home-lock.svg": [
+   20.0,
+   22.0
+  ],
+  "home-note.svg": [
+   14.001,
+   19.0
+  ],
+  "hook-effects.svg": [
+   15.867,
+   17.0
+  ],
+  "hook-motion.svg": [
+   16.0,
+   18.0
+  ],
+  "hook-object.svg": [
+   18.0,
+   18.0
+  ],
+  "hook-sound.svg": [
+   18.904,
+   21.11
+  ],
+  "hook-thought.svg": [
+   16.4,
+   18.0
+  ],
+  "icon-bolt.svg": [
+   13.0,
+   20.0
+  ],
+  "icon-colorwheel.svg": [
+   20.0,
+   20.0
+  ],
+  "icon-effects.svg": [
+   60.0,
+   30.0
+  ],
+  "icon-hook-arrow.svg": [
+   17.989,
+   16.813
+  ],
+  "icon-note.svg": [
+   14.801,
+   19.8
+  ],
+  "icon-pencil.svg": [
+   15.0,
+   17.0
+  ],
+  "icon-photo.svg": [
+   20.89,
+   19.0
+  ],
+  "icon-strobe.svg": [
+   19.0,
+   19.0
+  ],
+  "icon-tag.svg": [
+   20.074,
+   16.193
+  ],
+  "limit-ring.svg": [
+   25.0,
+   25.0
+  ],
+  "logo-star.svg": [
+   59.994,
+   59.994
+  ],
+  "mot-head-inner.svg": [
+   23.0,
+   27.0
+  ],
+  "mot-hold.svg": [
+   40.0,
+   40.0
+  ],
+  "mot-swipe-inner.svg": [
+   38.235,
+   43.665
+  ],
+  "mot-tap.svg": [
+   40.0,
+   40.0
+  ],
+  "mot-zoom.svg": [
+   40.0,
+   40.0
+  ],
+  "nav-generate.svg": [
+   40.0,
+   40.0
+  ],
+  "nav-projects.svg": [
+   40.0,
+   44.0
+  ],
+  "nav-stats.svg": [
+   40.0,
+   40.02
+  ],
+  "obj-krug.svg": [
+   40.0,
+   40.0
+  ],
+  "obj-romb.svg": [
+   40.0,
+   40.0
+  ],
+  "obj-zvezda10.svg": [
+   40.0,
+   40.0
+  ],
+  "obj-zvezda5.svg": [
+   40.0,
+   40.0
+  ],
+  "pd-arrow-right.svg": [
+   26.0,
+   14.728
+  ],
+  "pd-chip-bg.svg": [
+   11.037,
+   8.756
+  ],
+  "pd-chip-hook.svg": [
+   9.999,
+   11.0
+  ],
+  "pd-download.svg": [
+   20.0,
+   20.001
+  ],
+  "pd-row-loading.svg": [
+   620.0,
+   60.0
+  ],
+  "pd-star.svg": [
+   18.628,
+   17.814
+  ],
+  "pd-tiktok.svg": [
+   18.0,
+   20.0
+  ],
+  "pf-check.svg": [
+   11.627,
+   21.755
+  ],
+  "pf-divider-1.svg": [
+   117.0,
+   2.0
+  ],
+  "pf-divider-2.svg": [
+   117.0,
+   2.0
+  ],
+  "pf-infinity.svg": [
+   25.0,
+   14.0
+  ],
+  "pf-limit-note.svg": [
+   14.001,
+   19.0
+  ],
+  "pf-note.svg": [
+   18.001,
+   24.0
+  ],
+  "pf-profile-pencil.svg": [
+   10.0,
+   11.0
+  ],
+  "pf-promo-bg.svg": [
+   1114.0,
+   220.0
+  ],
+  "pf-promo-scissors.svg": [
+   15.999,
+   12.216
+  ],
+  "pf-scissors.svg": [
+   27.667,
+   21.0
+  ],
+  "pf-tariff-arrow.svg": [
+   20.0,
+   20.0
+  ],
+  "pr-badge-stripes.svg": [
+   150.0,
+   60.0
+  ],
+  "pr-check.svg": [
+   8.5,
+   15.5
+  ],
+  "pr-hint.svg": [
+   20.0,
+   20.0
+  ],
+  "pr-kind-blast.svg": [
+   150.0,
+   60.0
+  ],
+  "pr-kind-glow.svg": [
+   150.0,
+   60.0
+  ],
+  "pr-kind-impulse.svg": [
+   150.0,
+   60.0
+  ],
+  "pr-logo-blast.svg": [
+   25.0,
+   25.0
+  ],
+  "pr-logo-glow.svg": [
+   28.0,
+   21.0
+  ],
+  "pr-logo-impulse.svg": [
+   18.78,
+   18.0
+  ],
+  "pr-note.svg": [
+   12.001,
+   16.0
+  ],
+  "pr-scissors.svg": [
+   19.445,
+   15.001
+  ],
+  "pr-shape-blast.svg": [
+   838.641,
+   349.34
+  ],
+  "pr-shape-glow.svg": [
+   479.0,
+   352.0
+  ],
+  "pr-shape-impulse.svg": [
+   907.023,
+   865.225
+  ],
+  "pr-tag.svg": [
+   20.074,
+   16.193
+  ],
+  "proj-lines.svg": [
+   837.358,
+   531.464
+  ],
+  "proj-particle-a.svg": [
+   371.6,
+   453.6
+  ],
+  "proj-particle-b.svg": [
+   371.6,
+   453.6
+  ],
+  "proj-swirl-1.svg": [
+   174.076,
+   139.604
+  ],
+  "proj-swirl-2.svg": [
+   184.198,
+   183.948
+  ],
+  "sidebar-icons.svg": [
+   39.996,
+   221.978
+  ],
+  "st-trend-arrow.svg": [
+   14.65,
+   9.573
+  ],
+  "st-views.svg": [
+   14.0,
+   14.0
+  ],
+  "thg-echo-inner.svg": [
+   14.222,
+   20.0
+  ],
+  "thg-inversion-inner.svg": [
+   20.0,
+   20.0
+  ],
+  "thg-missing-inner.svg": [
+   20.0,
+   18.0
+  ],
+  "thg-punchline.svg": [
+   40.0,
+   40.0
+  ],
+  "timing-frame.svg": [
+   620.0,
+   190.0
+  ],
+  "tt-logo.svg": [
+   21.784,
+   25.0
+  ],
+  "tt-posted.svg": [
+   30.0,
+   30.0
+  ],
+  "tt-privacy-icons.svg": [
+   15.0,
+   44.0
+  ],
+  "tt-publish-arrow.svg": [
+   30.0,
+   30.0
+  ],
+  "tt-radios.svg": [
+   12.0,
+   70.0
+  ],
+  "tt-toggle.svg": [
+   24.0,
+   12.0
+  ],
+  "tt-uploading.svg": [
+   30.0,
+   30.0
+  ]
+ }
+}

@@ -69,8 +69,11 @@ EXAMPLES: Dict[str, Tuple[str, str, str]] = {
     "effect_extra:night_vision": ("Хуки/Эффекты/stylize/примеры стилей", "nightvision.mp4", "Night Vision"),
     "effect_extra:wave":         ("Хуки/Эффекты/stylize/примеры стилей", "wave.mp4", "Wave"),
     # Subtitles (caption = label, so it shows "Пример: Trendy" / "Пример: Brat")
-    "subtitles:trendy_5th": ("Субтитры примеры", "trendy.mp4", "Пример: Trendy"),
-    "subtitles:brat_5th":   ("Субтитры примеры", "brat.MP4", "Пример: Brat"),
+    "subtitles:trendy_5th":   ("Субтитры примеры", "trendy.mp4", "Пример: Trendy"),
+    "subtitles:brat_5th":     ("Субтитры примеры", "brat.MP4", "Пример: Brat"),
+    "subtitles:impulse_2nd":  ("Субтитры примеры", "impulse.mp4", "Пример: Impulse"),
+    "subtitles:scenes_3rd":   ("Субтитры примеры", "jakson.MP4", "Пример: Jakson"),
+    "subtitles:template_4th": ("Субтитры примеры", "tape.mp4", "Пример: Tape"),
 }
 
 

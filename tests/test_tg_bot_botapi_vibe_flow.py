@@ -34,7 +34,7 @@ def _make_app(monkeypatch, ranked):
             self.rank_calls = 0
             self.media_types = []
 
-        async def rank_buckets(self, *, lyrics, mood="", top=0, media_type="video"):
+        async def rank_buckets(self, *, lyrics, mood="", top=0, media_type="video", pool="vibes"):
             self.rank_calls += 1
             self.media_types.append(media_type)
             return {

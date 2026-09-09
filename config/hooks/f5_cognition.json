@@ -1,11 +1,28 @@
 {
-  "_comment": "Config for F5 Cognition hook. See outputs/tz_f5_gemini_tts.md (v1.2 + v1.3 deltas).",
+  "_comment": "Config for F5 Cognition hook. Providers are selected explicitly through F5_TEXT_PROVIDER and F5_TTS_PROVIDER; there is no implicit fallback.",
+  "providers": {
+    "text_provider_env": "F5_TEXT_PROVIDER",
+    "tts_provider_env": "F5_TTS_PROVIDER",
+    "supported": ["gemini", "openrouter"]
+  },
   "gemini": {
     "text_model_env": "GEMINI_MODEL_F5_TEXT",
     "audio_model_env": "GEMINI_MODEL_F5_TTS",
     "api_key_env": "GEMINI_API_KEY",
     "timeout_sec": 30,
     "max_retries": 2
+  },
+  "openrouter": {
+    "text_model_env": "OPENROUTER_MODEL_F5_TEXT",
+    "audio_model_env": "OPENROUTER_MODEL_F5_TTS",
+    "api_key_env": "OPENROUTER_API_KEY",
+    "audio_format": "pcm16",
+    "audio_sample_rate": 24000,
+    "audio_max_tokens": 96,
+    "audio_max_stream_seconds": 6,
+    "timeout_sec": 120,
+    "max_retries": 2,
+    "allow_provider_fallbacks": false
   },
   "generation": {
     "tts_target_duration_ms": [2500, 3500],

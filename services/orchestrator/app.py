@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import uuid
 import time
 from typing import Any, Dict
 
@@ -19,6 +21,7 @@ from core.queue_estimate import (
     build_queue_estimate,
     normalize_queue_estimate_window,
 )
+from .alignment_smoke_auth import consume_alignment_smoke_authorization
 from .job_store import JobStore
 from .llm_workers import (
     ensure_config_initialized,
@@ -39,8 +42,12 @@ from .runtime_config import (
     set_runtime_config,
 )
 from .schemas import (
+    AlignmentSmokeEnqueueResponse,
+    AlignmentSmokeRequest,
     ActiveJobsResponse,
     ActiveJobSummary,
+    FetchExternalVideoRequest,
+    FetchExternalVideoResponse,
     HookAnalyzeRequest,
     HookAnalyzeResponse,
     JobState,
@@ -63,6 +70,7 @@ from .schemas import (
     WindowsNodesUpdateRequest,
 )
 from .tasks import (
+    alignment_smoke_job,
     build_job,
     build_job_hybrid,
     build_job_openrouter,
@@ -334,7 +342,10 @@ def create_app() -> FastAPI:
 
     def _render_capacity_snapshot() -> Dict[str, Any]:
         urls = _windows_pool().get_active_urls(default_urls=_default_windows_urls())
-        return probe_render_capacity(urls)
+        return probe_render_capacity(
+            urls,
+            timeout_s=max(0.2, float(SETTINGS.windows_render_health_timeout_s)),
+        )
 
     def _ensure_render_capacity(request_payload: Dict[str, Any]) -> None:
         if str(request_payload.get("render_engine") or "ae").strip().lower() != "ae":
@@ -646,6 +657,76 @@ def create_app() -> FastAPI:
             detail=f"unsupported mode={selected_mode!r}; expected with_gemini",
         )
 
+    @app.post("/alignment-smoke", response_model=AlignmentSmokeEnqueueResponse)
+    def enqueue_alignment_smoke(req: AlignmentSmokeRequest) -> AlignmentSmokeEnqueueResponse:
+        signed_payload = req.model_dump(mode="json", exclude_none=True)
+        auth_nonce = str(signed_payload.pop("auth_nonce", "") or "")
+        if not consume_alignment_smoke_authorization(
+            store.r,
+            signed_payload,
+            nonce=auth_nonce,
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="alignment smoke authorization is invalid or expired",
+            )
+        if not bool(getattr(SETTINGS, "orchestrator_enqueue_enabled", True)):
+            raise HTTPException(status_code=503, detail="enqueue disabled on this orchestrator")
+
+        audio_s3_url = str(req.audio_s3_url or "").strip()
+        if not audio_s3_url.lower().startswith("s3://"):
+            raise HTTPException(status_code=422, detail="audio_s3_url must use s3://")
+        expected_bucket = str(os.environ.get("S3_BUCKET_RAW_AUDIO") or "").strip()
+        expected_prefix = str(os.environ.get("S3_RAW_AUDIO_PREFIX") or "raw_audio").strip("/")
+        if not expected_bucket:
+            raise HTTPException(status_code=503, detail="S3_BUCKET_RAW_AUDIO is empty")
+        s3_tail = audio_s3_url[5:]
+        bucket, separator, key = s3_tail.partition("/")
+        if (
+            not separator
+            or bucket != expected_bucket
+            or not key
+            or (expected_prefix and not key.startswith(f"{expected_prefix}/"))
+        ):
+            raise HTTPException(status_code=422, detail="audio_s3_url is outside raw-audio scope")
+
+        request_payload = signed_payload
+        request_payload["job_kind"] = "alignment_smoke"
+        routing = _resolve_job_routing(request_payload=request_payload)
+        _ensure_queue_affinity(routing)
+        request_payload.update(routing)
+        st, created = store.new_job(
+            request=request_payload,
+            idempotency_key=req.idempotency_key,
+        )
+        if not created:
+            return AlignmentSmokeEnqueueResponse(
+                job_id=st.job_id, status=st.status, created=False
+            )
+        try:
+            store.set_status(
+                st.job_id,
+                "QUEUED",
+                stage="alignment_smoke",
+                result={"routing": routing},
+            )
+            smoke_queue = f"{routing['build_queue']}.alignment-smoke"
+            alignment_smoke_job.apply_async(
+                args=[st.job_id], queue=smoke_queue
+            )
+        except Exception as exc:
+            store.set_status(
+                st.job_id,
+                "FAILED",
+                stage="alignment_smoke",
+                error=f"queue_failed: {exc!r}",
+            )
+            raise HTTPException(status_code=500, detail="Failed to enqueue alignment smoke job")
+        queued = store.get(st.job_id) or st
+        return AlignmentSmokeEnqueueResponse(
+            job_id=queued.job_id, status=queued.status, created=True
+        )
+
     # ==========================================================
     # NEW: correct naming (audio URL -> enqueue pipeline)
     # ==========================================================
@@ -736,7 +817,17 @@ def create_app() -> FastAPI:
         # return an empty ranking rather than 500 — a 500 here pushes the bot into
         # the legacy artist-theme fallback (the symptom we're fixing).
         try:
-            if req.media_type == "photo":
+            if req.pool != "vibes":
+                # Collection plane: one upload folder = one selectable group,
+                # scoped to the requested kind so a "Фильмы" shortlist can never
+                # surface a "Личности" group (or a semantic vibe).
+                from .collection_catalog_source import load_collection_catalog_from_postgres
+
+                catalog = load_collection_catalog_from_postgres(
+                    req.pool,
+                    db_url=str(getattr(SETTINGS, "credits_db_url", "") or "").strip(),
+                )
+            elif req.media_type == "photo":
                 from mlcore.photo_bucket_catalog import load_photo_catalog
                 catalog = load_photo_catalog()
             else:
@@ -867,6 +958,100 @@ def create_app() -> FastAPI:
             for c in (result.drop_candidates or [])[:3]
         ]
         return HookAnalyzeResponse(bpm=float(result.bpm), drop_candidates=cands)
+
+    @app.post("/media/fetch_external", response_model=FetchExternalVideoResponse)
+    def fetch_external_video(req: FetchExternalVideoRequest) -> FetchExternalVideoResponse:
+        """Достать отрезок по ссылке, нормализовать под AE и положить в S3.
+
+        Живёт здесь, а не в боте, по двум причинам: у ботов слим-образ без
+        yt-dlp и без тяжёлого ffmpeg-профиля, и держать сетевой доступ к
+        YouTube (прокси, токен-провайдер) в одном месте гораздо дешевле, чем в
+        двух ботах сразу.
+        """
+        import tempfile
+
+        from mlcore.media.external_video import (
+            ExternalClipRequest,
+            ExternalFetchBlocked,
+            ExternalFetchError,
+            external_source_enabled,
+            video_id,
+        )
+        from mlcore.media.video_normalize import normalize_video_for_ae
+
+        if not external_source_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail="external video source is disabled (EXTERNAL_VIDEO_SOURCE_ENABLED)",
+            )
+
+        bucket = str(os.environ.get("S3_BUCKET_RAW_AUDIO") or "").strip()
+        if not bucket:
+            raise HTTPException(status_code=503, detail="S3_BUCKET_RAW_AUDIO is empty")
+        prefix = str(os.environ.get("S3_RAW_AUDIO_PREFIX") or "raw_audio").strip("/")
+
+        clip_req = ExternalClipRequest(
+            url=str(req.url).strip(),
+            start_sec=float(req.start_sec),
+            end_sec=float(req.end_sec),
+        )
+
+        from mlcore.media.external_video import fetch_section, validate_request
+
+        try:
+            validate_request(clip_req)
+        except ExternalFetchError as e:
+            # Кривая ссылка/окно — это ошибка юзера, а не сбой: 422, чтобы бот
+            # показал текст как есть и не ретраил.
+            raise HTTPException(status_code=422, detail=str(e))
+
+        try:
+            from src.storage.s3 import upload_file_to_s3
+
+            with tempfile.TemporaryDirectory(prefix="ext_video_") as td:
+                raw = fetch_section(clip_req, work_dir=Path(td))
+                prepared = normalize_video_for_ae(
+                    src=raw,
+                    work_dir=Path(td) / "prepared",
+                    ffmpeg_bin=str(os.environ.get("FFMPEG_BIN") or "ffmpeg"),
+                    ffprobe_bin=str(os.environ.get("FFPROBE_BIN") or "ffprobe"),
+                )
+                key = (
+                    f"{prefix}/external_video/{video_id(clip_req.url) or 'clip'}_"
+                    f"{uuid.uuid4().hex[:10]}.mp4"
+                )
+                upload_file_to_s3(
+                    bucket=bucket,
+                    key=key,
+                    path=prepared.output_path,
+                    content_type="video/mp4",
+                )
+        except ExternalFetchBlocked as e:
+            # Отдельный код: это не «ссылка плохая», а «нас забанили» — повод
+            # для алерта и для переключения на managed-провайдера.
+            log.warning("fetch_external blocked url=%s err=%s", clip_req.url[:80], e)
+            raise HTTPException(status_code=502, detail=str(e))
+        except ExternalFetchError as e:
+            log.warning("fetch_external failed url=%s err=%s", clip_req.url[:80], e)
+            raise HTTPException(status_code=502, detail=str(e))
+        except Exception as e:
+            log.exception("fetch_external crashed url=%s", clip_req.url[:80])
+            raise HTTPException(status_code=500, detail=f"external fetch failed: {e}")
+
+        video_url = f"s3://{bucket}/{key}"
+        log.info(
+            "fetch_external ok url=%s -> %s %dx%d dur=%.2f audio=%s",
+            clip_req.url[:80], video_url, prepared.width, prepared.height,
+            prepared.duration_sec, prepared.has_audio,
+        )
+        return FetchExternalVideoResponse(
+            video_url=video_url,
+            width=int(prepared.width),
+            height=int(prepared.height),
+            duration_sec=float(prepared.duration_sec),
+            has_audio=bool(prepared.has_audio),
+            trimmed=bool(prepared.trimmed),
+        )
 
     @app.get("/jobs/active", response_model=ActiveJobsResponse)
     def list_active_jobs(min_age_seconds: int = 900, limit: int = 100) -> ActiveJobsResponse:

@@ -48,11 +48,41 @@ from .admin_commands import make_admin_router
 from .admin_panel import start_admin_panel
 from .broadcast_sender import start_broadcast_workers
 from .audio_prepare import AudioPrepareResult, prepare_audio_best_effort
+from mlcore.hooks.f6_video.inject import (
+    F6_LEAD_PAD_SEC,
+    F6_TAIL_PAD_SEC,
+    f6_leading_gap_sec,
+)
+
+from .video_prepare import (
+    F6_MAX_VIDEO_SEC,
+    F6_MIN_VIDEO_SEC,
+    VideoPrepareResult,
+    normalize_video_for_ae,
+)
 from .config import SETTINGS, Settings
-from .credits_db import CreditsDB
+from .credits_db import CreditsDB, package_video_credits
+from .marketing_texts import (
+    BTN_VERSIONS_WARN_CHANGE,
+    BTN_VERSIONS_WARN_CONTINUE,
+    METHODOLOGY_FILE_ID,
+    SURVEY_CB_PREFIX,
+    SURVEY_FIRST_QUESTION_ID,
+    SURVEY_Q2_BRANCH_BY_ANSWER,
+    SURVEY_Q3_BRANCH_BY_ANSWER,
+    SURVEY_QUESTIONS,
+    SURVEY_THANKS,
+    VERSIONS_INVALID,
+    VERSIONS_PROMPT,
+    VERSIONS_PROMPT_FREE_SUFFIX,
+    VERSIONS_WARN_INVALID,
+    VERSION_CHOICE_BUTTONS,
+    bridge_text_for_branch,
+    versions_warning_text,
+)
 from .tbank_client import TBankClient
 from .warmup_chain import CALLBACK_PREFIX as WARMUP_CALLBACK_PREFIX, CAMPAIGN as WARMUP_CAMPAIGN, callback_progress as warmup_callback_progress, keyboard_for_next as warmup_keyboard, message_for_stage as warmup_message
-from .orchestrator_client import OrchestratorClient
+from .orchestrator_client import OrchestratorClient, OrchestratorHTTPError
 from .s3_client import S3Client, make_s3_url
 from services.generation_runtime import GenerationRuntimeStore
 from .state_store import (
@@ -69,6 +99,7 @@ from .state_store import (
     STAGE_WAIT_BG_COLOR,
     STAGE_WAIT_STROBE_CUT,
     STAGE_WAIT_BG_MODE,
+    STAGE_WAIT_FOOTAGE_KIND,
     STAGE_WAIT_BG_INFO,
     STAGE_WAIT_FOOTAGE_ARTIST,
     STAGE_WAIT_FOOTAGE_GENRE,
@@ -82,6 +113,7 @@ from .state_store import (
     STAGE_WAIT_RENDER_ENGINE,
     STAGE_WAIT_SUBTITLES_MODE,
     STAGE_WAIT_VERSIONS,
+    STAGE_WAIT_VERSIONS_WARNING,
     # Post-generation stages
     STAGE_RATE_VIDEO,
     STAGE_FEEDBACK_LOW,
@@ -128,9 +160,14 @@ from .state_store import (
     STAGE_WAIT_EFFECT_EXTEND,
     STAGE_WAIT_VISUAL_TRANSITION,
     STAGE_WAIT_VISUAL_STYLE,
+    STAGE_WAIT_STYLE_SKIP_CONFIRM,
     STAGE_WAIT_F2_SHAPE,
+    STAGE_WAIT_FRAME,
+    STAGE_WAIT_WARMUP_KIND,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
+    STAGE_WAIT_F6_VIDEO,
+    STAGE_WAIT_F6_YT_RANGE,
     STAGE_WAIT_PHOTO_STYLE,
     STAGE_WAIT_PHOTO_TRANSITION,
     STAGE_WAIT_VIBE,
@@ -168,6 +205,12 @@ FOOTAGE_VIBE_FLOW_ENABLED = (os.environ.get("FOOTAGE_VIBE_FLOW_ENABLED", "1").st
 # OFF here until the team bot validates it; state/client/stages mirror regardless
 # for CI parity. Overridable via PHOTO_FLOW_ENABLED.
 PHOTO_FLOW_ENABLED = (os.environ.get("PHOTO_FLOW_ENABLED", "0").strip().lower()
+                      in {"1", "true", "yes", "on", "enabled"})
+
+# Шаг «Рамка» toggle. Спрашивается у всех перед выбором версий и от хука не
+# зависит. В public включён по умолчанию; FRAME_FLOW_ENABLED=0 остаётся явным
+# аварийным выключателем.
+FRAME_FLOW_ENABLED = (os.environ.get("FRAME_FLOW_ENABLED", "1").strip().lower()
                       in {"1", "true", "yes", "on", "enabled"})
 
 # /bigtest is a team-bot-only command. Constant is False here so the handler
@@ -220,6 +263,14 @@ MIN_REFRAME_CLIP_SEC: float = 7.0
 # F4 drop only with intro ≥ this; else asks for a manual F4 drop.
 F4_MIN_INTRO_SEC: float = 3.0
 
+# Local CTC alignment emits one frame per 20 ms, so a reference text has a hard
+# wall-clock floor. Requests past ALIGNMENT_MAX_REFERENCE_FRAME_BUDGET_RATIO of
+# the window are rejected by the alignment service with
+# ALIGNMENT_TEXT_TOO_LONG_FOR_WINDOW; the bot applies the same budget up front so
+# the user fixes the text instead of losing a paid render. Mirrors tg_bot_botapi.
+_ALIGNMENT_FRAME_SEC: float = 0.02
+_ALIGNMENT_FRAME_BUDGET_RATIO: float = 0.8
+
 HOOK_STAGES = frozenset({
     STAGE_WAIT_HOOK_CHOICE,
     STAGE_WAIT_HOOK_DROP,
@@ -234,8 +285,11 @@ HOOK_STAGES = frozenset({
     STAGE_WAIT_VISUAL_TRANSITION,
     STAGE_WAIT_VISUAL_STYLE,
     STAGE_WAIT_F2_SHAPE,
+    STAGE_WAIT_WARMUP_KIND,
     STAGE_WAIT_F1_SOUND,
     STAGE_WAIT_F1_TEXT,
+    STAGE_WAIT_F6_VIDEO,
+    STAGE_WAIT_F6_YT_RANGE,
 })
 
 # Footage precision flow (Phase 2b): stage(s) carrying the vibe multi-select.
@@ -312,6 +366,27 @@ F2_SHAPE_LABELS_RU = {
     "Звезда-5": "star2",
     "Эллипс": "elipse",
 }
+
+# Стилизации, которые всегда идут на ВЕСЬ ролик: спрашивать «до дропа или на
+# весь» у них бессмысленно — build-side всё равно форсит полное окно
+# (manifest.full_window). Держим зеркалом с mlcore/hooks/f3_effect/manifest.json.
+FX_EXTRA_ALWAYS_FULL = frozenset({"blackwhite"})
+
+# Рамка — PNG-маска поверх ВСЕХ слоёв. НЕ хук: шаг спрашивается перед выбором
+# версий на любом пути и не гейтится HOOK_FLOW_ENABLED (дроп ему не нужен).
+# id-сет зеркалит mlcore/hooks/frames/catalog.py + schemas.frame_id Literal.
+BTN_FRAME_ROUNDED = "Скруглённое окно"
+BTN_FRAME_SOFT_BARS = "Мягкие шторки"
+BTN_FRAME_LETTERBOX = "Чёрные полосы"
+BTN_FRAME_NONE = "Без рамки"
+FRAME_IDS = frozenset({"rounded", "soft_bars", "letterbox"})
+FRAME_LABELS_RU = {
+    BTN_FRAME_ROUNDED: "rounded",
+    BTN_FRAME_SOFT_BARS: "soft_bars",
+    BTN_FRAME_LETTERBOX: "letterbox",
+}
+_FRAME_BY_BUTTON = dict(FRAME_LABELS_RU)
+_FRAME_BY_BUTTON[BTN_FRAME_NONE] = "none"
 # Reference BPM the F4 device keyframes were authored under. Mirrored for parity
 # (the public picker UX is gated behind HOOK_FLOW_ENABLED).
 #
@@ -375,19 +450,27 @@ log = logging.getLogger("tg_bot")
 # parity; the public vibe shortlist UI is wired separately behind its flag.
 _BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 _PHOTO_BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
+_COLLECTION_BUCKET_PREVIEWS_CACHE: Optional[Dict[str, Dict[str, Any]]] = None
 # Which file_id field this bot sends (team bot -> file_id; public mirror overrides).
 _BUCKET_PREVIEW_FILE_ID_FIELD = "file_id_public"
 
 
 def _bucket_previews_path(media_type: str = "video") -> Path:
-    name = "photo_bucket_previews.json" if media_type == "photo" else "footage_bucket_previews.json"
+    name = {
+        "photo": "photo_bucket_previews.json",
+        "collection": "collection_bucket_previews.json",
+    }.get(media_type, "footage_bucket_previews.json")
     return Path(__file__).resolve().parents[2] / "data" / name
 
 
 def _load_bucket_previews(media_type: str = "video") -> Dict[str, Dict[str, Any]]:
     global _BUCKET_PREVIEWS_CACHE, _PHOTO_BUCKET_PREVIEWS_CACHE
-    is_photo = media_type == "photo"
-    cache = _PHOTO_BUCKET_PREVIEWS_CACHE if is_photo else _BUCKET_PREVIEWS_CACHE
+    global _COLLECTION_BUCKET_PREVIEWS_CACHE
+    caches = {
+        "photo": _PHOTO_BUCKET_PREVIEWS_CACHE,
+        "collection": _COLLECTION_BUCKET_PREVIEWS_CACHE,
+    }
+    cache = caches.get(media_type, _BUCKET_PREVIEWS_CACHE)
     if cache is None:
         try:
             obj = json.loads(_bucket_previews_path(media_type).read_text(encoding="utf-8"))
@@ -395,8 +478,10 @@ def _load_bucket_previews(media_type: str = "video") -> Dict[str, Dict[str, Any]
             cache = prev if isinstance(prev, dict) else {}
         except Exception:
             cache = {}
-        if is_photo:
+        if media_type == "photo":
             _PHOTO_BUCKET_PREVIEWS_CACHE = cache
+        elif media_type == "collection":
+            _COLLECTION_BUCKET_PREVIEWS_CACHE = cache
         else:
             _BUCKET_PREVIEWS_CACHE = cache
     return cache
@@ -404,20 +489,80 @@ def _load_bucket_previews(media_type: str = "video") -> Dict[str, Dict[str, Any]
 
 def _bucket_preview_file_id(bucket_id: str) -> str:
     bid = str(bucket_id or "").strip()
-    media_type = "photo" if bid.startswith("photo:") else "video"
+    # Each plane keeps its own store, so the id prefix picks the file. A
+    # collection id looked up in the footage store silently finds nothing —
+    # the shortlist would then show buttons with no preview at all.
+    if bid.startswith("photo:"):
+        media_type = "photo"
+    elif bid.startswith("collection:"):
+        media_type = "collection"
+    else:
+        media_type = "video"
     e = _load_bucket_previews(media_type).get(bid)
     if not isinstance(e, dict):
         return ""
     return str(e.get(_BUCKET_PREVIEW_FILE_ID_FIELD) or "").strip()
 
 
-def _live_bucket_ids(bg_mode: str) -> set:
+FOOTAGE_KIND_VERTICAL = "vertical"
+FOOTAGE_KIND_FILMS = "films"
+FOOTAGE_KIND_CINE = "cine16x9"
+# Kind -> the `pool` the ranker should rank. "vibes" is the semantic 9:16
+# catalog; anything else is a folder-scoped collection kind.
+_POOL_BY_FOOTAGE_KIND = {
+    FOOTAGE_KIND_VERTICAL: "vibes",
+    FOOTAGE_KIND_FILMS: "films",
+    FOOTAGE_KIND_CINE: "cine16x9",
+}
+
+
+def _pool_for_footage_kind(kind: str) -> str:
+    return _POOL_BY_FOOTAGE_KIND.get(str(kind or "").strip(), "vibes")
+
+
+def _pool_for_background(bg_mode: str, footage_kind: str) -> str:
+    """Keep a previous video-plane choice from leaking into the photo flow."""
+    if str(bg_mode or "").strip().lower() == "photo":
+        return "vibes"
+    return _pool_for_footage_kind(footage_kind)
+
+
+def _render_preset_for_bucket(theme: str, tags_group: str) -> str:
+    """Output geometry the chosen bucket asks for.
+
+    Only collections carry one — a 16:9 group delivered into a vertical frame
+    is centre-cropped to a third of its width, which is not what anyone picking
+    "16:9" is asking for. Everything else stays vertical, which is also the
+    fallback whenever the catalog cannot be read: a wrong geometry is far worse
+    than the historical one.
+    """
+    if str(theme or "").strip() != "collection":
+        return "vertical"
+    try:
+        from mlcore.footage_collection_catalog import find_collection
+
+        return str(find_collection(str(tags_group or "").strip()).default_format)
+    except Exception:
+        log.exception("render_preset_lookup_failed group=%s — falling back to vertical", tags_group)
+        return "vertical"
+
+
+def _live_bucket_ids(bg_mode: str, footage_kind: str = FOOTAGE_KIND_VERTICAL) -> set:
     """Bucket ids the CURRENT catalog offers for this plane.
 
     Empty set = the catalog could not be read; callers must treat that as "no
     opinion" and keep whatever the chat already has, never as "everything is
     stale" (that would re-rank every chat on every message)."""
     try:
+        pool = _pool_for_footage_kind(footage_kind)
+        if pool != "vibes":
+            # No opinion, deliberately. Collections auto-register from the
+            # folders that exist, and that index lives with the orchestrator —
+            # the bots mount no data volume and see only the committed
+            # registry. Judging staleness against that partial view would
+            # declare every auto-registered group "retired" and re-rank on
+            # every message. The caller falls back to the plane check.
+            return set()
         if str(bg_mode or "").strip().lower() == "photo":
             from mlcore.photo_bucket_catalog import load_photo_catalog
             return {b.bucket_id for b in load_photo_catalog()}
@@ -428,7 +573,9 @@ def _live_bucket_ids(bg_mode: str) -> set:
         return set()
 
 
-def _stale_vibe_shortlist_reason(ranked_ids: List[str], bg_mode: str) -> str:
+def _stale_vibe_shortlist_reason(
+    ranked_ids: List[str], bg_mode: str, footage_kind: str = FOOTAGE_KIND_VERTICAL
+) -> str:
     """Why a persisted vibe shortlist must be re-ranked, or "" to keep it.
 
     The shortlist is the FULL ranked catalog, so it has to match the catalog set
@@ -443,11 +590,16 @@ def _stale_vibe_shortlist_reason(ranked_ids: List[str], bg_mode: str) -> str:
     if any(bid.split(":", 1)[0].endswith(("_major", "_minor")) for bid in stored):
         return "legacy_ids"
 
-    live = _live_bucket_ids(bg_mode)
+    live = _live_bucket_ids(bg_mode, footage_kind)
     if not live:
         # Catalog unreadable — fall back to the plane check alone rather than
         # stranding the chat or re-ranking it on a loop.
-        expected_prefix = "photo:" if str(bg_mode or "").strip().lower() == "photo" else "visual:"
+        if _pool_for_footage_kind(footage_kind) != "vibes":
+            expected_prefix = "collection:"
+        elif str(bg_mode or "").strip().lower() == "photo":
+            expected_prefix = "photo:"
+        else:
+            expected_prefix = "visual:"
         return "" if all(b.startswith(expected_prefix) for b in stored) else "wrong_plane"
 
     stored_set = set(stored)
@@ -519,6 +671,11 @@ BTN_CONFIRM_YES = "Да"
 BTN_CONFIRM_BACK = "Вернуться назад"
 BTN_BACK = "Назад"
 BTN_BG_FOOTAGE = "Футажи"
+# Footage plane fork. «Личности» exists in the catalog but has no uploads yet,
+# so it is not offered — a button for an empty pool strands the user.
+BTN_FOOTAGE_KIND_VERTICAL = "9:16"
+BTN_FOOTAGE_KIND_FILMS = "Фильмы"
+BTN_FOOTAGE_KIND_CINE = "16:9"
 BTN_BG_SOLID = "Цветной фон"
 BTN_BG_STROBE = "Строб Ч/Б"
 BTN_BG_INFO_NEXT = "Продолжить"
@@ -528,7 +685,7 @@ BTN_BG_INFO_NEXT = "Продолжить"
 BTN_BG_PICTURES = "Картинки (скоро)"
 # Photo flow (4:3) ready button — shown instead of the stub when PHOTO_FLOW_ENABLED.
 # Mirror of tg_bot_botapi; selecting it sets bg_mode="photo".
-BTN_BG_PICTURES_PHOTO = "🖼 Картинки"
+BTN_BG_PICTURES_PHOTO = "Фото"
 # Vibe shortlist (inline) control buttons + callback-data prefix. Mirror of team.
 VIBE_CB_PREFIX = "vibe:"          # vibe:tog:<idx> | vibe:more | vibe:done | vibe:auto
 BTN_VIBE_REFRESH = "Ещё варианты ›"
@@ -611,17 +768,21 @@ BTN_HOOK_YES = "Сделать хук"
 BTN_HOOK_NO = "Без хука"
 BTN_HOOK_DROP_NONE = "В отрывке нет дропа"
 BTN_HOOK_DROP_MANUAL = "Ввести вручную"
-BTN_HOOK_CAT_SOUND = "Звук"
+BTN_HOOK_CAT_WARMUP = "Прогрев"
+# «Прогрев» — две ветки одной кнопки: свой звук (F1) или своя видео-вырезка
+# (F6). Категория хука в обоих случаях "sound". Mirror of tg_bot_botapi.
+BTN_WARMUP_SOUND = "Звук (mp3)"
+BTN_WARMUP_VIDEO = "Видео (mp4)"
 BTN_HOOK_CAT_OBJECT = "Объект"
 BTN_HOOK_CAT_EFFECT = "Эффект"
 BTN_HOOK_CAT_MOTION = "Движение"
 BTN_HOOK_CAT_THOUGHT = "Мысль"
 HOOK_CATEGORY_BUTTONS = [
-    BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT, BTN_HOOK_CAT_EFFECT,
+    BTN_HOOK_CAT_WARMUP, BTN_HOOK_CAT_OBJECT, BTN_HOOK_CAT_EFFECT,
     BTN_HOOK_CAT_MOTION, BTN_HOOK_CAT_THOUGHT,
 ]
 _HOOK_CATEGORY_BY_BUTTON = {
-    BTN_HOOK_CAT_SOUND: "sound",
+    BTN_HOOK_CAT_WARMUP: "sound",
     BTN_HOOK_CAT_OBJECT: "object",
     BTN_HOOK_CAT_EFFECT: "effect",
     BTN_HOOK_CAT_MOTION: "motion",
@@ -806,6 +967,22 @@ BTN_BUY_ONCE = "Купить разово"
 BTN_BUY_SUBSCRIPTION = "Купить по подписке"
 BTN_CONFIRM = "Подтвердить"
 
+STYLE_SKIP_ORIGIN_VISUAL = "visual"
+STYLE_SKIP_ORIGIN_PHOTO = "photo"
+STYLE_SKIP_ORIGIN_EFFECT_EXTRA = "effect_extra"
+STYLE_SKIP_WARNING = (
+    "⚠️ Пропустить стилизацию?\n\n"
+    "Без дополнительной стилизации ролик будет сильнее похож на исходные "
+    "материалы. Он станет менее уникальным, поэтому риск ограничений или "
+    "блокировки именно этого ролика может увеличиться.\n\n"
+    "Если решишь продолжить без стилизации, убедись, что субтитры перекрывают "
+    "по времени все использованные фрагменты. Также рекомендуем дополнительно "
+    "обработать ролик в CapCut или другом редакторе: добавить эффекты, "
+    "цветокоррекцию, кадрирование, зум или другие визуальные изменения, чтобы "
+    "сделать исходники менее узнаваемыми.\n\n"
+    "Продолжить без стилизации?"
+)
+
 BTN_NO_RELEASE = "Нет актуального релиза"
 BTN_NO_MONEY = "Пока не хватает финансов"
 BTN_BAD_QUALITY = "Качество роликов"
@@ -902,6 +1079,10 @@ _CONTROL_BUTTONS = {
 
 _AUDIO_EXTS = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
 _UTM_FIELDS = ("source", "medium", "campaign", "content", "term")
+# Partner cabinet deep-link codes are namespaced with this prefix so they
+# never collide with regular UTM start-args (which keep flowing through the
+# existing record_utm_touch/set_user_source path unchanged).
+_PARTNER_LINK_PREFIX = "p_"
 _RE_CELERY_RETRIES = re.compile(r"\bretries=(\d+)\b")
 _TG_AUDIO_DOWNLOAD_RETRIES = 3
 _TG_AUDIO_DOWNLOAD_TIMEOUT_S = 180.0
@@ -910,6 +1091,25 @@ _TG_VIDEO_COMPRESS_CRF_STEPS = (30, 32, 34, 36)
 _GENERATION_FAILED_USER_TEXT = (
     "Увидели ошибку, сейчас с тобой свяжется менеджер и запустит генерацию ролика вручную, "
     "а пока тех. отдел все проверит"
+)
+# Alignment error codes from mlcore.alignment.contracts. Matched as substrings
+# of the job error text ("<CODE>: <message>") the orchestrator stores.
+_ALIGNMENT_ERROR_WINDOW_MISMATCH = "ALIGNMENT_WINDOW_MISMATCH"
+_ALIGNMENT_ERROR_TEXT_TOO_LONG = "ALIGNMENT_TEXT_TOO_LONG_FOR_WINDOW"
+_ALIGNMENT_WINDOW_MISMATCH_USER_TEXT = (
+    "Не получилось разложить присланные строки по выбранному отрезку — "
+    "скорее всего текст и тайминг не совпадают.\n\n"
+    "Credits вернули на баланс. Попробуй ещё раз: пришли ровно те слова, "
+    "которые звучат в отрезке (без лишних строк), и по возможности задай "
+    "тайминг точнее — можно с долями секунды, например 1:20.5-1:33.\n\n"
+    "Нажми «Использовать прошлый трек», чтобы не загружать аудио заново."
+)
+_ALIGNMENT_TEXT_TOO_LONG_USER_TEXT = (
+    "Присланных строк слишком много для выбранного отрезка — они физически "
+    "не успевают прозвучать за это время.\n\n"
+    "Credits вернули на баланс. Сократи текст до тех слов, которые реально "
+    "звучат в отрезке, либо возьми отрезок длиннее.\n\n"
+    "Нажми «Использовать прошлый трек», чтобы не загружать аудио заново."
 )
 _AUDIO_PREPARE_FAILED_USER_TEXT = (
     "Не получилось подготовить трек к генерации. "
@@ -975,6 +1175,56 @@ def _extract_audio_spec(message: Message) -> Optional[Tuple[str, str]]:
             return file_id, file_name
 
     return None
+
+
+_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi"}
+
+
+def _extract_video_spec(message: Message) -> Optional[Tuple[str, str]]:
+    """(file_id, file_name) для F6-прогрева. Mirror of tg_bot_botapi."""
+    if getattr(message, "video", None) is not None:
+        return str(message.video.file_id), str(message.video.file_name or "warmup.mp4")
+
+    if getattr(message, "video_note", None) is not None:
+        return str(message.video_note.file_id), "warmup_note.mp4"
+
+    if getattr(message, "animation", None) is not None:
+        return str(message.animation.file_id), str(message.animation.file_name or "warmup.mp4")
+
+    if message.document:
+        file_id = str(message.document.file_id)
+        mime = str(message.document.mime_type or "").lower()
+        file_name = str(message.document.file_name or "warmup.bin")
+        ext = Path(file_name).suffix.lower()
+        if mime.startswith("video/") or ext in _VIDEO_EXTS:
+            return file_id, file_name
+
+    return None
+
+
+def _warmup_video_enabled() -> bool:
+    """Видео-рукав «Прогрева» (F6) gate.
+
+    Категория «Прогрев» есть у всех, а вот развилка «звук / видео» — только там,
+    где рукав включён. Выключен → «Прогрев» ведёт сразу на загрузку звука, то
+    есть ровно в старое поведение F1, и юзер даже не узнаёт, что развилка
+    существует. В public включён по умолчанию; WARMUP_VIDEO_ENABLED=0 остаётся
+    явным аварийным выключателем.
+    """
+    return os.environ.get("WARMUP_VIDEO_ENABLED", "1").strip().lower() in {
+        "1", "true", "yes", "on", "enabled",
+    }
+
+
+def _reset_f6(st) -> None:
+    """Сбросить выбор F6-прогрева. Модульная функция, а не метод: хендлеры
+    зовут её и на стаб-объектах в тестах."""
+    st.f6_video_url = ""
+    st.f6_video_width = 0
+    st.f6_video_height = 0
+    st.f6_video_duration = 0.0
+    st.f6_video_has_audio = True
+    st.f6_source_url = ""
 
 
 def _is_tg_file_too_big_error(err: Exception) -> bool:
@@ -2407,14 +2657,41 @@ class BlastBotApp:
         return {"sent_mode": "manager_alert"}
 
     async def _runtime_dispatch_user_notice(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        _, st, _ = await self._runtime_outbox_context(item)
+        run, st, payload = await self._runtime_outbox_context(item)
         bot = self._require_bot()
+        error_text = str(
+            payload.get("error_text")
+            or run.get("last_error_text")
+            or st.last_job_error
+            or ""
+        )
+        notice = self._alignment_failure_user_text(error_text)
         await bot.send_message(
             st.chat_id,
-            _GENERATION_FAILED_USER_TEXT,
+            notice or _GENERATION_FAILED_USER_TEXT,
             reply_markup=self._wait_audio_reuse_kb(),
         )
-        return {"sent_mode": "user_notice"}
+        return {
+            "sent_mode": "user_notice",
+            "notice_kind": "alignment_window" if notice else "generic",
+        }
+
+    @staticmethod
+    def _alignment_failure_user_text(error_text: str) -> Optional[str]:
+        """Turn an alignment window failure into something the user can act on.
+
+        These are not infrastructure faults: the text and the timing simply do
+        not describe the same piece of audio. Handing back the generic "менеджер
+        свяжется" hides the one thing the user can fix, so the two window codes
+        get their own message and the reuse-track keyboard sends them straight
+        back into the flow with the audio already uploaded.
+        """
+        text = str(error_text or "")
+        if _ALIGNMENT_ERROR_TEXT_TOO_LONG in text:
+            return _ALIGNMENT_TEXT_TOO_LONG_USER_TEXT
+        if _ALIGNMENT_ERROR_WINDOW_MISMATCH in text:
+            return _ALIGNMENT_WINDOW_MISMATCH_USER_TEXT
+        return None
 
     async def _restore_runtime_processing_states(self) -> None:
         store = getattr(self, "runtime_store", None)
@@ -2874,6 +3151,11 @@ class BlastBotApp:
                 )
 
             start_payload = _extract_start_payload(message)
+            if start_payload and start_payload.startswith(_PARTNER_LINK_PREFIX):
+                try:
+                    await self.credits_db.attribute_partner_from_code(chat_id, start_payload)
+                except Exception:
+                    log.exception("partner attribution failed chat=%s code=%s", chat_id, start_payload)
             if start_payload:
                 utm = _parse_utm_payload(start_payload)
                 await self.credits_db.record_utm_touch(chat_id, raw_start_arg=start_payload, utm=utm)
@@ -3229,6 +3511,13 @@ class BlastBotApp:
             await callback.answer()
             await self._move_to_wait_audio(chat_id, callback.message)
 
+        @self.router.callback_query(lambda c: c.data and c.data.startswith(SURVEY_CB_PREFIX))
+        async def _on_postgen_survey_callback(callback: CallbackQuery) -> None:
+            # Post-generation survey. Deliberately stage-independent: it runs
+            # while the chat sits in STAGE_PROCESSING and must not interfere
+            # with the render/progress flow.
+            await self._handle_postgen_survey_callback(callback)
+
         @self.router.callback_query(lambda c: c.data and c.data.startswith(VIBE_CB_PREFIX))
         async def _on_vibe_callback(callback: CallbackQuery) -> None:
             # Phase 2b footage precision flow (mirror of tg_bot_botapi). The
@@ -3279,12 +3568,9 @@ class BlastBotApp:
                 await self._handle_wait_audio(message, st)
                 return
 
-            if st.stage == STAGE_WAIT_LYRICS_CHOICE:
-                await self._handle_wait_lyrics_choice(message, st)
-                return
-
-            if st.stage == STAGE_WAIT_LYRICS_TEXT:
-                await self._handle_wait_lyrics_text(message, st)
+            if st.stage in {STAGE_WAIT_LYRICS_CHOICE, STAGE_WAIT_LYRICS_TEXT}:
+                # Removed step, kept only to rescue in-flight sessions.
+                await self._handle_legacy_lyrics_stage(message, st)
                 return
 
             if st.stage == STAGE_WAIT_FRAGMENT_CHOICE:
@@ -3305,6 +3591,10 @@ class BlastBotApp:
 
             if st.stage == STAGE_WAIT_BG_MODE:
                 await self._handle_wait_bg_mode(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_FOOTAGE_KIND:
+                await self._handle_wait_footage_kind(message, st)
                 return
 
             if st.stage == STAGE_WAIT_BG_INFO:
@@ -3387,6 +3677,9 @@ class BlastBotApp:
             if st.stage == STAGE_WAIT_VISUAL_STYLE:
                 await self._handle_wait_visual_style(message, st)
                 return
+            if st.stage == STAGE_WAIT_STYLE_SKIP_CONFIRM:
+                await self._handle_wait_style_skip_confirm(message, st)
+                return
             if st.stage == STAGE_WAIT_EFFECT_EXTEND:
                 await self._handle_wait_effect_extend(message, st)
                 return
@@ -3399,15 +3692,32 @@ class BlastBotApp:
             if st.stage == STAGE_WAIT_PHOTO_TRANSITION:
                 await self._handle_wait_photo_transition(message, st)
                 return
+            if st.stage == STAGE_WAIT_WARMUP_KIND:
+                await self._handle_wait_warmup_kind(message, st)
+                return
             if st.stage == STAGE_WAIT_F1_SOUND:
                 await self._handle_wait_f1_sound(message, st)
+                return
+            if st.stage == STAGE_WAIT_F6_VIDEO:
+                await self._handle_wait_f6_video(message, st)
+                return
+            if st.stage == STAGE_WAIT_F6_YT_RANGE:
+                await self._handle_wait_f6_yt_range(message, st)
                 return
             if st.stage == STAGE_WAIT_F1_TEXT:
                 await self._handle_wait_f1_text(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_FRAME:
+                await self._handle_wait_frame(message, st)
+                return
+
             if st.stage == STAGE_WAIT_VERSIONS:
                 await self._handle_wait_versions(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_VERSIONS_WARNING:
+                await self._handle_wait_versions_warning(message, st)
                 return
 
             if st.stage == STAGE_WAIT_CONFIRM:
@@ -3504,13 +3814,13 @@ class BlastBotApp:
         self._broadcast_stop = bc_stop
 
         self._processing_task = asyncio.create_task(self._processing_loop(), name="tg_bot_processing_loop")
-        self._recovery_task = asyncio.create_task(self._recovery_loop(), name="tg_bot_recovery_loop")
         self._reminder_task = asyncio.create_task(self._reminder_loop(), name="tg_bot_reminder_loop")
         self._payment_poll_task = asyncio.create_task(self._payment_poll_loop(), name="tg_bot_payment_poll")
         self._state_cleanup_task = asyncio.create_task(self._state_cleanup_loop(), name="tg_bot_state_cleanup_loop")
         self._fs_cleanup_task = asyncio.create_task(self._fs_cleanup_loop(), name="tg_bot_fs_cleanup_loop")
         self._subscription_charge_task = asyncio.create_task(self._subscription_charge_loop(), name="tg_bot_subscription_charge")
         await self._restore_runtime_processing_states()
+        self._recovery_task = asyncio.create_task(self._recovery_loop(), name="tg_bot_recovery_loop")
         self._outbox_task = asyncio.create_task(self._runtime_outbox_loop(), name="tg_bot_outbox_dispatcher")
         if bool(getattr(self.settings, "tg_auto_startup_maintenance", False)) and not bool(self.settings.tg_maintenance_mode):
             await self._set_startup_maintenance_enabled(
@@ -3704,12 +4014,16 @@ class BlastBotApp:
             return None
 
         def _to_sec(raw: str) -> float | None:
-            v = str(raw or "").strip()
+            v = str(raw or "").strip().replace(",", ".")
             if not v:
                 return None
-            m = re.fullmatch(r"(\d{1,3}):(\d{1,2})", v)
+            # Fractional seconds are accepted (1:20.5): a hand-picked window is
+            # what the aligner must contain, and a half-second of slack at the
+            # edge is the difference between a clean fit and a boundary word
+            # hanging outside it.
+            m = re.fullmatch(r"(\d{1,3}):(\d{1,2}(?:\.\d+)?)", v)
             if m:
-                return float(int(m.group(1))) * 60.0 + float(int(m.group(2)))
+                return float(int(m.group(1))) * 60.0 + float(m.group(2))
             try:
                 out = float(v)
             except ValueError:
@@ -3735,6 +4049,63 @@ class BlastBotApp:
         s = int(sec) % 60
         return f"{m}:{s:02d}"
 
+    @staticmethod
+    def _fmt_timing_precise(sec: float) -> str:
+        """``_fmt_timing`` plus fractional seconds when the user gave them.
+
+        Kept separate: ``_fmt_timing`` labels are matched back by equality in
+        ``_parse_hook_drop_label``, so its output must stay stable.
+        """
+        value = round(float(sec), 3)
+        minutes = int(value) // 60
+        seconds = value - float(minutes * 60)
+        if abs(seconds - round(seconds)) < 5e-4:
+            # Round first, then re-derive minutes: 119.9997 is 2:00, not 1:60.
+            return BlastBotApp._fmt_timing(round(value))
+        return f"{minutes}:{seconds:06.3f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _alignment_required_sec(fragment: str) -> float:
+        """Wall-clock floor for singing ``fragment``, mirroring the aligner.
+
+        The CTC path spends at least one emission frame per character plus one
+        per word gap, so the text has a hard minimum duration. Estimated here
+        from the raw string (the service re-derives it exactly after
+        pronunciation normalisation) so an impossible request is caught before
+        the user pays for a render.
+        """
+        cleaned = re.sub(r"[^\w\s]", "", str(fragment or ""), flags=re.UNICODE)
+        words = [word for word in cleaned.split() if word]
+        if not words:
+            return 0.0
+        tokens = sum(len(word) for word in words) + (len(words) - 1)
+        return float(tokens) * _ALIGNMENT_FRAME_SEC
+
+    @classmethod
+    def _alignment_density_error(
+        cls,
+        *,
+        fragment: str,
+        clip_start_sec: float,
+        clip_end_sec: float,
+    ) -> Optional[str]:
+        """User-facing reason the text cannot fit the window, or None."""
+        text = str(fragment or "").strip()
+        window_sec = float(clip_end_sec) - float(clip_start_sec)
+        if not text or window_sec <= 0.0:
+            return None
+        required_sec = cls._alignment_required_sec(text)
+        if required_sec <= window_sec * _ALIGNMENT_FRAME_BUDGET_RATIO:
+            return None
+        min_window_sec = required_sec / _ALIGNMENT_FRAME_BUDGET_RATIO
+        return (
+            f"Текст не поместится в выбранный отрезок: в нём {window_sec:.1f} с, "
+            f"а присланные строки звучат минимум {required_sec:.1f} с.\n\n"
+            f"Что сделать: оставить только те слова, которые реально звучат в "
+            f"этом отрезке, либо взять отрезок длиннее "
+            f"(нужно от {min_window_sec:.0f} с)."
+        )
+
     def _timing_label(self, st: ChatState) -> str:
         start = float(st.user_clip_start_sec or 0.0)
         end = float(st.user_clip_end_sec or 0.0)
@@ -3759,17 +4130,10 @@ class BlastBotApp:
         return artist_id
 
     @staticmethod
-    def _has_forced_alignment_reference_text(st: ChatState) -> bool:
-        return bool(str(st.lyrics_text or st.target_fragment or "").strip())
-
-    @staticmethod
-    def _has_local_alignment_inputs(st: ChatState) -> bool:
+    def _has_timing_window(st: ChatState) -> bool:
         start = float(st.user_clip_start_sec or 0.0)
         end = float(st.user_clip_end_sec or 0.0)
-        return bool(
-            str(st.target_fragment or "").strip()
-            and end > start >= 0.0
-        )
+        return end > start >= 0.0
 
     def _needs_explicit_local_alignment_fragment(self, st: ChatState) -> bool:
         backend = str(
@@ -3778,40 +4142,78 @@ class BlastBotApp:
         ).strip().lower()
         return backend == "local_ctc" and not bool(st.target_fragment_explicit)
 
-    async def _ask_explicit_local_alignment_fragment(
+    def _timing_label(self, st: ChatState) -> str:
+        start = float(st.user_clip_start_sec or 0.0)
+        end = float(st.user_clip_end_sec or 0.0)
+        if end > start >= 0.0:
+            return f"{self._fmt_timing(start)}-{self._fmt_timing(end)}"
+        return "выбранном тайминге"
+
+    async def _ask_fragment_text(
         self,
         message: Message,
         st: ChatState,
+        *,
+        prefix: str = "",
+        with_back: bool = True,
     ) -> None:
-        start = float(st.user_clip_start_sec or 0.0)
-        end = float(st.user_clip_end_sec or 0.0)
-        timing = (
-            f"{self._fmt_timing(start)}-{self._fmt_timing(end)}"
-            if end > start >= 0.0
-            else "выбранном тайминге"
-        )
+        """The single text step: exact lines that sound inside the chosen
+        window. The full-lyrics step was removed — these lines are the whole
+        reference text the aligner gets."""
         st.target_fragment = ""
         st.target_fragment_explicit = False
         st.stage = STAGE_WAIT_FRAGMENT_TEXT
         await self.store.set(st)
         await message.answer(
-            "Сохранённый трек готов. Для своей модели пришли только точные "
-            f"строки, которые звучат в {timing}. Полный текст песни повторять "
-            "не нужно.",
-            reply_markup=ReplyKeyboardRemove(),
+            f"{prefix}Пришли текст отрывка — только те точные строки, которые "
+            f"звучат в {self._timing_label(st)}. Скопируй их прямо из текста "
+            "песни, без пояснительных слов типа «куплет:» и т.п.\n\n"
+            "Важно: строки должны точно совпадать с тем, что звучит в отрезке. "
+            "Полный текст песни присылать не нужно — каждое лишнее слово "
+            "сдвигает расшифровку, и субтитры уедут по таймингу.",
+            reply_markup=_kb([BTN_BACK]) if with_back else ReplyKeyboardRemove(),
         )
 
-    async def _ask_timing_choice(self, message: Message, st: ChatState) -> None:
+    async def _ask_explicit_local_alignment_fragment(
+        self,
+        message: Message,
+        st: ChatState,
+    ) -> None:
+        # Reuse-input path: the window is already stored, so only the lines are
+        # missing. «Назад» is off here — there is no timing step to return to.
+        await self._ask_fragment_text(
+            message,
+            st,
+            prefix="Сохранённый трек готов. ",
+            with_back=False,
+        )
+
+    async def _ask_timing_choice(
+        self,
+        message: Message,
+        st: ChatState,
+        *,
+        prefix: str = "",
+    ) -> None:
         # No fork: the "let AI decide" option was removed — the timing is now
         # always user-supplied. Go straight to the input step.
+        #
+        # This is also the FIRST step of the flow (it used to sit after the
+        # text steps), so there is nothing to go back to: no «Назад» button.
+        # The fragment is cleared here because the next step always re-asks it
+        # — a new window must be paired with lines that match it.
         st.stage = STAGE_WAIT_TIMING_INPUT
         st.user_clip_start_sec = 0.0
         st.user_clip_end_sec = 0.0
+        st.target_fragment = ""
+        st.target_fragment_explicit = False
         await self.store.set(st)
         await message.answer(
-            "Укажи конкретный тайминг трека для клипа следующим образом: "
+            f"{prefix}Укажи отрезок трека для клипа следующим образом: "
             "1:20-1:50 (минуты:секунды).\n\n"
-            "Проверь, что отрывок текста и тайминг — сходятся.\n\n"
+            "Можно точнее — с долями секунды через точку: 1:20.5-1:33.2. "
+            "Так проще поставить границу между словами, а не посреди слова.\n\n"
+            "Дальше пришлёшь строки, которые звучат в этом отрезке.\n\n"
             "<b>Максимальный тайминг: 15с.</b> Это строгое ограничение — если "
             "поставишь больше, задача вернётся с ошибкой и придётся заполнять "
             "заново.",
@@ -3840,13 +4242,19 @@ class BlastBotApp:
 
     async def _handle_wait_timing_input(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            # Timing is the first step of the flow now, so «Назад» (only
+            # reachable from a stale keyboard) just re-asks it.
+            await self._ask_timing_choice(message, st)
+            return
         if not text:
             await message.answer("Отправь тайминг текстом, например: 1:20-1:50")
             return
         parsed = self._parse_timing(text)
         if parsed is None:
             await message.answer(
-                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 (начало-конец в секундах)."
+                "Не удалось распознать тайминг. Формат: 1:20-1:50 или 80-110 "
+                "(начало-конец в секундах). Доли секунды — через точку: 1:20.5-1:33.2."
             )
             return
         start_sec, end_sec = parsed
@@ -3863,6 +4271,10 @@ class BlastBotApp:
                 "покороче, например 1:20-1:33."
             )
             return
+        # No density check here any more: the window is chosen BEFORE the
+        # lines, so there is nothing to weigh it against yet. The impossible
+        # text/window pair is caught on the fragment step instead — still
+        # before the credits are spent.
         st.user_clip_start_sec = round(start_sec, 3)
         st.user_clip_end_sec = round(end_sec, 3)
         await self.store.set(st)
@@ -3871,9 +4283,10 @@ class BlastBotApp:
         if HOOK_FLOW_ENABLED:
             await self._trigger_hook_analysis_task(st)
         await message.answer(
-            f"Тайминг установлен: {self._fmt_timing(start_sec)} - {self._fmt_timing(end_sec)} ({duration:.0f} сек)."
+            f"Тайминг установлен: {self._fmt_timing_precise(start_sec)} - "
+            f"{self._fmt_timing_precise(end_sec)} ({duration:.1f} сек)."
         )
-        await self._ask_bg_mode(message, st)
+        await self._ask_fragment_text(message, st)
 
     async def _ask_bg_mode(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_BG_MODE
@@ -3932,10 +4345,16 @@ class BlastBotApp:
         st.pending_bg_mode = ""
         st.bg_mode = mode
         st.bg_solid_color = ""
+        if mode == "photo":
+            # This field belongs to the video fork. Persisting 16:9/films here
+            # would make the ranker load a collection catalog instead of photos.
+            st.footage_kind = FOOTAGE_KIND_VERTICAL
         await self.store.set(st)
         if mode == "footage":
             if FOOTAGE_VIBE_FLOW_ENABLED:
-                await self._ask_vibe_shortlist(message, st)
+                # Which plane the shortlist draws from is now an explicit
+                # step: the 9:16 vibes or a film collection.
+                await self._ask_footage_kind(message, st)
             else:
                 await self._ask_footage_genre(message, st)
             return
@@ -4142,11 +4561,17 @@ class BlastBotApp:
     async def _run_vibe_ranker_bg(self, *, chat_id: int, lyrics: str, mood: str) -> None:
         """Background runner — must never raise into the asyncio loop."""
         media_type = "video"
+        footage_kind = FOOTAGE_KIND_VERTICAL
         try:
             current = await self.store.get(chat_id)
             media_type = "photo" if current.bg_mode == "photo" else "video"
+            # This runs when the lyrics arrive, BEFORE the footage plane is
+            # chosen, so it ranks whatever the chat is on now. Picking a
+            # different plane later re-ranks with force=True.
+            footage_kind = str(current.footage_kind or FOOTAGE_KIND_VERTICAL)
             result = await self.orchestrator.rank_buckets(
-                lyrics=lyrics, mood=mood, media_type=media_type
+                lyrics=lyrics, mood=mood, media_type=media_type,
+                pool=_pool_for_background(current.bg_mode, footage_kind),
             )
             ranked_ids, labels = self._parse_ranked_buckets(result)
             st = await self.store.get(chat_id)
@@ -4154,6 +4579,8 @@ class BlastBotApp:
             # photo shortlist (or vice versa) if the user changed bg_mode meanwhile.
             current_media_type = "photo" if st.bg_mode == "photo" else "video"
             if current_media_type != media_type:
+                return
+            if str(st.footage_kind or FOOTAGE_KIND_VERTICAL) != footage_kind:
                 return
             # Only persist if the user has not moved on / re-ranked.
             if st.vibe_rank_status not in {"pending", "ready"}:
@@ -4214,7 +4641,7 @@ class BlastBotApp:
         stored_ids = list(st.vibe_ranked_ids or [])
         stored_labels = dict(st.vibe_labels_by_id or {})
         if st.vibe_ranked_ids and not force:
-            reason = _stale_vibe_shortlist_reason(st.vibe_ranked_ids, st.bg_mode)
+            reason = _stale_vibe_shortlist_reason(st.vibe_ranked_ids, st.bg_mode, st.footage_kind)
             if not reason:
                 return True
             log.info(
@@ -4234,6 +4661,7 @@ class BlastBotApp:
                 result = await self.orchestrator.rank_buckets(
                     lyrics=lyrics, mood="",
                     media_type="photo" if st.bg_mode == "photo" else "video",
+                    pool=_pool_for_background(st.bg_mode, st.footage_kind),
                 )
                 ranked_ids, labels = self._parse_ranked_buckets(result)
             except Exception as e:
@@ -4254,7 +4682,7 @@ class BlastBotApp:
         # A forced refresh that could not reach the orchestrator must not cost the
         # user their shortlist — an older order still beats being dropped into the
         # legacy genre picker.
-        if stored_ids and not _stale_vibe_shortlist_reason(stored_ids, st.bg_mode):
+        if stored_ids and not _stale_vibe_shortlist_reason(stored_ids, st.bg_mode, st.footage_kind):
             st.vibe_ranked_ids = stored_ids
             st.vibe_labels_by_id = stored_labels
             st.vibe_rank_status = "ready"
@@ -4321,6 +4749,56 @@ class BlastBotApp:
             "3. «Назад» — выбрать другой тип фона.",
         ]
         return "\n".join(lines)
+
+    async def _ask_footage_kind(self, message: Message, st: ChatState) -> None:
+        """Which footage plane the shortlist should draw from.
+
+        Two live options for now. The other collection kinds (16:9, Личности)
+        exist in the catalog but are deliberately not offered — showing a button
+        for an empty pool would strand the user on an empty shortlist.
+        """
+        st.stage = STAGE_WAIT_FOOTAGE_KIND
+        await self.store.set(st)
+        await message.answer(
+            "Какой футаж подобрать?\n\n"
+            "• 9:16 — вертикальные футажи под настроение трека\n"
+            "• 16:9 — киношные горизонтальные съёмки\n"
+            "• Фильмы — нарезки из конкретного фильма",
+            reply_markup=_kb(
+                [BTN_FOOTAGE_KIND_VERTICAL],
+                [BTN_FOOTAGE_KIND_CINE],
+                [BTN_FOOTAGE_KIND_FILMS],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _handle_wait_footage_kind(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_bg_mode(message, st)
+            return
+        if text == BTN_FOOTAGE_KIND_VERTICAL:
+            kind = FOOTAGE_KIND_VERTICAL
+        elif text == BTN_FOOTAGE_KIND_CINE:
+            kind = FOOTAGE_KIND_CINE
+        elif text == BTN_FOOTAGE_KIND_FILMS:
+            kind = FOOTAGE_KIND_FILMS
+        else:
+            await message.answer(
+                f"Выбери кнопкой: «{BTN_FOOTAGE_KIND_VERTICAL}», "
+                f"«{BTN_FOOTAGE_KIND_CINE}» или «{BTN_FOOTAGE_KIND_FILMS}»."
+            )
+            return
+        # Changing the plane invalidates the shortlist: it holds ids from the
+        # catalog that was ranked, and the two catalogs share no ids at all.
+        if str(st.footage_kind or FOOTAGE_KIND_VERTICAL) != kind:
+            st.vibe_ranked_ids = []
+            st.vibe_labels_by_id = {}
+            st.vibe_selected_ids = []
+            st.vibe_page = 0
+        st.footage_kind = kind
+        await self.store.set(st)
+        await self._ask_vibe_shortlist(message, st)
 
     async def _ask_vibe_shortlist(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_VIBE
@@ -4415,7 +4893,10 @@ class BlastBotApp:
             except TelegramBadRequest:
                 pass
             await cb.answer()
-            await self._ask_bg_mode(cb.message, st)
+            # Back from the shortlist lands on the plane fork, not on the
+            # background menu: the likely intent is "wrong footage type",
+            # not "wrong background".
+            await self._ask_footage_kind(cb.message, st)
             return
         if action == "more":
             pages = max(1, self._vibe_page_count(st))
@@ -4488,11 +4969,13 @@ class BlastBotApp:
     # Hook flow — ported 1:1 from tg_bot_botapi (behind HOOK_FLOW_ENABLED).
     # Exit goes to _proceed_to_versions_or_confirm (public's post-settings).
     # ====================================================================
-    def _color_kb(self, *, include_battery: bool = False):
+    def _color_kb(self, *, include_battery: bool = False, include_back: bool = False):
         rows = [COLOR_PALETTE_BUTTONS[i:i + 3] for i in range(0, len(COLOR_PALETTE_BUTTONS), 3)]
         if include_battery:
             rows.append([BTN_COLOR_BATTERY])
         rows.append([BTN_COLOR_DEFAULT])
+        if include_back:
+            rows.append([BTN_BACK])
         return _kb(*rows)
 
     async def _ask_subtitle_color(self, message: Message, st: ChatState) -> None:
@@ -4507,11 +4990,41 @@ class BlastBotApp:
         )
         await message.answer(
             prompt,
-            reply_markup=self._color_kb(include_battery=st.bg_mode == "solid"),
+            reply_markup=self._color_kb(
+                include_battery=st.bg_mode == "solid", include_back=True
+            ),
         )
+
+    async def _back_from_subtitle_color(self, message: Message, st: ChatState) -> None:
+        """«Назад» из палитры субтитров — на шаг, который реально шёл перед ней.
+
+        Цвета спрашиваются последними в блоке настроек, поэтому предыдущий шаг
+        зависит от ветки: у сплошного фона это режим субтитров, у футажа/фото —
+        хук/визуал. Возврат сбрасывает флаги «уже спрошено», иначе ветка
+        проскочит назад к подтверждению вместо своих шагов."""
+        st.colors_done = False
+        st.subtitle_color_hex = ""
+        st.accent_color_hex = ""
+        st.battery_mode = False
+        st.battery_cases = []
+        if st.bg_mode == "solid":
+            await self.store.set(st)
+            await self._ask_subtitles_mode(message, st)
+            return
+        st.visuals_done = False
+        st.visual_transition = ""
+        st.visual_style = ""
+        await self.store.set(st)
+        if HOOK_FLOW_ENABLED:
+            await self._ask_hook_choice(message, st)
+            return
+        await self._ask_visual_transition(message, st)
 
     async def _handle_wait_subtitle_color(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._back_from_subtitle_color(message, st)
+            return
         if st.bg_mode == "solid" and text == BTN_COLOR_BATTERY:
             battery_palette = _SUBTITLE_COLOR_BATTERY_BY_BG.get(
                 str(st.bg_solid_color or "").strip()
@@ -4561,11 +5074,17 @@ class BlastBotApp:
         await self.store.set(st)
         await message.answer(
             "Выбери акцентный цвет для фигур и фокус-слов: палитра или «По умолчанию».",
-            reply_markup=self._color_kb(),
+            reply_markup=self._color_kb(include_back=True),
         )
 
     async def _handle_wait_accent_color(self, message: Message, st: ChatState) -> None:
-        choice = _parse_color_choice(message.text or "")
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            st.accent_color_hex = ""
+            await self.store.set(st)
+            await self._ask_subtitle_color(message, st)
+            return
+        choice = _parse_color_choice(text)
         if choice is None:
             await message.answer("Выбери цвет кнопкой из палитры или «По умолчанию».")
             return
@@ -4663,7 +5182,53 @@ class BlastBotApp:
             except Exception:
                 pass
 
+    def _selected_bucket_slot(self, st: ChatState) -> tuple:
+        """(theme, tags_group) of the bucket this chat would enqueue on.
+
+        Read from the SELECTION rather than from footage_kind: a multi-select
+        is single-plane, so the first pick answers for the batch, and an empty
+        selection means the legacy artist path, which is vertical.
+        """
+        selected = [s for s in (getattr(st, "vibe_selected_ids", None) or []) if ":" in s]
+        if not selected:
+            return "", ""
+        try:
+            from mlcore.footage_batch_distribution import resolve_bucket_slot
+
+            return resolve_bucket_slot(selected[0], catalog=[])
+        except Exception:
+            return "", ""
+
     async def _ask_hook_choice(self, message: Message, st: ChatState) -> None:
+        # Every hook overlay is drawn against a 1080x1920 frame with baked
+        # coordinates, and the API refuses the combination outright — so on a
+        # horizontally rendered plane the step is skipped rather than offered
+        # and then rejected at enqueue, after the user has already chosen.
+        if _render_preset_for_bucket(*self._selected_bucket_slot(st)) != "vertical":
+            # Only the DROP-ANCHORED hooks are unavailable here.  Route wide
+            # footage directly into the shared two-step visual picker; sending
+            # it through the legacy effect picker first caused transition and
+            # stylization to be asked twice.
+            st.hook_enabled = False
+            st.hook_category = ""
+            st.hook_drop_t = None
+            st.hook_device = ""
+            st.effect_hook = ""
+            st.effect_hook_extend = ""
+            st.f2_shape = ""
+            st.f1_sound_url = ""
+            st.f1_sound_text = ""
+            st.warmup_kind = ""
+            _reset_f6(st)
+            st.battery_mode = False
+            st.battery_cases = []
+            st.battery_f4_drop = None
+            st.visual_transition = ""
+            st.visual_style = ""
+            st.visuals_done = False
+            await self.store.set(st)
+            await self._ask_visual_transition(message, st)
+            return
         st.stage = STAGE_WAIT_HOOK_CHOICE
         await self.store.set(st)
         note = ""
@@ -4680,11 +5245,14 @@ class BlastBotApp:
         await message.answer(
             "Сделать хук в ролик? Хук — это короткий FX-акцент на дропе, "
             "помогает удерживать зрителя." + note,
-            reply_markup=_kb([BTN_HOOK_YES, BTN_HOOK_NO]),
+            reply_markup=_kb([BTN_HOOK_YES, BTN_HOOK_NO], [BTN_BACK]),
         )
 
     async def _handle_wait_hook_choice(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_subtitles_mode(message, st)
+            return
         if text == BTN_HOOK_NO:
             st.hook_enabled = False
             st.hook_drop_t = None
@@ -4693,6 +5261,8 @@ class BlastBotApp:
             st.f2_shape = ""
             st.f1_sound_url = ""
             st.f1_sound_text = ""
+            st.warmup_kind = ""
+            _reset_f6(st)
             st.effect_hook = ""
             st.effect_transition = ""
             st.effect_extra = ""
@@ -4815,15 +5385,15 @@ class BlastBotApp:
         # per-category one-liner sits next to its button (full descriptions live
         # in core.hook_intros for the team bot / future on-demand expansion).
         await message.answer(
-            "Хук — приём в первые секунды, который цепляет зрителя.\n\n"
-            "🔊 Звук — свой звук до дропа + вспышка-молния\n"
-            "🟦 Объект — фигура в такт на склейке до дропа\n"
-            "✨ Эффект — визуальные FX: хук, переход, грейд\n"
-            "👆 Движение — engagement-байт: рука/голова в такт\n"
-            "💭 Мысль — голос-ИИ перед дропом\n\n"
+            "Хук — акцент вокруг выбранного дропа, который удерживает внимание.\n\n"
+            "🔥 Прогрев — свой звук или видео перед дропом; основной трек временно уходит на фон\n"
+            "🟦 Объект — фигура появляется в такт на склейках до дропа\n"
+            "✨ Эффект — FX на дропе, переходы между клипами и стилизация\n"
+            "👆 Движение — жест рукой или головой, который зритель повторяет в такт\n"
+            "💭 Мысль — короткая ИИ-реплика перед дропом\n\n"
             "Выбери тип ↓",
             reply_markup=_kb(
-                [BTN_HOOK_CAT_SOUND, BTN_HOOK_CAT_OBJECT],
+                [BTN_HOOK_CAT_WARMUP, BTN_HOOK_CAT_OBJECT],
                 [BTN_HOOK_CAT_EFFECT, BTN_HOOK_CAT_MOTION],
                 [BTN_HOOK_CAT_THOUGHT],
                 [BTN_BACK],
@@ -4848,24 +5418,25 @@ class BlastBotApp:
             await self.store.set(st)
             await self._ask_f2_shape(message, st)
             return
-        if text == BTN_HOOK_CAT_SOUND:
+        if text == BTN_HOOK_CAT_WARMUP:
             if st.hook_drop_t is None:
-                await message.answer("Для «Звука» нужен момент дропа — вернись и выбери его.")
-                await self._ask_hook_drop(message, st)
-                return
-            _clip_start = float(st.user_clip_start_sec or 0.0)
-            if (float(st.hook_drop_t) - _clip_start) <= 1.0:
-                await message.answer(
-                    "Дроп слишком близко к началу отрывка: для «Звука» нужно ≥1с "
-                    "до дропа (звук играет в окне до хука). Выбери дроп позже."
-                )
+                await message.answer("Для «Прогрева» нужен момент дропа — вернись и выбери его.")
                 await self._ask_hook_drop(message, st)
                 return
             st.hook_category = "sound"
+            st.warmup_kind = ""
             st.f1_sound_url = ""
             st.f1_sound_text = ""
+            _reset_f6(st)
+            if not _warmup_video_enabled():
+                # Рукав видео выключен: ведём сразу на звук — это в точности
+                # прежнее поведение F1, развилки юзер не видит.
+                st.warmup_kind = "sound"
+                await self.store.set(st)
+                await self._ask_f1_sound(message, st)
+                return
             await self.store.set(st)
-            await self._ask_f1_sound(message, st)
+            await self._ask_warmup_kind(message, st)
             return
         if text == BTN_HOOK_CAT_EFFECT:
             if st.hook_drop_t is None:
@@ -5053,7 +5624,7 @@ class BlastBotApp:
                 [BTN_PHOTO_STYLE_WARM, BTN_PHOTO_STYLE_COLD],
                 [BTN_PHOTO_STYLE_VINTAGE, BTN_PHOTO_STYLE_BW],
                 [BTN_PHOTO_STYLE_VHS, BTN_PHOTO_STYLE_NIGHT],
-                [BTN_PHOTO_STYLE_NONE],
+                [BTN_FX_SKIP],
                 [BTN_BACK],
             ),
         )
@@ -5062,6 +5633,9 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
             await self._ask_photo_transition(message, st)
+            return
+        if text in {BTN_FX_SKIP, BTN_PHOTO_STYLE_NONE}:
+            await self._ask_style_skip_confirm(message, st, STYLE_SKIP_ORIGIN_PHOTO)
             return
         style = _PHOTO_STYLE_BY_BUTTON.get(text)
         if style is None:
@@ -5122,6 +5696,7 @@ class BlastBotApp:
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
                 [BTN_FX_EX_BLACKWHITE, BTN_FX_EX_CRYSTAL],
                 [BTN_FX_EX_NIGHT, BTN_FX_EX_WAVE],
+                [BTN_FX_SKIP],
                 [BTN_BACK],
             ),
         )
@@ -5133,6 +5708,9 @@ class BlastBotApp:
         text = str(message.text or "").strip()
         if text == BTN_BACK:
             await self._ask_visual_transition(message, st)
+            return
+        if text == BTN_FX_SKIP:
+            await self._ask_style_skip_confirm(message, st, STYLE_SKIP_ORIGIN_VISUAL)
             return
         style = _FX_EXTRA_BY_BUTTON.get(text)
         if style is None:
@@ -5251,7 +5829,10 @@ class BlastBotApp:
             await self._ask_effect_transition(message, st)
             return
         if text == BTN_FX_SKIP:
-            st.effect_extra = ""
+            await self._ask_style_skip_confirm(
+                message, st, STYLE_SKIP_ORIGIN_EFFECT_EXTRA
+            )
+            return
         else:
             ex = _FX_EXTRA_BY_BUTTON.get(text)
             if ex is None:
@@ -5265,10 +5846,93 @@ class BlastBotApp:
             await message.answer("Нужно выбрать хотя бы один эффект из трёх. Начнём заново с хука.")
             await self._ask_effect_hook(message, st)
             return
+        if st.effect_extra in FX_EXTRA_ALWAYS_FULL:
+            # окно не выбирается — эффект по определению на весь ролик
+            st.effect_extra_full = True
+            await self.store.set(st)
+            await self._after_effect_extra(message, st)
+            return
         if st.effect_extra:
             await self._ask_effect_extra_full(message, st)
             return
         await self._after_effect_extra(message, st)
+
+    async def _ask_style_skip_confirm(
+        self, message: Message, st: ChatState, origin: str
+    ) -> None:
+        if origin not in {
+            STYLE_SKIP_ORIGIN_VISUAL,
+            STYLE_SKIP_ORIGIN_PHOTO,
+            STYLE_SKIP_ORIGIN_EFFECT_EXTRA,
+        }:
+            raise ValueError(f"unknown style skip origin: {origin!r}")
+        st.style_skip_origin = origin
+        st.stage = STAGE_WAIT_STYLE_SKIP_CONFIRM
+        await self.store.set(st)
+        await message.answer(
+            STYLE_SKIP_WARNING,
+            reply_markup=_kb([BTN_CONFIRM], [BTN_BACK]),
+        )
+
+    async def _handle_wait_style_skip_confirm(
+        self, message: Message, st: ChatState
+    ) -> None:
+        text = str(message.text or "").strip()
+        origin = str(st.style_skip_origin or "")
+
+        if text == BTN_BACK:
+            st.style_skip_origin = ""
+            await self.store.set(st)
+            if origin == STYLE_SKIP_ORIGIN_VISUAL:
+                await self._ask_visual_style(message, st)
+                return
+            if origin == STYLE_SKIP_ORIGIN_PHOTO:
+                await self._ask_photo_style(message, st)
+                return
+            if origin == STYLE_SKIP_ORIGIN_EFFECT_EXTRA:
+                await self._ask_effect_extra(message, st)
+                return
+            await message.answer("Не удалось восстановить шаг стилизации. Выбери настройки заново.")
+            await self._ask_hook_choice(message, st)
+            return
+
+        if text != BTN_CONFIRM:
+            await message.answer(
+                "Выбери «Подтвердить» или «Назад».",
+                reply_markup=_kb([BTN_CONFIRM], [BTN_BACK]),
+            )
+            return
+
+        st.style_skip_origin = ""
+        if origin == STYLE_SKIP_ORIGIN_VISUAL:
+            st.visual_style = ""
+            st.visuals_done = True
+            await self.store.set(st)
+            await self._proceed_to_versions_or_confirm(message, st)
+            return
+
+        if origin == STYLE_SKIP_ORIGIN_PHOTO:
+            st.photo_style = "none"
+            st.visuals_done = True
+            await self.store.set(st)
+            await self._proceed_to_versions_or_confirm(message, st)
+            return
+
+        if origin == STYLE_SKIP_ORIGIN_EFFECT_EXTRA:
+            st.effect_extra = ""
+            st.effect_extra_full = False
+            await self.store.set(st)
+            if not (st.effect_hook or st.effect_transition):
+                await message.answer(
+                    "Нужно выбрать хотя бы один эффект из трёх. Начнём заново с хука."
+                )
+                await self._ask_effect_hook(message, st)
+                return
+            await self._after_effect_extra(message, st)
+            return
+
+        await message.answer("Не удалось подтвердить пропуск. Выбери стилизацию заново.")
+        await self._ask_hook_choice(message, st)
 
     async def _ask_effect_extra_full(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_EFFECT_EXTRA_FULL
@@ -5388,6 +6052,250 @@ class BlastBotApp:
         await message.answer(
             f"Ок, «Объект»: фигура «{text}». На склейках до дропа — она; "
             f"на дропе — молния; после дропа — рандомные F3-переходы."
+        )
+        await self._proceed_to_versions_or_confirm(message, st)
+
+    # ── «Прогрев»: звук (F1) или видео (F6). Mirror of tg_bot_botapi. ──
+    async def _ask_warmup_kind(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_WARMUP_KIND
+        await self.store.set(st)
+        await message.answer(
+            "«Прогрев»: что поставим перед дропом?\n\n"
+            f"• *{BTN_WARMUP_SOUND}* — твой звук (разгон, риз, голос) поверх футажа.\n"
+            f"• *{BTN_WARMUP_VIDEO}* — твоя вырезка (кусок интервью, мем) во весь "
+            "кадр со своим звуком; трек на это время уходит на фон.\n\n"
+            "Для звука на дропе бьёт молния; видео сменяется монтажом без молнии.",
+            parse_mode="Markdown",
+            reply_markup=_kb([BTN_WARMUP_SOUND, BTN_WARMUP_VIDEO], [BTN_BACK]),
+        )
+
+    async def _handle_wait_warmup_kind(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_hook_type(message, st)
+            return
+        if text == BTN_WARMUP_SOUND:
+            st.warmup_kind = "sound"
+            _reset_f6(st)
+            await self.store.set(st)
+            await self._ask_f1_sound(message, st)
+            return
+        if text == BTN_WARMUP_VIDEO:
+            st.warmup_kind = "video"
+            st.f1_sound_url = ""
+            st.f1_sound_text = ""
+            await self.store.set(st)
+            await self._ask_f6_video(message, st)
+            return
+        await message.answer("Выбери кнопкой: звук или видео.")
+
+    async def _ask_f6_video(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_F6_VIDEO
+        await self.store.set(st)
+        await message.answer(
+            "«Прогрев видео»: пришли вырезку, которая сыграет ДО дропа — "
+            "кусок интервью, мем, что угодно цепляющее.\n"
+            f"Длина {F6_MIN_VIDEO_SEC:.0f}–{F6_MAX_VIDEO_SEC:.0f}с (длиннее — обрежу "
+            "по началу), вес до 20 МБ.\n"
+            "Видео встанет во весь кадр со своим звуком, трек на это время уйдёт "
+            # Mirror team bot: keep the optional paragraph inside the same text
+            # argument; a comma before '+' becomes unary-plus on str at runtime.
+            "на фон и сменится основным монтажом ровно на дропе."
+            + (
+                "\n\nМожно и ссылкой: пришли ссылку на YouTube, а следующим "
+                "сообщением — тайминги нужного куска."
+                if self.settings.external_video_source_enabled else ""
+            ),
+            reply_markup=_kb([BTN_BACK]),
+        )
+
+    async def _ask_f6_yt_range(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_F6_YT_RANGE
+        await self.store.set(st)
+        await message.answer(
+            "Ссылку принял. Теперь пришли тайминги нужного куска: "
+            "1:20-1:35 или 80-95 (в секундах), доли — через точку.\n"
+            f"Длина куска — {F6_MIN_VIDEO_SEC:.0f}–{F6_MAX_VIDEO_SEC:.0f}с: "
+            "именно он сыграет перед дропом.",
+            reply_markup=_kb([BTN_BACK]),
+        )
+
+    async def _handle_wait_f6_yt_range(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            st.f6_source_url = ""
+            await self.store.set(st)
+            await self._ask_f6_video(message, st)
+            return
+
+        # Общий парсер режет строку по ПЕРВОМУ пробелу, поэтому «0:12 - 0:19»
+        # он не понимает — а люди пишут именно так. Схлопываем пробелы вокруг
+        # тире локально, не трогая парсер основного флоу выбора отрывка.
+        normalized = re.sub(r"\s*[-\u2013\u2014]\s*", "-", text)
+        parsed = self._parse_timing(normalized)
+        if parsed is None:
+            await message.answer(
+                "Не разобрал тайминги. Формат: 1:20-1:35 или 80-95 (в секундах). "
+                "Доли секунды — через точку."
+            )
+            return
+        start_sec, end_sec = parsed
+        span = float(end_sec) - float(start_sec)
+        if span < F6_MIN_VIDEO_SEC or span > F6_MAX_VIDEO_SEC:
+            await message.answer(
+                f"Кусок должен быть от {F6_MIN_VIDEO_SEC:.0f} до "
+                f"{F6_MAX_VIDEO_SEC:.0f} секунд, а вышло {span:.1f}с. Пришли другие тайминги."
+            )
+            return
+
+        await message.answer("Вырезаю кусок из ролика… это займёт до минуты.")
+        try:
+            got = await self.orchestrator.fetch_external_video(
+                url=str(st.f6_source_url), start_sec=start_sec, end_sec=end_sec,
+            )
+        except OrchestratorHTTPError as e:
+            log.warning(
+                "f6_youtube_fetch_failed chat=%s status=%s detail=%s",
+                st.chat_id, e.status_code, e.detail,
+            )
+            if e.status_code == 422:
+                await message.answer(f"Не получилось: {e.detail}\nПопробуй другие тайминги.")
+                return
+            await message.answer(
+                "Не удалось достать видео по ссылке. Пришли файл сообщением — "
+                "так надёжнее."
+            )
+            await self._ask_f6_video(message, st)
+            return
+        except Exception as e:
+            log.exception("f6_youtube_fetch_crashed chat=%s err=%s", st.chat_id, e)
+            await message.answer(
+                "Не удалось достать видео по ссылке. Пришли файл сообщением."
+            )
+            await self._ask_f6_video(message, st)
+            return
+
+        st.f6_video_url = str(got.get("video_url") or "")
+        st.f6_video_width = int(got.get("width") or 0)
+        st.f6_video_height = int(got.get("height") or 0)
+        st.f6_video_duration = float(got.get("duration_sec") or 0.0)
+        st.f6_video_has_audio = bool(got.get("has_audio", True))
+        st.hook_type = "standard"
+        await self.store.set(st)
+        if not (st.f6_video_url and st.f6_video_width and st.f6_video_height):
+            await message.answer(
+                "Источник вернул неполные данные о видео. Пришли файл сообщением."
+            )
+            await self._ask_f6_video(message, st)
+            return
+
+        note = "" if st.f6_video_has_audio else " (в куске нет звука — трек не приглушаю)"
+        await message.answer(
+            f"Готово: {st.f6_video_duration:.1f}с, "
+            f"{st.f6_video_width}×{st.f6_video_height}{note}.\n"
+            "Кусок сыграет с первого кадра и сменится основным монтажом на дропе."
+        )
+        await self._proceed_to_versions_or_confirm(message, st)
+
+    async def _handle_wait_f6_video(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_warmup_kind(message, st)
+            return
+
+        spec = _extract_video_spec(message)
+        if spec is None:
+            # Ссылка вместо файла: ветка YouTube. Гейт — общий флаг
+            # EXTERNAL_VIDEO_SOURCE_ENABLED (его же читает оркестратор), чтобы
+            # не звать заведомо выключенный эндпоинт и не обещать в тексте то,
+            # чего сейчас нет. Mirror of tg_bot_botapi.
+            if text and self.settings.external_video_source_enabled:
+                from mlcore.media.external_video import is_supported_url
+
+                if is_supported_url(text):
+                    st.f6_source_url = text
+                    await self.store.set(st)
+                    await self._ask_f6_yt_range(message, st)
+                    return
+            await message.answer(
+                "Нужен видео-файл для «Прогрева». Пришли mp4/mov сообщением "
+                "или нажми «Назад»."
+            )
+            return
+        if message.chat is None:
+            return
+        if st.hook_drop_t is None:
+            await message.answer("Для «Прогрева» нужен момент дропа — вернись и выбери его.")
+            await self._ask_hook_drop(message, st)
+            return
+
+        chat_id = int(message.chat.id)
+        file_id, original_name = spec
+        incoming_dir = self.settings.tmp_dir / str(chat_id) / "hook_video"
+        incoming_dir.mkdir(parents=True, exist_ok=True)
+        src_name = f"{_now_tag()}_{uuid.uuid4().hex[:8]}_{_safe_name(original_name)}"
+        src_path = incoming_dir / src_name
+
+        try:
+            await message.answer("Загружаю видео…")
+            await self._download_telegram_audio_with_retry(
+                bot=message.bot,
+                file_id=file_id,
+                dest=src_path,
+                chat_id=chat_id,
+                original_name=original_name,
+            )
+            # Перекодируем ВСЕГДА: HEVC/VP9 из Telegram AE на ноде не откроет.
+            prep: VideoPrepareResult = await asyncio.to_thread(
+                normalize_video_for_ae,
+                src=src_path,
+                work_dir=incoming_dir / "prepared",
+                ffmpeg_bin=self.settings.ffmpeg_bin,
+                ffprobe_bin=self.settings.ffprobe_bin,
+            )
+            key = self._build_raw_audio_key(
+                chat_id=chat_id, file_name=f"f6hook_{prep.output_path.name}"
+            )
+            video_url = await asyncio.to_thread(
+                self.s3.upload_file,
+                path=prep.output_path,
+                bucket=self.settings.s3_bucket_raw_audio,
+                key=key,
+                content_type="video/mp4",
+            )
+        except TelegramBadRequest as e:
+            log.exception("f6_video_tg_bad_request chat=%s file_id=%s err=%s", chat_id, file_id, e)
+            if _is_tg_file_too_big_error(e):
+                await message.answer(
+                    "Telegram не даёт скачать этот файл — он тяжелее 20 МБ. "
+                    "Пришли кусок покороче или пожми его перед отправкой."
+                )
+            else:
+                await message.answer(f"Не удалось скачать видео из Telegram: {e}")
+            return
+        except Exception as e:
+            log.exception("f6_video_prepare_failed chat=%s file_id=%s err=%s", chat_id, file_id, e)
+            await message.answer(f"Не удалось подготовить видео: {e}. Попробуй ещё раз или «Назад».")
+            return
+
+        st.f6_video_url = str(video_url)
+        st.f6_video_width = int(prep.width)
+        st.f6_video_height = int(prep.height)
+        st.f6_video_duration = float(prep.duration_sec)
+        st.f6_video_has_audio = bool(prep.has_audio)
+        st.hook_type = "standard"
+        await self.store.set(st)
+
+        notes = []
+        if prep.trimmed:
+            notes.append(f"обрезал до {F6_MAX_VIDEO_SEC:.0f}с")
+        if not prep.has_audio:
+            notes.append("в файле нет звука — трек оставлю на полной громкости")
+        suffix = (" (" + "; ".join(notes) + ")") if notes else ""
+        await message.answer(
+            f"Ок, «Прогрев видео»: {prep.duration_sec:.1f}с, "
+            f"{prep.width}×{prep.height}{suffix}.\n"
+            "Вырезка сыграет с первого кадра и сменится основным монтажом на дропе."
         )
         await self._proceed_to_versions_or_confirm(message, st)
 
@@ -5550,6 +6458,7 @@ class BlastBotApp:
                 [BTN_SUB_MODE_SCENES],
                 [BTN_SUB_MODE_4TH],
                 [BTN_SUB_MODE_TRENDY, BTN_SUB_MODE_BRAT],
+                [BTN_BACK],
             ),
         )
 
@@ -5580,10 +6489,17 @@ class BlastBotApp:
         st.visuals_done = False
         st.f1_sound_url = ""
         st.f1_sound_text = ""
+        st.warmup_kind = ""
+        st.f6_video_url = ""
+        st.f6_video_width = 0
+        st.f6_video_height = 0
+        st.f6_video_duration = 0.0
+        st.f6_video_has_audio = True
         st.f2_shape = ""
         st.colors_done = False
         st.subtitle_color_hex = ""
         st.accent_color_hex = ""
+        st.frame_id = ""
         st.battery_mode = False
         st.battery_cases = []
         st.versions_count = 1
@@ -5726,14 +6642,11 @@ class BlastBotApp:
         st.active_job_id = ""
         st.active_job_ids = []
         st.completed_job_ids = []
-        st.stage = STAGE_WAIT_LYRICS_TEXT
-        await self.store.set(st)
-
-        await message.answer(
-            "Трек готов! Пришли текст песни обычным сообщением. "
-            "Он нужен для точной синхронизации субтитров с аудио.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+        # The old «пришли весь текст песни» step is gone: under the local_ctc
+        # aligner only the fragment is used as reference text, so the full
+        # lyrics were collected and thrown away. Timing comes first now — the
+        # user picks the window, then copies the lines that sound in it.
+        await self._ask_timing_choice(message, st, prefix="Трек готов! ")
 
     async def _ensure_prepared_audio_for_confirm(self, *, message: Message, st: ChatState) -> Path | None:
         prepared_raw = str(st.prepared_audio_local_path or "").strip()
@@ -5800,86 +6713,27 @@ class BlastBotApp:
         log.info("prepared_audio_recover_ok chat=%s path=%s", chat_id, recovered_path)
         return recovered_path
 
-    async def _handle_wait_lyrics_choice(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if text and text not in {BTN_SEND_LYRICS, BTN_SKIP_LYRICS} and not _is_control_button_text(text):
-            await self._handle_wait_lyrics_text(message, st)
-            return
-
-        if text == BTN_SEND_LYRICS:
-            st.stage = STAGE_WAIT_LYRICS_TEXT
-            await self.store.set(st)
-            await message.answer(
-                "Пришли текст песни обычным сообщением (не кнопкой).",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            return
-
-        if text == BTN_SKIP_LYRICS:
-            st.stage = STAGE_WAIT_LYRICS_TEXT
-            await self.store.set(st)
-            await message.answer(
-                "Теперь запускаем генерацию только с текстом песни — пришли его обычным сообщением.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            return
-
-        st.stage = STAGE_WAIT_LYRICS_TEXT
-        await self.store.set(st)
-        await message.answer(
-            "Пришли текст песни обычным сообщением.",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-
-    async def _handle_wait_lyrics_text(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if not text:
-            await message.answer("Жду текст песни сообщением.")
-            return
-        if _is_control_button_text(text):
-            await message.answer("Нужен именно текст песни сообщением. После этого перейду к следующему шагу.")
-            return
-
-        st.lyrics_text = text
-        st.target_fragment = ""
-        st.target_fragment_explicit = False
-        # No fork: go straight to the "paste the lines" step (the "let AI decide"
-        # branch was removed — the fragment is now always user-supplied).
-        st.stage = STAGE_WAIT_FRAGMENT_TEXT
-        await self.store.set(st)
-        # Phase 2b: kick off the footage-bucket ranker in the background now that
-        # we have lyrics. By the time the user reaches the "Футажи" step the
-        # ranked shortlist is ready (zero added latency). No-op when flow is off.
-        await self._trigger_vibe_ranker_task(st)
-        await message.answer(
-            "Скопируй и пришли нужные строки прямо из текста песни — те слова, "
-            "которые хочешь видеть в клипе. Например — припев трека, без "
-            "пояснительных слов типа «куплет:» и т.п.",
-            reply_markup=ReplyKeyboardRemove(),
+    async def _handle_legacy_lyrics_stage(self, message: Message, st: ChatState) -> None:
+        """Sessions parked at the removed «пришли весь текст песни» step when
+        the new flow shipped. There is no lyrics step any more, so restart at
+        the first step of the current flow (timing)."""
+        await self._ask_timing_choice(
+            message,
+            st,
+            prefix="Шаги обновились: полный текст песни больше не нужен. ",
         )
 
     async def _handle_wait_fragment_choice(self, message: Message, st: ChatState) -> None:
-        text = str(message.text or "").strip()
-        if text == BTN_SEND_FRAGMENT:
-            st.stage = STAGE_WAIT_FRAGMENT_TEXT
-            await self.store.set(st)
-            await message.answer(
-                "Скопируй и пришли нужные строки прямо из текста песни — те слова, которые хочешь видеть в клипе. "
-                "Например — припев трека.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
-            return
-
-        if text == BTN_SKIP_FRAGMENT:
-            st.target_fragment = ""
-            st.target_fragment_explicit = False
-            await self._ask_timing_choice(message, st)
-            return
-
-        await message.answer("Выбери кнопку: «Указать строки из текста» или «На усмотрение ИИ».")
+        # Legacy stage, reachable only from a session parked on it. There is no
+        # fork any more (the lines are mandatory under local_ctc), so whatever
+        # the user pressed, ask for the lines.
+        await self._ask_fragment_text(message, st)
 
     async def _handle_wait_fragment_text(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            await self._ask_timing_choice(message, st)
+            return
         if not text:
             await message.answer("Жду интересующий фрагмент обычным текстовым сообщением.")
             return
@@ -5887,16 +6741,32 @@ class BlastBotApp:
             await message.answer("Нужны именно строки из текста песни — скопируй их и пришли сообщением.")
             return
 
+        density_error = self._alignment_density_error(
+            fragment=text,
+            clip_start_sec=float(st.user_clip_start_sec or 0.0),
+            clip_end_sec=float(st.user_clip_end_sec or 0.0),
+        )
+        if density_error:
+            await message.answer(density_error)
+            return
+
         st.target_fragment = text
         st.target_fragment_explicit = True
+        # The full-lyrics step is gone: these lines ARE the reference text for
+        # the aligner and the input the footage ranker reads, so they are kept
+        # in lyrics_text too (everything downstream still reads that field).
+        st.lyrics_text = text
         st.stage = STAGE_WAIT_CONFIRM_TEXT
         await self.store.set(st)
+        # Phase 2b: kick off the footage-bucket ranker in the background now
+        # that we have the lines. By the time the user reaches the "Футажи"
+        # step the ranked shortlist is ready. No-op when the flow is off.
+        await self._trigger_vibe_ranker_task(st)
 
-        lyrics_preview = st.lyrics_text[:200] + ("…" if len(st.lyrics_text) > 200 else "")
         await message.answer(
-            f"Подтвердить текст?\n\n"
-            f"*Текст песни:*\n{lyrics_preview}\n\n"
-            f"*Строки из текста:*\n{st.target_fragment}",
+            f"Всё верно?\n\n"
+            f"*Отрезок:* {self._timing_label(st)}\n\n"
+            f"*Строки:*\n{st.target_fragment}",
             reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]),
             parse_mode="Markdown",
         )
@@ -5904,22 +6774,18 @@ class BlastBotApp:
     async def _handle_wait_confirm_text(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM_YES:
-            await self._ask_timing_choice(message, st)
+            await self._ask_bg_mode(message, st)
             return
         if text == BTN_CONFIRM_BACK:
             st.lyrics_text = ""
-            st.target_fragment = ""
-            st.target_fragment_explicit = False
-            st.stage = STAGE_WAIT_LYRICS_TEXT
-            await self.store.set(st)
-            await message.answer(
-                "Пришли текст песни обычным сообщением.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
+            await self._ask_fragment_text(message, st)
             return
         await message.answer("Выбери: «Да» или «Вернуться назад».", reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]))
 
     async def _handle_wait_subtitles_mode(self, message: Message, st: ChatState) -> None:
+        if str(message.text or "").strip() == BTN_BACK:
+            await self._ask_bg_mode(message, st)
+            return
         mode = _parse_subtitles_mode_choice(message.text or "")
         if mode is None:
             await message.answer(
@@ -6141,22 +7007,107 @@ class BlastBotApp:
         )
 
     async def _proceed_after_render_engine(self, message: Message, st: ChatState) -> None:
-        paid = await self.credits_db.has_paid(st.chat_id)
-        if paid:
-            st.stage = STAGE_WAIT_VERSIONS
-            await self.store.set(st)
-            await message.answer(
-                "Сколько версий сгенерировать?",
-                reply_markup=_kb(["1", "2", "3", "4", "5"]),
-            )
-            return
-        st.versions_count = 1
-        st.stage = STAGE_WAIT_CONFIRM
+        # Free users get the same 1..5 picker as paying ones — the free quota
+        # is 5 generations, so what caps a pick is the balance check in
+        # _handle_wait_versions, not a narrower UI. Picks that burn >=80% of
+        # the free quota are confirmed once there.
+        await self._ask_versions(message, st)
+
+    def _free_generation_limit(self) -> int:
+        return max(1, int(getattr(self.settings, "initial_credits", 5) or 5))
+
+    # ── Рамка — шаг перед версиями (не хук, спрашиваем на любом пути) ──
+    # Перехват стоит ВНУТРИ _ask_versions: в версии ведут все ветки, и одна
+    # точка входа гарантирует, что шаг не потеряется ни на одной из них.
+    async def _ask_frame(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_FRAME
         await self.store.set(st)
         await message.answer(
-            self._final_confirm_text(st),
-            parse_mode="Markdown",
-            reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]),
+            "Добавить рамку поверх видео?\n"
+            "• Скруглённое окно — поля со всех сторон.\n"
+            "• Мягкие шторки — растушёванные затемнения сверху и снизу.\n"
+            "• Чёрные полосы — киношный леттербокс.",
+            reply_markup=_kb(
+                [BTN_FRAME_ROUNDED],
+                [BTN_FRAME_SOFT_BARS, BTN_FRAME_LETTERBOX],
+                [BTN_FRAME_NONE],
+                [BTN_BACK],
+            ),
+        )
+
+    async def _back_before_frame(self, message: Message, st: ChatState) -> None:
+        """«Назад» с рамки/версий — на последний шаг настроек этой ветки."""
+        if self._render_engine_selector_enabled():
+            await self._ask_render_engine(message, st)
+            return
+        if st.bg_mode == "solid_strobe":
+            # У строба палитра не спрашивается: последний шаг — стиль склейки.
+            st.visuals_done = False
+            await self.store.set(st)
+            await self._ask_strobe_cut(message, st)
+            return
+        if HOOK_FLOW_ENABLED or st.bg_mode == "solid":
+            await self._ask_subtitle_color(message, st)
+            return
+        await self._ask_subtitles_mode(message, st)
+
+    async def _handle_wait_frame(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_BACK:
+            st.frame_id = ""
+            await self.store.set(st)
+            await self._back_before_frame(message, st)
+            return
+        frame = _FRAME_BY_BUTTON.get(text)
+        if frame is None:
+            await message.answer("Выбери рамку кнопкой ниже или нажми «Без рамки».")
+            return
+        st.frame_id = frame
+        await self.store.set(st)
+        if frame == "none":
+            await message.answer("Ок, без рамки.")
+        else:
+            await message.answer(f"Ок, рамка: «{text}».")
+        await self._ask_versions(message, st)
+
+    async def _ask_versions(self, message: Message, st: ChatState) -> None:
+        if (
+            st.hook_enabled
+            and st.hook_category == "sound"
+            and st.warmup_kind == "video"
+            and st.f6_video_url
+            and st.hook_drop_t is not None
+        ):
+            required = max(0.0, float(st.hook_drop_t) - float(st.user_clip_start_sec or 0.0))
+            gap = f6_leading_gap_sec(
+                clip_start=float(st.user_clip_start_sec or 0.0),
+                drop_time=float(st.hook_drop_t),
+                duration=float(st.f6_video_duration or 0.0),
+            )
+            if gap > 0.0:
+                await message.answer(
+                    f"До видео останется незакрытый зазор {gap:.1f}с — в него попадёт "
+                    "случайный футаж, поэтому запуск остановлен.\n\n"
+                    f"Загрузи видео длиной не меньше {required:.1f}с либо вернись назад "
+                    "и измени начало фрагмента или момент дропа."
+                )
+                await self._ask_f6_video(message, st)
+                return
+        # The frame is a fixed 1080x1920 PNG mask laid over every layer, so it
+        # only means anything in a vertical frame. Offering it elsewhere would
+        # letterbox a wide render with a portrait mask.
+        vertical = _render_preset_for_bucket(*self._selected_bucket_slot(st)) == "vertical"
+        if FRAME_FLOW_ENABLED and vertical and not st.frame_id:
+            await self._ask_frame(message, st)
+            return
+        paid = await self.credits_db.has_paid(st.chat_id)
+        text = VERSIONS_PROMPT
+        if not paid:
+            text += VERSIONS_PROMPT_FREE_SUFFIX.format(limit=self._free_generation_limit())
+        st.stage = STAGE_WAIT_VERSIONS
+        await self.store.set(st)
+        await message.answer(
+            text, reply_markup=_kb(list(VERSION_CHOICE_BUTTONS), [BTN_BACK])
         )
 
     async def _handle_wait_render_engine(self, message: Message, st: ChatState) -> None:
@@ -6224,24 +7175,62 @@ class BlastBotApp:
         await message.answer("Выбери: «Да» или «Вернуться назад».", reply_markup=_kb([BTN_CONFIRM_YES, BTN_CONFIRM_BACK]))
 
     async def _handle_wait_versions(self, message: Message, st: ChatState) -> None:
+        if str(message.text or "").strip() == BTN_BACK:
+            # Рамку спрашивают прямо перед версиями: если она уже выбрана,
+            # шаг назад ведёт к ней, иначе — к последнему шагу настроек.
+            if st.frame_id:
+                st.frame_id = ""
+                await self.store.set(st)
+                await self._ask_frame(message, st)
+                return
+            await self._back_before_frame(message, st)
+            return
         n = _parse_versions_choice(message.text or "")
         if n is None:
-            await message.answer("Выбери количество версий: 1, 2, 3, 4 или 5.")
+            await message.answer(VERSIONS_INVALID)
             return
         st.versions_count = int(n)
         bal = await self.credits_db.get_balance(st.chat_id)
         if int(n) > bal:
             await message.answer(
                 f"Недостаточно генераций. У тебя {bal}, а выбрано {n}. Выбери меньше.",
-                reply_markup=_kb(["1", "2", "3", "4", "5"]),
+                reply_markup=_kb(list(VERSION_CHOICE_BUTTONS), [BTN_BACK]),
             )
             return
+        # Free tier only: a pick that eats most of the quota is confirmed
+        # explicitly. Paying users have no such quota, so no warning.
+        if not await self.credits_db.has_paid(st.chat_id):
+            warning = versions_warning_text(int(n), self._free_generation_limit())
+            if warning:
+                st.stage = STAGE_WAIT_VERSIONS_WARNING
+                await self.store.set(st)
+                await message.answer(
+                    warning,
+                    reply_markup=_kb([BTN_VERSIONS_WARN_CONTINUE], [BTN_VERSIONS_WARN_CHANGE]),
+                )
+                return
+        await self._show_final_confirm_after_versions(message, st)
+
+    async def _show_final_confirm_after_versions(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_CONFIRM
         await self.store.set(st)
         await message.answer(
-            self._final_confirm_text(st, versions=int(n)),
+            self._final_confirm_text(st, versions=int(st.versions_count or 1)),
             parse_mode="Markdown",
             reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]),
+        )
+
+    async def _handle_wait_versions_warning(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_VERSIONS_WARN_CONTINUE:
+            await self._show_final_confirm_after_versions(message, st)
+            return
+        if text == BTN_VERSIONS_WARN_CHANGE:
+            await self._ask_versions(message, st)
+            return
+        await message.answer(
+            VERSIONS_WARN_INVALID,
+            reply_markup=_kb([BTN_VERSIONS_WARN_CONTINUE], [BTN_VERSIONS_WARN_CHANGE]),
         )
 
     async def _handle_wait_confirm(self, message: Message, st: ChatState) -> None:
@@ -6259,11 +7248,13 @@ class BlastBotApp:
 
         chat_id = int(message.chat.id)
         user_id = message.from_user.id if message.from_user else chat_id
-        if not self._has_forced_alignment_reference_text(st):
-            st.stage = STAGE_WAIT_LYRICS_TEXT
+        # Order mirrors the flow: window first, lines second.
+        if not self._has_timing_window(st):
+            st.stage = STAGE_WAIT_TIMING_INPUT
             await self.store.set(st)
             await message.answer(
-                "Для запуска нужен текст песни. Пришли его обычным сообщением.",
+                "Для точной синхронизации укажи тайминг отрывка, например: "
+                "1:20-1:35.",
                 reply_markup=ReplyKeyboardRemove(),
             )
             return
@@ -6278,15 +7269,6 @@ class BlastBotApp:
             return
         if self._needs_explicit_local_alignment_fragment(st):
             await self._ask_explicit_local_alignment_fragment(message, st)
-            return
-        if not self._has_local_alignment_inputs(st):
-            st.stage = STAGE_WAIT_TIMING_INPUT
-            await self.store.set(st)
-            await message.answer(
-                "Для точной синхронизации укажи тайминг этих строк, например: "
-                "1:20-1:35.",
-                reply_markup=ReplyKeyboardRemove(),
-            )
             return
 
         try:
@@ -6410,6 +7392,7 @@ class BlastBotApp:
             return
 
         key = self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name)
+        launched = False
         try:
             versions = max(1, min(5, int(st.versions_count or 1)))
             await message.answer("Запускаю генерацию…")
@@ -6476,6 +7459,7 @@ class BlastBotApp:
             st.last_status_text = initial_text
             st.last_status_msg_at = time.time()
             await self.store.set(st)
+            launched = True
         except Exception as e:
             err_text = str(e)
             if deducted_versions > 0:
@@ -6512,6 +7496,173 @@ class BlastBotApp:
             )
             self._reset_processing_state(st, next_stage=STAGE_WAIT_AUDIO)
             await self.store.set(st)
+
+        if launched:
+            # Runs ON TOP of the render, which is already queued: the survey and
+            # the methodology never gate delivery of the finished video, and a
+            # failure here must not touch the generation.
+            await self._start_postgen_marketing_flow(message=message, st=st)
+
+    # ------------------------------------------------------------------
+    # Post-generation marketing flow (survey + methodology)
+    # ------------------------------------------------------------------
+
+    async def _is_free_funnel_chat(self, chat_id: int) -> bool:
+        """True when this chat should see the free-tier marketing funnels.
+
+        Shared by the post-generation rating/pitch funnel and the survey +
+        methodology flow so both agree on who counts as "free", including the
+        hidden chat_id override that lets a paid account review them."""
+        if not await self.credits_db.has_paid(int(chat_id)):
+            return True
+        if int(chat_id) in self.settings.tg_force_free_funnel_chat_ids:
+            log.info("force_free_funnel_override chat=%s", chat_id)
+            return True
+        return False
+
+    async def _is_free_funnel_user(self, st: ChatState) -> bool:
+        return await self._is_free_funnel_chat(int(st.chat_id))
+
+    async def _start_postgen_marketing_flow(self, *, message: Message, st: ChatState) -> None:
+        """First generation → survey (then bridge + methodology). Later ones →
+        methodology only, per RESEND_METHODOLOGY_EVERY_GENERATION.
+
+        Free tier only — this is conversion material, so paying clients get
+        neither the survey nor the document."""
+        try:
+            if not await self._is_free_funnel_user(st):
+                return
+        except Exception as exc:
+            log.warning("postgen_flow_paid_check_failed chat=%s err=%s", st.chat_id, str(exc))
+            return
+        try:
+            # "generation_started" is written exactly once per launched batch
+            # (right above), so count == 1 means this is the first generation.
+            started = await self.credits_db.count_events(st.chat_id, "generation_started")
+        except Exception as exc:
+            log.warning("postgen_flow_count_failed chat=%s err=%s", st.chat_id, str(exc))
+            return
+
+        if int(started) <= 1:
+            await self._send_survey_question(message, SURVEY_FIRST_QUESTION_ID)
+            return
+
+        if not self._should_resend_methodology(int(started)):
+            return
+        await self._send_methodology(message)
+
+    def _should_resend_methodology(self, generations_started: int) -> bool:
+        """Repeat generations: every time, or only the second one (default).
+
+        The spec left this open; the env flag lets marketing flip it without a
+        logic redeploy."""
+        if bool(getattr(self.settings, "resend_methodology_every_generation", False)):
+            return True
+        return int(generations_started) == 2
+
+    async def _send_survey_question(self, message: Message, question_id: str) -> None:
+        question = SURVEY_QUESTIONS.get(str(question_id or ""))
+        if question is None:
+            log.warning("postgen_survey_unknown_question id=%s", question_id)
+            return
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=opt.label,
+                    callback_data=f"{SURVEY_CB_PREFIX}{question.id}:{opt.id}",
+                )]
+                for opt in question.options
+            ]
+        )
+        try:
+            await message.answer(question.text, reply_markup=kb)
+        except Exception as exc:
+            log.warning("postgen_survey_send_failed q=%s err=%s", question.id, str(exc))
+
+    async def _send_methodology(self, message: Message) -> None:
+        try:
+            await message.answer_document(document=METHODOLOGY_FILE_ID)
+        except Exception as exc:
+            log.warning("postgen_methodology_send_failed err=%s", str(exc))
+
+    async def _handle_postgen_survey_callback(self, cb: CallbackQuery) -> None:
+        """Handle pgsurvey:<question_id>:<answer_id> quick answers."""
+        if cb.message is None or cb.message.chat is None:
+            await cb.answer()
+            return
+        chat_id = int(cb.message.chat.id)
+        raw = str(cb.data or "")[len(SURVEY_CB_PREFIX):]
+        try:
+            question_id, answer_id = raw.split(":", 1)
+        except ValueError:
+            await cb.answer()
+            return
+
+        question = SURVEY_QUESTIONS.get(question_id)
+        option = None
+        if question is not None:
+            option = next((o for o in question.options if o.id == answer_id), None)
+        if question is None or option is None:
+            await cb.answer()
+            return
+
+        # Stale keyboard from an already-answered question: acknowledge, do not
+        # re-run the branch (it would re-send the bridge and the document).
+        try:
+            existing = await self.credits_db.get_survey_response(chat_id)
+        except Exception as exc:
+            log.warning("postgen_survey_read_failed chat=%s err=%s", chat_id, str(exc))
+            existing = None
+        if existing and question_id in dict(existing.get("answers") or {}):
+            await cb.answer("Уже ответил.")
+            return
+
+        await cb.answer()
+        try:
+            await cb.message.edit_text(f"{question.text}\n\n✅ {option.label}")
+        except TelegramBadRequest:
+            pass
+
+        try:
+            await self.credits_db.save_survey_answer(
+                chat_id,
+                question_id=question.id,
+                answer_id=option.id,
+                answer_label=option.label,
+                branch_q2=SURVEY_Q2_BRANCH_BY_ANSWER.get(option.id, "") if question.id == "q2" else "",
+                branch_q3=SURVEY_Q3_BRANCH_BY_ANSWER.get(option.id, "") if question.id == "q3" else "",
+                completed=(question.id == "q3"),
+            )
+        except Exception as exc:
+            # Losing an answer must not strand the user mid-survey.
+            log.warning("postgen_survey_save_failed chat=%s q=%s err=%s", chat_id, question.id, str(exc))
+
+        next_id = question.next_by_answer.get(option.id, question.next_default)
+        if next_id:
+            await self._send_survey_question(cb.message, next_id)
+            return
+
+        # Q3 answered → bridge line for the branch, then the methodology. If the
+        # user bought a package mid-survey, keep the answer but stop here: the
+        # bridge and the document are conversion material for free users only.
+        try:
+            free = await self._is_free_funnel_chat(chat_id)
+        except Exception as exc:
+            log.warning("postgen_survey_paid_check_failed chat=%s err=%s", chat_id, str(exc))
+            free = False
+        if not free:
+            try:
+                await cb.message.answer(SURVEY_THANKS)
+            except Exception as exc:
+                log.warning("postgen_thanks_send_failed chat=%s err=%s", chat_id, str(exc))
+            return
+
+        branch = SURVEY_Q3_BRANCH_BY_ANSWER.get(option.id, "")
+        try:
+            await cb.message.answer(bridge_text_for_branch(branch))
+        except Exception as exc:
+            log.warning("postgen_bridge_send_failed chat=%s err=%s", chat_id, str(exc))
+        await self._send_methodology(cb.message)
 
     async def _handle_wait_next(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
@@ -6896,7 +8047,7 @@ class BlastBotApp:
         "Импульс": 24,
     }
 
-    async def _show_purchase_stub(self, message: Message, st: ChatState, recurrent: bool = False) -> None:
+    async def _show_purchase_stub(self, message: Message, st: ChatState, recurrent: bool = False) -> bool:
         username = (st.chat_username or "").lstrip("@") or str(st.chat_id)
         pkg = st.selected_package or "не указан"
         event = "purchase_intent_recurrent" if recurrent else "purchase_intent"
@@ -6908,12 +8059,14 @@ class BlastBotApp:
         if self.tbank and price > 0:
             suffix = "sub" if recurrent else ""
             order_id = f"{st.chat_id}-{pkg.replace(' ', '_')}-{suffix}{uuid.uuid4().hex[:8]}"
+            payment_record_created = False
             try:
                 last_utm = await self.credits_db.get_last_utm(st.chat_id)
                 if recurrent:
                     await self.credits_db.create_recurrent_payment(order_id, st.chat_id, price, pkg, utm=last_utm)
                 else:
                     await self.credits_db.create_payment(order_id, st.chat_id, price, pkg, utm=last_utm)
+                payment_record_created = True
                 pay_url = await self.tbank.create_payment(
                     amount_rub=price,
                     order_id=order_id,
@@ -6952,18 +8105,30 @@ class BlastBotApp:
                     )
                     status_label = "Подписка создана" if recurrent else "Создан"
                     await self._notify_manager_payment(username, pkg, price, status_label)
-                    return
+                    return True
+                raise RuntimeError("T-Bank Init did not return PaymentURL")
             except Exception as e:
-                log.warning("tbank payment creation failed: %s", e)
+                log.exception("tbank payment creation failed: %s", e)
+                if payment_record_created:
+                    updated = await self.credits_db.update_payment_status(order_id, "INIT_FAILED")
+                    if not updated:
+                        log.error("failed to mark T-Bank Init failure order=%s", order_id)
+        else:
+            log.error(
+                "tbank payment creation unavailable configured=%s package=%s price=%s",
+                bool(self.tbank), pkg, price,
+            )
 
-        # Fallback: manager contact
         await message.answer(
-            "Рады, что ты решился попробовать. С тобой свяжется наш менеджер и уточнит "
-            "все интересующие моменты по продукту. Отпишем с этого аккаунта: @impulsemanage\n\n"
-            "У нас все официально: прозрачный эквайринг и, конечно, чек об оплате.",
-            reply_markup=ReplyKeyboardRemove(),
+            "Не удалось сформировать ссылку на оплату из-за технической ошибки. "
+            "Попробуй ещё раз через минуту.",
+            reply_markup=(
+                _kb([BTN_CONFIRM], [BTN_BACK])
+                if recurrent
+                else _kb([BTN_PURCHASE], [BTN_TO_TARIFFS])
+            ),
         )
-        await self._notify_manager(username, pkg)
+        return False
 
     # --- Rating first video ---
     async def _handle_rate_video(self, message: Message, st: ChatState) -> None:
@@ -7165,9 +8330,9 @@ class BlastBotApp:
                 # Бласт is subscription-only now (no one-time option).
                 await self._show_subscription_confirm(message, st)
             else:
-                await self._show_purchase_stub(message, st)
-                st.stage = STAGE_WAIT_PAYMENT
-                await self.store.set(st)
+                if await self._show_purchase_stub(message, st):
+                    st.stage = STAGE_WAIT_PAYMENT
+                    await self.store.set(st)
         else:
             await message.answer(
                 "Выбери из кнопок ниже.",
@@ -7189,9 +8354,9 @@ class BlastBotApp:
     async def _handle_purchase_choice(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_BUY_ONCE:
-            await self._show_purchase_stub(message, st)
-            st.stage = STAGE_WAIT_PAYMENT
-            await self.store.set(st)
+            if await self._show_purchase_stub(message, st):
+                st.stage = STAGE_WAIT_PAYMENT
+                await self.store.set(st)
         elif text == BTN_BUY_SUBSCRIPTION:
             await self._show_subscription_confirm(message, st)
         else:
@@ -7224,9 +8389,9 @@ class BlastBotApp:
     async def _handle_subscription_confirm(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
         if text == BTN_CONFIRM:
-            await self._show_purchase_stub(message, st, recurrent=True)
-            st.stage = STAGE_WAIT_PAYMENT
-            await self.store.set(st)
+            if await self._show_purchase_stub(message, st, recurrent=True):
+                st.stage = STAGE_WAIT_PAYMENT
+                await self.store.set(st)
         elif text == BTN_BACK:
             # No more purchase-choice fork — go back to the packages list.
             await self._show_all_packages(message, st)
@@ -7716,6 +8881,21 @@ class BlastBotApp:
             if user_clip_end_sec is None or user_clip_end_sec <= new_start:
                 user_clip_end_sec = float(end)
 
+        # F6 «Прогрев видео»: сохраняем исходное пользовательское окно трека.
+        # Backend сам добавляет timeline pre-roll под полную длину видео и
+        # отдельно расширяет источник аудио назад. Если передвинуть clip_start
+        # здесь, subtitle flow потеряет величину компенсации.
+        if (
+            st.hook_enabled
+            and st.hook_category == "sound"
+            and st.warmup_kind == "video"
+            and st.f6_video_url
+        ):
+            if st.hook_drop_t is None:
+                raise RuntimeError("F6 video warm-up requires a drop (hook_drop_t)")
+            if user_clip_start_sec is None or user_clip_end_sec is None:
+                raise RuntimeError("F6 video warm-up requires the original clip window")
+
         maintenance_bypass_token = ""
         allow_bypass = self._allow_maintenance_bypass_for_state(st)
         if (
@@ -7763,6 +8943,7 @@ class BlastBotApp:
             maintenance_bypass_token=maintenance_bypass_token,
             rotation_theme=rotation_theme,
             rotation_tags_group=rotation_group,
+            render_preset=_render_preset_for_bucket(rotation_theme, rotation_group),
             bg_mode=str(st.bg_mode or "footage"),
             bg_solid_color=str(st.bg_solid_color or ""),
             hook_enabled=bool(st.hook_enabled),
@@ -7792,9 +8973,21 @@ class BlastBotApp:
                 if (st.hook_enabled and st.hook_category == "object" and st.f2_shape)
                 else None
             ),
+            # Рамка не привязана к хуку: шлём всегда, кроме явного отказа
+            # ("none") и ещё не пройденного шага ("").
+            frame_id=(
+                str(st.frame_id)
+                if (st.frame_id and st.frame_id != "none")
+                else None
+            ),
             f1_sound_url=(
                 str(st.f1_sound_url)
-                if (st.hook_enabled and st.hook_category == "sound" and st.f1_sound_url)
+                if (
+                    st.hook_enabled
+                    and st.hook_category == "sound"
+                    and st.warmup_kind != "video"
+                    and st.f1_sound_url
+                )
                 else None
             ),
             f1_sound_text=(
@@ -7802,11 +8995,26 @@ class BlastBotApp:
                 if (
                     st.hook_enabled
                     and st.hook_category == "sound"
+                    and st.warmup_kind != "video"
                     and st.f1_sound_url
                     and st.f1_sound_text
                 )
                 else None
             ),
+            f6_video_url=(
+                str(st.f6_video_url)
+                if (
+                    st.hook_enabled
+                    and st.hook_category == "sound"
+                    and st.warmup_kind == "video"
+                    and st.f6_video_url
+                )
+                else None
+            ),
+            f6_video_width=(int(st.f6_video_width) if st.f6_video_url else None),
+            f6_video_height=(int(st.f6_video_height) if st.f6_video_url else None),
+            f6_video_duration=(float(st.f6_video_duration) if st.f6_video_url else None),
+            f6_video_has_audio=bool(st.f6_video_has_audio),
             # The 4:3 template still implements its own grade/intro, but nothing
             # selects them any more: photo picks from the footage effect library
             # above. Sending nothing leaves both off so the two cannot stack.
@@ -8140,6 +9348,11 @@ class BlastBotApp:
     async def _recovery_loop(self) -> None:
         while True:
             try:
+                # Admin requeue can revive an orchestrator job after its chat
+                # state was reset. Reconcile incomplete durable runs
+                # periodically so delivery does not depend on a bot restart.
+                await self._restore_runtime_processing_states()
+
                 now = time.time()
                 waiting_states = await self.store.list_waiting_referral()
                 for st in waiting_states:
@@ -8314,7 +9527,7 @@ class BlastBotApp:
                             if status == "CONFIRMED":
                                 pkg = pay["package"]
                                 tg_id = pay["tg_id"]
-                                credits_to_add = self._PKG_CREDITS.get(pkg, 5)
+                                credits_to_add = package_video_credits(pkg)
                                 await self.credits_db.update_payment_status(order_id, "CONFIRMED", payment_id)
                                 await self.credits_db.add_credits(
                                     tg_id,
@@ -8472,8 +9685,8 @@ class BlastBotApp:
 
         success, err = await self.tbank.charge(payment_id, rebill_id)
         if success:
+            credits_to_add = package_video_credits(pkg)
             await self.credits_db.update_payment_status(order_id, "confirmed", payment_id)
-            credits_to_add = self._PKG_CREDITS.get(pkg, 5)
             await self.credits_db.add_credits(tg_id, credits_to_add, "subscription", f"Подписка «{pkg}»")
             # First track-eligible charge grants the tariff base; renewals +1.
             track_base = self._PKG_TRACKS.get(pkg, 0)
@@ -8604,23 +9817,8 @@ class BlastBotApp:
         """Check order status via T-Bank CheckOrder API."""
         if not self.tbank:
             return None
-        params: Dict[str, Any] = {
-            "TerminalKey": self.tbank._terminal_key,
-            "OrderId": order_id,
-        }
-        params["Token"] = self.tbank._make_token(params)
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post("https://securepay.tinkoff.ru/v2/CheckOrder", json=params)
-                if resp.status_code != 200:
-                    return None
-                data = resp.json()
-                if not data.get("Success"):
-                    return None
-                payments = data.get("Payments", [])
-                if not payments:
-                    return None
-                return payments[-1]
+            return await self.tbank.check_order(order_id)
         except Exception as e:
             log.warning("tbank check_order err=%r", e)
             return None
@@ -9155,13 +10353,20 @@ class BlastBotApp:
                 st=st,
                 kind="generation_failed_user_notice",
                 suffix=failed_job_id or "batch",
-                payload={"failed_job_id": failed_job_id},
+                # error_text rides along so the outbox retry can pick the same
+                # notice as this inline send: the run's last_error_text is only
+                # written further down, so a retry would otherwise see nothing.
+                payload={
+                    "failed_job_id": failed_job_id,
+                    "error_text": failed_error,
+                },
             )
             if claimed_user_notice:
                 try:
                     await bot.send_message(
                         st.chat_id,
-                        _GENERATION_FAILED_USER_TEXT,
+                        self._alignment_failure_user_text(failed_error)
+                        or _GENERATION_FAILED_USER_TEXT,
                         reply_markup=self._wait_audio_reuse_kb(),
                     )
                     await self._runtime_mark_outbox_sent(dedupe_key=user_notice_key)
@@ -9355,13 +10560,7 @@ class BlastBotApp:
         track_bal = await self.credits_db.get_track_balance(st.chat_id)
         log.info("generation_complete chat=%s remaining=%s tracks_remaining=%s", st.chat_id, bal, track_bal)
 
-        paid = await self.credits_db.has_paid(st.chat_id)
-
-        # Hidden test override: force the free funnel for whitelisted chat_ids so
-        # the rating → pitch → referral flow can be reviewed from a paid account.
-        if paid and int(st.chat_id) in self.settings.tg_force_free_funnel_chat_ids:
-            log.info("force_free_funnel_override chat=%s", st.chat_id)
-            paid = False
+        paid = not await self._is_free_funnel_user(st)
 
         # Paid users: no rating/funnel, just loop back to generation
         if paid:

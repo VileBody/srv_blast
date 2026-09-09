@@ -1,0 +1,51 @@
+name: blast-web
+
+services:
+  api:
+    image: blast-web-api:${BLAST_WEB_IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: web_app/backend/Dockerfile.production
+    container_name: blast-web-api
+    env_file:
+      - ${BLAST_WEB_ENV_FILE:-./backend/.env.production}
+    environment:
+      MODE: prod
+      BLAST_BACKEND_MODE: production
+      BLAST_COOKIE_SAMESITE: lax
+      BLAST_COOKIE_SECURE: "1"
+      BLAST_CSRF: "1"
+      BLAST_DEV_TOOLS: "0"
+      BLAST_PERSIST: "1"
+      BLAST_RATE_LIMIT: "1"
+      BLAST_REQUIRE_AUTH: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - web
+    volumes:
+      - tiktok-tokens:/app/web_app/backend/.runtime
+    restart: unless-stopped
+
+  web:
+    image: blast-web-frontend:${BLAST_WEB_IMAGE_TAG:-local}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.preview
+    container_name: blast-web-frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:18190:80"
+    networks:
+      - web
+    restart: unless-stopped
+
+networks:
+  web:
+    name: blast-web
+
+volumes:
+  tiktok-tokens:
+    name: blast-web-tiktok-tokens

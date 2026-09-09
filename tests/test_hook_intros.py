@@ -16,6 +16,14 @@ def test_all_categories_present_and_described():
 
 
 def test_hook_intro_accessor():
-    assert hook_intro("sound")["text"].startswith("🔊")
+    # «Прогрев» = звук ИЛИ видео в окне до дропа (F1/F6) — одна карточка.
+    assert hook_intro("sound")["text"].startswith("🔥")
     assert hook_intro("unknown") is None
     assert hook_intro("") is None
+
+
+def test_warmup_intro_describes_the_current_video_mix() -> None:
+    text = hook_intro("sound")["text"]
+    assert "на 10%" in text
+    assert "за последнюю секунду" in text
+    assert "без молнии" in text

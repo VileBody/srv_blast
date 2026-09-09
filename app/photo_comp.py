@@ -26,7 +26,7 @@ from core.video_timing import AE_FPS
 from mlcore.photo_framing import normalize_framing
 
 # Comp geometry for the photo flow: a standalone horizontal 4:3 render (the
-# founder's reference comp), independent of the vertical footage main comp.
+# founder's reference comp), independent of the footage render preset.
 PHOTO_COMP_W = 1920
 PHOTO_COMP_H = 1440
 

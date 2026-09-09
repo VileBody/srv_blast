@@ -112,6 +112,12 @@ class SendAudioS3Request(BaseModel):
     f2_shape: Optional[
         Literal["rhomb", "square", "star1", "star2", "elipse"]
     ] = None
+    # Рамка — PNG-маска поверх всех слоёв (чёрные поля с прозрачным окном).
+    # Отдельный шаг бота, НЕ хук: работает на любом пути и не требует дропа.
+    # Едет как FRAME_ID; оркестратор резолвит ассет и кладёт
+    # full_edit_config["frame"], project_builder инжектит оверлей последним.
+    # None => без рамки.
+    frame_id: Optional[Literal["rounded", "soft_bars", "letterbox"]] = None
     # F1 «Звук» packaged-combo: S3/HTTP URL of the user-uploaded sound that plays
     # in the pre-drop window [0.5, drop−0.5]. When set, the bot threads it here;
     # the orchestrator emits full_edit_config["f1"] (audio layer + F2-style visual
@@ -122,6 +128,21 @@ class SendAudioS3Request(BaseModel):
     # "says"). When present, the orchestrator renders it as a track-type subtitle
     # over the sound window (same machinery as F5). Empty/None => no subtitle.
     f1_sound_text: Optional[str] = Field(default=None, max_length=2000)
+    # F6 «Видео» packaged-combo: S3/HTTP ссылка на НОРМАЛИЗОВАННЫЙ (h264+aac)
+    # mp4 — прогрев, который играет во весь кадр в pre-drop окне [0.5, drop−0.5]
+    # со своим звуком; трек под ним приглушается. Визуал — то же комбо, что у F1.
+    # Требует user_drop_t и размеров исходника (ffprobe на боте): по ним
+    # запекается cover-скейл, потому что выражения в headless aerender ненадёжны.
+    # None => без F6.
+    f6_video_url: Optional[str] = Field(default=None, max_length=2048)
+    f6_video_width: Optional[int] = Field(default=None, gt=0, le=8192)
+    f6_video_height: Optional[int] = Field(default=None, gt=0, le=8192)
+    # Фактическая длительность вырезки (секунды) — окно подрезается по ней,
+    # чтобы не остался замороженный хвост, если бот отдал окно шире видео.
+    f6_video_duration: Optional[float] = Field(default=None, gt=0.0, le=600.0)
+    # Есть ли в вырезке звуковая дорожка. False (немой gif/animation) => трек
+    # НЕ приглушается, иначе вместо прогрева получится тишина.
+    f6_video_has_audio: bool = True
     # Customization colors (hex '#RRGGBB'). subtitle = text fill (all modes);
     # accent = F2 shape + focus/accent word. None/empty => script default.
     subtitle_color_hex: Optional[str] = Field(default=None, pattern=r"^#?[0-9a-fA-F]{6}$")
@@ -143,6 +164,11 @@ class SendAudioS3Request(BaseModel):
     # (theme, tags_group) pair instead of picking from the artist profile.
     rotation_theme: str = ""
     rotation_tags_group: str = ""
+    # Output geometry. Orthogonal to bg_mode (which says WHAT is on the
+    # background) — this says what SHAPE the frame is. Only the main comp changes;
+    # the subtitle comp stays 1080x1920 and is re-framed into it, so the text
+    # stack is identical in all three. Default keeps every existing job vertical.
+    render_preset: Literal["vertical", "wide", "square"] = "vertical"
     # Background mode: "footage" (default) or "solid". When "solid", the AE
     # composition replaces the footage stack with a single solid color layer.
     # Stage 2 footage planning still runs (its picks are simply ignored at
@@ -219,6 +245,41 @@ class SendAudioS3Request(BaseModel):
         # F1 combo pivots on the drop too (audio window [0.5, drop−0.5] + combo).
         if self.f1_sound_url and self.user_drop_t is None:
             raise ValueError("f1_sound_url requires user_drop_t (drop anchor) to be set")
+        # F6 pivots on the drop as well, and its cover scale is baked from the
+        # source size — without both the block cannot be built.
+        if self.f6_video_url:
+            if self.user_drop_t is None:
+                raise ValueError("f6_video_url requires user_drop_t (drop anchor) to be set")
+            if not (self.f6_video_width and self.f6_video_height):
+                raise ValueError(
+                    "f6_video_url requires f6_video_width and f6_video_height (ffprobe)"
+                )
+        # Every hook overlay is authored against a 1080x1920 frame: the F4 device
+        # scripts size their cover solid off the comp but position their artwork
+        # in absolute pixels, the F2 shapes and F3 hook_light carry baked
+        # coordinates, and none of them were re-checked for a wider or square
+        # frame. Rendering one there does not fail — it silently puts the effect
+        # in the wrong place, which is worse. Refuse the combination until the
+        # scripts are reviewed.
+        if self.render_preset != "vertical":
+            requested = [
+                name
+                for name, value in (
+                    ("f1_sound_url", self.f1_sound_url),
+                    ("f6_video_url", self.f6_video_url),
+                    ("f2_shape", self.f2_shape),
+                    ("effect_hook", self.effect_hook),
+                    ("f4_device", self.f4_device),
+                    ("hook_device", self.hook_device),
+                )
+                if value
+            ]
+            if requested:
+                raise ValueError(
+                    "hooks are authored for the vertical 1080x1920 frame and are not "
+                    f"supported at render_preset={self.render_preset!r} "
+                    f"(requested: {', '.join(requested)})"
+                )
         return self
 
 
@@ -226,6 +287,25 @@ class EnqueueJobResponse(BaseModel):
     job_id: str
     status: JobStatus
     created: bool = True
+
+
+class AlignmentSmokeRequest(BaseModel):
+    audio_s3_url: str = Field(min_length=1)
+    target_fragment: str = Field(min_length=1)
+    clip_start_abs: float = Field(ge=0.0)
+    clip_end_abs: float = Field(gt=0.0)
+    request_id: str = Field(default="", max_length=200)
+    idempotency_key: Optional[str] = Field(default=None, min_length=1)
+    auth_nonce: str = Field(min_length=32, max_length=128)
+
+    @model_validator(mode="after")
+    def _validate_window(self) -> "AlignmentSmokeRequest":
+        if float(self.clip_end_abs) <= float(self.clip_start_abs):
+            raise ValueError("clip_end_abs must be > clip_start_abs")
+        return self
+
+
+AlignmentSmokeEnqueueResponse = EnqueueJobResponse
 
 
 class JobState(BaseModel):
@@ -395,11 +475,46 @@ class HookAnalyzeResponse(BaseModel):
     drop_candidates: List[HookDropCandidate] = Field(default_factory=list)
 
 
+class FetchExternalVideoRequest(BaseModel):
+    """Запрос на вырезку по ссылке (YouTube) для F6-прогрева.
+
+    Границы отрезка задаёт юзер в боте; окно валидируется и здесь, и в
+    mlcore.media.external_video — сеть дорогая, отказать лучше до неё.
+    """
+
+    url: str = Field(min_length=1, max_length=2048)
+    start_sec: float = Field(ge=0.0, le=86400.0)
+    end_sec: float = Field(gt=0.0, le=86400.0)
+
+    @model_validator(mode="after")
+    def _validate_window(self) -> "FetchExternalVideoRequest":
+        if float(self.end_sec) <= float(self.start_sec):
+            raise ValueError("end_sec must be > start_sec")
+        return self
+
+
+class FetchExternalVideoResponse(BaseModel):
+    """Готовая вырезка: S3-URL + то, что build-стороне нужно для cover-скейла."""
+
+    video_url: str
+    width: int
+    height: int
+    duration_sec: float
+    has_audio: bool
+    trimmed: bool = False
+
+
 class RankBucketsRequest(BaseModel):
     lyrics: str = ""
     mood: str = ""  # "minor" | "major" | "" (no filter)
     top: int = Field(default=0, ge=0)  # 0 = full ranked list
     media_type: Literal["video", "photo"] = "video"
+    # Which catalog plane to rank. "vibes" is the semantic visual:* shortlist
+    # (the default, unchanged). The others are collection planes — untagged,
+    # folder-scoped groups — and are ranked from data/footage_collections.json.
+    # Orthogonal to media_type: that picks video vs photo sources, this picks
+    # which buckets over them are selectable.
+    pool: Literal["vibes", "films", "people", "cine16x9"] = "vibes"
 
 
 class RankedBucket(BaseModel):

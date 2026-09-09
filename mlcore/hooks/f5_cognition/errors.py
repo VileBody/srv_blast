@@ -33,9 +33,19 @@ class F5TtsTooShort(F5Error):
     code = "F5_TTS_TOO_SHORT"
 
 
-class F5GeminiTimeout(F5Error):
+class F5ProviderError(F5Error):
+    """Retryable failure returned by a configured F5 provider."""
+    code = "F5_PROVIDER_ERROR"
+
+
+class F5GeminiTimeout(F5ProviderError):
     """Вызов Gemini > timeout."""
     code = "F5_GEMINI_TIMEOUT"
+
+
+class F5OpenRouterError(F5ProviderError):
+    """OpenRouter request failed or returned an invalid response."""
+    code = "F5_OPENROUTER_ERROR"
 
 
 class F5TtsRetryExhausted(F5Error):

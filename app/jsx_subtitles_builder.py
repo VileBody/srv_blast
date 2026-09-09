@@ -155,6 +155,29 @@ def trim_phrase_to_spoken(phrase: str, *, audio_ms: float, tts_ms: float) -> str
     return phrase if keep >= len(words) else " ".join(words[:keep])
 
 
+def clear_words_in_window(
+    word_timings: list[dict[str, Any]],
+    *,
+    window_start: float,
+    window_end: float,
+    margin: float = 0.08,
+) -> list[dict[str, Any]]:
+    """Drop the clip words inside [window_start, window_end] without putting
+    anything in their place (F6 «Видео»: the frame is fully taken by the user's
+    warm-up clip, so the track's own lyrics must not run over it).
+
+    Comp-relative seconds. Returns a new list (input not mutated).
+    """
+    ws, we = float(window_start), float(window_end)
+    if we <= ws:
+        return list(word_timings)
+    lo, hi = ws - float(margin), we + float(margin)
+    return [
+        w for w in (word_timings or [])
+        if not (float(w.get("start", 0.0)) < hi and float(w.get("end", 0.0)) > lo)
+    ]
+
+
 def splice_voice_phrase(
     word_timings: list[dict[str, Any]],
     *,
@@ -220,6 +243,7 @@ def build_jsx_subtitles_overlay(
     target_comp: str = DEFAULT_TARGET_COMP,
     fill_hex: Optional[str] = None,
     subs_blend: Optional[str] = None,
+    brat_blinker_enabled: bool = True,
 ) -> str:
     """Return an injectable JSX block: prelude ($.global injects) + the script.
 
@@ -239,6 +263,8 @@ def build_jsx_subtitles_overlay(
     # Headless: never pop a file dialog / alert.
     body = _flip_flag_false(body, "INTERACTIVE")
     body = _flip_flag_false(body, "DEBUG")
+    if mode == SUBTITLES_MODE_BRAT_5TH and not brat_blinker_enabled:
+        body = _flip_flag_false(body, "blinker")
 
     payload = json.dumps({"word_timings": word_timings}, ensure_ascii=False)
     target_js = json.dumps(str(target_comp), ensure_ascii=False)

@@ -77,6 +77,9 @@ CREATE INDEX IF NOT EXISTS idx_footage_tags_source ON footage_tags(source);
 # Asset pool sources. video = footage clips (default), photo = 4:3 photo flow.
 SOURCE_VIDEO = "video"
 SOURCE_PHOTO = "photo"
+# Folder-scoped, never-tagged pool (films / people / cine16x9). It appears in
+# footage_assets only — there are no rows for it in footage_tags by design.
+SOURCE_COLLECTION = "collection"
 
 
 # --------------------------------------------------------------------------- #

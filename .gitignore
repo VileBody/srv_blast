@@ -3,6 +3,7 @@
 
 # Local env
 .env
+web_app/backend/.env.production
 .env.rust-gen.iac
 infra/timeweb/rust-gen-node/backend.tf
 infra/timeweb/rust-gen-node/.terraform/

@@ -30,6 +30,7 @@ from celery.signals import task_failure
 
 from core.telegram_api import make_telegram_api
 
+from mlcore.alignment.client import AlignmentServiceError, request_local_alignment
 from .artifacts import make_job_paths
 from .celery_app import celery_app
 from .config import SETTINGS
@@ -119,6 +120,13 @@ _LLM_ENV_KEYS = (
     "F2_SEED",
     "F1_SOUND_URL",
     "F1_SOUND_TEXT",
+    "F6_VIDEO_URL",
+    "F6_VIDEO_WIDTH",
+    "F6_VIDEO_HEIGHT",
+    "F6_VIDEO_DURATION",
+    "F6_VIDEO_HAS_AUDIO",
+    # рамка (не хук, но тот же env-мост в in-process оркестратор)
+    "FRAME_ID",
     "BG_MODE",
     "BG_SOLID_COLOR_HEX",
     "SUBTITLES_FORCE_FILL_HEX",
@@ -129,6 +137,11 @@ _LLM_ENV_KEYS = (
     "PHOTO_TRANSITION",
     "PHOTO_INVENTORY_JSON",
     "PHOTO_TAGS_SNAPSHOT_JSON",
+    # output geometry (vertical | wide | square). Absent => vertical.
+    "RENDER_PRESET",
+    # collection plane (untagged, folder-scoped pools)
+    "COLLECTION_INVENTORY_JSON",
+    "FOOTAGE_COLLECTIONS_JSON",
 )
 
 
@@ -1914,7 +1927,11 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     else:
         env["BG_MODE"] = "footage"
 
-    if bg_mode != "photo":
+    # A collection job draws from its OWN inventory, so rebuilding the tag-based
+    # one here would be pure waste — and the block below also pins
+    # FOOTAGE_INVENTORY_JSON at the tag pool, which the collection branch further
+    # down would then have to undo.
+    if bg_mode != "photo" and rotation_theme != "collection":
         # Activation is single-flight on orchestrator-0, while builds are routed
         # across both nodes. Generated JSON files are node-local caches; refresh
         # them from Postgres (revision marker makes unchanged pools a cheap no-op).
@@ -2076,6 +2093,15 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 f"invalid f2_shape={_f2_shape_raw!r}; allowed={sorted(_f2_allowed_shapes)}"
             )
         env["F2_SHAPE"] = _f2_shape
+    # Рамка (не хук): id из каталога рамок. Дропа не требует, применима всегда.
+    _frame_raw = req.get("frame_id")
+    if _frame_raw is not None and str(_frame_raw).strip():
+        from mlcore.hooks.frames.catalog import FRAME_IDS as _FRAME_IDS
+
+        _frame = str(_frame_raw).strip().lower()
+        if _frame not in _FRAME_IDS:
+            raise RuntimeError(f"invalid frame_id={_frame_raw!r}; allowed={sorted(_FRAME_IDS)}")
+        env["FRAME_ID"] = _frame
     # F1 «Звук» pass-through: S3/HTTP URL of the user-uploaded pre-drop sound.
     # Set => orchestrator emits full_edit_config["f1"] (audio + visual combo).
     # Requires USER_DROP_T; absent => no F1.
@@ -2091,12 +2117,68 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         _f1_text_raw = req.get("f1_sound_text")
         if _f1_text_raw is not None and str(_f1_text_raw).strip():
             env["F1_SOUND_TEXT"] = str(_f1_text_raw).strip()
+    # F6 «Видео» pass-through: S3/HTTP URL нормализованного mp4-прогрева +
+    # метаданные ffprobe. Set => оркестратор кладёт full_edit_config["f6"].
+    # Требует USER_DROP_T; без размеров cover-скейл не запечь.
+    _f6_video_raw = req.get("f6_video_url")
+    if _f6_video_raw is not None and str(_f6_video_raw).strip():
+        _f6_video = str(_f6_video_raw).strip()
+        if not _is_remote_url(_f6_video):
+            raise RuntimeError(
+                f"f6_video_url must be remote (http/https/s3). got={_f6_video!r}"
+            )
+        _f6_w = req.get("f6_video_width")
+        _f6_h = req.get("f6_video_height")
+        if not _f6_w or not _f6_h:
+            raise RuntimeError(
+                "f6_video_url requires f6_video_width and f6_video_height (ffprobe)"
+            )
+        env["F6_VIDEO_URL"] = _f6_video
+        env["F6_VIDEO_WIDTH"] = str(int(_f6_w))
+        env["F6_VIDEO_HEIGHT"] = str(int(_f6_h))
+        _f6_dur = req.get("f6_video_duration")
+        if _f6_dur:
+            env["F6_VIDEO_DURATION"] = str(float(_f6_dur))
+        if req.get("f6_video_has_audio") is False:
+            env["F6_VIDEO_HAS_AUDIO"] = "0"
     if exclude_file_names:
         env["FOOTAGE_EXCLUDE_FILE_NAMES_JSON"] = json.dumps(exclude_file_names, ensure_ascii=False)
     if rotation_theme:
         env["FOOTAGE_ROTATION_THEME"] = rotation_theme
         if rotation_tags_group:
             env["FOOTAGE_ROTATION_GROUP"] = rotation_tags_group
+
+    # Output geometry. Set only when it differs from the default so a vertical
+    # job's build env stays byte-for-byte what it was before presets existed.
+    render_preset = str(req.get("render_preset") or "vertical").strip().lower()
+    if render_preset not in ("vertical", "wide", "square"):
+        raise RuntimeError(
+            f"invalid render_preset={render_preset!r} (expected vertical|wide|square)"
+        )
+    if render_preset != "vertical":
+        env["RENDER_PRESET"] = render_preset
+
+    # Collection plane: an untagged, folder-scoped pool that lives in its OWN
+    # inventory. Pointing the picker at it here is what makes the isolation
+    # physical — a collection job cannot see the tag-based pool, and vice versa,
+    # because they never share an inventory file.
+    if rotation_theme == "collection":
+        collection_inventory = str(
+            os.environ.get("COLLECTION_INVENTORY_JSON")
+            or "data/collection_inventory.json"
+        ).strip()
+        env["FOOTAGE_INVENTORY_JSON"] = collection_inventory
+        # Collections are never tagged, so there is no metadata to merge; an
+        # empty list keeps the picker's mapping step honest instead of letting it
+        # silently pick up the tag-based snapshot.
+        env["FOOTAGE_STYLE_METADATA_DB_PATHS_JSON"] = json.dumps([])
+        # Same node-local-cache problem the other two planes solve: activation ran
+        # on one orchestrator, this job may be on the other.
+        _ensure_collection_picker_artifacts_from_registry(
+            repo_root=repo_root,
+            inventory_path=collection_inventory,
+            cache_key=str(job_id),
+        )
     # Wave 1 Поток B: the picker's global per-bucket cooldown ledger (footage_usage)
     # needs the DSN + the serving chat. Passed explicitly so it doesn't depend on
     # CREDITS_DB_URL being present in the raw subprocess env.
@@ -2574,9 +2656,188 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     return {"ok": True, "stage": "build_done", "paths": paths.manifest()}
 
 
+def _alignment_smoke_ass_time(seconds: float) -> str:
+    centiseconds = max(0, int(round(float(seconds) * 100.0)))
+    hours, rem = divmod(centiseconds, 360000)
+    minutes, rem = divmod(rem, 6000)
+    secs, cs = divmod(rem, 100)
+    return f"{hours}:{minutes:02d}:{secs:02d}.{cs:02d}"
+
+
+def _alignment_smoke_ass_escape(text: str) -> str:
+    return (
+        str(text or "")
+        .replace("\\", r"\\")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+        .replace("\n", r"\N")
+    )
+
+
+def _render_alignment_smoke_preview(
+    *,
+    audio_path: Path,
+    output_path: Path,
+    ass_path: Path,
+    words: list,
+    clip_start_abs: float,
+    clip_end_abs: float,
+) -> None:
+    duration = float(clip_end_abs) - float(clip_start_abs)
+    if duration <= 0.0:
+        raise RuntimeError("alignment smoke preview duration must be positive")
+    events: list[str] = []
+    for word in words:
+        start = max(0.0, float(word.t_start) - float(clip_start_abs))
+        end = min(duration, float(word.t_end) - float(clip_start_abs))
+        if end <= start:
+            continue
+        events.append(
+            "Dialogue: 0,"
+            f"{_alignment_smoke_ass_time(start)},"
+            f"{_alignment_smoke_ass_time(end)},"
+            "Default,,0,0,0,,"
+            f"{_alignment_smoke_ass_escape(word.text)}"
+        )
+    if not events:
+        raise RuntimeError("alignment smoke response contains no words inside user window")
+    ass_text = "\n".join(
+        [
+            "[Script Info]",
+            "ScriptType: v4.00+",
+            "PlayResX: 720",
+            "PlayResY: 1280",
+            "WrapStyle: 2",
+            "",
+            "[V4+ Styles]",
+            "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
+            "Style: Default,DejaVu Sans,62,&H00FFFFFF,&H000000FF,&H00000000,&H96000000,-1,0,0,0,100,100,0,0,1,4,1,5,45,45,45,1",
+            "",
+            "[Events]",
+            "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
+            *events,
+            "",
+        ]
+    )
+    ass_path.parent.mkdir(parents=True, exist_ok=True)
+    ass_path.write_text(ass_text, encoding="utf-8")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    ass_filter_path = str(ass_path.resolve()).replace("\\", "/").replace(":", r"\:")
+    proc = subprocess.run(
+        [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-f", "lavfi", "-i", f"color=c=black:s=720x1280:r=30:d={duration:.3f}",
+            "-ss", f"{float(clip_start_abs):.3f}",
+            "-t", f"{duration:.3f}", "-i", str(audio_path),
+            "-vf", f"ass={ass_filter_path}",
+            "-map", "0:v:0", "-map", "1:a:0?",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "160k", "-shortest", str(output_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=max(120.0, duration * 4.0),
+        check=False,
+    )
+    if proc.returncode != 0 or not output_path.is_file():
+        raise RuntimeError(
+            f"alignment smoke preview failed rc={proc.returncode}: {proc.stderr[-2000:]}"
+        )
+
+
+@celery_app.task(name="orchestrator.alignment_smoke_job")
+def alignment_smoke_job(job_id: str) -> Dict[str, Any]:
+    store = JobStore.from_env()
+    state = store.get(job_id)
+    if state is None:
+        raise RuntimeError(f"alignment smoke job not found: {job_id}")
+    req = dict(state.request or {})
+    if str(req.get("job_kind") or "") != "alignment_smoke":
+        raise RuntimeError(f"job {job_id} is not an alignment smoke job")
+    paths = make_job_paths(
+        work_dir=SETTINGS.work_dir,
+        output_dir=SETTINGS.output_dir,
+        job_id=job_id,
+    )
+    audio_path = paths.data_dir / "alignment-smoke-source.mp3"
+    preview_path = paths.out_dir / "alignment-smoke-preview.mp4"
+    ass_path = paths.out_dir / "alignment-smoke-preview.ass"
+    try:
+        store.set_status(job_id, "RUNNING", stage="alignment_smoke_download")
+        _download(str(req.get("audio_s3_url") or ""), audio_path)
+        store.set_status(job_id, "RUNNING", stage="alignment_smoke")
+        aligned = request_local_alignment(
+            service_url=str(os.environ.get("ALIGNMENT_SERVICE_URL") or "").strip(),
+            timeout_s=float(os.environ.get("ALIGNMENT_TIMEOUT_S") or "600"),
+            audio_path=audio_path,
+            target_fragment=str(req.get("target_fragment") or ""),
+            clip_start_abs=float(req.get("clip_start_abs")),
+            clip_end_abs=float(req.get("clip_end_abs")),
+            request_id=str(req.get("request_id") or job_id),
+        )
+        stage1_asr = aligned.stage1_asr
+        selected = stage1_asr.selected_fragment
+        words = list(
+            selected.transcript_words
+            if selected is not None
+            else stage1_asr.transcript_words
+        )
+        _render_alignment_smoke_preview(
+            audio_path=audio_path,
+            output_path=preview_path,
+            ass_path=ass_path,
+            words=words,
+            clip_start_abs=float(req.get("clip_start_abs")),
+            clip_end_abs=float(req.get("clip_end_abs")),
+        )
+        output_bucket = str(os.environ.get("S3_BUCKET_OUTPUT_VIDEO") or "").strip()
+        if not output_bucket:
+            raise RuntimeError("S3_BUCKET_OUTPUT_VIDEO is empty")
+        output_key = f"alignment-smoke/{job_id}/preview.mp4"
+        s3 = _make_s3_client()
+        s3.upload_file(
+            str(preview_path),
+            output_bucket,
+            output_key,
+            ExtraArgs={"ContentType": "video/mp4"},
+        )
+        result = {
+            "output_url": f"s3://{output_bucket}/{output_key}",
+            "stage1_asr": stage1_asr.model_dump(mode="json"),
+            "diagnostics": dict(aligned.diagnostics),
+            "backend": dict(aligned.backend),
+        }
+        store.set_status(job_id, "SUCCEEDED", stage="alignment_smoke", result=result)
+        return {"ok": True, **result}
+    except AlignmentServiceError as exc:
+        store.set_status(
+            job_id,
+            "FAILED",
+            stage="alignment_smoke",
+            error=f"{exc.code}: {exc.message}",
+            result={"alignment_error": {"code": exc.code, "details": exc.details}},
+        )
+        raise
+    except Exception as exc:
+        store.set_status(
+            job_id,
+            "FAILED",
+            stage="alignment_smoke",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    finally:
+        for path in (audio_path, preview_path, ass_path):
+            try:
+                path.unlink(missing_ok=True)
+            except Exception:
+                log.warning("alignment_smoke_cleanup_failed job_id=%s path=%s", job_id, path)
+
+
 # Task names whose first positional arg is the job_id, used by the orphan-reaper
 # below to flip a job to FAILED when its worker dies mid-execution.
 _JOB_ID_FIRST_ARG_TASKS = frozenset({
+    "orchestrator.alignment_smoke_job",
     "orchestrator.build_job",
     "orchestrator.build_job_sdk",
     "orchestrator.build_job_openrouter",
@@ -2656,6 +2917,9 @@ _FOOTAGE_TAGGING_PROGRESS_KEY = "footage_tagging:progress"
 # footage pool so both can run/poll independently.
 _PHOTO_TAGGING_PROGRESS_KEY = "photo_tagging:progress"
 _PHOTO_ACTIVATION_PROGRESS_KEY = "photo_activation:progress"
+# Collection plane (films / people / cine16x9): its own single-flight key so an
+# ingest there never blocks (or is blocked by) the footage or photo pools.
+_COLLECTION_ACTIVATION_PROGRESS_KEY = "collection_activation:progress"
 
 
 def _footage_tagging_source_prefix() -> str:
@@ -2678,9 +2942,112 @@ def _photo_tagging_source_prefix() -> str:
 
 def _norm_media_type(media_type: Any) -> str:
     mt = str(media_type or "video").strip().lower() or "video"
-    if mt not in ("video", "photo"):
-        raise RuntimeError(f"invalid media_type={mt!r} (expected video|photo)")
+    if mt not in ("video", "photo", "collection"):
+        raise RuntimeError(f"invalid media_type={mt!r} (expected video|photo|collection)")
     return mt
+
+
+def _collection_source_prefix() -> str:
+    """Top-level S3 folder of the collection plane. Separate from the footage and
+    photo prefixes so the three pools can never be scanned into each other."""
+    explicit = (os.environ.get("ASSET_UI_COLLECTION_SOURCE_PREFIX") or "").strip().strip("/")
+    if explicit:
+        return explicit
+    return (os.environ.get("S3_COLLECTION_PREFIX") or "collection_sources").strip().strip("/")
+
+
+def _report_collection_registry(static_index_path: Any) -> Dict[str, Any]:
+    """Reconcile the uploaded folders against the selectable-collection registry.
+
+    Uploading files and making a group selectable are two different acts: the
+    registry carries the RU label and the track themes, which are editorial
+    decisions no scan can infer. Without this report an operator would upload a
+    folder, see the ingest succeed, and never learn that nothing became
+    selectable — the failure mode the reconcile tooling exists to prevent.
+    """
+    from pathlib import Path as _P
+
+    try:
+        data = json.loads(_P(str(static_index_path)).read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"registry_check_error": str(exc)}
+
+    counts: Dict[str, int] = {}
+    for row in data.get("assets") or []:
+        if not isinstance(row, dict):
+            continue
+        kind = str(row.get("genre") or "").strip().lower()
+        folder = str(row.get("tag") or "").strip().lower()
+        if kind and folder:
+            counts[f"{kind}__{folder}"] = counts.get(f"{kind}__{folder}", 0) + 1
+
+    try:
+        from mlcore.footage_collection_catalog import load_collection_catalog
+
+        # Compare case-insensitively: the registry spells folders however the
+        # operator typed them, S3 however they were uploaded, and the picker
+        # already matches without regard to case. Without this the report
+        # called a working collection unregistered.
+        registered = {b.slug.lower() for b in load_collection_catalog()}
+    except Exception as exc:
+        return {"registry_check_error": str(exc), "folders_found": len(counts)}
+
+    unnamed = sorted(set(counts) - registered)
+    empty = sorted(registered - set(counts))
+    out: Dict[str, Any] = {
+        "folders_found": len(counts),
+        "collections_registered": len(registered),
+        # Every uploaded folder is selectable on its own now; the registry only
+        # supplies the Russian label and the track themes. So "live" is the
+        # folder count, and the number worth reading is how many still run
+        # under a name derived from the folder.
+        "collections_live": len(counts),
+    }
+
+    # Whether a collection can actually serve a job is decided by facts known
+    # right now — clip count and clip length. Reporting it here turns a failed
+    # render for a paying user into a warning for the operator who is still
+    # looking at the upload.
+    try:
+        from mlcore.footage_collection_readiness import evaluate_index
+
+        rows = evaluate_index(data.get("assets") or [])
+        out["readiness"] = [r.as_dict() for r in rows]
+        unusable = [r for r in rows if r.status == "unusable"]
+        thin = [r for r in rows if r.status == "thin"]
+        if unusable:
+            out["unusable_collections"] = [r.slug for r in unusable]
+            log.error(
+                "activate(collection): %d collection(s) CANNOT serve a job — clips too "
+                "short to cut a watchable montage from: %s",
+                len(unusable),
+                [(r.slug, f"shortest={r.min_duration_sec:.2f}s") for r in unusable],
+            )
+        if thin:
+            out["thin_collections"] = [r.slug for r in thin]
+            log.warning(
+                "activate(collection): %d collection(s) may exhaust the no-repeat pool "
+                "on a fast track: %s",
+                len(thin), [(r.slug, f"{r.clips}/{r.needed_clips}") for r in thin],
+            )
+    except Exception as exc:
+        out["readiness_error"] = str(exc)
+        log.warning("activate(collection): readiness evaluation failed: %r", exc)
+    if unnamed:
+        out["auto_named_folders"] = unnamed
+        log.info(
+            "activate(collection): %d folder(s) are selectable under a name derived "
+            "from the folder — add a registry entry to give them a Russian label "
+            "and the track themes they suit: %s",
+            len(unnamed), unnamed,
+        )
+    if empty:
+        out["registered_but_empty"] = empty
+        log.warning(
+            "activate(collection): %d registered collection(s) have no files: %s",
+            len(empty), empty,
+        )
+    return out
 
 
 @celery_app.task(name="orchestrator.tag_untagged_footage", bind=True, max_retries=0)
@@ -2833,6 +3200,135 @@ def _video_registry_index_obj(records: List[Dict[str, Any]]) -> Dict[str, Any]:
         "media_type": "video",
         "assets_count": len(assets),
         "assets": assets,
+    }
+
+
+def _ensure_collection_picker_artifacts_from_registry(
+    *,
+    repo_root: Path,
+    inventory_path: str,
+    cache_key: str,
+) -> Dict[str, Any]:
+    """Keep every build node's COLLECTION inventory aligned with Postgres.
+
+    Activation is single-flight on one orchestrator while builds are routed across
+    both, so the JSON inventory is a node-local cache. The video and photo planes
+    already rebuild theirs from the durable registry on entry; without the same
+    step here, a collection job that landed on the node which did NOT run the
+    ingest died on a missing inventory file.
+
+    Simpler than its siblings in one way: there is no tags snapshot to rebuild,
+    because collections are never tagged.
+    """
+    root = Path(repo_root).resolve()
+
+    def _path(raw: str) -> Path:
+        p = Path(str(raw or "").strip())
+        return p if p.is_absolute() else root / p
+
+    inv_path = _path(inventory_path)
+    index_path = _path(
+        os.environ.get("COLLECTION_ASSETS_INDEX_JSON") or "data/collection_assets_index.json"
+    )
+    bundle_path = _path(
+        os.environ.get("COLLECTION_DESCRIPTIONS_BUNDLE_OUT")
+        or "pins/collection_descriptions_bundle.json"
+    )
+    marker_path = inv_path.with_name(f".{inv_path.name}.registry.json")
+
+    db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
+    if not db_url:
+        if inv_path.exists():
+            return {"hydrated": False, "reason": "postgres_not_configured"}
+        raise RuntimeError("collection picker cache missing and Postgres is not configured")
+
+    async def _load() -> tuple[List[Dict[str, Any]], str]:
+        import asyncpg  # type: ignore
+        from mlcore.footage_assets_db import fetch_all_assets
+
+        conn = await asyncpg.connect(dsn=db_url)
+        try:
+            records = await fetch_all_assets(conn, source="collection")
+            revision = await conn.fetchval(
+                """
+                SELECT COALESCE(MAX(updated_at)::text, '')
+                FROM footage_assets
+                WHERE source = 'collection'
+                """
+            )
+            return records, f"{len(records)}:{str(revision or '')}"
+        finally:
+            await conn.close()
+
+    records, revision = asyncio.run(_load())
+    if not records:
+        raise RuntimeError(
+            "collection picker cache missing and the Postgres collection registry is "
+            "empty — run activation for media_type=collection"
+        )
+
+    if inv_path.exists() and marker_path.exists():
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            if str(marker.get("revision") or "") == revision:
+                return {"hydrated": False, "revision": revision, "inventory": str(inv_path)}
+        except Exception:
+            pass
+
+    from mlcore.footage_assets_db import index_row_from_record
+
+    index_obj = {
+        "version": "collection-registry-v1",
+        "media_type": "collection",
+        "assets_count": len(records),
+        "assets": [index_row_from_record(r) for r in records if isinstance(r, dict)],
+    }
+
+    safe_key = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(cache_key or "job"))[:80]
+    index_tmp = index_path.with_name(f".{index_path.name}.{safe_key}.tmp")
+    inv_tmp = inv_path.with_name(f".{inv_path.name}.{safe_key}.tmp")
+    bundle_tmp = bundle_path.with_name(f".{bundle_path.name}.{safe_key}.tmp")
+    marker_tmp = marker_path.with_name(f".{marker_path.name}.{safe_key}.tmp")
+    for p in (index_path, inv_path, bundle_path, marker_path):
+        p.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        index_tmp.write_text(
+            json.dumps(index_obj, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        from footage_config import build_inventory_and_bundle
+
+        build_inventory_and_bundle(
+            repo_root=root,
+            footage_dir=Path(os.environ.get("FOOTAGE_DIR", str(root / "footage"))),
+            static_assets_index_path=index_tmp,
+            inventory_out_path=inv_tmp,
+            bundle_out_path=bundle_tmp,
+            media_type="collection",
+        )
+        marker_tmp.write_text(
+            json.dumps({"revision": revision}, ensure_ascii=False), encoding="utf-8"
+        )
+        os.replace(index_tmp, index_path)
+        os.replace(inv_tmp, inv_path)
+        os.replace(bundle_tmp, bundle_path)
+        os.replace(marker_tmp, marker_path)
+    finally:
+        for tmp in (index_tmp, inv_tmp, bundle_tmp, marker_tmp):
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    log.info(
+        "collection picker cache hydrated registry_rows=%d revision=%s inventory=%s",
+        len(records), revision, inv_path,
+    )
+    return {
+        "hydrated": True,
+        "registry_rows": len(records),
+        "revision": revision,
+        "inventory": str(inv_path),
     }
 
 
@@ -3206,7 +3702,13 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
 
     mt = _norm_media_type(media_type)
     is_photo = mt == "photo"
-    progress_key = _PHOTO_ACTIVATION_PROGRESS_KEY if is_photo else _FOOTAGE_ACTIVATION_PROGRESS_KEY
+    is_collection = mt == "collection"
+    if is_photo:
+        progress_key = _PHOTO_ACTIVATION_PROGRESS_KEY
+    elif is_collection:
+        progress_key = _COLLECTION_ACTIVATION_PROGRESS_KEY
+    else:
+        progress_key = _FOOTAGE_ACTIVATION_PROGRESS_KEY
 
     bucket = str(os.environ.get("S3_BUCKET_ASSET_STORAGE") or "").strip()
     db_url = str(getattr(SETTINGS, "credits_db_url", "") or "").strip()
@@ -3233,6 +3735,26 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
             inventory_out = _Path(os.environ.get("PHOTO_INVENTORY_JSON", str(repo_root / "data" / "photo_inventory.json")))
             bundle_out = _Path(os.environ.get("PHOTO_DESCRIPTIONS_BUNDLE_OUT", str(repo_root / "pins" / "photo_descriptions_bundle.json")))
             prefix = _photo_tagging_source_prefix()
+        elif is_collection:
+            static_index_path = _Path(
+                os.environ.get(
+                    "COLLECTION_ASSETS_INDEX_JSON",
+                    str(repo_root / "data" / "collection_assets_index.json"),
+                )
+            )
+            inventory_out = _Path(
+                os.environ.get(
+                    "COLLECTION_INVENTORY_JSON",
+                    str(repo_root / "data" / "collection_inventory.json"),
+                )
+            )
+            bundle_out = _Path(
+                os.environ.get(
+                    "COLLECTION_DESCRIPTIONS_BUNDLE_OUT",
+                    str(repo_root / "pins" / "collection_descriptions_bundle.json"),
+                )
+            )
+            prefix = _collection_source_prefix()
         else:
             static_index_path = _Path(
                 os.environ.get("STATIC_ASSETS_INDEX_JSON", str(repo_root / "data" / "static_assets_index_1to1.json"))
@@ -3250,6 +3772,21 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
             from scripts.build_photo_assets_index import build_photo_index
 
             idx = build_photo_index(bucket=bucket, prefix=prefix, out_path=static_index_path, progress_cb=_idx_progress)
+        elif is_collection:
+            from mlcore.footage_segments import min_source_sec
+            from scripts.build_static_assets_index import build_index
+
+            # Collection sources are long by design, so the index also records
+            # where the edits are; the segmenter snaps window boundaries onto
+            # them instead of cutting across a shot change.
+            idx = build_index(
+                bucket=bucket,
+                prefix=prefix,
+                out_path=static_index_path,
+                progress_cb=_idx_progress,
+                detect_scene_cuts=True,
+                scene_cut_min_duration_sec=min_source_sec(),
+            )
         else:
             from scripts.build_static_assets_index import build_index
 
@@ -3288,6 +3825,24 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
             max_assets_in_bundle=int(max_assets_env) if max_assets_env else None,
             media_type=mt,
         )
+
+        if is_collection:
+            # 3+4) NO tagging, NO tags snapshot — that is the defining property of
+            # this plane, not an omission. A collection's clips are selectable
+            # only through their folder, and tagging them would be both wasted
+            # spend and the one thing that could let them into a vibe bucket.
+            _publish("running", phase="registry_check")
+            summary = {
+                "indexed": idx.get("assets_count"),
+                "index_failed": idx.get("failed"),
+                "tagging": "skipped_by_design",
+                "pool_registered": pool_registry.get("total"),
+                "pool_pruned": pool_registry.get("pruned"),
+                "pool_pickable": pool_registry.get("pickable"),
+                **_report_collection_registry(static_index_path),
+            }
+            _publish("done", **summary)
+            return summary
 
         # 3) tag untagged clips
         def _tag_progress(done: int, total: int, written: int) -> None:
@@ -3349,7 +3904,12 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
     return summary
 
 
-@celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=10)
+# Dispatch waits out node saturation via retries: the render node accepts one
+# AE job at a time and answers 503 while busy, so the retry loop *is* the
+# queue. With backoff capped at 120s, 120 retries ≈ 4h of waiting, which
+# covers a realistic backlog. It stays finite on purpose: a node that is
+# actually dead must still end in FAILED so the alert fires.
+@celery_app.task(name="orchestrator.dispatch_to_windows", bind=True, max_retries=120)
 def dispatch_to_windows(self, job_id: str) -> Dict[str, Any]:
     store = JobStore.from_env()
     st = store.get(job_id)

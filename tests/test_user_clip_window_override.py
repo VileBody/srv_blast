@@ -125,6 +125,24 @@ def test_apply_user_clip_window_allows_short_duration() -> None:
     assert abs(float(updated.audio.clip_end_abs) - 17.0) <= 1e-6
 
 
+def test_words_on_equivalent_microsecond_boundary_are_kept() -> None:
+    words = Stage1AsrPayload.model_validate(
+        {
+            "transcript_words": [
+                {"text": "Первый", "t_start": 54.869, "t_end": 55.21},
+            ],
+            "pause_spans": [],
+            "srt_items": [],
+        }
+    ).transcript_words
+
+    kept = go._words_in_window(
+        words=list(words), start_abs=54.869002, end_abs=75.0
+    )
+
+    assert [w.text for w in kept] == ["Первый"]
+
+
 def test_stage1_asr_selected_fragment_allows_short_duration() -> None:
     payload = _stage1_asr_payload().model_dump(mode="json")
     payload["selected_fragment"] = {

@@ -1,0 +1,37 @@
+# Paste inside the nginx `server {}` that exposes the admin panel.
+# Upstream: the tg-bot-public-admin container, bound to the host at
+# TG_BOT_PUBLIC_ADMIN_BIND_HOST:TG_BOT_PUBLIC_ADMIN_BIND_PORT (default
+# 127.0.0.1:18081 — see docker-compose.yml `tg-bot-public-admin`).
+#
+# Both /admin/ (staff, HTTP Basic Auth via ADMIN_PANEL_PASSWORD) and
+# /partner/ (traffic partners, cookie-session login at /partner/login) are
+# served by the SAME FastAPI app/process — one upstream, two paths. The
+# partner cabinet is created and managed from /admin/partners.
+#
+# Example public URLs:
+#   https://blast808.com/admin/
+#   https://blast808.com/partner/
+
+location /admin/ {
+    proxy_pass http://127.0.0.1:18081;
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+location /partner/ {
+    proxy_pass http://127.0.0.1:18081;
+    proxy_http_version 1.1;
+
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # Partner sessions are cookie-based (httponly, samesite=lax) — make sure
+    # TLS terminates here so the `secure` cookie flag (set when
+    # TG_BOT_API_ENV=prod) actually gets sent back by browsers.
+}

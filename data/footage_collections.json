@@ -1,0 +1,336 @@
+{
+  "version": "collection-v1",
+  "_schema": {
+    "kind": "films | people | cine16x9 — the reserved first-level S3 folder",
+    "folder": "the upload folder name (second S3 level), byte-for-byte as in S3; one folder = one group",
+    "label": "RU text on the bot button",
+    "description": "RU one-liner shown with the shortlist preview (optional)",
+    "themes": "track themes this collection suits; drives shortlist order. Optional — an unlisted collection still appears, in registry order, at the tail",
+    "formats": "allowed output geometries: wide | square | vertical. Defaults to [wide, square]"
+  },
+  "_themes_note": "Proposed from the film, NOT measured — review and edit. Valid values are the 25 track themes in mlcore/footage_bucket_ranker.candidate_themes().",
+  "collections": [
+    {
+      "kind": "films",
+      "folder": "бойцовский клуб",
+      "label": "Бойцовский клуб",
+      "description": "тёмная агрессия, распад, подвалы и неон",
+      "themes": [
+        "self_destruction_minor",
+        "aggression_minor",
+        "cyber_alienation_minor",
+        "urban_blocks_minor"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "брат",
+      "label": "Брат",
+      "description": "90-е, серый город, холодная решимость",
+      "themes": [
+        "aggression_minor",
+        "urban_blocks_minor",
+        "nostalgia_city_minor",
+        "youth_rebellion_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "бумер",
+      "label": "Бумер",
+      "description": "дорога, трасса, пацанская романтика 2000-х",
+      "themes": [
+        "nostalgia_city_minor",
+        "youth_rebellion_major",
+        "urban_blocks_minor",
+        "aggression_minor"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "великий гэтсби",
+      "label": "Великий Гэтсби",
+      "description": "роскошь, вечеринки, недостижимая любовь",
+      "themes": [
+        "adrenaline_flex_major",
+        "epic_love_major",
+        "nightlife_electro_minor",
+        "romance_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "волк с уолл-стрит",
+      "label": "Волк с Уолл-стрит",
+      "description": "деньги, кураж, безудержный подъём",
+      "themes": [
+        "hustle_minor",
+        "adrenaline_flex_major",
+        "motivation_major",
+        "sex_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "до встречи с тобой",
+      "label": "До встречи с тобой",
+      "description": "светлая нежность и расставание",
+      "themes": [
+        "romance_major",
+        "epic_love_major",
+        "heartbreak_minor"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "дом gucci",
+      "label": "Дом Gucci",
+      "description": "богатство, интриги, ревность",
+      "themes": [
+        "betrayal_minor",
+        "jealousy_minor",
+        "adrenaline_flex_major",
+        "sex_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "дьявол носит прада",
+      "label": "Дьявол носит Прада",
+      "description": "карьера, стиль, город и амбиции",
+      "themes": [
+        "motivation_major",
+        "hustle_minor",
+        "adrenaline_flex_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "жмурки",
+      "label": "Жмурки",
+      "description": "чёрный юмор, криминал, 90-е",
+      "themes": [
+        "aggression_minor",
+        "urban_blocks_minor",
+        "youth_rebellion_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "проект х",
+      "label": "Проект Х",
+      "description": "вечеринка без тормозов, молодость",
+      "themes": [
+        "youth_rebellion_major",
+        "nightlife_electro_minor",
+        "adrenaline_flex_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "реквием по мечте",
+      "label": "Реквием по мечте",
+      "description": "распад, зависимость, ускользающая мечта",
+      "themes": [
+        "self_destruction_minor",
+        "depression_minor",
+        "escapism_dreams_minor",
+        "loneliness_isolation_minor"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "films",
+      "folder": "токийский дрифт",
+      "label": "Токийский дрифт",
+      "description": "ночные гонки, дрифт, огни Токио",
+      "themes": [
+        "adrenaline_flex_major",
+        "youth_rebellion_major",
+        "nostalgia_city_minor",
+        "motivation_major"
+      ],
+      "formats": [
+        "vertical"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "New_York",
+      "label": "Нью-Йорк",
+      "description": "город, улицы, огни, движение",
+      "themes": [
+        "hustle_minor",
+        "urban_blocks_minor",
+        "nostalgia_city_minor",
+        "motivation_major",
+        "nightlife_electro_minor"
+      ],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Asaka",
+      "label": "Осака",
+      "description": "японский город, неон, узкие улицы",
+      "themes": [
+        "nostalgia_city_minor",
+        "cyber_alienation_minor",
+        "urban_blocks_minor",
+        "escapism_dreams_minor"
+      ],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Kyoto",
+      "label": "Киото",
+      "description": "храмы, сады, тихая созерцательность",
+      "themes": [
+        "serene_landscape_major",
+        "mysticism_fate_minor",
+        "escapism_dreams_minor",
+        "nostalgia_city_minor"
+      ],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Los_Angels",
+      "label": "Лос-Анджелес",
+      "description": "пальмы, шоссе, закатное золото",
+      "themes": [
+        "adrenaline_flex_major",
+        "hustle_minor",
+        "motivation_major",
+        "youth_rebellion_major"
+      ],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Miami",
+      "label": "Майами",
+      "description": "океан, неон, ночная жизнь",
+      "themes": [
+        "nightlife_electro_minor",
+        "adrenaline_flex_major",
+        "sex_major",
+        "romance_major"
+      ],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "BMW",
+      "label": "BMW",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Boston",
+      "label": "Boston",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "JDM",
+      "label": "JDM",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Lisbon",
+      "label": "Lisbon",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Paris",
+      "label": "Paris",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Porsche",
+      "label": "Porsche",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    },
+    {
+      "kind": "cine16x9",
+      "folder": "Sqd",
+      "label": "Sqd",
+      "description": "",
+      "themes": [],
+      "formats": [
+        "wide"
+      ]
+    }
+  ]
+}
