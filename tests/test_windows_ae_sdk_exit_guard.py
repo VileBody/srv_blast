@@ -80,3 +80,39 @@ def test_crash_flags_are_cleared_before_a_job_can_launch_ae() -> None:
 
     clear = runtime.index("self._clear_ae_crash_flags()\n                    self._maybe_reset_ae_project")
     assert clear > 0
+
+
+def test_footage_and_audio_are_normalised_before_ae_sees_them() -> None:
+    """AE indexes frames from every source it imports. VFR clips and the
+    90000/1 cover-art stream some MP3s carry are what it chokes on with
+    "internal structure inconsistency (seq) (25 :: 8)"."""
+    runtime = (RUNTIME_DIR / "ae_sdk.py").read_text(encoding="utf-8")
+    prepare = runtime[runtime.index("def _prepare_files") : runtime.index("def _strip_audio_cover_art")]
+
+    assert "_normalize_footage_to_cfr" in prepare
+    assert "_strip_audio_cover_art" in prepare
+    # both must run on the downloaded file, before the project paths are patched
+    assert prepare.index("_normalize_footage_to_cfr") < prepare.index("_patch_project_paths")
+
+
+def test_wedged_afterfx_fails_one_job_instead_of_the_node() -> None:
+    """Without an idle guard a hung AE holds _RENDER_LOCK until
+    AFTERFX_RUN_TIMEOUT_S (7200s on the node) and every queued job waits."""
+    runtime = (RUNTIME_DIR / "ae_sdk.py").read_text(encoding="utf-8")
+    run = runtime[runtime.index("def _run_afterfx") : runtime.index("def _wait_for_status")]
+
+    assert "AFTERFX_IDLE_TIMEOUT_S" in run
+    assert "AfterFX idle timeout" in run
+    # the idle check has to precede the total-timeout branch to be reachable
+    assert run.index("idle_timeout_s > 0") < run.index("timeout_s > 0 and (now - started_at) > timeout_s")
+
+
+def test_brat_keyframes_use_the_comp_frame_rate() -> None:
+    """BRAT quantised its reveal keyframes to a hardcoded 30fps grid while the
+    comps run at 23.976, so every keyframe landed between frames -- across the
+    per-word precomps it builds, that is the mixed-rate timing AE rejects."""
+    brat = (Path(__file__).resolve().parents[1] / "5th_template" / "brat_subtitles.jsx").read_text(encoding="utf-8")
+
+    bind = brat.index("CONFIG.fps = srcComp.frameRate")
+    grid = brat.index("var fr = 1.0 / CONFIG.fps;", bind)
+    assert bind < grid

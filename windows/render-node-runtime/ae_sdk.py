@@ -481,8 +481,23 @@ class AeRenderer:
             log.info("AE recycle: no session to close reason=%s", reason)
             return
 
+        quit_dir = self.base_dir / "_ae_cleanup_scripts"
+        quit_dir.mkdir(parents=True, exist_ok=True)
+        stamp = int(time.time() * 1000)
+        marker_path = quit_dir / f"quit_{stamp}.ran"
+        marker_literal = str(marker_path).replace("\\", "/")
+
+        # The marker tells apart "AE never ran the script" from "AE ran it and
+        # did not die" -- without it a quit timeout is unattributable.
         quit_jsx = """
 (function () {
+    try {
+        var f = new File("__MARKER_PATH__");
+        f.encoding = "UTF-8";
+        f.open("w");
+        f.write("ran");
+        f.close();
+    } catch (_) {}
     try { app.beginSuppressDialogs(); } catch (_) {}
     try {
         if (app.project && typeof CloseOptions !== "undefined") app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
@@ -491,15 +506,12 @@ class AeRenderer:
     try { app.endSuppressDialogs(false); } catch (_) {}
     try { app.quit(); } catch (_) {}
 })();
-""".strip()
+""".replace("__MARKER_PATH__", marker_literal).strip()
 
-        timeout_s = max(5.0, self._env_float("AE_RECYCLE_QUIT_TIMEOUT_S", 90.0))
-        try:
-            quit_dir = self.base_dir / "_ae_cleanup_scripts"
-            quit_dir.mkdir(parents=True, exist_ok=True)
-            jsx_path = quit_dir / f"quit_{int(time.time() * 1000)}.jsx"
+        timeout_s = max(5.0, self._env_float("AE_RECYCLE_QUIT_TIMEOUT_S", 180.0))
+        def _request_quit() -> None:
+            jsx_path = quit_dir / f"quit_{stamp}_{int(time.time() * 1000)}.jsx"
             self._write_jsx_file(jsx_path, quit_jsx)
-
             subprocess.run(
                 [self.afterfx_bin, "-r", str(jsx_path)],
                 env=os.environ.copy(),
@@ -508,18 +520,37 @@ class AeRenderer:
                 timeout=180,
             )
 
+        try:
+            _request_quit()
+
+            # AE can still be finalising the render when the first request
+            # arrives, in which case the script is queued and may never run;
+            # one repeat mid-wait costs nothing and covers that.
             deadline = time.time() + timeout_s
+            retried = False
             while time.time() < deadline:
                 if not self._afterfx_is_running():
-                    log.info("AE recycled cleanly reason=%s", reason)
+                    log.info(
+                        "AE recycled cleanly reason=%s script_ran=%s",
+                        reason,
+                        marker_path.exists(),
+                    )
                     return
+                if not retried and time.time() > deadline - timeout_s / 2:
+                    retried = True
+                    log.info("AE still up, repeating quit request reason=%s", reason)
+                    try:
+                        _request_quit()
+                    except Exception as exc:
+                        log.warning("AE quit retry failed reason=%s err=%r", reason, exc)
                 time.sleep(1.0)
 
             log.warning(
-                "AE did not exit within %ss after quit request reason=%s; falling back to kill "
-                "(next start will show Crash Repair)",
+                "AE did not exit within %ss after quit request reason=%s script_ran=%s; "
+                "falling back to kill (next start may show Crash Repair)",
                 timeout_s,
                 reason,
+                marker_path.exists(),
             )
         except Exception as exc:
             log.warning("AE graceful quit failed reason=%s err=%r", reason, exc)
@@ -939,8 +970,197 @@ class AeRenderer:
                         stripped_color_space,
                         dest,
                     )
+            if rel.startswith("media/video/") and dest.suffix.lower() in _VIDEO_EXTS:
+                self._normalize_footage_to_cfr(dest)
+            if rel.startswith("media/audio/"):
+                self._strip_audio_cover_art(dest)
 
         self._patch_project_paths(jsx_path, job_dir)
+
+    def _strip_audio_cover_art(self, path: Path) -> None:
+        """Drop the cover-art video stream some MP3s carry.
+
+        Embedded artwork is exposed as a video stream declaring r_frame_rate
+        90000/1 with avg_frame_rate 0/0 -- a 260-second track therefore claims
+        ~23 million frames. AE builds a frame index for it on import, which is
+        the operation that fails with "internal structure inconsistency (seq)".
+        Audio is stream-copied, so this costs milliseconds and loses nothing.
+
+        Fail-open: on any problem the original file stays as it was.
+        """
+        if not self._env_bool("AE_AUDIO_STRIP_COVER_ART", True):
+            return
+        try:
+            ffprobe = self._ffmpeg_bin("ffprobe")
+            if not ffprobe:
+                return
+            probe = subprocess.run(
+                [
+                    ffprobe, "-v", "error", "-select_streams", "v",
+                    "-show_entries", "stream=codec_name,r_frame_rate",
+                    "-of", "csv=p=0", str(path),
+                ],
+                capture_output=True, text=True, timeout=60,
+            )
+            streams = (probe.stdout or "").strip()
+            if not streams:
+                return
+
+            ffmpeg = self._ffmpeg_bin("ffmpeg")
+            if not ffmpeg:
+                log.warning("ffmpeg not found; audio cover art kept path=%s", path)
+                return
+
+            tmp = path.with_name(f"{path.stem}.novideo{path.suffix}")
+            proc = subprocess.run(
+                [ffmpeg, "-y", "-loglevel", "error", "-i", str(path),
+                 "-vn", "-c:a", "copy", str(tmp)],
+                capture_output=True, text=True, timeout=300,
+            )
+            if proc.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
+                log.warning(
+                    "audio cover-art strip failed rc=%s path=%s stderr_tail=%s",
+                    proc.returncode, path, (proc.stderr or "")[-500:],
+                )
+                try:
+                    tmp.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return
+
+            os.replace(tmp, path)
+            log.info("audio cover art stripped path=%s streams=%r", path.name, streams)
+        except Exception as exc:
+            log.warning("audio cover-art strip error path=%s err=%r", path, exc)
+
+    @staticmethod
+    def _ffmpeg_bin(name: str) -> Optional[str]:
+        explicit = (os.getenv(f"{name.upper()}_BIN") or "").strip()
+        if explicit:
+            return explicit if Path(explicit).exists() else None
+        found = shutil.which(name)
+        if found:
+            return found
+        # WinGet installs land outside PATH for service accounts.
+        pattern = (
+            Path(os.path.expanduser("~"))
+            / "AppData/Local/Microsoft/WinGet/Packages"
+        )
+        try:
+            for candidate in pattern.glob(f"Gyan.FFmpeg*/**/bin/{name}.exe"):
+                return str(candidate)
+        except Exception:
+            pass
+        return None
+
+    @classmethod
+    def _probe_frame_rates(cls, path: Path) -> Tuple[str, str]:
+        ffprobe = cls._ffmpeg_bin("ffprobe")
+        if not ffprobe:
+            return "", ""
+        try:
+            proc = subprocess.run(
+                [
+                    ffprobe, "-v", "error", "-select_streams", "v:0",
+                    "-show_entries", "stream=r_frame_rate,avg_frame_rate",
+                    "-of", "csv=p=0", str(path),
+                ],
+                capture_output=True, text=True, timeout=60,
+            )
+        except Exception as exc:
+            log.warning("ffprobe failed path=%s err=%r", path, exc)
+            return "", ""
+        parts = (proc.stdout or "").strip().split(",")
+        if len(parts) < 2:
+            return "", ""
+        return parts[0].strip(), parts[1].strip()
+
+    @staticmethod
+    def _rate_to_float(rate: str) -> float:
+        try:
+            if "/" in rate:
+                num, den = rate.split("/", 1)
+                den_f = float(den)
+                return float(num) / den_f if den_f else 0.0
+            return float(rate)
+        except Exception:
+            return 0.0
+
+    def _normalize_footage_to_cfr(self, path: Path) -> None:
+        """Re-encode variable-frame-rate footage to CFR at the comp frame rate.
+
+        AE resolves source frames against its own clock, and clips whose
+        timestamps disagree with their declared frame rate make it fail with
+        "internal structure inconsistency (seq) (25 :: 8)" -- the crash that
+        wedges the session. Measured on this node: ~3s per 20s clip, in the
+        download phase which runs outside _RENDER_LOCK, and cached by content so
+        a clip is converted once no matter how many jobs reuse it.
+
+        Fail-open by design: any problem here leaves the original file in place,
+        because a slightly risky render beats no render.
+        """
+        if not self._env_bool("AE_FOOTAGE_CFR_ENABLED", True):
+            return
+
+        target = (os.getenv("AE_FOOTAGE_TARGET_FPS") or "24000/1001").strip()
+        target_f = self._rate_to_float(target)
+        if target_f <= 0:
+            return
+
+        try:
+            r_rate, avg_rate = self._probe_frame_rates(path)
+            if not r_rate:
+                return
+            r_f = self._rate_to_float(r_rate)
+            avg_f = self._rate_to_float(avg_rate)
+            is_vfr = bool(avg_f) and abs(r_f - avg_f) > 0.01
+            mismatched = abs(r_f - target_f) > 0.01
+            if not is_vfr and not mismatched:
+                return
+
+            ffmpeg = self._ffmpeg_bin("ffmpeg")
+            if not ffmpeg:
+                log.warning("ffmpeg not found; leaving footage untouched path=%s", path)
+                return
+
+            cache_dir = self.base_dir / "_cfr_cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            stat = path.stat()
+            key = f"{path.stem}_{stat.st_size}_{target.replace('/', '-')}{path.suffix}"
+            cached = cache_dir / key
+
+            if not cached.exists():
+                # keep the real extension: ffmpeg picks the muxer from it
+                tmp = cached.with_name(f"{cached.stem}.part{cached.suffix}")
+                proc = subprocess.run(
+                    [
+                        ffmpeg, "-y", "-loglevel", "error", "-i", str(path),
+                        "-vsync", "cfr", "-r", target,
+                        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                        "-pix_fmt", "yuv420p", "-an", str(tmp),
+                    ],
+                    capture_output=True, text=True, timeout=600,
+                )
+                if proc.returncode != 0 or not tmp.exists() or tmp.stat().st_size == 0:
+                    log.warning(
+                        "CFR normalize failed rc=%s path=%s stderr_tail=%s",
+                        proc.returncode, path, (proc.stderr or "")[-500:],
+                    )
+                    try:
+                        tmp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                    return
+                os.replace(tmp, cached)
+                log.info(
+                    "CFR normalized clip=%s r=%s avg=%s -> %s", path.name, r_rate, avg_rate, target
+                )
+            else:
+                log.info("CFR cache hit clip=%s", path.name)
+
+            shutil.copy2(cached, path)
+        except Exception as exc:
+            log.warning("CFR normalize error path=%s err=%r", path, exc)
 
     def _download_any(self, url: str, dest: Path) -> None:
         u = (url or "").strip()
@@ -1176,6 +1396,14 @@ class AeRenderer:
         timeout_s = self._env_float("AFTERFX_RUN_TIMEOUT_S", 600.0)
         startup_timeout_s = self._env_float("AFTERFX_STARTUP_TIMEOUT_S", 0.0)
         watchdog_poll_s = max(0.1, self._env_float("AFTERFX_WATCHDOG_POLL_S", 2.0))
+        # A wedged AE (modal dialog, hung script) otherwise sits here until
+        # AFTERFX_RUN_TIMEOUT_S -- two hours on this node -- while holding
+        # _RENDER_LOCK, so the whole node stops rather than one job failing.
+        # startup_timeout_s does not cover it: it only applies until progress is
+        # first seen, and a retried job already has project.aep on disk, which
+        # counts as progress immediately. _run_aerender has had this guard all
+        # along (AERENDER_IDLE_TIMEOUT_S); this is the same idea.
+        idle_timeout_s = self._env_float("AFTERFX_IDLE_TIMEOUT_S", 300.0)
 
         cmd = [self.afterfx_bin, "-r", str(jsx_path)]
         status_path = status_path or (job_dir / "ae_status.txt")
@@ -1197,6 +1425,8 @@ class AeRenderer:
             initial_stdout_sig = self._file_progress_sig(stdout_log_path)
             initial_stderr_sig = self._file_progress_sig(stderr_log_path)
             startup_seen = False
+            last_progress_sig = None
+            last_progress_at = time.time()
 
             while True:
                 rc = proc.poll()
@@ -1215,6 +1445,24 @@ class AeRenderer:
 
                 if rc is not None:
                     break
+
+                progress_sig = (
+                    self._file_progress_sig(stdout_log_path),
+                    self._file_progress_sig(stderr_log_path),
+                    self._file_progress_sig(status_path),
+                    self._file_progress_sig(project_path),
+                    self._file_progress_sig(output_path),
+                )
+                if progress_sig != last_progress_sig:
+                    last_progress_sig = progress_sig
+                    last_progress_at = now
+
+                if idle_timeout_s > 0 and (now - last_progress_at) > idle_timeout_s:
+                    self._terminate_process(proc, reason=f"idle_timeout>{idle_timeout_s}s")
+                    raise RuntimeError(
+                        f"AfterFX idle timeout>{idle_timeout_s}s without progress; "
+                        f"logs={stdout_log_path};{stderr_log_path}; status={status_path}"
+                    )
 
                 if startup_timeout_s > 0 and (not startup_seen) and (now - started_at) > startup_timeout_s:
                     self._terminate_process(proc, reason=f"startup_timeout>{startup_timeout_s}s")
