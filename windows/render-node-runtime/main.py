@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import threading
 import time
 import uuid
@@ -465,6 +466,73 @@ manager = RenderTaskManager(
     max_workers=RENDER_MAX_WORKERS,
     max_pending=RENDER_MAX_PENDING,
 )
+
+
+def _job_dir_janitor() -> None:
+    """Delete job folders once AE has certainly let go of them.
+
+    Deleting right after a job kept failing with PermissionError -- AE still had
+    the media open -- and the failure was swallowed, so nothing ever cleaned up:
+    696 folders and 66 GB had accumulated, 668 of them older than a day. Age is
+    the only reliable signal that every handle is closed, so the sweep runs on a
+    timer instead of inline.
+
+    Folders belonging to a render the node still tracks as accepted or running
+    are never touched, and neither are the caches (_cfr_cache pays for itself,
+    _ae_cleanup_scripts is tiny).
+    """
+    base = Path(AE_JOBS_BASE_DIR)
+    interval_s = max(60.0, float(os.getenv("AE_JOBS_JANITOR_INTERVAL_S") or 900))
+    retention_h = float(os.getenv("AE_JOBS_RETENTION_HOURS") or 24)
+
+    if retention_h <= 0:
+        log.info("job dir janitor disabled (AE_JOBS_RETENTION_HOURS=%s)", retention_h)
+        return
+
+    while True:
+        try:
+            cutoff = time.time() - retention_h * 3600.0
+            with manager._lock:  # noqa: SLF001 - same module, deliberate
+                active = {
+                    st.job_id
+                    for st in manager._states.values()
+                    if st.status in ("accepted", "running")
+                }
+
+            removed = 0
+            freed = 0
+            failed = 0
+            for entry in base.iterdir() if base.exists() else []:
+                if not entry.is_dir() or entry.name.startswith("_"):
+                    continue
+                if entry.name in active:
+                    continue
+                try:
+                    if entry.stat().st_mtime >= cutoff:
+                        continue
+                    size = sum(f.stat().st_size for f in entry.rglob("*") if f.is_file())
+                    shutil.rmtree(entry, ignore_errors=False)
+                    removed += 1
+                    freed += size
+                except Exception:
+                    # Still locked, or vanished under us. Next sweep retries.
+                    failed += 1
+
+            if removed or failed:
+                log.info(
+                    "job dir janitor removed=%s freed_mb=%s still_locked=%s retention_h=%s",
+                    removed, round(freed / 1024 / 1024), failed, retention_h,
+                )
+        except Exception as e:
+            log.warning("job dir janitor sweep failed: %r", e)
+
+        time.sleep(interval_s)
+
+
+@app.on_event("startup")
+def _start_job_dir_janitor() -> None:
+    threading.Thread(target=_job_dir_janitor, name="job-dir-janitor", daemon=True).start()
+    log.info("job dir janitor started base=%s", AE_JOBS_BASE_DIR)
 
 
 @app.get("/health")
