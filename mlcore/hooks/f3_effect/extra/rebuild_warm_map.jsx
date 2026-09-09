@@ -25,7 +25,7 @@ var SILENT = true; // true = без блокирующих alert (для авт�
 var AEP_PATH = (function(){ var f = new File($.fileName); return f.parent.fsName + "/warm map.aep"; })();
 var SRC_FOLDER_NAME = "[src] warm map";
 
-function log(msg){ if (SILENT){ try { $.writeln(msg); } catch(e){} } else alert(msg); }
+function log(msg){ if (SILENT){ try { $.writeln(msg); } catch(e){} } else { try { $.writeln(msg); } catch(e){} } }
 
 function refName(){
     if (CONFIG.place && CONFIG.place.indexOf(":") > -1) return CONFIG.place.split(":")[1];

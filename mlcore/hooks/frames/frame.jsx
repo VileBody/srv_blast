@@ -5,7 +5,7 @@
 var CONFIG = { targetCompName:null, framePath:null, opacity:100 };
 var SILENT = true;
 if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__BLAST; for (var __k in __p){ if (__p[__k]!=null) CONFIG[__k]=__p[__k]; } }
-function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
+function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else { try { $.writeln(m); } catch(e){} } }
 function findComp(){ var a=app.project.activeItem,i,it; if(CONFIG.targetCompName){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&it.name===CONFIG.targetCompName)return it;}} if(a&&a instanceof CompItem)return a; return null; }
 function setP(e,n,v){ try{var p=e.property(n);if(p)p.setValue(v);}catch(x){} }
 function importOnce(path){

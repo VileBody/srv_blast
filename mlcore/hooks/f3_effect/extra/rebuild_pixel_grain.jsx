@@ -5,7 +5,7 @@ if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__
 var AEP_PATH = (function(){ return new File($.fileName).parent.fsName + "/pixel graim.aep"; })();
 var SRC_FOLDER = "[src] pixel grain";
 
-function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
+function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else { try { $.writeln(m); } catch(e){} } }
 function findLayer(c,n){ for(var i=1;i<=c.numLayers;i++) if(c.layer(i).name===n) return c.layer(i); return null; }
 function findComp(){ var a=app.project.activeItem,i,it;
   if(CONFIG.targetCompName){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&it.name===CONFIG.targetCompName)return it;}}

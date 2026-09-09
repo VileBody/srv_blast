@@ -131,3 +131,38 @@ def test_builder_template_opens_no_undo_group() -> None:
     )
     assert "beginUndoGroup" not in code
     assert "endUndoGroup" not in code
+
+
+def test_each_overlay_gets_its_own_scope() -> None:
+    """Overlays are concatenated into one script. With their helpers at top
+    level, hoisting made the last declaration of a name win for everybody: the
+    F1 sound hook ran BRAT's pickFile and looked for subtitles.json instead of
+    its sound file."""
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root))
+    from app.project_builder import _isolate_overlay_js
+
+    wrapped = _isolate_overlay_js("f1", "function pickFile(){ return null; }")
+    assert wrapped.startswith("// --- f1 (isolated scope) ---")
+    assert "(function () {" in wrapped and "})();" in wrapped
+    assert _isolate_overlay_js("f2", "") == ""
+
+
+def test_bundled_scripts_cannot_open_a_modal() -> None:
+    """A dialog on the render node blocks AE until someone clicks it, and
+    nobody is watching. Dev-only scripts are not bundled and may still alert."""
+    root = Path(__file__).resolve().parents[1]
+    offenders = []
+    for folder in ("mlcore/hooks", "5th_template"):
+        for jsx in (root / folder).rglob("*.jsx"):
+            if jsx.name == "test_sounds.jsx":  # manual tool, never bundled
+                continue
+            for num, line in enumerate(jsx.read_text(encoding="utf-8").splitlines(), 1):
+                stripped = line.strip()
+                if stripped.startswith("//"):
+                    continue
+                if "alert(" in line or "openDialog" in line:
+                    offenders.append(f"{jsx.relative_to(root)}:{num}")
+    assert not offenders, offenders

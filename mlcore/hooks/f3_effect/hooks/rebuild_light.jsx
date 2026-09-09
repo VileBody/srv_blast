@@ -32,7 +32,7 @@ var __B = (typeof $!=="undefined" && $.global && $.global.__BLAST) ? $.global.__
 var TARGET_COMP = (__B.targetCompName!=null) ? __B.targetCompName : null;
 var DROP_TIME   = (__B.dropTime!=null) ? __B.dropTime : null;
 var HOOK_ANCHOR = 4.5045045045045; // якорь хука (вспышка/шейк) -> на этот момент попадёт DROP_TIME
-function logL(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
+function logL(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else { try { $.writeln(m); } catch(e){} } }
 
 // ====================== ХЕЛПЕРЫ ======================
 function clamp0(x){ return (x < 0) ? 0 : x; }

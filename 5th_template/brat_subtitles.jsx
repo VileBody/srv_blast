@@ -91,7 +91,9 @@ var CONFIG = {
 var BZ = KeyframeInterpolationType.BEZIER;
 
 function log(m){ try { $.writeln("[brat] " + m); } catch(e){} }
-function say(m){ if (CONFIG.DEBUG){ try { alert("[brat] " + m); } catch(e){} } log(m); }
+// No alert(): this script is bundled into the render-node project, where a
+// modal blocks AE until someone clicks it and nobody is watching.
+function say(m){ log(m); }
 
 function injectedData(){
     try { if (typeof $.global.__BLAST_SUBS_JSON !== "undefined" && $.global.__BLAST_SUBS_JSON) return $.global.__BLAST_SUBS_JSON; } catch(e){}
@@ -106,7 +108,7 @@ function injectedBpm(){
     return null;
 }
 function pickFile(){
-    if (CONFIG.INTERACTIVE){ var f = File.openDialog("Выбери JSON с таймингами субтитров"); return f ? f : null; }
+    // No File.openDialog(): on the render node it would hang AE forever.
     try { var sf = new File($.fileName); return new File(sf.parent.fsName + "/subtitles.json"); } catch(e){ return null; }
 }
 function readJSON(jf){

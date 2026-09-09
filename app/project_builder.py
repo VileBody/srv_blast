@@ -429,6 +429,27 @@ def _build_f6_overlay_js(full_edit_config: Dict[str, Any]) -> str:
     return overlay
 
 
+def _isolate_overlay_js(name: str, js: str) -> str:
+    """Wrap an injected overlay in its own scope before it joins the project JSX.
+
+    The overlays are concatenated into one script, and their helpers used to sit
+    at its top level. JavaScript hoists function declarations, so the last
+    declaration of a name won for everybody: in a real job `pickFile` was
+    declared by both the F1 sound hook and BRAT, and the sound hook silently ran
+    BRAT's version -- looking for subtitles.json instead of its sound file.
+    `log`, `findComp`, `findLayer` and `setP` collided the same way, and the
+    shared `CONFIG` was reassigned five times.
+
+    Each overlay is an independent module, so it gets an independent scope. New
+    overlays are then safe to add without auditing every name in the bundle.
+    """
+    body = (js or "").strip()
+    if not body:
+        return ""
+    header = "// --- " + name + " (isolated scope) ---"
+    return header + chr(10) + "(function () {" + chr(10) + body + chr(10) + "})();" + chr(10)
+
+
 def _build_jsx_subtitles_js(
     full_edit_config: Dict[str, Any],
     *,
@@ -867,14 +888,14 @@ def build_full_project(
     tpl = env.get_template("project_template.j2")
     jsx = tpl.render(
         **payload,
-        f4_overlay_js=f4_overlay_js,
-        f3_overlay_js=f3_overlay_js,
-        f2_overlay_js=f2_overlay_js,
-        f1_overlay_js=f1_overlay_js,
-        f6_overlay_js=f6_overlay_js,
-        f5_overlay_js=f5_overlay_js,
-        frame_overlay_js=frame_overlay_js,
-        jsx_subtitles_js=jsx_subtitles_js,
+        f4_overlay_js=_isolate_overlay_js("f4", f4_overlay_js),
+        f3_overlay_js=_isolate_overlay_js("f3", f3_overlay_js),
+        f2_overlay_js=_isolate_overlay_js("f2", f2_overlay_js),
+        f1_overlay_js=_isolate_overlay_js("f1", f1_overlay_js),
+        f6_overlay_js=_isolate_overlay_js("f6", f6_overlay_js),
+        f5_overlay_js=_isolate_overlay_js("f5", f5_overlay_js),
+        frame_overlay_js=_isolate_overlay_js("frame", frame_overlay_js),
+        jsx_subtitles_js=_isolate_overlay_js("subtitles", jsx_subtitles_js),
     )
     out_jsx.write_text(jsx, encoding="utf-8")
 

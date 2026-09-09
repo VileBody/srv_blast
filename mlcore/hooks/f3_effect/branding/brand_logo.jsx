@@ -15,7 +15,7 @@ var CONFIG = {
     targetCompName: null,
     placeRef:       "Текст",
     dropTime:       3.0,           // момент дропа, сек (якорь; первый штамп тут)
-    logoPath:       "C:/Users/Пользователь/Desktop/АЕ/Хуки/Лого и шейпы/Лого Бласта/Group 1245.png",
+    logoPath:       null,          // реальный путь приезжает из S3 через asset_picker
     style:          "stamp_flash", // "stamp_flash" | "clean_fade" | "corner_watermark"
     scale:          23,
     position:       "center",      // "center" | "tl" | "tr" | "bl" | "br"
@@ -32,7 +32,7 @@ if (typeof $ !== "undefined" && $.global && $.global.__BLAST){
     var __p = $.global.__BLAST; for (var __k in __p){ if (__p[__k] !== null && __p[__k] !== undefined) CONFIG[__k] = __p[__k]; }
 }
 
-function log(m){ if (SILENT){ try { $.writeln(m); } catch(e){} } else alert(m); }
+function log(m){ if (SILENT){ try { $.writeln(m); } catch(e){} } else { try { $.writeln(m); } catch(e){} } }
 function findLayer(c, n){ for (var i=1;i<=c.numLayers;i++) if (c.layer(i).name===n) return c.layer(i); return null; }
 function findTargetComp(){
     var i, it;

@@ -3,7 +3,7 @@ var CONFIG = { targetCompName:null, placeRef:"Текст", dropTime:null, startT
 var SILENT = true;
 if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__BLAST; for (var __k in __p){ if (__p[__k]!=null) CONFIG[__k]=__p[__k]; } }
 var BZ=KeyframeInterpolationType.BEZIER;
-function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
+function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else { try { $.writeln(m); } catch(e){} } }
 function setP(e,m,v){ try{e.property(m).setValue(v);}catch(x){} }
 function fxS(){ try{ return (CONFIG.fxScale && CONFIG.fxScale.i>0) ? CONFIG.fxScale : null; }catch(e){ return null; } }
 function sx(v){ var s=fxS(); return s? v*s.x : v; }
