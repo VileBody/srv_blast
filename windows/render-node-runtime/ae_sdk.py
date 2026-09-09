@@ -334,11 +334,24 @@ class AeRenderer:
             return app_dir.parent
         return app_dir
 
+    # AE launched via `afterfx.exe -r <script>` sets app.exitAfterLaunchAndEval,
+    # i.e. it quits once the script has been evaluated. Quitting with a modified
+    # project open raises the blocking, title-less "Save changes to <project>.aep
+    # before closing?" modal; AE then stops answering further -r calls, so every
+    # following cleanup/build times out and the session gets force-restarted
+    # between jobs. Every script the runtime feeds to AE opts out of that first,
+    # which is also what keeps the session warm for the next job.
+    _JSX_PREAMBLE = "try { app.exitAfterLaunchAndEval = false; } catch (e) {}" + chr(10)
+
     @staticmethod
     def _write_jsx_file(path: Path, text: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         if text.startswith("\ufeff"):
             text = text[1:]
+        # _patch_project_paths rewrites an already-written script, so keep
+        # this idempotent instead of stacking preambles.
+        if not text.startswith(AeRenderer._JSX_PREAMBLE):
+            text = AeRenderer._JSX_PREAMBLE + text
         path.write_text(text, encoding="utf-8-sig")
 
     @staticmethod
