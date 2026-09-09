@@ -347,13 +347,19 @@ class AeRenderer:
             return app_dir.parent
         return app_dir
 
-    # AE launched via `afterfx.exe -r <script>` quits once the script has been
-    # evaluated, and quitting with a modified project open raises a blocking save
-    # dialog that wedges the session for every following job. Asking AE not to
-    # exit is best-effort only -- observed on AE 2025: it quits regardless -- so
-    # the real guarantee is that every script leaves no modified project behind
-    # (see the wrapper and cleanup teardowns below).
-    _JSX_PREAMBLE = "try { app.exitAfterLaunchAndEval = false; } catch (e) {}" + chr(10)
+    # Auto-Save must be off from inside the session: AE rewrites its prefs file
+    # from memory on startup, so editing the file on disk does not hold (observed
+    # 15:53:19 -- AE restored "Enable Auto Save RQ2" to 1 over an edit made while
+    # it was closed). It fires exactly when the wrapper starts the Render Queue,
+    # serialising the project while the render mutates it, which is one of the
+    # ways AE reaches "internal structure inconsistency (seq)".
+    _JSX_PREAMBLE = (
+        "try { app.exitAfterLaunchAndEval = false; } catch (e) {}" + chr(10)
+        + "try { app.preferences.savePrefAsLong(\"Auto Save\", \"Enable Auto Save3\", 0,"
+          " PREFType.PREF_Type_MACHINE_INDEPENDENT); } catch (e) {}" + chr(10)
+        + "try { app.preferences.savePrefAsLong(\"Auto Save\", \"Enable Auto Save RQ2\", 0,"
+          " PREFType.PREF_Type_MACHINE_INDEPENDENT); } catch (e) {}" + chr(10)
+    )
 
     @staticmethod
     def _write_jsx_file(path: Path, text: str) -> None:
