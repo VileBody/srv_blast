@@ -185,3 +185,29 @@ def test_watcher_dismisses_untitled_ae_dialogs() -> None:
     # the enumeration must keep title-less windows instead of returning early
     enum = watcher[watcher.index("GetWindowTextLength") : watcher.index("GetWindowThreadProcessId")]
     assert "if ($len -le 0) {\n      return $true\n    }" not in enum
+
+
+def test_idle_watchdog_watches_the_builder_heartbeat() -> None:
+    """The status file, project.aep and output.mp4 only appear near the end of a
+    job. On a complex build nothing else moved for minutes, so the idle guard
+    read a healthy build as silence and killed it. hb.txt and run_live.log are
+    the builder's own heartbeat and are the only things that move meanwhile."""
+    runtime = (RUNTIME_DIR / "ae_sdk.py").read_text(encoding="utf-8")
+    run = runtime[runtime.index("def _run_afterfx") : runtime.index("def _wait_for_status")]
+
+    assert 'job_dir / "hb.txt"' in run
+    assert 'job_dir / "run_live.log"' in run
+
+
+def test_finished_renders_survive_an_agent_restart() -> None:
+    """The registry lived only in memory, so restarting the agent turned a
+    finished-but-uncollected render into a 404 and refunded a video that had
+    actually rendered (job 6cc3ef6a). In-flight renders must come back as a
+    failure with a reason rather than vanish."""
+    node_main = (RUNTIME_DIR / "main.py").read_text(encoding="utf-8")
+
+    assert "_persist_locked" in node_main
+    assert "_restore" in node_main
+    assert "render agent restarted while this job was in flight" in node_main
+    # every terminal transition has to reach the disk, not just the happy path
+    assert node_main.count("self._persist_locked()") >= 4
