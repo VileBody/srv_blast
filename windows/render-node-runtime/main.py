@@ -282,6 +282,24 @@ class RenderTaskManager:
             restored, orphaned, self._state_file,
         )
 
+    def _drop_failed_locked(self, job_id: str, render_id: str) -> bool:
+        """Caller holds self._lock. Forget a failed render so the job can retry.
+
+        A failed record used to be returned as-is on re-dispatch, so the job was
+        never handed to AE again -- it just got the old failure back until the
+        record aged out (RENDER_STATE_TTL_S, a day). accepted/running/succeeded
+        keep their idempotency: those protect against duplicate renders.
+        """
+        st = self._states.get(render_id)
+        if st is None or st.status != "failed":
+            return False
+        self._states.pop(render_id, None)
+        if self._render_id_by_job_id.get(job_id) == render_id:
+            self._render_id_by_job_id.pop(job_id, None)
+        self._persist_locked()
+        log.info("dropped failed render so job can retry job_id=%s render_id=%s", job_id, render_id)
+        return True
+
     @staticmethod
     def _payload_hash(payload: Dict[str, Any]) -> str:
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -294,6 +312,8 @@ class RenderTaskManager:
         with self._lock:
             if payload_job_id:
                 existing_render_id = self._render_id_by_job_id.get(payload_job_id)
+                if existing_render_id and self._drop_failed_locked(payload_job_id, existing_render_id):
+                    existing_render_id = None
                 if existing_render_id:
                     st = self._states[existing_render_id]
                     if st.payload_hash != payload_hash:
@@ -310,6 +330,8 @@ class RenderTaskManager:
 
         with self._lock:
             existing_render_id = self._render_id_by_job_id.get(job_id)
+            if existing_render_id and self._drop_failed_locked(job_id, existing_render_id):
+                existing_render_id = None
             if existing_render_id:
                 st = self._states[existing_render_id]
                 if st.payload_hash != payload_hash:
@@ -385,6 +407,23 @@ class RenderTaskManager:
         finally:
             with self._lock:
                 self._unfinished = max(0, self._unfinished - 1)
+
+    def forget(self, render_id: str) -> str:
+        """Drop a render record. Returns "removed", "not_found" or "running"."""
+        with self._lock:
+            st = self._states.get(render_id)
+            if st is None:
+                return "not_found"
+            if st.status == "running":
+                return "running"
+            self._states.pop(render_id, None)
+            if self._render_id_by_job_id.get(st.job_id) == render_id:
+                self._render_id_by_job_id.pop(st.job_id, None)
+            if st.status == "accepted":
+                self._unfinished = max(0, self._unfinished - 1)
+            self._persist_locked()
+            log.info("render record forgotten render_id=%s job_id=%s", render_id, st.job_id)
+            return "removed"
 
     def get(self, render_id: str) -> Optional[_RenderState]:
         with self._lock:
@@ -507,6 +546,20 @@ def get_render(render_id: str) -> RenderStatusResponse:
         output_url=(result.output_s3_url if result is not None else None),
         app_dir=(str(result.app_dir) if result is not None else None),
     )
+
+
+@app.delete("/render/{render_id}")
+def delete_render(render_id: str) -> Dict[str, str]:
+    rid = str(render_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="render_id is empty")
+
+    outcome = manager.forget(rid)
+    if outcome == "not_found":
+        raise HTTPException(status_code=404, detail="render_id not found")
+    if outcome == "running":
+        raise HTTPException(status_code=409, detail="render is running; refusing to forget it")
+    return {"status": "removed", "render_id": rid}
 
 
 if __name__ == "__main__":

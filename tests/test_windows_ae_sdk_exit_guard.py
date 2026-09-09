@@ -211,3 +211,28 @@ def test_finished_renders_survive_an_agent_restart() -> None:
     assert "render agent restarted while this job was in flight" in node_main
     # every terminal transition has to reach the disk, not just the happy path
     assert node_main.count("self._persist_locked()") >= 4
+
+
+def test_failed_render_does_not_block_a_retry() -> None:
+    """A failed record used to be handed straight back on re-dispatch, so the
+    job was never given to AE again — it just got the old failure until the
+    record aged out (a day). accepted/running/succeeded keep their idempotency,
+    which is what protects against duplicate renders."""
+    node_main = (RUNTIME_DIR / "main.py").read_text(encoding="utf-8")
+
+    assert "_drop_failed_locked" in node_main
+    submit = node_main[node_main.index("def submit(") : node_main.index("def _run(")]
+    # both idempotency checks must consult it, not just the second one
+    assert submit.count("_drop_failed_locked") == 2
+
+    drop = node_main[node_main.index("def _drop_failed_locked") : node_main.index("def _payload_hash")]
+    assert 'st.status != "failed"' in drop  # only failures are forgotten
+
+
+def test_render_record_can_be_forgotten_but_not_while_running() -> None:
+    node_main = (RUNTIME_DIR / "main.py").read_text(encoding="utf-8")
+
+    assert '@app.delete("/render/{render_id}")' in node_main
+    forget = node_main[node_main.index("def forget(") : node_main.index("def stats(")]
+    assert 'return "running"' in forget
+    assert "self._persist_locked()" in forget
