@@ -48,3 +48,35 @@ def test_ae_process_is_recycled_after_each_job() -> None:
     # The reset is the fallback branch, reached only with recycling turned off.
     assert recycle < post_reset
     assert "def _terminate_afterfx_session" in runtime
+
+
+def test_recycle_asks_ae_to_quit_instead_of_killing_it() -> None:
+    """taskkill registers as a crash, and the next AE start then blocks on the
+    modal "Crash Repair Options" dialog, which the modal watcher cannot dismiss
+    (the window carries no title, so the watcher never even sees it)."""
+    runtime = (RUNTIME_DIR / "ae_sdk.py").read_text(encoding="utf-8")
+
+    recycle = runtime.index("def _recycle_afterfx_session")
+    body = runtime[recycle : runtime.index("def _clear_ae_crash_flags")]
+
+    assert "app.quit()" in body
+    assert "CloseOptions.DO_NOT_SAVE_CHANGES" in body
+    # kill stays available, but only once a clean quit has failed
+    assert body.index("app.quit()") < body.index("_terminate_afterfx_session")
+
+
+def test_ae_process_probe_covers_both_image_names() -> None:
+    """The GUI runs as AfterFX.com on the render node; probing only AfterFX.exe
+    reports a live session as gone and turns the recycle into a no-op."""
+    runtime = (RUNTIME_DIR / "ae_sdk.py").read_text(encoding="utf-8")
+    probe = runtime[runtime.index("def _afterfx_is_running") : runtime.index("def _recycle_afterfx_session")]
+
+    assert "AfterFX.exe" in probe
+    assert "AfterFX.com" in probe
+
+
+def test_crash_flags_are_cleared_before_a_job_can_launch_ae() -> None:
+    runtime = (RUNTIME_DIR / "ae_sdk.py").read_text(encoding="utf-8")
+
+    clear = runtime.index("self._clear_ae_crash_flags()\n                    self._maybe_reset_ae_project")
+    assert clear > 0

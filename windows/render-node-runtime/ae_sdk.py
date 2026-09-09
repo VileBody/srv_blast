@@ -427,6 +427,135 @@ class AeRenderer:
             return
         self._best_effort_reset_ae_project(tag=tag)
 
+    @staticmethod
+    def _afterfx_is_running() -> bool:
+        """True while any AE process is up.
+
+        The GUI runs as AfterFX.exe or AfterFX.com depending on which binary
+        launched it -- on this node it is usually AfterFX.com. Probing only
+        AfterFX.exe reports "not running" for a live session, which silently
+        turns the recycle into a no-op.
+        """
+        for image_name in ("AfterFX.exe", "AfterFX.com"):
+            try:
+                proc = subprocess.run(
+                    ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            except Exception as exc:
+                log.warning("tasklist probe failed image=%s err=%r", image_name, exc)
+                continue
+            if image_name.lower() in (proc.stdout or "").lower():
+                return True
+        return False
+
+    def _recycle_afterfx_session(self, *, reason: str) -> None:
+        """Recycle the AE process between jobs by asking it to exit.
+
+        A taskkill registers as a crash, and the next AE start then comes up on
+        the "Crash Repair Options" dialog -- which is modal, blocks the job, and
+        cannot be clicked away by the modal watcher (UI Automation on it fails
+        with "Could not open the process token"). So AE is asked to quit itself;
+        the project is closed first so nothing is left to prompt about.
+        """
+        if os.name != "nt":
+            log.warning("AE recycle unavailable platform=%s reason=%s", os.name, reason)
+            return
+
+        if not self._afterfx_is_running():
+            log.info("AE recycle: no session to close reason=%s", reason)
+            return
+
+        quit_jsx = """
+(function () {
+    try { app.beginSuppressDialogs(); } catch (_) {}
+    try {
+        if (app.project && typeof CloseOptions !== "undefined") app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+        else if (app.project) app.project.close();
+    } catch (_) {}
+    try { app.endSuppressDialogs(false); } catch (_) {}
+    try { app.quit(); } catch (_) {}
+})();
+""".strip()
+
+        timeout_s = max(5.0, self._env_float("AE_RECYCLE_QUIT_TIMEOUT_S", 90.0))
+        try:
+            quit_dir = self.base_dir / "_ae_cleanup_scripts"
+            quit_dir.mkdir(parents=True, exist_ok=True)
+            jsx_path = quit_dir / f"quit_{int(time.time() * 1000)}.jsx"
+            self._write_jsx_file(jsx_path, quit_jsx)
+
+            subprocess.run(
+                [self.afterfx_bin, "-r", str(jsx_path)],
+                env=os.environ.copy(),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=180,
+            )
+
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
+                if not self._afterfx_is_running():
+                    log.info("AE recycled cleanly reason=%s", reason)
+                    return
+                time.sleep(1.0)
+
+            log.warning(
+                "AE did not exit within %ss after quit request reason=%s; falling back to kill "
+                "(next start will show Crash Repair)",
+                timeout_s,
+                reason,
+            )
+        except Exception as exc:
+            log.warning("AE graceful quit failed reason=%s err=%r", reason, exc)
+
+        self._terminate_afterfx_session(reason=f"quit_timeout:{reason}")
+
+    @staticmethod
+    def _clear_ae_crash_flags() -> None:
+        """Clear AE's own "last session died" flags.
+
+        A killed AE sets ForceQuitOccured/AbortOccured under
+        HKCU\Software\Adobe\After Effects\<version>, and the next start then
+        opens the modal "Crash Repair Options" dialog. It blocks the job and the
+        modal watcher cannot click it (UI Automation on it fails with "Could not
+        open the process token"), so the flags are cleared whenever the runtime
+        had to kill AE rather than let it exit.
+        """
+        if os.name != "nt":
+            return
+        try:
+            import winreg
+        except Exception:
+            return
+
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Adobe\After Effects") as root:
+                index = 0
+                while True:
+                    try:
+                        version = winreg.EnumKey(root, index)
+                    except OSError:
+                        break
+                    index += 1
+                    try:
+                        with winreg.OpenKey(root, version, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+                            for name in ("ForceQuitOccured", "AbortOccured"):
+                                try:
+                                    winreg.QueryValueEx(key, name)
+                                except FileNotFoundError:
+                                    continue
+                                winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, 0)
+                                log.info("AE crash flag cleared version=%s name=%s", version, name)
+                    except Exception as exc:
+                        log.warning("AE crash flag clear failed version=%s err=%r", version, exc)
+        except FileNotFoundError:
+            return
+        except Exception as exc:
+            log.warning("AE crash flag clear failed err=%r", exc)
+
     def _terminate_afterfx_session(self, *, reason: str) -> None:
         """Force the GUI AE process to go away, so the next job gets a fresh one."""
         if os.name != "nt":
@@ -443,6 +572,7 @@ class AeRenderer:
                 )
             except Exception as exc:
                 log.warning("AE session recycle taskkill failed image=%s err=%r", image_name, exc)
+        self._clear_ae_crash_flags()
         log.warning("AE session recycled reason=%s", reason)
 
 
@@ -622,6 +752,13 @@ class AeRenderer:
                 backend = self._render_backend()
                 log.info("AE render backend job_id=%s backend=%s", spec.job_id, backend)
                 with _RENDER_LOCK:
+                    # Clear AE's crash flags before anything can launch it. The
+                    # "Crash Repair Options" dialog is modal, blocks the job and
+                    # is invisible to the modal watcher (the window has no title),
+                    # so it must never get the chance to appear -- whatever killed
+                    # the previous session. Clearing while AE runs is fine: a
+                    # render node never wants the recovery prompt.
+                    self._clear_ae_crash_flags()
                     self._maybe_reset_ae_project(tag=f"{spec.job_id}_pre")
                     try:
                         # run AfterFX jsx builder
@@ -690,7 +827,7 @@ class AeRenderer:
                         # that kept timing out on a wedged AE.
                         # AE_RECYCLE_AFTER_JOB=0 restores the warm session.
                         if self._env_bool("AE_RECYCLE_AFTER_JOB", True):
-                            self._terminate_afterfx_session(
+                            self._recycle_afterfx_session(
                                 reason=f"planned_recycle_after_job:{spec.job_id}"
                             )
                         else:
