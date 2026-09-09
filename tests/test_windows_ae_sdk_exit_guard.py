@@ -116,3 +116,18 @@ def test_brat_keyframes_use_the_comp_frame_rate() -> None:
     bind = brat.index("CONFIG.fps = srcComp.frameRate")
     grid = brat.index("var fr = 1.0 / CONFIG.fps;", bind)
     assert bind < grid
+
+
+def test_builder_template_opens_no_undo_group() -> None:
+    """AE does not nest undo groups. The injected overlay scripts each open
+    their own, so an outer group around them left AE with more endUndoGroup
+    calls than begins -- "Undo group mismatch, will attempt to fix", which
+    rewrites AE's undo stack. A render node never needs undo."""
+    root = Path(__file__).resolve().parents[1]
+    template = (root / "templates" / "project_template.j2").read_text(encoding="utf-8")
+
+    code = "\n".join(
+        line for line in template.splitlines() if not line.lstrip().startswith("//")
+    )
+    assert "beginUndoGroup" not in code
+    assert "endUndoGroup" not in code

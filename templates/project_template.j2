@@ -1,6 +1,12 @@
 {# templates/project_template.j2 #}
 (function () {
-  app.beginUndoGroup("AE_TEXTLIB_FULL_PROJECT");
+  // No outer undo group. AE does not nest them, and the 37 injected overlay
+  // scripts (hooks, shapes, BRAT) each open their own -- nested inside this one
+  // they left AE with more endUndoGroup calls than begins, which it reports as
+  // "Undo group mismatch, will attempt to fix". That fix rewrites AE's own undo
+  // stack, and a corrupted stack is one of the states behind "internal structure
+  // inconsistency (seq)". A render node builds the project once and throws it
+  // away, so undo buys nothing here.
 
   // ==========================================================
   // 0) ENV / STATUS helpers
@@ -1714,12 +1720,10 @@
 
     logLine("INFO", "done FULL project.");
     try { app.endSuppressDialogs(false); } catch(_) {}
-    app.endUndoGroup();
 
   } catch(eTop) {
     try { __writeAeStatusErr("top-level error: " + (eTop && eTop.toString ? eTop.toString() : String(eTop)) + " | last_hb=" + String(__LAST_HB || "")); } catch(_) {}
     try { app.endSuppressDialogs(false); } catch(_) {}
-    try { app.endUndoGroup(); } catch(_) {}
     throw eTop;
   }
 })();
