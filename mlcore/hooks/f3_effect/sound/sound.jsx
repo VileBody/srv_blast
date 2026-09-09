@@ -17,7 +17,7 @@ var CONFIG = {
     dropTime:       3.0,           // момент дропа (якорь)
 
     soundFile:      null,          // конкретный файл (приоритетнее пула)
-    soundPool:      "C:/Users/Пользователь/Desktop/АЕ/Звуки/Camera Flash", // папка-пул
+    soundPool:      null,          // папка-пул; реальные ассеты приезжают из S3 через asset_picker
     pick:           "random",      // "random" | "first"
 
     impactAt:       null,          // сек до импульса внутри файла (null = старт на дропе)
@@ -33,7 +33,7 @@ if (typeof $ !== "undefined" && $.global && $.global.__BLAST){
     var __p = $.global.__BLAST; for (var __k in __p){ if (__p[__k] !== null && __p[__k] !== undefined) CONFIG[__k] = __p[__k]; }
 }
 
-function log(m){ if (SILENT){ try { $.writeln(m); } catch(e){} } else alert(m); }
+function log(m){ if (SILENT){ try { $.writeln(m); } catch(e){} } else { try { $.writeln(m); } catch(e){} } }
 function findLayer(c, n){ for (var i=1;i<=c.numLayers;i++) if (c.layer(i).name===n) return c.layer(i); return null; }
 function findTargetComp(){
     var i, it;

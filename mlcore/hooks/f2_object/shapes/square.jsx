@@ -43,7 +43,7 @@ var T_FX_DUR       = T_END_OFFSET - T_FX_OFFSET;   // ~0.067с
 var INVERT_KEYS = [[0,100],[0.13346680013347,0],[0.3003003003003,100],[0.46713380046713,0]];
 var BZ = KeyframeInterpolationType.BEZIER;
 
-function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
+function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else { try { $.writeln(m); } catch(e){} } }
 function setP(e,m,v){ try{e.property(m).setValue(v);}catch(x){} }
 function findLayer(c,n){ for(var i=1;i<=c.numLayers;i++) if(c.layer(i).name===n) return c.layer(i); return null; }
 function findComp(){

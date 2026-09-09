@@ -3,7 +3,7 @@ var CONFIG = { targetCompName:null, placeRef:"Текст", dropTime:null, startT
                opStart:25, fadeTime:0.6 };
 var SILENT = true;
 if (typeof $!=="undefined" && $.global && $.global.__BLAST){ var __p=$.global.__BLAST; for (var __k in __p){ if (__p[__k]!=null) CONFIG[__k]=__p[__k]; } }
-function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
+function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else { try { $.writeln(m); } catch(e){} } }
 function findLayer(c,n){ for(var i=1;i<=c.numLayers;i++) if(c.layer(i).name===n) return c.layer(i); return null; }
 function findComp(){ var a=app.project.activeItem,i,it;
   if(CONFIG.targetCompName){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&it.name===CONFIG.targetCompName)return it;}}

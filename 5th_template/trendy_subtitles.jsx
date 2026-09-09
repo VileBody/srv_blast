@@ -64,7 +64,9 @@ var CONFIG = {
 // ================================================================
 
 function log(m){ try { $.writeln("[trendy] " + m); } catch(e){} }
-function say(m){ if (CONFIG.DEBUG){ try { alert("[trendy] " + m); } catch(e){} } log(m); }
+// No alert(): bundled into the render-node project, where a modal blocks AE
+// until someone clicks it and nobody is watching.
+function say(m){ log(m); }
 function setP(e, mn, v){ try { e.property(mn).setValue(v); return true; } catch(x){ return false; } }
 
 function injectedData(){
@@ -76,7 +78,7 @@ function injectedFill(){
     return null;
 }
 function pickFile(){
-    if (CONFIG.INTERACTIVE){ var f = File.openDialog("Выбери JSON с таймингами субтитров"); return f ? f : null; }
+    // No File.openDialog(): on the render node it would hang AE forever.
     try { var sf = new File($.fileName); return new File(sf.parent.fsName + "/subtitles.json"); } catch(e){ return null; }
 }
 function readJSON(jf){

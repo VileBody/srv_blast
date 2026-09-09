@@ -9,7 +9,7 @@ var CFG = { intro_dur:0.63, outro_dur:0.63, min_hold:0.10, rot_peak1:-2.31, rot_
             // zoom blur kicked in and made the shake far too strong. Leave false.
             useSapphireBlur:false };
 
-function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else alert(m); }
+function log(m){ if(SILENT){try{$.writeln(m);}catch(e){}}else { try { $.writeln(m); } catch(e){} } }
 function findLayer(c,n){ for(var i=1;i<=c.numLayers;i++) if(c.layer(i).name===n) return c.layer(i); return null; }
 function findComp(){ var a=app.project.activeItem,i,it;
   if(CONFIG.targetCompName){for(i=1;i<=app.project.numItems;i++){it=app.project.item(i);if(it instanceof CompItem&&it.name===CONFIG.targetCompName)return it;}}
