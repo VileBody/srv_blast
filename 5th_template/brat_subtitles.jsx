@@ -461,6 +461,12 @@ function addBlinker(tcomp, spanIn, spanOut){
     }
     var cleanup = cleanupPreviousBrat(srcComp);
 
+    // Reveal keyframes must land on the comp's own frame grid. CONFIG.fps is a
+    // fallback for standalone runs; inside the pipeline the comp is 23.976, and
+    // quantising to a hardcoded 30 put every keyframe between frames. Across the
+    // per-word precomps BRAT builds, that mixed-rate timing is what AE reports as
+    // "internal structure inconsistency (seq) (25 :: 8)".
+    if (srcComp.frameRate > 0) { CONFIG.fps = srcComp.frameRate; }
 
     var CW = srcComp.width, CH = srcComp.height;
     var BOX_W = Math.round(CW * CONFIG.boxWFactor);
