@@ -236,3 +236,20 @@ def test_render_record_can_be_forgotten_but_not_while_running() -> None:
     forget = node_main[node_main.index("def forget(") : node_main.index("def stats(")]
     assert 'return "running"' in forget
     assert "self._persist_locked()" in forget
+
+
+def test_job_folders_are_cleaned_by_age_not_inline() -> None:
+    """Deleting a job folder right after the render kept failing with
+    PermissionError — AE still held the media — and the failure was swallowed,
+    so nothing was ever cleaned: 696 folders and 66 GB, 668 of them older than a
+    day. Age is the only reliable signal that the handles are closed."""
+    node_main = (RUNTIME_DIR / "main.py").read_text(encoding="utf-8")
+
+    assert "_job_dir_janitor" in node_main
+    sweep = node_main[node_main.index("def _job_dir_janitor") : node_main.index('@app.get("/health")')]
+
+    assert "AE_JOBS_RETENTION_HOURS" in sweep
+    # never touch a job the node still has in flight, nor the caches
+    assert 'st.status in ("accepted", "running")' in sweep
+    assert 'entry.name.startswith("_")' in sweep
+    assert "entry.name in active" in sweep
