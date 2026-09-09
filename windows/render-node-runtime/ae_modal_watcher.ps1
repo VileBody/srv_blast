@@ -7,6 +7,9 @@ param(
     "Crash Repair Options"
   ),
   [int]$PollSeconds = 2,
+  [string[]]$MainWindowTitlePatterns = @(
+    "^Adobe After Effects \d"
+  ),
   [string]$LogPath = "C:\ae_dev\logs\ae_modal_watcher.log"
 )
 
@@ -52,7 +55,12 @@ function Write-Log([string]$msg) {
 }
 
 function Get-TopWindows {
-  $list = New-Object System.Collections.Generic.List[object]
+  # IMPORTANT: the EnumWindows callback runs on an unmanaged call-in thread.
+  # Invoking PowerShell cmdlets (e.g. Get-Process) from inside it is a known
+  # source of pipeline reentrancy hangs — this collects only raw
+  # handle/pid/title via native calls here, and resolves process names in a
+  # single batched Get-Process call afterwards, outside the callback.
+  $raw = New-Object System.Collections.Generic.List[object]
   $cb = [WinApi+EnumWindowsProc]{
     param([IntPtr]$hWnd, [IntPtr]$lParam)
 
@@ -61,34 +69,25 @@ function Get-TopWindows {
     }
 
     $len = [WinApi]::GetWindowTextLength($hWnd)
-    if ($len -le 0) {
+    $title = ""
+    if ($len -gt 0) {
+      $sb = New-Object System.Text.StringBuilder ($len + 1)
+      [void][WinApi]::GetWindowText($hWnd, $sb, $sb.Capacity)
+      $title = $sb.ToString().Trim()
+    }
+    # Title-less windows are kept on purpose: AE's blocking dialogs (Crash
+    # Repair Options, "one chance to save your project") have no title, which
+    # is exactly why this watcher never saw them before.
+
+    [uint32]$procId = 0
+    [void][WinApi]::GetWindowThreadProcessId($hWnd, [ref]$procId)
+    if ($procId -eq 0) {
       return $true
     }
 
-    $sb = New-Object System.Text.StringBuilder ($len + 1)
-    [void][WinApi]::GetWindowText($hWnd, $sb, $sb.Capacity)
-    $title = $sb.ToString().Trim()
-    if ([string]::IsNullOrWhiteSpace($title)) {
-      return $true
-    }
-
-    [uint32]$pid = 0
-    [void][WinApi]::GetWindowThreadProcessId($hWnd, [ref]$pid)
-    if ($pid -eq 0) {
-      return $true
-    }
-
-    $procName = ""
-    try {
-      $procName = (Get-Process -Id $pid -ErrorAction Stop).Name
-    } catch {
-      return $true
-    }
-
-    $list.Add([PSCustomObject]@{
+    $raw.Add([PSCustomObject]@{
       Handle = $hWnd
-      Pid = [int]$pid
-      ProcessName = $procName
+      Pid = [int]$procId
       Title = $title
     }) | Out-Null
 
@@ -96,6 +95,29 @@ function Get-TopWindows {
   }
 
   [void][WinApi]::EnumWindows($cb, [IntPtr]::Zero)
+
+  if ($raw.Count -eq 0) {
+    return (New-Object System.Collections.Generic.List[object])
+  }
+
+  $pidNames = @{}
+  $uniquePids = $raw | Select-Object -ExpandProperty Pid -Unique
+  foreach ($proc in (Get-Process -Id $uniquePids -ErrorAction SilentlyContinue)) {
+    $pidNames[$proc.Id] = $proc.Name
+  }
+
+  $list = New-Object System.Collections.Generic.List[object]
+  foreach ($r in $raw) {
+    if (-not $pidNames.ContainsKey($r.Pid)) {
+      continue
+    }
+    $list.Add([PSCustomObject]@{
+      Handle = $r.Handle
+      Pid = $r.Pid
+      ProcessName = $pidNames[$r.Pid]
+      Title = $r.Title
+    }) | Out-Null
+  }
   return $list
 }
 
@@ -106,9 +128,11 @@ function Get-UiSnapshot([IntPtr]$hWnd) {
       return ""
     }
 
+    # ControlViewCondition (vs. raw TrueCondition) skips non-interactive
+    # elements, which matters a lot on a window this deep.
     $all = $root.FindAll(
       [System.Windows.Automation.TreeScope]::Descendants,
-      [System.Windows.Automation.Condition]::TrueCondition
+      [System.Windows.Automation.Automation]::ControlViewCondition
     )
 
     $texts = New-Object System.Collections.Generic.List[string]
@@ -137,14 +161,58 @@ function Get-UiSnapshot([IntPtr]$hWnd) {
   }
 }
 
+# Real UI Automation click: find a Button control by name (first match wins,
+# in the given priority order) scoped to $root, and invoke it directly.
+# This does NOT depend on window focus/foreground, unlike AppActivate+SendKeys,
+# which is what made the old dismiss logic unreliable (focus-steal prevention,
+# or ENTER landing on a button that wasn't actually the default one).
+function Invoke-ButtonByName([System.Windows.Automation.AutomationElement]$root, [string[]]$names) {
+  foreach ($n in $names) {
+    $condName = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $n)
+    $condBtn = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    $cond = New-Object System.Windows.Automation.AndCondition($condName, $condBtn)
+    $btn = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $cond)
+    if (-not $btn) {
+      continue
+    }
+
+    $invokePattern = $null
+    if ($btn.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invokePattern)) {
+      try {
+        $invokePattern.Invoke()
+        return $n
+      } catch {
+        Write-Log "invoke_error name=[$n] err=$($_.Exception.Message)"
+      }
+    }
+
+    # Some custom-drawn Adobe dialog controls only expose LegacyIAccessible.
+    $legacyPattern = $null
+    if ($btn.TryGetCurrentPattern([System.Windows.Automation.LegacyIAccessiblePattern]::Pattern, [ref]$legacyPattern)) {
+      try {
+        $legacyPattern.DoDefaultAction()
+        return $n
+      } catch {
+        Write-Log "legacy_invoke_error name=[$n] err=$($_.Exception.Message)"
+      }
+    }
+  }
+  return $null
+}
+
+# Per-dialog-title button candidates, tried in priority order. Add more
+# titles/buttons here as new blocking dialogs get observed in the log.
+$ButtonCandidatesByTitle = @{
+  "Crash Repair Options" = @("Continue", "OK", "Repair", "Close")
+}
+
 # Normalize target process names so "AfterFX" also matches "AfterFX.com"/"AfterFX.exe".
 $targetRegexes = $TargetProcesses | ForEach-Object {
   $base = $_.ToLowerInvariant()
   "^$([regex]::Escape($base))(\.exe|\.com)?$"
 }
-$wshell = New-Object -ComObject WScript.Shell
 $seen = @{}
-Write-Log "watcher_start poll=$PollSeconds target_processes=$($TargetProcesses -join '|') dismiss_titles=$($AutoDismissTitles -join '|')"
+Write-Log "watcher_start poll=$PollSeconds target_processes=$($TargetProcesses -join '|') dismiss_titles=$($AutoDismissTitles -join '|') mode=uia_invoke"
 
 while ($true) {
   $windows = Get-TopWindows
@@ -162,33 +230,87 @@ while ($true) {
     if (-not $isTarget) {
       continue
     }
-
-    $key = "$($w.Pid)|$($w.Title)"
+    $key = "$($w.Pid)|$($w.Handle)|$($w.Title)"
     $present[$key] = 1
 
-    try {
+    if ([string]::IsNullOrWhiteSpace($w.Title)) {
       if (-not $seen.ContainsKey($key)) {
         $seen[$key] = 1
+        Write-Log "untitled_dialog_detected pid=$($w.Pid) proc=$($w.ProcessName) handle=$($w.Handle)"
+      }
+      try {
+        $shell = New-Object -ComObject WScript.Shell
+        if ($shell.AppActivate([int]$w.Pid)) {
+          Start-Sleep -Milliseconds 200
+          $shell.SendKeys("{ENTER}")
+          Write-Log "untitled_dialog_action pid=$($w.Pid) action=sendkeys_enter"
+          Start-Sleep -Milliseconds 500
+        } else {
+          Write-Log "untitled_dialog_action_failed pid=$($w.Pid) reason=AppActivateFailed"
+        }
+      } catch {
+        Write-Log "untitled_dialog_error pid=$($w.Pid) err=$($_.Exception.Message)"
+      }
+      continue
+    }
+
+    $isMainWindow = $false
+    foreach ($mp in $MainWindowTitlePatterns) {
+      if ($w.Title -match $mp) {
+        $isMainWindow = $true
+        break
+      }
+    }
+
+    try {
+      $ui = ""
+      if (-not $isMainWindow) {
         $ui = Get-UiSnapshot -hWnd $w.Handle
-        Write-Log "window_detected pid=$($w.Pid) proc=$($w.ProcessName) title=[$($w.Title)] $ui"
+      }
+
+      if (-not $seen.ContainsKey($key)) {
+        $seen[$key] = 1
+        if ($isMainWindow) {
+          # The main app window's control tree is huge (docked panels,
+          # timeline, viewer, etc.) — a full descendants walk on it can
+          # take minutes. It's never the crash/repair dialog anyway, so
+          # skip the snapshot and just log that we saw it.
+          Write-Log "window_detected pid=$($w.Pid) proc=$($w.ProcessName) title=[$($w.Title)] main_window_snapshot_skipped=1"
+        } else {
+          Write-Log "window_detected pid=$($w.Pid) proc=$($w.ProcessName) title=[$($w.Title)] $ui"
+        }
+      }
+
+      if ($ui -match "(?i)internal structure inconsistency|before quitting you have one chance to save your project") {
+        $root = $null
+        try { $root = [System.Windows.Automation.AutomationElement]::FromHandle($w.Handle) } catch {}
+        if ($root) {
+          $clicked = Invoke-ButtonByName -root $root -names @("OK")
+          if ($clicked) {
+            Write-Log "window_action pid=$($w.Pid) title=[$($w.Title)] action=uia_invoke button=[$clicked] pattern=[fatal_afterfx_dialog]"
+            Start-Sleep -Milliseconds 500
+          }
+        }
       }
 
       foreach ($pattern in $AutoDismissTitles) {
         if ($w.Title -like "*$pattern*") {
-          $activated = $false
-          if ($wshell.AppActivate($w.Pid)) {
-            $activated = $true
-          } elseif ($wshell.AppActivate($w.Title)) {
-            $activated = $true
-          }
+          $candidates = $ButtonCandidatesByTitle[$pattern]
+          if (-not $candidates) { $candidates = @("Continue", "OK") }
 
-          if ($activated) {
-            Start-Sleep -Milliseconds 300
-            $wshell.SendKeys("{ENTER}")
-            Write-Log "window_action pid=$($w.Pid) title=[$($w.Title)] action=ENTER pattern=[$pattern]"
-            Start-Sleep -Milliseconds 700
+          $root = $null
+          try { $root = [System.Windows.Automation.AutomationElement]::FromHandle($w.Handle) } catch {}
+
+          if ($root) {
+            $clicked = Invoke-ButtonByName -root $root -names $candidates
+            if ($clicked) {
+              Write-Log "window_action pid=$($w.Pid) title=[$($w.Title)] action=uia_invoke button=[$clicked] pattern=[$pattern]"
+              Start-Sleep -Milliseconds 500
+            } else {
+              Write-Log "window_action_failed pid=$($w.Pid) title=[$($w.Title)] action=uia_invoke pattern=[$pattern] reason=no_matching_button candidates=[$($candidates -join ',')]"
+            }
           } else {
-            Write-Log "window_action_failed pid=$($w.Pid) title=[$($w.Title)] action=ENTER pattern=[$pattern] reason=AppActivateFailed"
+            Write-Log "window_action_failed pid=$($w.Pid) title=[$($w.Title)] action=uia_invoke pattern=[$pattern] reason=FromHandleFailed"
           }
         }
       }

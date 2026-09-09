@@ -166,3 +166,22 @@ def test_bundled_scripts_cannot_open_a_modal() -> None:
                 if "alert(" in line or "openDialog" in line:
                     offenders.append(f"{jsx.relative_to(root)}:{num}")
     assert not offenders, offenders
+
+
+def test_watcher_dismisses_untitled_ae_dialogs() -> None:
+    """AE's blocking dialogs (Crash Repair Options, "one chance to save your
+    project") carry no window title, so the watcher used to discard them before
+    it ever looked. A real AE window always has a title, so an untitled visible
+    window owned by AfterFX is one of those dialogs; Enter takes its default
+    button. Verified on the node: dialog detected and dismissed in the same
+    second, job completed normally."""
+    root = Path(__file__).resolve().parents[1]
+    watcher = (root / "windows" / "render-node-runtime" / "ae_modal_watcher.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert "untitled_dialog_detected" in watcher
+    assert "SendKeys(\"{ENTER}\")" in watcher
+    # the enumeration must keep title-less windows instead of returning early
+    enum = watcher[watcher.index("GetWindowTextLength") : watcher.index("GetWindowThreadProcessId")]
+    assert "if ($len -le 0) {\n      return $true\n    }" not in enum
