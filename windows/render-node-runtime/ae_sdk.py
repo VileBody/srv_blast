@@ -334,13 +334,12 @@ class AeRenderer:
             return app_dir.parent
         return app_dir
 
-    # AE launched via `afterfx.exe -r <script>` sets app.exitAfterLaunchAndEval,
-    # i.e. it quits once the script has been evaluated. Quitting with a modified
-    # project open raises the blocking, title-less "Save changes to <project>.aep
-    # before closing?" modal; AE then stops answering further -r calls, so every
-    # following cleanup/build times out and the session gets force-restarted
-    # between jobs. Every script the runtime feeds to AE opts out of that first,
-    # which is also what keeps the session warm for the next job.
+    # AE launched via `afterfx.exe -r <script>` quits once the script has been
+    # evaluated, and quitting with a modified project open raises a blocking save
+    # dialog that wedges the session for every following job. Asking AE not to
+    # exit is best-effort only -- observed on AE 2025: it quits regardless -- so
+    # the real guarantee is that every script leaves no modified project behind
+    # (see the wrapper and cleanup teardowns below).
     _JSX_PREAMBLE = "try { app.exitAfterLaunchAndEval = false; } catch (e) {}" + chr(10)
 
     @staticmethod
@@ -378,7 +377,9 @@ class AeRenderer:
         if (app.project) {
         try { app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES); } catch(_) {}
         }
-        try { app.newProject(); } catch(_) {}
+        // Only ever on an empty slot: app.newProject() with a modified
+        // project still open raises AE's blocking save dialog.
+        if (!app.project) { try { app.newProject(); } catch(_) {} }
     } catch(_) {}
     try { app.endSuppressDialogs(false); } catch(_) {}
     })();
