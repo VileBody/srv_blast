@@ -35,3 +35,16 @@ def test_bom_is_still_stripped_from_incoming_script(tmp_path: Path) -> None:
     AeRenderer._write_jsx_file(jsx, "﻿// builder\n")
 
     assert jsx.read_text(encoding="utf-8-sig").count("﻿") == 0
+
+
+def test_ae_process_is_recycled_after_each_job() -> None:
+    """A warm AE session dies on the third job with "internal structure
+    inconsistency (seq) (25 :: 8)", so each job gets its own process."""
+    runtime = (RUNTIME_DIR / "ae_sdk.py").read_text(encoding="utf-8")
+
+    recycle = runtime.index('self._env_bool("AE_RECYCLE_AFTER_JOB", True)')
+    post_reset = runtime.index('self._maybe_reset_ae_project(tag=f"{spec.job_id}_post")')
+
+    # The reset is the fallback branch, reached only with recycling turned off.
+    assert recycle < post_reset
+    assert "def _terminate_afterfx_session" in runtime

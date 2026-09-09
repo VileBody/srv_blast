@@ -427,6 +427,24 @@ class AeRenderer:
             return
         self._best_effort_reset_ae_project(tag=tag)
 
+    def _terminate_afterfx_session(self, *, reason: str) -> None:
+        """Force the GUI AE process to go away, so the next job gets a fresh one."""
+        if os.name != "nt":
+            log.warning("AE session recycle unavailable platform=%s reason=%s", os.name, reason)
+            return
+        for image_name in ("AfterFX.exe", "AfterFX.com"):
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", image_name, "/T"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=30,
+                    check=False,
+                )
+            except Exception as exc:
+                log.warning("AE session recycle taskkill failed image=%s err=%r", image_name, exc)
+        log.warning("AE session recycled reason=%s", reason)
+
 
     def _upload_job_folder_to_s3(self, *, app_dir: Path, job_id: str) -> Optional[str]:
         """
@@ -662,7 +680,21 @@ class AeRenderer:
                         log.exception("Unexpected AE-session error for job %s", spec.job_id)
                         result = _fail(f"unexpected AE-session error: {e}")
                     finally:
-                        self._maybe_reset_ae_project(tag=f"{spec.job_id}_post")
+                        # One job per AE process. A warm session accumulates
+                        # state and dies on the third job with "internal structure
+                        # inconsistency (seq) (25 :: 8)" -- observed on AE 2025,
+                        # the same pid serving jobs 1 and 2 fine and failing on 3.
+                        # Recycling costs a ~25s cold start on a 2-3 min render and
+                        # removes the failure. The post-job project reset is
+                        # redundant once the process goes away, and it is the step
+                        # that kept timing out on a wedged AE.
+                        # AE_RECYCLE_AFTER_JOB=0 restores the warm session.
+                        if self._env_bool("AE_RECYCLE_AFTER_JOB", True):
+                            self._terminate_afterfx_session(
+                                reason=f"planned_recycle_after_job:{spec.job_id}"
+                            )
+                        else:
+                            self._maybe_reset_ae_project(tag=f"{spec.job_id}_post")
 
             # 3) optional upload rendered mp4 outside the AE lock.
             if result is None:
