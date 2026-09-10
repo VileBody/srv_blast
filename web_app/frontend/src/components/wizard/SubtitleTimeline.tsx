@@ -18,10 +18,16 @@ import { AsrWord, useWizardStore } from '../../stores/wizardStore';
 const MIN_WORD_S = 0.08;
 const GAP_S = 0.01;
 const PX_PER_SEC = 130;
-const LANE_TOP = 22;
-/** отступ начала шкалы от левого края: подпись «:00» и первое слово не режутся */
-const X0 = 24;
-const LANE_H = 54;
+/* Геометрия по Figma: контейнер 540×180; сверху 20 → слова 60 → 20 → ползунок 20 → 20 → тайминги.
+   Пунктир секунд и плейхед идут от верха контейнера до ползунка. */
+const BOX_H = 180;
+const WORD_TOP = 20;
+const WORD_H = 60;
+const BAR_TOP = 100;
+const BAR_H = 20;
+const LABEL_TOP = 140;
+/** боковые поля контейнера (Figma: минимум 20 слева и справа) — и у дорожки, и у ползунка */
+const X0 = 20;
 const PLAYHEAD_TICK_MS = 50;
 
 function fmt(sec: number): string {
@@ -184,7 +190,7 @@ export function SubtitleTimeline() {
     return out;
   }, [clipStart, clipEnd]);
 
-  // --- полоса перемотки под пилюлями (макет): тянем бегунок — время едет ---
+  // --- перемотка: ползунок (весь отрывок) и плейхед (тянется по дорожке) ---
   const barRef = useRef<HTMLDivElement>(null);
   const seekFromBar = (clientX: number) => {
     const bar = barRef.current;
@@ -193,12 +199,19 @@ export function SubtitleTimeline() {
     const pct = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
     seek(clipStart + pct * duration);
   };
-  const onBarDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.stopPropagation();
+  const capture = (e: ReactPointerEvent<HTMLElement>) => {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* синтетический pointerId */ }
-    seekFromBar(e.clientX);
   };
+  const onBarDown = (e: ReactPointerEvent<HTMLDivElement>) => { e.stopPropagation(); capture(e); seekFromBar(e.clientX); };
   const onBarMove = (e: ReactPointerEvent<HTMLDivElement>) => { if (e.buttons) seekFromBar(e.clientX); };
+  const seekFromLane = (clientX: number) => {
+    const box = scrollRef.current;
+    if (!box) return;
+    const rect = box.getBoundingClientRect();
+    seek(clipStart + (clientX - rect.left + box.scrollLeft - X0) / pxPerSec);
+  };
+  const onHeadDown = (e: ReactPointerEvent<HTMLElement>) => { e.stopPropagation(); capture(e); seekFromLane(e.clientX); };
+  const onHeadMove = (e: ReactPointerEvent<HTMLElement>) => { if (e.buttons) seekFromLane(e.clientX); };
 
   const activeIndex = asr.words.findIndex((w) => time >= w.tStart && time < w.tEnd);
   const width = Math.ceil(duration * pxPerSec) + X0 * 2;
@@ -252,19 +265,17 @@ export function SubtitleTimeline() {
         </button>
       </div>
 
-      {/* Таймлайн: пилюли слов на дорожке, под ними полоса перемотки и шкала */}
-      <div className="mt-[20px] rounded-r15 bg-[rgba(5,1,15,0.35)] px-[28px] pb-[18px] pt-[6px]">
+      {/* Таймлайн (Figma 540×180): один контейнер дефолтного цвета, внутри — дорожка слов,
+          ползунок на всю ширину и подписи секунд. Секунды-пунктир и плейхед — от верха до ползунка. */}
+      <div className="relative mt-[20px] overflow-hidden rounded-r15 bg-grad-soft-20" style={{ height: BOX_H }}>
         <div
           ref={scrollRef}
           tabIndex={0}
           onKeyDown={onKey}
-          className="no-scrollbar relative h-[212px] overflow-x-auto overflow-y-hidden outline-none focus-visible:ring-1 focus-visible:ring-accent-light"
+          className="no-scrollbar relative h-full overflow-x-auto overflow-y-hidden outline-none focus-visible:ring-1 focus-visible:ring-accent-light"
           onPointerDown={(e) => {
-            // клик по пустому месту — перемотка
-            const box = scrollRef.current;
-            if (!box) return;
-            const rect = box.getBoundingClientRect();
-            seek(clipStart + (e.clientX - rect.left + box.scrollLeft - X0) / pxPerSec);
+            // клик по пустому месту дорожки — перемотка
+            seekFromLane(e.clientX);
             setSelected(null);
           }}
         >
@@ -276,13 +287,13 @@ export function SubtitleTimeline() {
             </div>
           ) : (
             <div className="relative h-full" style={{ width }}>
-              {/* дорожка слов */}
-              <span aria-hidden className="pointer-events-none absolute left-0 right-0 rounded-r12 bg-[rgba(139,111,230,0.12)]" style={{ top: 8, height: LANE_TOP + LANE_H + 40 }} />
+              {/* подложка отрывка: чуть светлее фона, от верха до ползунка — таймлайн читается сквозь окно */}
+              <span aria-hidden className="pointer-events-none absolute top-0 bg-[rgba(246,245,253,0.05)]" style={{ left: X0, width: duration * pxPerSec, height: BAR_TOP }} />
               {/* пунктир секунд */}
               {ticks.map((s) => (
-                <span key={s} aria-hidden className="pointer-events-none absolute border-l border-dashed border-[rgba(246,245,253,0.22)]" style={{ left: X0 + (s - clipStart) * pxPerSec, top: 8, height: LANE_TOP + LANE_H + 40 }} />
+                <span key={s} aria-hidden className="pointer-events-none absolute top-0 border-l-2 border-dashed border-[rgba(246,245,253,0.28)]" style={{ left: X0 + (s - clipStart) * pxPerSec - 1, height: BAR_TOP }} />
               ))}
-              {/* слова */}
+              {/* слова: не выделено / выделено (обводка) / фокусное (белое) */}
               {asr.words.map((word, index) => {
                 const cur = live && live.index === index ? live : word;
                 const left = X0 + (cur.tStart - clipStart) * pxPerSec;
@@ -301,14 +312,13 @@ export function SubtitleTimeline() {
                     onPointerCancel={onPillUp}
                     onDoubleClick={(e) => { e.stopPropagation(); toggleAsrFocus(index); }}
                     className={cn(
-                      'absolute flex cursor-grab select-none items-center justify-center overflow-hidden rounded-r12 px-[14px] text-[22px] leading-none transition-[box-shadow,background-color,color] active:cursor-grabbing',
-                      word.focus ? 'bg-text text-[#1a1230]' : 'bg-[rgba(139,111,230,0.22)] text-text',
-                      isSel && !word.focus && 'bg-transparent shadow-[inset_0_0_0_2px_var(--accent-light)]',
+                      'absolute flex cursor-grab select-none items-center justify-center overflow-hidden rounded-r15 px-[16px] text-[24px] leading-none transition-[box-shadow,background-color,color] active:cursor-grabbing',
+                      word.focus ? 'bg-text text-accent' : isSel ? 'bg-transparent text-text shadow-[inset_0_0_0_2px_var(--accent-light)]' : 'bg-[rgba(139,111,230,0.28)] text-text',
                       isSel && word.focus && 'shadow-[0_0_0_2px_var(--accent-light)]',
-                      isActive && !word.focus && 'brightness-150',
+                      isActive && !word.focus && !isSel && 'brightness-150',
                       isSel && 'z-[2]'
                     )}
-                    style={{ left, width: w, top: LANE_TOP + 20, height: LANE_H }}
+                    style={{ left, width: w, top: WORD_TOP, height: WORD_H }}
                   >
                     <span className="truncate">{word.text}</span>
                     {/* ручки длительности — тянут только край */}
@@ -317,21 +327,28 @@ export function SubtitleTimeline() {
                   </div>
                 );
               })}
-              {/* плейхед: линия с ромбиками-ручками по концам */}
-              <span aria-hidden className="pointer-events-none absolute z-[3] w-[2px] bg-text" style={{ left: X0 + progress * duration * pxPerSec, top: 8, height: LANE_TOP + LANE_H + 40 }}>
-                <span className="absolute left-1/2 top-0 h-[10px] w-[10px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] bg-text" />
-                <span className="absolute bottom-0 left-1/2 h-[10px] w-[10px] -translate-x-1/2 translate-y-1/2 rotate-45 rounded-[2px] bg-text" />
-              </span>
               {/* подписи секунд */}
               {ticks.map((s) => (
-                <span key={`l${s}`} aria-hidden className="pointer-events-none absolute -translate-x-1/2 text-[16px] tabular-nums text-text-60" style={{ left: X0 + (s - clipStart) * pxPerSec, bottom: 0 }}>
+                <span key={`l${s}`} aria-hidden className="pointer-events-none absolute -translate-x-1/2 text-[16px] leading-none tabular-nums text-text-60" style={{ left: X0 + (s - clipStart) * pxPerSec, top: LABEL_TOP }}>
                   {fmt(s - clipStart).slice(0, 5)}
                 </span>
               ))}
+              {/* плейхед: линия с ромбиками, от верха до ползунка; тянется */}
+              <span
+                role="presentation"
+                onPointerDown={onHeadDown}
+                onPointerMove={onHeadMove}
+                className="absolute top-0 z-[3] w-[14px] -translate-x-1/2 cursor-ew-resize"
+                style={{ left: X0 + progress * duration * pxPerSec, height: BAR_TOP }}
+              >
+                <span aria-hidden className="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-text" />
+                <span aria-hidden className="absolute left-1/2 top-0 h-[12px] w-[12px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] bg-text" />
+                <span aria-hidden className="absolute bottom-0 left-1/2 h-[12px] w-[12px] -translate-x-1/2 translate-y-1/2 rotate-45 rounded-[2px] bg-text" />
+              </span>
             </div>
           )}
         </div>
-        {/* полоса перемотки: весь отрывок целиком, бегунок — текущее время */}
+        {/* ползунок: вся ширина контейнера, весь отрывок; белая пилюля — текущее время */}
         <div
           ref={barRef}
           role="slider"
@@ -341,10 +358,11 @@ export function SubtitleTimeline() {
           aria-valuenow={Math.round((time - clipStart) * 100)}
           onPointerDown={ready ? onBarDown : undefined}
           onPointerMove={ready ? onBarMove : undefined}
-          className={cn('relative mt-[10px] h-[22px] select-none rounded-full bg-[rgba(139,111,230,0.28)]', ready ? 'cursor-pointer' : 'opacity-40')}
+          className={cn('absolute z-[4] select-none rounded-full bg-[rgba(139,111,230,0.30)]', ready ? 'cursor-pointer' : 'opacity-40')}
+          style={{ top: BAR_TOP, height: BAR_H, left: X0, right: X0 }}
         >
-          <span aria-hidden className="absolute left-0 top-0 h-full rounded-full bg-[rgba(139,111,230,0.45)]" style={{ width: `${progress * 100}%` }} />
-          <span aria-hidden className="absolute top-1/2 h-[24px] w-[56px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-text shadow-[0_2px_10px_rgba(0,0,0,.35)]" style={{ left: `calc(28px + ${progress} * (100% - 56px))` }} />
+          <span aria-hidden className="absolute left-0 top-0 h-full rounded-full bg-[rgba(139,111,230,0.5)]" style={{ width: `calc(30px + ${progress} * (100% - 60px))` }} />
+          <span aria-hidden className="absolute top-0 h-full w-[60px] -translate-x-1/2 rounded-full bg-text" style={{ left: `calc(30px + ${progress} * (100% - 60px))` }} />
         </div>
       </div>
       <p className="mt-[12px] text-[13px] leading-[1.35] text-text-40">{t('wizard.subs.timeline.hint')}</p>

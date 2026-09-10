@@ -72,6 +72,40 @@ ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 UPLOAD_DIR = STATIC_DIR / "uploads" / "tracks"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_demo_track_audio() -> None:
+    """Сгенерировать звук демо-трека для mock-режима (метроном + тон, 30 с).
+
+    Демо-трек воркспейса указывает на этот файл `localUrl`; настоящего mp3 в
+    репозитории нет, а плеер примерки субтитров без звука не проверить.
+    Файл — рантайм-артефакт, в git не идёт.
+    """
+    import math
+    import struct
+    import wave
+
+    target = UPLOAD_DIR / "demo-last-night.wav"
+    if target.exists():
+        return
+    rate, seconds, bpm = 22050, 30, 120
+    beat = 60.0 / bpm
+    frames = bytearray()
+    for i in range(rate * seconds):
+        t = i / rate
+        phase = (t % beat) / beat
+        click = math.exp(-phase * 40) * (0.8 if (t // beat) % 4 == 0 else 0.4)
+        tone = 0.12 * math.sin(2 * math.pi * 110 * t) + 0.06 * math.sin(2 * math.pi * 220 * t)
+        frames += struct.pack("<h", int(max(-1.0, min(1.0, click + tone)) * 32767))
+    with wave.open(str(target), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(bytes(frames))
+
+
+if RUNTIME.backend == "mock":
+    ensure_demo_track_audio()
 SOURCE_DIR = STATIC_DIR / "uploads" / "sources"
 SOURCE_DIR.mkdir(parents=True, exist_ok=True)
 

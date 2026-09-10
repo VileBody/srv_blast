@@ -319,6 +319,9 @@ def _seed_demo_workspace() -> Workspace:
             "s3Key": f"{BASE_S3}/tracks/user_1/previous/source.mp3",
             "filename": "last-night-demo.mp3",
             "durationS": 204.0,
+            # Синтетический звук (см. main.ensure_demo_track_audio): без него плеер
+            # примерки субтитров в mock-режиме был мёртвой кнопкой.
+            "localUrl": "/static/uploads/tracks/demo-last-night.wav",
             "createdAt": iso(utcnow() - timedelta(days=1)),
             "expiresAt": iso(utcnow() + timedelta(days=6)),
         }
