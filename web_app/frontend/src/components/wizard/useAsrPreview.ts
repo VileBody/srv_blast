@@ -25,6 +25,7 @@ export function useAsrPreview(active: boolean) {
   const fragmentLyrics = useWizardStore((state) => state.fragmentLyrics);
   const lyrics = useWizardStore((state) => state.lyrics);
   const status = useWizardStore((state) => state.asr.status);
+  const asrKey = useWizardStore((state) => state.asr.key);
   const setAsrResult = useWizardStore((state) => state.setAsrResult);
 
   const fragment = fragmentEnabled ? fragmentLyrics : '';
@@ -38,7 +39,7 @@ export function useAsrPreview(active: boolean) {
     if (!inputsKey || startedForRef.current === inputsKey) return;
     startedForRef.current = inputsKey;
     let cancelled = false;
-    api.asrStart({ clipFrom: timingFrom, clipTo: timingTo, fragment, lyrics })
+    api.asrStart({ clipFrom: timingFrom, clipTo: timingTo, fragment, lyrics, trackId: track?.id ?? '' })
       .then(({ asr }) => { if (!cancelled) setAsrResult(asr); })
       .catch(() => { if (!cancelled) startedForRef.current = ''; });
     // Размонтирование до ответа (StrictMode дважды монтирует эффект) — ответ уже
@@ -52,15 +53,15 @@ export function useAsrPreview(active: boolean) {
   // опросы react-query встают на паузу (см. HANDOFF, «грабли»).
   useEffect(() => {
     // IDLE — ещё не стартовали (или бэку нечего примерять): поллить нечего, ждём start
-    if (!inputsKey || (status !== 'QUEUED' && status !== 'RUNNING')) return;
+    if (!inputsKey || !asrKey || (status !== 'QUEUED' && status !== 'RUNNING')) return;
     let cancelled = false;
     const tick = () => {
-      api.asrState({ clipFrom: timingFrom, clipTo: timingTo, fragment, lyrics })
+      api.asrState(asrKey)
         .then(({ asr }) => { if (!cancelled) setAsrResult(asr); })
         .catch(() => undefined);
     };
     const id = window.setInterval(tick, POLL_MS);
     return () => { cancelled = true; window.clearInterval(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inputsKey, status]);
+  }, [inputsKey, asrKey, status]);
 }

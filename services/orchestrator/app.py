@@ -663,6 +663,23 @@ def create_app() -> FastAPI:
             detail=f"unsupported mode={selected_mode!r}; expected with_gemini",
         )
 
+    def _ensure_raw_audio_scope(audio_s3_url: str) -> None:
+        audio_s3_url = audio_s3_url.strip()
+        if not audio_s3_url.lower().startswith("s3://"):
+            raise HTTPException(status_code=422, detail="audio_s3_url must use s3://")
+        expected_bucket = str(os.environ.get("S3_BUCKET_RAW_AUDIO") or "").strip()
+        expected_prefix = str(os.environ.get("S3_RAW_AUDIO_PREFIX") or "raw_audio").strip("/")
+        if not expected_bucket:
+            raise HTTPException(status_code=503, detail="S3_BUCKET_RAW_AUDIO is empty")
+        bucket, separator, key = audio_s3_url[5:].partition("/")
+        if (
+            not separator
+            or bucket != expected_bucket
+            or not key
+            or (expected_prefix and not key.startswith(f"{expected_prefix}/"))
+        ):
+            raise HTTPException(status_code=422, detail="audio_s3_url is outside raw-audio scope")
+
     @app.post("/alignment-smoke", response_model=AlignmentSmokeEnqueueResponse)
     def enqueue_alignment_smoke(req: AlignmentSmokeRequest) -> AlignmentSmokeEnqueueResponse:
         signed_payload = req.model_dump(mode="json", exclude_none=True)
@@ -743,13 +760,9 @@ def create_app() -> FastAPI:
         рендер приходит с `reuse_text_job_id=<job_id>`.
         """
         _ensure_accepting_new_jobs(req)
-        audio_s3_url = str(req.audio_s3_url or "").strip()
-        if not (
-            audio_s3_url.lower().startswith("s3://")
-            or audio_s3_url.lower().startswith("http://")
-            or audio_s3_url.lower().startswith("https://")
-        ):
-            raise HTTPException(status_code=422, detail="audio_s3_url must be s3:// or http(s)://")
+        # Тот же скоуп, что у alignment-smoke: воркер скачает только из raw-audio
+        # бакета. Произвольный http(s) сюда не пускаем — это был бы SSRF из воркера.
+        _ensure_raw_audio_scope(str(req.audio_s3_url or ""))
         request_payload = req.model_dump(mode="json", exclude_none=True)
         request_payload["job_kind"] = "asr_preview"
         request_payload["stage1_alignment_backend"] = "local_ctc"

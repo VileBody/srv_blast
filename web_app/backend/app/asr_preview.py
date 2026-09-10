@@ -120,6 +120,8 @@ def stage_data_asr(stage_data: dict[str, Any], *, expected_key: str) -> dict[str
     if not asr.get("jobId"):
         return None
     words = asr.get("words")
-    if not isinstance(words, list):
+    # Пустой список = примерка ещё считалась, когда фронт сохранил черновик. Reuse
+    # с незавершённой джобой валит рендер (resume unavailable) — такое не берём.
+    if not isinstance(words, list) or not words:
         return None
     return asr

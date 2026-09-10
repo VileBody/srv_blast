@@ -287,6 +287,9 @@ class AsrStartPayload(BaseModel):
     clipTo: str = ""
     fragment: str = ""
     lyrics: str = ""
+    # Трек визарда, а не «последний загруженный»: человек мог залить новый файл и
+    # вернуться к предыдущему — примерка обязана считаться по тому, что уйдёт в рендер.
+    trackId: str = ""
 
 
 class RatePayload(BaseModel):
@@ -974,13 +977,15 @@ async def api_drops(clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
     return {"status": "COMPLETED", "bpm": float(result.get("bpm") or 0.0), "drops": drops, "mock": False}
 
 
-def _asr_inputs(clip_from: str, clip_to: str, fragment: str, lyrics: str) -> tuple[dict[str, Any], float, float, str] | None:
+def _asr_inputs(clip_from: str, clip_to: str, fragment: str, lyrics: str, track_id: str = "") -> tuple[dict[str, Any], float, float, str] | None:
     """Вводные примерки: трек + окно + текст. Нет чего-то → примерять нечего."""
     start = render_job_builder.mmss_seconds(clip_from)
     end = render_job_builder.mmss_seconds(clip_to)
     if start is None or end is None or end <= start:
         return None
-    track = store.previous_track() or {}
+    track = store.find_track(track_id) if track_id else None
+    if track is None:
+        track = store.previous_track() or {}
     if not str(track.get("s3Key") or "").strip():
         return None
     text = asr_preview.target_fragment({"fragment": fragment, "lyrics": lyrics})
@@ -1018,7 +1023,7 @@ async def api_asr_start(payload: AsrStartPayload) -> dict[str, Any]:
     становится недействительной: рендер сверяет окно и текст, см. asr_preview.py).
     В mock-режиме слова раскладываются по окну сразу, без оркестратора.
     """
-    inputs = _asr_inputs(payload.clipFrom, payload.clipTo, payload.fragment, payload.lyrics)
+    inputs = _asr_inputs(payload.clipFrom, payload.clipTo, payload.fragment, payload.lyrics, payload.trackId)
     if inputs is None:
         return {"asr": asr_preview.empty_state(""), "mock": RUNTIME.backend == "mock"}
     track, start, end, text = inputs
@@ -1063,13 +1068,15 @@ async def api_asr_start(payload: AsrStartPayload) -> dict[str, Any]:
 
 
 @app.get("/api/wizard/asr", tags=["wizard"])
-async def api_asr_state(clipFrom: str = "", clipTo: str = "", fragment: str = "", lyrics: str = "") -> dict[str, Any]:
-    """Статус/слова примерки для этих вводных (фронт поллит, пока не COMPLETED/FAILED)."""
-    inputs = _asr_inputs(clipFrom, clipTo, fragment, lyrics)
-    if inputs is None:
+async def api_asr_state(key: str = "") -> dict[str, Any]:
+    """Статус/слова примерки по ключу из `start` (фронт поллит, пока не COMPLETED/FAILED).
+
+    Поллинг идёт по ключу, а не по вводным: текст трека в query-строке на каждый
+    запрос упирался бы в лимиты URL у nginx (кириллица ×3 после кодирования).
+    """
+    key = key.strip()
+    if not key:
         return {"asr": asr_preview.empty_state(""), "mock": RUNTIME.backend == "mock"}
-    track, start, end, text = inputs
-    key = asr_preview.preview_key(str(track["s3Key"]), start, end, text)
     state = _asr_state_for(key)
     try:
         state = await run_in_threadpool(_asr_sync, state)

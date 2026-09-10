@@ -1084,6 +1084,13 @@ def save_source(
     return deepcopy(item)
 
 
+def find_track(track_id: str) -> dict[str, Any] | None:
+    for item in ws().saved_tracks:
+        if item.get("id") == track_id:
+            return deepcopy(item)
+    return None
+
+
 def previous_track() -> dict[str, Any] | None:
     tracks = ws().saved_tracks
     return deepcopy(tracks[0]) if tracks else None

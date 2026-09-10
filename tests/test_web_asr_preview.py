@@ -58,7 +58,7 @@ def test_preview_key_changes_with_inputs(monkeypatch: pytest.MonkeyPatch) -> Non
 
 def test_stage_data_asr_rejects_foreign_key(monkeypatch: pytest.MonkeyPatch) -> None:
     asr = _asr_module(monkeypatch)
-    block = {"key": "abc", "jobId": "j1", "words": [], "edited": True}
+    block = {"key": "abc", "jobId": "j1", "words": [{"text": "a", "tStart": 1.0, "tEnd": 1.2}], "edited": True}
     assert asr.stage_data_asr({"asr": block}, expected_key="abc") is block
     assert asr.stage_data_asr({"asr": block}, expected_key="zzz") is None
     assert asr.stage_data_asr({"asr": {**block, "jobId": None}}, expected_key="abc") is None
@@ -78,9 +78,11 @@ def test_focus_words_and_conversions(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _AsrHttp(_FakeHttp):
-    def __init__(self) -> None:
+    def __init__(self, asr_status: str = "SUCCEEDED") -> None:
         super().__init__()
         self.puts: list[tuple[str, dict[str, Any]]] = []
+        # enqueue сверяет примерку с оркестратором до reuse
+        self.states["asr-1"] = {"status": asr_status, "stage": "asr_preview", "result": {"words": [], "clip_start_abs": 10.0, "clip_end_abs": 25.0}}
 
     def put(self, url: str, *, json: dict[str, Any]):
         self.puts.append((url, json))
@@ -151,6 +153,29 @@ def test_enqueue_skips_edit_push_when_not_edited(monkeypatch: pytest.MonkeyPatch
     assert backend._http.posts[0]["reuse_text_job_id"] == "asr-1"
 
 
+def test_enqueue_drops_reuse_when_preview_not_finished(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Примерка ещё идёт / упала / протухла → reuse отключается явно, рендер идёт со свежим ASR."""
+    from tests.test_web_production_backend import _module
+
+    module = _module(monkeypatch)
+    backend = _backend(module, _config(module, stage1_backend="local_ctc"))
+    backend._http = _AsrHttp(asr_status="RUNNING")
+    job = _asr_job(module, edited=True)
+    backend.enqueue_job(job)
+    assert backend._http.puts == []  # правки в незавершённую джобу не шлём
+    assert "reuse_text_job_id" not in backend._http.posts[0]
+    assert job["asrReuseDropped"].startswith("status=")
+    # фокус-слова не зависят от reuse: Stage2 матчит их по тексту+старту
+    assert backend._http.posts[0]["user_focus_words"] == [{"text": "два", "t_start": 10.6}]
+
+
+def test_stage_data_asr_requires_words(monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(monkeypatch)
+    asr = importlib.import_module("app.asr_preview")
+    key = asr.preview_key("s3://b/k", 1.0, 2.0, "t")
+    assert asr.stage_data_asr({"asr": {"key": key, "jobId": "j", "words": []}}, expected_key=key) is None
+
+
 def test_enqueue_ignores_stale_asr_block(monkeypatch: pytest.MonkeyPatch) -> None:
     from tests.test_web_production_backend import _module
 
@@ -195,12 +220,21 @@ def test_asr_endpoints_mock_flow(client) -> None:
     assert asr["clipStart"] == 10.0 and asr["clipEnd"] == 20.0
     key = asr["key"]
 
-    # тот же ключ — та же примерка, другой текст — другой ключ
-    r = tc.get("/api/wizard/asr", params={"clipFrom": "00:10", "clipTo": "00:20", "fragment": "раз два\nтри"})
-    assert r.json()["asr"]["key"] == key
-    r = tc.get("/api/wizard/asr", params={"clipFrom": "00:10", "clipTo": "00:20", "fragment": "иное"})
+    # поллинг — по ключу; чужой ключ → пусто
+    r = tc.get("/api/wizard/asr", params={"key": key})
+    assert r.json()["asr"]["key"] == key and r.json()["asr"]["status"] == "COMPLETED"
+    r = tc.get("/api/wizard/asr", params={"key": "nope"})
     assert r.json()["asr"]["status"] == "IDLE"
+    # другой текст — другой ключ
+    r = tc.post("/api/wizard/asr/start", json={"clipFrom": "00:10", "clipTo": "00:20", "fragment": "иное", "lyrics": ""})
     assert r.json()["asr"]["key"] != key
+
+    # трек визарда по id, а не «последний загруженный»
+    older = main.store.ws().saved_tracks[-1]
+    main.store.save_track("newer.mp3", audio_hash="h2")
+    r = tc.post("/api/wizard/asr/start", json={"clipFrom": "00:10", "clipTo": "00:20", "fragment": "раз", "lyrics": "", "trackId": older["id"]})
+    asr_mod = importlib.import_module("app.asr_preview")
+    assert r.json()["asr"]["key"] == asr_mod.preview_key(older["s3Key"], 10.0, 20.0, "раз")
 
     # без текста fragment → берётся lyrics (то же правило, что у рендера)
     r = tc.post("/api/wizard/asr/start", json={"clipFrom": "00:10", "clipTo": "00:20", "fragment": "", "lyrics": "весь текст"})

@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import boto3
 import httpx
+import logging
 from botocore.config import Config
 
 from . import asr_preview
@@ -595,11 +596,33 @@ class ProductionBackend:
 
     def _push_asr_edits(self, job: dict[str, Any]) -> None:
         """Правки таймингов уезжают в оркестратор ДО постановки первой вариации:
-        она подхватит stage1_asr из asr_preview-джобы через reuse_text_job_id."""
+        она подхватит stage1_asr из asr_preview-джобы через reuse_text_job_id.
+
+        Перед этим примерка сверяется с оркестратором: джоба могла протухнуть
+        (TTL стора) или упасть — reuse с такой джобой роняет рендер целиком.
+        Тогда reuse отключается ЯВНО (`job["asrReuseDropped"]` + лог), Stage 1
+        посчитается заново, правки пропадут — но ролик выйдет.
+        """
         block = self._asr_preview_block(job)
-        if not block or not block.get("edited"):
+        if not block:
             return
-        self.update_asr_words(str(block["jobId"]), list(block.get("words") or []))
+        job_id = str(block["jobId"])
+        try:
+            state = self.asr_preview_state(job_id)
+            reason = "" if state["status"] == "COMPLETED" else f"status={state['status']}"
+        except ProductionBackendError as exc:
+            reason = f"unavailable: {exc}"
+        if reason:
+            job["asrReuseDropped"] = reason[:300]
+            job["asrReuseJobId"] = None
+            logging.getLogger(__name__).warning(
+                "asr_preview_reuse_dropped web_job=%s asr_job=%s reason=%s",
+                job.get("id"), job_id, reason,
+            )
+            return
+        job["asrReuseJobId"] = job_id
+        if block.get("edited"):
+            self.update_asr_words(job_id, list(block.get("words") or []))
 
     def _enqueue_next(self, job: dict[str, Any]) -> None:
         orchestrator_ids = [
@@ -922,7 +945,9 @@ class ProductionBackend:
         target_fragment = str(render_job.get("lyrics", {}).get("fragment") or "").strip()
         lyrics = str(render_job.get("lyrics", {}).get("full") or "").strip()
         asr_block = self._asr_preview_block(job)
-        asr_job_id = str(asr_block.get("jobId") or "") if asr_block else None
+        # reuse только после сверки в _push_asr_edits (job["asrReuseJobId"]);
+        # фокус-слова — без reuse тоже работают: Stage2 матчит их по тексту+старту.
+        asr_job_id = str(job.get("asrReuseJobId") or "") or None
         focus = asr_preview.focus_words(list(asr_block.get("words") or [])) if asr_block else []
         if self.config.stage1_backend == "local_ctc" and not target_fragment:
             raise ProductionBackendError("local_ctc requires an exact target fragment")

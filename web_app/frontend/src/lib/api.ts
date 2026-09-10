@@ -238,12 +238,10 @@ export const api = {
   // plane — план подбора (vibes 9:16 / cine16x9 / films). Без него степпер типов
   // футажей листался, а список примеров не менялся.
   /** Примерка субтитров (ASR отрывка): запуск — идемпотентен по трек+окно+текст */
-  asrStart: (payload: { clipFrom: string; clipTo: string; fragment: string; lyrics: string }) =>
+  asrStart: (payload: { clipFrom: string; clipTo: string; fragment: string; lyrics: string; trackId: string }) =>
     request<{ asr: AsrPreviewResponse; mock?: boolean }>('/api/wizard/asr/start', { method: 'POST', body: JSON.stringify(payload) }),
-  asrState: (payload: { clipFrom: string; clipTo: string; fragment: string; lyrics: string }) =>
-    request<{ asr: AsrPreviewResponse; mock?: boolean }>(
-      `/api/wizard/asr?clipFrom=${encodeURIComponent(payload.clipFrom)}&clipTo=${encodeURIComponent(payload.clipTo)}&fragment=${encodeURIComponent(payload.fragment)}&lyrics=${encodeURIComponent(payload.lyrics)}`
-    ),
+  asrState: (key: string) =>
+    request<{ asr: AsrPreviewResponse; mock?: boolean }>(`/api/wizard/asr?key=${encodeURIComponent(key)}`),
   vibes: (plane = 'vibes') =>
     request<{ status: string; vibes: Vibe[] }>(`/api/wizard/vibes?plane=${encodeURIComponent(plane)}`),
   photos: () => request<{ status: string; photos: Vibe[] }>('/api/wizard/photos'),
