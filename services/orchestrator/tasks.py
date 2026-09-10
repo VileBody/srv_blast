@@ -104,6 +104,7 @@ _LLM_ENV_KEYS = (
     "BATCH_VARIANT_INDEX",
     "BATCH_VARIANTS_TOTAL",
     "REUSE_TEXT_JOB_ID",
+    "USER_FOCUS_WORDS",
     "GEMINI_MAX_THINKING_TOKENS",
     # hook env vars (F3/F4/F5 + drop anchor)
     "HOOK_ENABLED",
@@ -2198,6 +2199,18 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         env["BATCH_VARIANTS_TOTAL"] = str(int(variant_total))
     if reuse_text_job_id:
         env["REUSE_TEXT_JOB_ID"] = reuse_text_job_id
+    user_focus_words = req.get("user_focus_words") or []
+    if isinstance(user_focus_words, list) and user_focus_words:
+        # Веб-визард: слова, помеченные фокусными на таймлайне. Подсказка Stage2
+        # (см. gemini_orchestrator._user_focus_words_hint).
+        env["USER_FOCUS_WORDS"] = json.dumps(
+            [
+                {"text": str(w.get("text") or ""), "t_start": float(w.get("t_start") or 0.0)}
+                for w in user_focus_words
+                if isinstance(w, dict) and str(w.get("text") or "").strip()
+            ],
+            ensure_ascii=False,
+        )
 
     build_all_fn = None
     if mode != "no_gemini":
@@ -2834,10 +2847,252 @@ def alignment_smoke_job(job_id: str) -> Dict[str, Any]:
                 log.warning("alignment_smoke_cleanup_failed job_id=%s path=%s", job_id, path)
 
 
+def _asr_preview_words_payload(stage1_asr: Dict[str, Any]) -> List[Dict[str, Any]]:
+    selected = stage1_asr.get("selected_fragment") or {}
+    words = selected.get("transcript_words") or stage1_asr.get("transcript_words") or []
+    return [
+        {
+            "text": str(w.get("text") or ""),
+            "t_start": float(w.get("t_start")),
+            "t_end": float(w.get("t_end")),
+        }
+        for w in words
+    ]
+
+
+def _asr_preview_result(
+    *, stage1_asr: Dict[str, Any], clip_start_abs: float, clip_end_abs: float
+) -> Dict[str, Any]:
+    return {
+        "words": _asr_preview_words_payload(stage1_asr),
+        "clip_start_abs": float(clip_start_abs),
+        "clip_end_abs": float(clip_end_abs),
+    }
+
+
+@celery_app.task(name="orchestrator.asr_preview_job")
+def asr_preview_job(job_id: str) -> Dict[str, Any]:
+    """Stage 1a only: локальное выравнивание (local_ctc) без Stage2/рендера.
+
+    Нужна веб-визарду: слова с таймингами показываются на таймлайне ДО выбора
+    настроек субтитров, пользователь их подравнивает (`apply_asr_words_edit`),
+    а рендер-джоба приходит с `reuse_text_job_id=<эта джоба>` и берёт
+    stage1_asr из её resume_state. Поэтому resume_state здесь собирается ровно
+    в тех ключах и с той метадатой, по которым `gemini_orchestrator`
+    проверяет cache-compat (mode/reference/identity) — иначе сид отбросится и
+    правки пропадут.
+    """
+    from mlcore.gemini_orchestrator import build_local_alignment_metadata
+
+    store = JobStore.from_env()
+    state = store.get(job_id)
+    if state is None:
+        raise RuntimeError(f"asr preview job not found: {job_id}")
+    req = dict(state.request or {})
+    if str(req.get("job_kind") or "") != "asr_preview":
+        raise RuntimeError(f"job {job_id} is not an asr preview job")
+    paths = make_job_paths(
+        work_dir=SETTINGS.work_dir,
+        output_dir=SETTINGS.output_dir,
+        job_id=job_id,
+    )
+    audio_path = paths.data_dir / "asr-preview-source.mp3"
+    resume_state_path = paths.data_dir / "llm_resume_state.json"
+    target_fragment = str(req.get("target_fragment") or "")
+    clip_start_abs = float(req.get("clip_start_abs"))
+    clip_end_abs = float(req.get("clip_end_abs"))
+    try:
+        store.set_status(job_id, "RUNNING", stage="asr_preview_download")
+        _download(str(req.get("audio_s3_url") or ""), audio_path)
+        store.set_status(job_id, "RUNNING", stage="asr_preview_alignment")
+        aligned = request_local_alignment(
+            service_url=str(os.environ.get("ALIGNMENT_SERVICE_URL") or "").strip(),
+            timeout_s=float(os.environ.get("ALIGNMENT_TIMEOUT_S") or "600"),
+            audio_path=audio_path,
+            target_fragment=target_fragment,
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+            request_id=str(req.get("request_id") or job_id),
+        )
+        alignment_metadata = build_local_alignment_metadata(
+            backend_info=dict(aligned.backend),
+            diagnostics=dict(aligned.diagnostics),
+        )
+        stage1_asr = aligned.stage1_asr.model_dump(mode="json")
+        resume_state = {
+            "stage1_asr": stage1_asr,
+            "stage1_asr_mode": "local_ctc",
+            # Сверяется побайтно с TARGET_FRAGMENT рендер-джобы.
+            "stage1_asr_reference_text": target_fragment,
+            "stage1_alignment_backend": "local_ctc",
+            "stage1_alignment_metadata": alignment_metadata,
+        }
+        resume_state_path.parent.mkdir(parents=True, exist_ok=True)
+        resume_state_path.write_text(
+            json.dumps(resume_state, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        _persist_resume_state_snapshot(
+            store=store,
+            job_id=job_id,
+            resume_state_path=resume_state_path,
+            source="asr_preview",
+        )
+        result = _asr_preview_result(
+            stage1_asr=stage1_asr,
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+        )
+        result["backend"] = dict(aligned.backend)
+        store.set_status(job_id, "SUCCEEDED", stage="asr_preview", result=result)
+        log.info(
+            "asr_preview_succeeded job_id=%s words=%d clip=%.3f..%.3f",
+            job_id, len(result["words"]), clip_start_abs, clip_end_abs,
+        )
+        return {"ok": True, **result}
+    except AlignmentServiceError as exc:
+        store.set_status(
+            job_id,
+            "FAILED",
+            stage="asr_preview",
+            error=f"{exc.code}: {exc.message}",
+            result={"alignment_error": {"code": exc.code, "details": exc.details}},
+        )
+        raise
+    except Exception as exc:
+        store.set_status(
+            job_id,
+            "FAILED",
+            stage="asr_preview",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+        raise
+    finally:
+        try:
+            audio_path.unlink(missing_ok=True)
+        except Exception:
+            log.warning("asr_preview_cleanup_failed job_id=%s path=%s", job_id, audio_path)
+
+
+def rebuild_stage1_asr_with_words(
+    stage1_asr: Dict[str, Any],
+    *,
+    words: List[Dict[str, Any]],
+    pause_min_gap_sec: float,
+) -> Dict[str, Any]:
+    """Подменить слова в stage1_asr, пересчитав производные (паузы, окно фрагмента).
+
+    Чистая функция — правки таймингов с таймлайна. Слова обязаны идти по порядку,
+    не пересекаться и лежать внутри окна фрагмента: сдвиг за границу окна изменил
+    бы working_start/end, а их оркестратор сверяет с user clip window
+    (`ALIGNMENT_WINDOW_MISMATCH`). Такие правки — ошибка клиента, не тихий кламп.
+    """
+    from mlcore.models.stage1_asr import Stage1AsrPayload
+
+    selected = stage1_asr.get("selected_fragment")
+    if not isinstance(selected, dict):
+        raise ValueError("stage1_asr has no selected_fragment")
+    audio = selected.get("audio") or {}
+    clip_start = float(audio.get("clip_start_abs"))
+    clip_end = float(audio.get("clip_end_abs"))
+    clean: List[Dict[str, Any]] = []
+    prev_end = clip_start - 1e-6
+    for idx, w in enumerate(words):
+        text = str(w.get("text") or "").strip()
+        if not text:
+            raise ValueError(f"word[{idx}] has empty text")
+        t_start = round(float(w.get("t_start")), 3)
+        t_end = round(float(w.get("t_end")), 3)
+        if t_end <= t_start:
+            raise ValueError(f"word[{idx}] {text!r}: t_end must be > t_start")
+        if t_start < clip_start - 1e-6 or t_end > clip_end + 1e-6:
+            raise ValueError(
+                f"word[{idx}] {text!r} {t_start:.3f}..{t_end:.3f} is outside the clip "
+                f"window {clip_start:.3f}..{clip_end:.3f}"
+            )
+        if t_start < prev_end - 1e-6:
+            raise ValueError(
+                f"word[{idx}] {text!r} starts at {t_start:.3f} before the previous word ends "
+                f"at {prev_end:.3f}"
+            )
+        clean.append({"text": text, "t_start": t_start, "t_end": t_end})
+        prev_end = t_end
+    if not clean:
+        raise ValueError("words list is empty")
+    pauses: List[Dict[str, Any]] = []
+    for left, right in zip(clean, clean[1:]):
+        if float(right["t_start"]) - float(left["t_end"]) >= float(pause_min_gap_sec):
+            pauses.append({"text": "[pause]", "t_start": left["t_end"], "t_end": right["t_start"]})
+    out = json.loads(json.dumps(stage1_asr))
+    out["transcript_words"] = list(clean)
+    out["pause_spans"] = list(pauses)
+    out["selected_fragment"]["transcript_words"] = list(clean)
+    out["selected_fragment"]["pause_spans"] = list(pauses)
+    # Прогон через модель: та же валидация, что у свежего ответа alignment-сервиса.
+    Stage1AsrPayload.model_validate(out)
+    return out
+
+
+def apply_asr_words_edit(
+    *, store: JobStore, job_id: str, words: List[Dict[str, Any]]
+) -> Dict[str, Any]:
+    """Записать отредактированные слова в resume_state asr_preview-джобы.
+
+    Обновляются ВСЕ места, откуда `_seed_resume_state_from_source_job` читает
+    сид (файл, job result, runtime DB) — через `_persist_resume_state_snapshot`,
+    иначе рендер подхватил бы старые тайминги из более приоритетного источника.
+    """
+    state = store.get(job_id)
+    if state is None:
+        raise KeyError(job_id)
+    req = dict(state.request or {})
+    if str(req.get("job_kind") or "") != "asr_preview":
+        raise ValueError(f"job {job_id} is not an asr preview job")
+    if state.status != "SUCCEEDED":
+        raise ValueError(f"asr preview job {job_id} is not finished (status={state.status})")
+    resume_state = _load_resume_state_from_runtime_db(job_id=job_id)
+    if not resume_state:
+        resume_state = _resume_state_from_job_result(store, job_id)
+    resume_state_path = _job_resume_state_path(work_dir=SETTINGS.work_dir, job_id=job_id)
+    if not resume_state and resume_state_path.exists():
+        resume_state = _load_resume_state_file(resume_state_path)
+    stage1_asr = resume_state.get("stage1_asr") if isinstance(resume_state, dict) else None
+    if not isinstance(stage1_asr, dict):
+        raise ValueError(f"asr preview job {job_id} has no stage1_asr in resume_state")
+    try:
+        pause_min_gap = max(0.1, float(os.environ.get("STAGE1A_PAUSE_MIN_GAP_S", "1.0")))
+    except Exception:
+        pause_min_gap = 1.0
+    updated = rebuild_stage1_asr_with_words(
+        stage1_asr, words=words, pause_min_gap_sec=pause_min_gap
+    )
+    resume_state = dict(resume_state)
+    resume_state["stage1_asr"] = updated
+    resume_state_path.parent.mkdir(parents=True, exist_ok=True)
+    resume_state_path.write_text(
+        json.dumps(resume_state, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    _persist_resume_state_snapshot(
+        store=store,
+        job_id=job_id,
+        resume_state_path=resume_state_path,
+        source="asr_preview_edit",
+    )
+    audio = (updated.get("selected_fragment") or {}).get("audio") or {}
+    result = _asr_preview_result(
+        stage1_asr=updated,
+        clip_start_abs=float(audio.get("clip_start_abs")),
+        clip_end_abs=float(audio.get("clip_end_abs")),
+    )
+    result["edited"] = True
+    store.set_status(job_id, "SUCCEEDED", stage="asr_preview", result=result)
+    return result
+
+
 # Task names whose first positional arg is the job_id, used by the orphan-reaper
 # below to flip a job to FAILED when its worker dies mid-execution.
 _JOB_ID_FIRST_ARG_TASKS = frozenset({
     "orchestrator.alignment_smoke_job",
+    "orchestrator.asr_preview_job",
     "orchestrator.build_job",
     "orchestrator.build_job_sdk",
     "orchestrator.build_job_openrouter",

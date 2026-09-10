@@ -54,6 +54,8 @@ class Workspace:
     user_sources: list[dict[str, Any]] = field(default_factory=list)
     active_project_id: str | None = None
     wizard_session: dict[str, Any] | None = None
+    # Примерка субтитров (ASR отрывка до шага «Текст»), см. app/asr_preview.py
+    asr_preview: dict[str, Any] | None = None
 
 
 def _new_subscription(user_id: str) -> dict[str, Any]:
@@ -1099,6 +1101,15 @@ def set_wizard_session(payload: dict[str, Any]) -> dict[str, Any]:
 
 def get_wizard_session() -> dict[str, Any] | None:
     return deepcopy(ws().wizard_session)
+
+
+def get_asr_preview() -> dict[str, Any] | None:
+    return deepcopy(ws().asr_preview)
+
+
+def set_asr_preview(state: dict[str, Any] | None) -> dict[str, Any] | None:
+    ws().asr_preview = deepcopy(state) if state else None
+    return deepcopy(ws().asr_preview)
 
 
 def register_user(payload: dict[str, Any]) -> dict[str, Any]:

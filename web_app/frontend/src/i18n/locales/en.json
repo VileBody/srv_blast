@@ -421,7 +421,25 @@
       "lyricsPlaceholder": "The segment text will appear after the first step",
       "empty": "Subtitles will appear here",
       "add": "Add subtitles",
-      "footerEmpty": "Add subtitles"
+      "footerEmpty": "Add subtitles",
+      "timeline": {
+        "title": "Subtitle fitting",
+        "ready": "ready",
+        "failed": "failed",
+        "idle": "no input",
+        "running": "working…",
+        "edited": "edited",
+        "zoomOut": "Zoom out",
+        "zoomIn": "Zoom in",
+        "reset": "Reset edits",
+        "play": "Play clip",
+        "pause": "Pause",
+        "focus": "Make focus word",
+        "unfocus": "Remove focus",
+        "idleHint": "Pick the clip window and lyrics on the “Track” step — words will show up here",
+        "runningHint": "Aligning words to the track…",
+        "hint": "Drag a word to shift its timing; drag its edges to change duration. Click selects a word, ★ or double-click marks it as a focus word (accent in subtitles). Arrow keys ← → nudge the selection by 0.05 s (0.2 s with Shift)."
+      }
     },
     "pool": {
       "total": "Total videos:",

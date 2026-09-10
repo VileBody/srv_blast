@@ -44,6 +44,10 @@ from .runtime_config import (
 from .schemas import (
     AlignmentSmokeEnqueueResponse,
     AlignmentSmokeRequest,
+    AsrPreviewEnqueueResponse,
+    AsrPreviewRequest,
+    AsrWordsUpdateRequest,
+    AsrWordsUpdateResponse,
     ActiveJobsResponse,
     ActiveJobSummary,
     FetchExternalVideoRequest,
@@ -71,6 +75,8 @@ from .schemas import (
 )
 from .tasks import (
     alignment_smoke_job,
+    apply_asr_words_edit,
+    asr_preview_job,
     build_job,
     build_job_hybrid,
     build_job_openrouter,
@@ -725,6 +731,68 @@ def create_app() -> FastAPI:
         queued = store.get(st.job_id) or st
         return AlignmentSmokeEnqueueResponse(
             job_id=queued.job_id, status=queued.status, created=True
+        )
+
+    @app.post("/asr/preview", response_model=AsrPreviewEnqueueResponse)
+    def enqueue_asr_preview(req: AsrPreviewRequest) -> AsrPreviewEnqueueResponse:
+        """Stage 1a only — «примерка» субтитров для веб-визарда.
+
+        Та же очередь и тот же воркер, что у alignment-smoke (alignment-api +
+        S3 ему уже доступны, а build-воркер не блокируется). Результат —
+        `result.words` в `GET /jobs/{id}`; правки — `PUT /jobs/{id}/asr-words`;
+        рендер приходит с `reuse_text_job_id=<job_id>`.
+        """
+        _ensure_accepting_new_jobs(req)
+        audio_s3_url = str(req.audio_s3_url or "").strip()
+        if not (
+            audio_s3_url.lower().startswith("s3://")
+            or audio_s3_url.lower().startswith("http://")
+            or audio_s3_url.lower().startswith("https://")
+        ):
+            raise HTTPException(status_code=422, detail="audio_s3_url must be s3:// or http(s)://")
+        request_payload = req.model_dump(mode="json", exclude_none=True)
+        request_payload["job_kind"] = "asr_preview"
+        request_payload["stage1_alignment_backend"] = "local_ctc"
+        routing = _resolve_job_routing(request_payload=request_payload)
+        _ensure_queue_affinity(routing)
+        request_payload.update(routing)
+        st, created = store.new_job(
+            request=request_payload,
+            idempotency_key=req.idempotency_key,
+        )
+        if not created:
+            return AsrPreviewEnqueueResponse(job_id=st.job_id, status=st.status, created=False)
+        try:
+            store.set_status(st.job_id, "QUEUED", stage="asr_preview", result={"routing": routing})
+            asr_preview_job.apply_async(
+                args=[st.job_id], queue=f"{routing['build_queue']}.alignment-smoke"
+            )
+        except Exception as exc:
+            store.set_status(
+                st.job_id, "FAILED", stage="asr_preview", error=f"queue_failed: {exc!r}"
+            )
+            raise HTTPException(status_code=500, detail="Failed to enqueue asr preview job")
+        queued = store.get(st.job_id) or st
+        return AsrPreviewEnqueueResponse(job_id=queued.job_id, status=queued.status, created=True)
+
+    @app.put("/jobs/{job_id}/asr-words", response_model=AsrWordsUpdateResponse)
+    def update_asr_words(job_id: str, req: AsrWordsUpdateRequest) -> AsrWordsUpdateResponse:
+        """Правки таймингов слов поверх готовой asr_preview-джобы (см. tasks.apply_asr_words_edit)."""
+        try:
+            result = apply_asr_words_edit(
+                store=store,
+                job_id=job_id,
+                words=[w.model_dump(mode="json") for w in req.words],
+            )
+        except KeyError:
+            raise HTTPException(status_code=404, detail="job not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return AsrWordsUpdateResponse(
+            job_id=job_id,
+            words_count=len(result.get("words") or []),
+            clip_start_abs=float(result["clip_start_abs"]),
+            clip_end_abs=float(result["clip_end_abs"]),
         )
 
     # ==========================================================

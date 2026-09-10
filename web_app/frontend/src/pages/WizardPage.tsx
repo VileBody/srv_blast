@@ -18,6 +18,7 @@ import { SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
 import { timingToSeconds } from '../components/wizard/useFragmentAudio';
+import { useAsrPreview } from '../components/wizard/useAsrPreview';
 import { BackSquareButton, WizardHeaderCard } from '../components/wizard/WizardFrame';
 import { useToast } from '../contexts/ToastContext';
 import { cn } from '../lib/cn';
@@ -452,6 +453,9 @@ export function WizardPage() {
     && timingToSeconds(state.timingFrom) !== null
     && timingToSeconds(state.timingTo) !== null
     && !segmentInvalid;
+
+  // Примерка субтитров: ASR стартует, как только человек ушёл с «Трека», и успевает к «Тексту»
+  useAsrPreview(stage !== 1 && trackReady && timingReady);
 
   // Этап «Трек» можно проскочить только мимо UI (персист стора, прямой ?qaStage, старый батч) —
   // возвращаем на него, иначе визард дойдёт до «Сгенерировать» с пустым треком.

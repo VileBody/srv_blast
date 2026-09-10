@@ -678,6 +678,55 @@ def _reference_words_from_user_text(text: str) -> List[str]:
     return out
 
 
+def expected_local_alignment_identity() -> Dict[str, str]:
+    """Идентичность alignment-сервиса, которую ждёт этот воркер (из env).
+
+    Вынесено из stage1a: ту же проверку делает asr_preview-джоба (веб-визард
+    гонит ASR заранее), и её resume_state обязан пройти cache-compat сверку
+    здесь же — иначе правки таймингов молча выбросятся и ASR посчитается заново.
+    """
+    return {
+        "algorithm_version": str(os.environ.get("ALIGNMENT_ALGORITHM_VERSION") or "").strip(),
+        "model_revision": str(os.environ.get("ALIGNMENT_MODEL_REVISION") or "").strip(),
+        "audio_preprocessor": "demucs",
+        "separator_model": str(os.environ.get("ALIGNMENT_DEMUCS_MODEL_NAME") or "").strip(),
+        "separator_revision": str(os.environ.get("ALIGNMENT_DEMUCS_MODEL_REVISION") or "").strip(),
+        "separator_package_version": str(
+            os.environ.get("ALIGNMENT_DEMUCS_PACKAGE_VERSION") or ""
+        ).strip(),
+    }
+
+
+def build_local_alignment_metadata(
+    *,
+    backend_info: Dict[str, Any],
+    diagnostics: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Сверить ответ alignment-сервиса с ожидаемой идентичностью и собрать
+    `stage1_alignment_metadata` для resume_state. Расхождение — явная ошибка,
+    не фолбэк (см. No Fallback Policy)."""
+    expected_backend_identity = expected_local_alignment_identity()
+    for field, expected_value in expected_backend_identity.items():
+        actual_value = str(backend_info.get(field) or "")
+        if not expected_value:
+            raise AlignmentServiceError(
+                "ALIGNMENT_INTERNAL_ERROR",
+                f"worker alignment identity is empty for {field}",
+            )
+        if actual_value != expected_value:
+            raise AlignmentServiceError(
+                "ALIGNMENT_INTERNAL_ERROR",
+                "alignment service identity mismatch "
+                f"field={field} expected={expected_value!r} "
+                f"actual={actual_value!r}",
+            )
+    return {
+        "backend": "local_ctc",
+        **expected_backend_identity,
+        "diagnostics": dict(diagnostics),
+    }
+
+
 def _stage1a_pause_min_gap_sec() -> float:
     try:
         v = float(os.environ.get("STAGE1A_PAUSE_MIN_GAP_S", "1.0"))
@@ -717,6 +766,61 @@ def _derive_pause_spans_from_aligned_words(
                 }
             )
     return out
+
+
+def _user_focus_words_hint(
+    *,
+    words_in_clip: List[Any],
+    logger: logging.Logger,
+) -> str:
+    """Подсказка Stage2-subtitles по словам, которые автор пометил фокусными.
+
+    Источник — env `USER_FOCUS_WORDS` (JSON-список `{text, t_start}`), который
+    веб-визард шлёт через `SendAudioS3Request.user_focus_words`. Слово матчится
+    по тексту и старту (±0.35с — правки таймингов на таймлайне уже в stage1),
+    несовпавшие отбрасываются с логом: подсказывать модели слово, которого
+    в клипе нет, — прямой путь к галлюцинации.
+    """
+    raw = (os.environ.get("USER_FOCUS_WORDS") or "").strip()
+    if not raw:
+        return ""
+    try:
+        items = json.loads(raw)
+    except Exception as e:
+        raise RuntimeError(f"USER_FOCUS_WORDS is not valid JSON: {e}") from e
+    if not isinstance(items, list):
+        raise RuntimeError("USER_FOCUS_WORDS must be a JSON list")
+    matched: List[str] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        try:
+            t_start = float(item.get("t_start"))
+        except Exception:
+            continue
+        hit = None
+        for w in words_in_clip:
+            if str(w.text).strip().lower() == text.lower() and abs(float(w.t_start) - t_start) <= 0.35:
+                hit = w
+                break
+        if hit is None:
+            logger.warning(
+                "user_focus_word_unmatched text=%r t_start=%.3f", text, t_start
+            )
+            continue
+        matched.append(f'- "{hit.text}" @ {float(hit.t_start):.2f}s')
+    if not matched:
+        return ""
+    logger.info("user_focus_words_applied count=%d", len(matched))
+    return (
+        "USER_FOCUS_WORDS (author-marked, mandatory):\n"
+        + "\n".join(matched)
+        + "\nEach listed word MUST be the focus/accent of the scene or segment it "
+        "belongs to: for scene templates set it as `focus_word` (TYPE_2 italic or "
+        "TYPE_4 red, choose by the rules above); for impulse mode make it a `short` "
+        "accent layer. Do not move these words to another scene to avoid the rule."
+    )
 
 
 def _pause_spans_in_window(
@@ -2836,21 +2940,12 @@ def build_all_via_gemini_one_call(
         or _STAGE1_ALIGNMENT_BACKEND_GEMINI
     ).strip().lower()
     stage1_alignment_metadata_cached = resume_state.get("stage1_alignment_metadata")
-    expected_alignment_revision = str(
-        os.environ.get("ALIGNMENT_MODEL_REVISION") or ""
-    ).strip()
-    expected_alignment_algorithm = str(
-        os.environ.get("ALIGNMENT_ALGORITHM_VERSION") or ""
-    ).strip()
-    expected_separator_model = str(
-        os.environ.get("ALIGNMENT_DEMUCS_MODEL_NAME") or ""
-    ).strip()
-    expected_separator_revision = str(
-        os.environ.get("ALIGNMENT_DEMUCS_MODEL_REVISION") or ""
-    ).strip()
-    expected_separator_package_version = str(
-        os.environ.get("ALIGNMENT_DEMUCS_PACKAGE_VERSION") or ""
-    ).strip()
+    _expected_identity = expected_local_alignment_identity()
+    expected_alignment_revision = _expected_identity["model_revision"]
+    expected_alignment_algorithm = _expected_identity["algorithm_version"]
+    expected_separator_model = _expected_identity["separator_model"]
+    expected_separator_revision = _expected_identity["separator_revision"]
+    expected_separator_package_version = _expected_identity["separator_package_version"]
     if isinstance(stage1_asr_cached, dict):
         cache_compatible = True
         if stage1_alignment_backend_cached != stage1_alignment_backend:
@@ -2967,34 +3062,10 @@ def build_all_via_gemini_one_call(
                 user_clip_window=user_clip_window,
                 logger=logger,
             )
-            backend_info = dict(local_response.backend)
-            expected_backend_identity = {
-                "algorithm_version": expected_alignment_algorithm,
-                "model_revision": expected_alignment_revision,
-                "audio_preprocessor": "demucs",
-                "separator_model": expected_separator_model,
-                "separator_revision": expected_separator_revision,
-                "separator_package_version": expected_separator_package_version,
-            }
-            for field, expected_value in expected_backend_identity.items():
-                actual_value = str(backend_info.get(field) or "")
-                if not expected_value:
-                    raise AlignmentServiceError(
-                        "ALIGNMENT_INTERNAL_ERROR",
-                        f"worker alignment identity is empty for {field}",
-                    )
-                if actual_value != expected_value:
-                    raise AlignmentServiceError(
-                        "ALIGNMENT_INTERNAL_ERROR",
-                        "alignment service identity mismatch "
-                        f"field={field} expected={expected_value!r} "
-                        f"actual={actual_value!r}",
-                    )
-            alignment_metadata = {
-                "backend": "local_ctc",
-                **expected_backend_identity,
-                "diagnostics": dict(local_response.diagnostics),
-            }
+            alignment_metadata = build_local_alignment_metadata(
+                backend_info=dict(local_response.backend),
+                diagnostics=dict(local_response.diagnostics),
+            )
             resume_state["stage1_alignment_metadata"] = alignment_metadata
             stage1a_raw.write_text(
                 json.dumps(alignment_metadata, ensure_ascii=False, indent=2),
@@ -3615,6 +3686,11 @@ def build_all_via_gemini_one_call(
             + "\n"
         )
         logger.info("stage2_subtitles_retry_hint_applied chars=%d", len(subtitles_retry_hint))
+    user_focus_hint = _user_focus_words_hint(
+        words_in_clip=stage1_words_in_clip, logger=logger
+    )
+    if user_focus_hint and subtitles_planner is not None:
+        sub_prompt = str(sub_prompt) + "\n\n" + user_focus_hint + "\n"
     sub_raw = logs_dir / f"gemini_raw_stage2_subtitles_{stamp}.json"
     sub_sys = logs_dir / f"gemini_system_stage2_subtitles_{stamp}.txt"
     sub_user = logs_dir / f"gemini_prompt_stage2_subtitles_{stamp}.txt"

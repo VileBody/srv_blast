@@ -27,6 +27,36 @@ export const HOOK_LABELS: Record<HookKind, string> = {
   thought: 'Мысль'
 };
 
+/** Слово из примерки субтитров (ASR отрывка), тайминги — абсолютные секунды трека */
+export interface AsrWord {
+  text: string;
+  tStart: number;
+  tEnd: number;
+  /** помечено автором как фокусное — Stage2 обязан сделать его акцентом сцены */
+  focus?: boolean;
+}
+
+export type AsrStatus = 'IDLE' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+
+/**
+ * Примерка субтитров: ASR отрывка запускается сразу после шага «Трек», к шагу «Текст»
+ * слова лежат на таймлайне и их можно подвинуть / пометить фокусными.
+ * `key` — трек+окно+текст (считает бэк): другие вводные → другая примерка, правки
+ * старой не переносятся (рендер сверяет окно и текст и пересчитал бы ASR сам).
+ * `source` — как пришло из ASR (для «сбросить»), `words` — рабочая копия с правками.
+ */
+export interface AsrPreviewState {
+  key: string;
+  jobId: string | null;
+  status: AsrStatus;
+  words: AsrWord[];
+  source: AsrWord[];
+  clipStart: number | null;
+  clipEnd: number | null;
+  edited: boolean;
+  error: string | null;
+}
+
 export interface WizardStateData {
   projectId?: string | null;
   track?: SavedTrack | null;
@@ -80,6 +110,7 @@ export interface WizardStateData {
     colorFont?: string;
     seeded: boolean;
   };
+  asr: AsrPreviewState;
   final: {
     subtitleColor: string;
     accentColor: string;
@@ -144,6 +175,13 @@ interface WizardStore extends WizardStateData {
   setSubtitles: (patch: Partial<WizardStateData['subtitles']>) => void;
   toggleSubtitleStyle: (style: string) => void;
   setAllocation: (patch: Partial<WizardStateData['allocation']>) => void;
+  /** результат/статус примерки с бэка; правки для того же key сохраняются */
+  setAsrResult: (asr: { key: string; jobId: string | null; status: AsrStatus; words: AsrWord[]; clipStart: number | null; clipEnd: number | null; error: string | null }) => void;
+  /** сдвинуть слово: новые тайминги (уже провалидированные таймлайном) */
+  setAsrWord: (index: number, patch: Partial<Pick<AsrWord, 'tStart' | 'tEnd'>>) => void;
+  toggleAsrFocus: (index: number) => void;
+  /** вернуть слова из ASR как есть */
+  resetAsrEdits: () => void;
   reset: (projectId?: string | null) => void;
   /** Новый батч по тому же треку: сбрасывает только выбор, вводные трека остаются. */
   newBatch: (projectId?: string | null) => void;
@@ -157,6 +195,10 @@ interface WizardStore extends WizardStateData {
 export function hasTrackInput(state: Pick<WizardStateData, 'track' | 'lyrics'>): boolean {
   return Boolean(state.track && state.lyrics.trim());
 }
+
+export const emptyAsr = (): AsrPreviewState => ({
+  key: '', jobId: null, status: 'IDLE', words: [], source: [], clipStart: null, clipEnd: null, edited: false, error: null
+});
 
 const initialData = (projectId?: string | null): WizardStateData => ({
   projectId,
@@ -172,6 +214,7 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   hooks: { dropTime: undefined, kind: undefined, configs: {} },
   subtitles: { color: '#f6f5fd', pool: [] },
   allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
+  asr: emptyAsr(),
   final: { subtitleColor: '#ffffff', accentColor: '#8b6fe6', videosToGenerate: 1, idempotencyKey: crypto.randomUUID() }
 });
 
@@ -211,6 +254,35 @@ export const useWizardStore = create<WizardStore>()(
         return { hooks: { ...state.hooks, kind: state.hooks.kind === kind ? undefined : state.hooks.kind, configs } };
       }),
       setSubtitles: (patch) => set((state) => ({ subtitles: { ...state.subtitles, ...patch } })),
+      setAsrResult: (asr) => set((state) => {
+        const same = state.asr.key === asr.key;
+        // Слова с бэка обновляют source; рабочая копия живёт своей жизнью, пока это та же
+        // примерка и в ней есть правки. Новая примерка (другой key) — всё с чистого листа.
+        const keepEdits = same && state.asr.edited && asr.status === 'COMPLETED' && state.asr.words.length === asr.words.length;
+        return {
+          asr: {
+            key: asr.key,
+            jobId: asr.jobId,
+            status: asr.status,
+            source: asr.words,
+            words: keepEdits ? state.asr.words : asr.words.map((w) => ({ ...w })),
+            clipStart: asr.clipStart,
+            clipEnd: asr.clipEnd,
+            edited: keepEdits ? state.asr.edited : false,
+            error: asr.error
+          }
+        };
+      }),
+      setAsrWord: (index, patch) => set((state) => {
+        const words = state.asr.words.map((w, i) => (i === index ? { ...w, ...patch } : w));
+        return { asr: { ...state.asr, words, edited: true } };
+      }),
+      toggleAsrFocus: (index) => set((state) => {
+        const words = state.asr.words.map((w, i) => (i === index ? { ...w, focus: !w.focus } : w));
+        // фокус — тоже правка: уезжает в генерацию вместе с таймингами
+        return { asr: { ...state.asr, words, edited: true } };
+      }),
+      resetAsrEdits: () => set((state) => ({ asr: { ...state.asr, words: state.asr.source.map((w) => ({ ...w })), edited: false } })),
       toggleSubtitleStyle: (style) => set((state) => {
         const pool = state.subtitles.pool.includes(style)
           ? state.subtitles.pool.filter((item) => item !== style)
@@ -233,6 +305,8 @@ export const useWizardStore = create<WizardStore>()(
           timingMode: state.timingMode,
           timingFrom: state.timingFrom,
           timingTo: state.timingTo,
+          // Примерка субтитров — тоже вводная трека: те же слова и правки
+          asr: state.asr,
           // Человеку надо СКАЗАТЬ, что вводные переехали из прошлого батча, и дать
           // их поменять — иначе он либо не заметит подмену, либо решит, что визард
           // потерял шаг. Флаг разовый и в localStorage не уезжает.
@@ -269,6 +343,12 @@ export const useWizardStore = create<WizardStore>()(
           hooks: { ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) },
           subtitles: { ...fresh.subtitles, ...((raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {}) },
           allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },
+          asr: (() => {
+            const saved = raw.asr as Partial<AsrPreviewState> | null | undefined;
+            if (!saved || !saved.jobId || !Array.isArray(saved.words)) return fresh.asr;
+            // Сессия хранит только правки; source дотянется поллингом по тому же key
+            return { ...fresh.asr, key: String(saved.key ?? ''), jobId: saved.jobId, status: 'COMPLETED', words: saved.words, source: saved.words, edited: Boolean(saved.edited) };
+          })(),
           final: { ...fresh.final, ...((raw.final as Partial<WizardStateData['final']>) ?? {}) },
           stage: Math.max(1, Math.min(5, Number(stage) || 1))
         };
@@ -284,6 +364,11 @@ export const useWizardStore = create<WizardStore>()(
           hooks: state.hooks,
           subtitles: state.subtitles,
           allocation: state.allocation,
+          // Примерка субтитров: бэк сверит key со своими вводными и, если совпало,
+          // отдаст правки в оркестратор и запустит рендер от этой ASR-джобы.
+          asr: state.asr.jobId
+            ? { key: state.asr.key, jobId: state.asr.jobId, edited: state.asr.edited, words: state.asr.words }
+            : null,
           final: state.final
         };
       }
@@ -303,6 +388,7 @@ export const useWizardStore = create<WizardStore>()(
         hooks: state.hooks,
         subtitles: state.subtitles,
         allocation: state.allocation,
+        asr: state.asr,
         final: state.final,
         stage: state.stage
       })
