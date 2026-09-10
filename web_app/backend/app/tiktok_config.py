@@ -52,11 +52,28 @@ class TiktokConfig:
     redirect_uri: str
     scopes: str
     upload_source: str
+    allowed_user_ids: tuple[str, ...]
 
     @property
     def configured(self) -> bool:
         """Готовы ли ключи. Без них включается мок-режим подключения аккаунта."""
         return bool(self.client_key and self.client_secret)
+
+    def allows(self, *identifiers: str | None) -> bool:
+        """Пускать ли этого человека в интеграцию.
+
+        Пока приложение не прошло аудит TikTok, оно живёт в песочнице: публиковать
+        может только владелец приложения, а всем остальным сандбокс-креды показывать
+        нельзя — они увидят чужой аккаунт разработчика и ошибки авторизации. Поэтому
+        доступ выдаётся поимённо; `*` открывает интеграцию всем (состояние после
+        одобрения заявки).
+        """
+        if not self.allowed_user_ids:
+            return False
+        if "*" in self.allowed_user_ids:
+            return True
+        known = {str(value).strip().lower() for value in identifiers if str(value or "").strip()}
+        return bool(known & set(self.allowed_user_ids))
 
 
 def load() -> TiktokConfig:
@@ -66,10 +83,17 @@ def load() -> TiktokConfig:
         raise RuntimeError(
             "tiktok_config: TIKTOK_UPLOAD_SOURCE must be FILE_UPLOAD or PULL_FROM_URL"
         )
+    raw_allowed = os.getenv("TIKTOK_ALLOWED_USER_IDS", "")
+    allowed = tuple(
+        part.strip().lower()
+        for part in raw_allowed.replace(";", ",").replace(" ", ",").split(",")
+        if part.strip()
+    )
     return TiktokConfig(
         client_key=os.getenv("TIKTOK_CLIENT_KEY", ""),
         client_secret=os.getenv("TIKTOK_CLIENT_SECRET", ""),
         redirect_uri=os.getenv("TIKTOK_REDIRECT_URI", "http://localhost:5173/app/profile/tiktok/callback"),
         scopes=os.getenv("TIKTOK_SCOPES", "user.info.basic,video.publish,video.list"),
         upload_source=upload_source,
+        allowed_user_ids=allowed,
     )

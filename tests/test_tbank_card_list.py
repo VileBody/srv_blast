@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 import pytest
 
-from services.tg_bot_public.tbank_client import TBankClient
+from services.tg_bot_public.tbank_client import TBankClient, TBankTransportError
 
 
 class _FakeResponse:
@@ -121,3 +121,21 @@ def test_check_order_returns_latest_payment() -> None:
     assert url.endswith("/v2/CheckOrder")
     assert body["OrderId"] == "order-1"
     assert body["Token"]
+
+
+def test_init_http_error_is_ambiguous_instead_of_retry_safe() -> None:
+    _FakeAsyncClient.status_code = 503
+    _FakeAsyncClient.payload = {}
+
+    with pytest.raises(TBankTransportError, match="HTTP 503"):
+        asyncio.run(_client().create_payment(1990, "order-1"))
+
+
+def test_init_application_rejection_returns_no_payment_url() -> None:
+    _FakeAsyncClient.payload = {
+        "Success": False,
+        "ErrorCode": "20",
+        "Message": "Duplicate order id",
+    }
+
+    assert asyncio.run(_client().create_payment(1990, "order-1")) is None

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -11,12 +11,60 @@ import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../../contexts/ToastContext';
 import { SvgMaskIcon } from './SvgMaskIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
+import { AppAnalytics } from '../analytics/AppAnalytics';
 
-const nav = [
+// The desktop screens were laid out for a 1600x900 canvas. Scaling from 1280x800
+// left a 1280x720 laptop at 90%, while the same page at browser zoom 80% got the
+// intended 1600x900 CSS viewport. Keep that geometry inside the app so users do
+// not have to change browser zoom themselves.
+const DESKTOP_LAYOUT_WIDTH = 1600;
+const DESKTOP_LAYOUT_HEIGHT = 900;
+const MIN_DESKTOP_SCALE = 0.64;
+
+function desktopScale(width: number, height: number): number {
+  // Tailwind's max-lg rules end below 1024px. At exactly 1024px the desktop
+  // shell is still active and uses the same virtual viewport principle.
+  if (width < 1024) return 1;
+  // Browser zoom increases both virtual dimensions. Use the tighter axis so a
+  // short laptop screen gets the same usable 1600x900 canvas as a manual zoom.
+  return Math.max(MIN_DESKTOP_SCALE, Math.min(1, width / DESKTOP_LAYOUT_WIDTH, height / DESKTOP_LAYOUT_HEIGHT));
+}
+
+function useAppViewport() {
+  const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
+
+  useEffect(() => {
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => setViewport({ width: window.innerWidth, height: window.innerHeight }));
+    };
+    window.addEventListener('resize', update);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', update);
+    };
+  }, []);
+
+  const scale = desktopScale(viewport.width, viewport.height);
+  return {
+    scale,
+    layoutWidth: viewport.width / scale,
+    layoutHeight: viewport.height / scale
+  };
+}
+
+const baseNav = [
   { href: '/app/projects', label: 'nav.projects', icon: '/assets/figma/nav-projects.svg', size: 37 },
   { href: '/app/generate', label: 'nav.generate', icon: '/assets/figma/nav-generate.svg', size: 34 },
   { href: '/app/stats', label: 'nav.stats', icon: '/assets/figma/nav-stats.svg', size: 34, locked: true }
 ];
+
+function navigation(isAdmin = false) {
+  return isAdmin
+    ? [...baseNav, { href: '/app/admin/analytics', label: 'nav.adminAnalytics', icon: '/assets/figma/nav-stats.svg', size: 34 }]
+    : baseNav;
+}
 
 function Avatar({ name, avatarUrl }: { name?: string; avatarUrl?: string }) {
   const { t } = useTranslation();
@@ -34,21 +82,21 @@ function Avatar({ name, avatarUrl }: { name?: string; avatarUrl?: string }) {
       {avatarUrl ? (
         <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover p-[2px]" />
       ) : (
-        (name ?? 'B').slice(0, 1).toUpperCase()
+        <span className="translate-y-[2px] leading-none">{(name ?? 'B').slice(0, 1).toUpperCase()}</span>
       )}
     </NavLink>
   );
 }
 
-function Sidebar({ activeJobId, userName, avatarUrl }: { activeJobId?: string; userName?: string; avatarUrl?: string }) {
+function Sidebar({ activeJobId, userName, avatarUrl, isAdmin }: { activeJobId?: string; userName?: string; avatarUrl?: string; isAdmin?: boolean }) {
   const { t } = useTranslation();
   return (
     <aside className="sidebar">
       <NavLink to="/app" aria-label={t('nav.dashboard')} className="sidebar-icon !w-[60px]">
         <img src="/assets/figma/logo-star.svg" width="60" height="60" alt="Blast" />
       </NavLink>
-      <nav className="mt-[clamp(48px,10vh,107px)] flex flex-col items-center gap-space-7">
-        {nav.map((item) => (
+      <nav className="mt-[clamp(48px,calc(var(--app-layout-h,100vh)*.1),107px)] flex flex-col items-center gap-space-7">
+        {navigation(isAdmin).map((item) => (
           <NavLink
             key={item.href}
             to={item.href === '/app/generate' && activeJobId ? `/app/processing/${activeJobId}` : item.href}
@@ -98,7 +146,7 @@ function MobileHeader({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-function Drawer({ open, onClose, activeJobId }: { open: boolean; onClose: () => void; activeJobId?: string }) {
+function Drawer({ open, onClose, activeJobId, isAdmin }: { open: boolean; onClose: () => void; activeJobId?: string; isAdmin?: boolean }) {
   const { t } = useTranslation();
   if (!open) return null;
   return (
@@ -110,7 +158,7 @@ function Drawer({ open, onClose, activeJobId }: { open: boolean; onClose: () => 
           <Button variant="ghost" size="sm" onClick={onClose}>×</Button>
         </div>
         <nav className="flex flex-col gap-space-3">
-          {nav.map((item) => (
+          {navigation(isAdmin).map((item) => (
             <NavLink
               key={item.href}
               to={item.href === '/app/generate' && activeJobId ? `/app/processing/${activeJobId}` : item.href}
@@ -137,6 +185,19 @@ export function AppShell() {
   const activeJob = activeJobQuery.data?.job;
   const [lastCompletedJob, setLastCompletedJob] = useState<string | null>(null);
   const notifiedJob = useRef<string | null>(null);
+  const viewport = useAppViewport();
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    root.style.zoom = String(viewport.scale);
+    root.style.setProperty('--app-layout-w', `${viewport.layoutWidth}px`);
+    root.style.setProperty('--app-layout-h', `${viewport.layoutHeight}px`);
+    return () => {
+      root.style.zoom = '';
+      root.style.removeProperty('--app-layout-w');
+      root.style.removeProperty('--app-layout-h');
+    };
+  }, [viewport.layoutHeight, viewport.layoutWidth, viewport.scale]);
 
   useEffect(() => {
     if (!activeJobQuery.data || activeJob) return;
@@ -155,33 +216,45 @@ export function AppShell() {
   }, [activeJobQuery.data?.job, push]);
 
   const userName = meQuery.data?.user.name;
+  const frameStyle = {
+    width: `${viewport.layoutWidth}px`,
+    height: `${viewport.layoutHeight}px`,
+    '--app-layout-w': `${viewport.layoutWidth}px`,
+    '--app-layout-h': `${viewport.layoutHeight}px`,
+    '--app-page-h': `${viewport.layoutHeight - 2 * 32}px`
+  } as React.CSSProperties;
 
   return (
-    <div className="app-frame">
-      <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl ?? undefined} />
-      <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} />
-      {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
-      <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
-      <main className="with-sidebar min-w-0 flex-1">
-        <div className="app-content">
-          <MobileHeader onOpen={() => setDrawerOpen(true)} />
-          {meQuery.isLoading ? (
-            <Skeleton className="h-[120px]" />
-          ) : meQuery.error ? (
-            <div className="card flex items-center justify-between gap-space-4">
-              <div>
-                <h1 className="text-[28px] font-bold">API недоступен</h1>
-                <p className="mt-space-2 text-text-60">Проверь, что FastAPI запущен на 8000 порту.</p>
+    <>
+      <AppAnalytics />
+      <div className="app-scale-viewport">
+        <div className="app-frame" style={frameStyle}>
+          <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl ?? undefined} isAdmin={meQuery.data?.isAdmin} />
+        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} isAdmin={meQuery.data?.isAdmin} />
+        {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
+        <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
+        <main className="with-sidebar min-w-0 flex-1">
+          <div className="app-content">
+            <MobileHeader onOpen={() => setDrawerOpen(true)} />
+            {meQuery.isLoading ? (
+              <Skeleton className="h-[120px]" />
+            ) : meQuery.error ? (
+              <div className="card flex items-center justify-between gap-space-4">
+                <div>
+                  <h1 className="text-[28px] font-bold">API недоступен</h1>
+                  <p className="mt-space-2 text-text-60">Проверь, что FastAPI запущен на 8000 порту.</p>
+                </div>
+                <Button onClick={() => navigate('/login')}>К логину</Button>
               </div>
-              <Button onClick={() => navigate('/login')}>К логину</Button>
-            </div>
-          ) : (
-            <ErrorBoundary>
-              <Outlet />
-            </ErrorBoundary>
-          )}
+            ) : (
+              <ErrorBoundary>
+                <Outlet />
+              </ErrorBoundary>
+            )}
+          </div>
+        </main>
         </div>
-      </main>
-    </div>
+      </div>
+    </>
   );
 }

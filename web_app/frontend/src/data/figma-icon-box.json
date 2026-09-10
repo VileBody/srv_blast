@@ -70,6 +70,14 @@
    40.0,
    39.344
   ],
+  "efs-blackwhite.svg": [
+   24.0,
+   24.0
+  ],
+  "efs-crystal.svg": [
+   24.0,
+   24.0
+  ],
   "efs-glitch.svg": [
    40.0,
    40.0
@@ -78,9 +86,25 @@
    40.0,
    40.0
   ],
+  "efs-night.svg": [
+   24.0,
+   24.0
+  ],
   "efs-oldcam.svg": [
    40.0,
    40.0
+  ],
+  "efs-pixel.svg": [
+   24.0,
+   24.0
+  ],
+  "efs-warm.svg": [
+   24.0,
+   24.0
+  ],
+  "efs-wave.svg": [
+   24.0,
+   24.0
   ],
   "efs-xerox-inner.svg": [
    15.847,
@@ -381,6 +405,10 @@
   "pr-tag.svg": [
    20.074,
    16.193
+  ],
+  "pr-texture.svg": [
+   150.0,
+   150.0
   ],
   "proj-lines.svg": [
    837.358,

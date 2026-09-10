@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -11,6 +11,8 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { CreateProjectModal } from '../components/project/CreateProjectModal';
 import { FigIcon } from '../components/ui/FigIcon';
 import { useToast } from '../contexts/ToastContext';
+import { startNextBatch } from '../stores/wizardStore';
+import { ProjectCover } from '../components/project/ProjectCover';
 
 /** Светлый градиент-заливка для текста (bg-clip-text), как в макетах W35/W37. */
 const gradLight = {
@@ -21,7 +23,7 @@ const gradLight = {
 
 /** Мини-карта статистики текущего проекта (299×192, r15) с частицами-свирлом (Figma 712:1682/1982).
     `value` может быть словом («Без лимита») — тогда кегль меньше, иначе фигмовские 104 не влезают. */
-function StatCard({ label, value, to, variant }: { label: string; value: number | string; to: string; variant: 'primary' | 'muted' }) {
+function StatCard({ label, value, to, onClick, variant }: { label: string; value: number | string; to?: string; onClick?: () => void; variant: 'primary' | 'muted' }) {
   const muted = variant === 'muted';
   const wordy = typeof value === 'string' && !/^\d+$/.test(value);
   // цвет фейда = фон карты, чтобы частицы жёстко «уходили» в него слева (эффект глубины).
@@ -29,12 +31,11 @@ function StatCard({ label, value, to, variant }: { label: string; value: number 
   const fade = muted
     ? 'linear-gradient(90deg, #2a1e49 0%, #2a1e49 55%, rgba(42,30,73,0) 80%)'
     : 'linear-gradient(90deg, #241a3c 0%, #241a3c 55%, rgba(36,26,60,0) 80%)';
-  return (
-    <Link
-      to={to}
-      className="group relative flex h-[192px] w-[299px] shrink-0 flex-col overflow-hidden rounded-[15px]"
-      style={muted ? { background: '#2a1e49' } : { background: 'var(--grad-soft-20)' }}
-    >
+  // «Сделать ещё» ведёт не по ссылке, а в визард: карта умеет быть и ссылкой, и кнопкой
+  const className = 'group relative flex h-[192px] w-[299px] shrink-0 flex-col overflow-hidden rounded-[15px] text-left';
+  const style = muted ? { background: '#2a1e49' } : { background: 'var(--grad-soft-20)' };
+  const body = (
+    <>
       {/* мягкое свечение (две размытые эллипс-частицы) + свирл — точные позиции/наклоны из Figma */}
       <img src="/assets/figma/proj-particle-a.svg" alt="" aria-hidden className="pointer-events-none absolute left-[-126px] top-[-127px] h-[454px] w-[372px] max-w-none rotate-[-18.32deg] select-none" />
       <img src="/assets/figma/proj-particle-b.svg" alt="" aria-hidden className={`pointer-events-none absolute h-[454px] w-[372px] max-w-none rotate-[-18.32deg] select-none ${muted ? 'left-[-89px] top-[15px]' : 'left-[-139px] top-[-135px]'}`} />
@@ -51,8 +52,11 @@ function StatCard({ label, value, to, variant }: { label: string; value: number 
         <FigIcon name="home-arrow.svg" h={16} className="transition-transform duration-200 group-hover:translate-x-[3px]" />
       </div>
       <span className={cn('relative mt-[24px] px-[28px] font-[350] leading-none text-transparent', wordy ? 'text-[44px]' : 'text-[104px]')} style={gradLight}>{value}</span>
-    </Link>
+    </>
   );
+  return to
+    ? <Link to={to} className={className} style={style}>{body}</Link>
+    : <button type="button" onClick={onClick} className={className} style={style}>{body}</button>;
 }
 
 /**
@@ -82,7 +86,7 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
     >
       {/* обложка: отступ 14 слева/сверху, уходит за правый край (bleed 38px) и перекрыта фейдом в #281e47 */}
       <div className="relative ml-[14px] mr-[-38px] mt-[14px] min-h-0 flex-1">
-        <img src={project.coverUrl ?? '/assets/cover-placeholder.svg'} alt="" className="h-full w-full rounded-[14px] object-cover" />
+        <ProjectCover name={project.name} src={project.coverUrl} className="h-full w-full rounded-[14px]" />
         <div className="pointer-events-none absolute inset-y-0 right-[38px] w-[100px]" style={{ background: 'linear-gradient(90deg, rgba(40,30,71,0) 0%, #281e47 100%)' }} />
       </div>
 
@@ -153,13 +157,14 @@ function AddProjectButton({ onClick }: { onClick: () => void }) {
 /** Верхняя карта «Текущий проект» (1192×379): заголовок + 2 мини-статы + линии (Figma 712:1636). */
 function CurrentProjectCard({ active, onCreate }: { active?: Project | null; onCreate: () => void }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const generated = active?.generated ?? 0;
   // total === null/undefined → безлимит (TikTok подключён). Значок ∞ на 104-м кегле никто
   // не читал как «без лимита» — пишем словами.
   const unlimited = active != null && active.total == null;
   const remaining: number | string = unlimited ? t('limits.noLimit') : Math.max(0, (active?.total ?? 0) - generated);
   return (
-    <section className="card-2 relative shrink-0 overflow-hidden p-[40px] md:h-[379px]">
+    <section className="card-2 relative shrink-0 overflow-hidden p-[24px] sm:p-[32px] lg:h-[379px] lg:p-[40px]">
       <img src="/assets/figma/proj-lines.svg" alt="" aria-hidden className="pointer-events-none absolute right-[-378px] top-[-20px] h-[509px] w-[835px] max-w-none rotate-[-16.44deg] select-none" />
       <div className="relative">
         <h1 className="text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{active?.name ?? t('projects.noActive')}</h1>
@@ -171,7 +176,8 @@ function CurrentProjectCard({ active, onCreate }: { active?: Project | null; onC
       {active ? (
         <div className="relative mt-[28px] flex gap-space-5">
           <StatCard label={t('projects.currentVideos')} value={generated} to={`/app/projects/${active.id}`} variant="primary" />
-          <StatCard label={t('projects.makeMore')} value={remaining} to={`/app/projects/${active.id}`} variant="muted" />
+          {/* «Сделать ещё» = новый батч по тому же треку, а не повторный вход в тот же проект */}
+          <StatCard label={t('projects.makeMore')} value={remaining} onClick={() => navigate(startNextBatch(active.id))} variant="muted" />
         </div>
       ) : (
         <button type="button" onClick={onCreate} className="soft-btn relative mt-[28px] h-[60px] px-space-6 text-[20px] font-[400]">{t('projects.createProject')}</button>
@@ -239,10 +245,10 @@ export function ProjectsPage() {
   if (query.isLoading) return <Skeleton className="h-full min-h-[560px]" />;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[20px] md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col gap-[20px] lg:h-[var(--app-page-h)] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       <CurrentProjectCard active={active} onCreate={() => setModalOpen(true)} />
 
-      <section className="card-2 relative flex min-h-0 flex-col overflow-hidden p-[40px] md:flex-1">
+      <section className="card-2 relative flex min-h-[420px] flex-col overflow-hidden p-[24px] sm:p-[32px] lg:min-h-0 lg:flex-1 lg:p-[40px]">
         <div className="flex items-center justify-between gap-space-4">
           <h2 className="text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{t('projects.allProjects')}</h2>
           {archivedCount > 0 && (

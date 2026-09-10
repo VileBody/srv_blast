@@ -4,27 +4,47 @@ import type { SavedTrack } from '../lib/types';
 import { DEFAULT_FOOTAGE_TYPE, normalizeFootageType } from '../data/footageTypes';
 
 export type BackgroundMode = 'footage' | 'photo' | 'color';
-export type HookKind = 'sound' | 'object' | 'effects' | 'motion' | 'thought';
+export type HookKind = 'warmup' | 'object' | 'effects' | 'motion' | 'thought' | 'none';
+
+export interface SourceVideoPlan {
+  id: string;
+  format: '9:16' | '16:9';
+  sourceIds: string[];
+}
 
 /** Конфигурация одного хука (Figma W24–W34) */
 export interface HookConfig {
+  warmupKind?: 'audio' | 'video';
+  soundDuration?: number;
+  videoUrl?: string;
+  videoWidth?: number;
+  videoHeight?: number;
+  videoDuration?: number;
+  videoHasAudio?: boolean;
   sound?: string;
   soundUrl?: string;
   soundPlaybackUrl?: string;
   object?: string;
   effectHook?: string;
+  /** Длина echo-шлейфа slow shutter: штатная, до конца или три футажа после дропа. */
+  effectHookExtend?: '' | 'to_end' | 'after_drop:3';
   effectGlue?: string;
   effectStyle?: string;
+  /** Выбранные стилизации образуют отдельное измерение распределения в Пуле. */
+  effectStyles?: string[];
+  /** Грейд на весь ролик, а не только до дропа (manifest: effect_extra_full). */
+  effectStyleFull?: boolean;
   motion?: string;
   thought?: string;
 }
 
 export const HOOK_LABELS: Record<HookKind, string> = {
-  sound: 'Звук',
+  warmup: 'Прогрев',
   object: 'Объект',
   effects: 'Эффекты',
   motion: 'Движение',
-  thought: 'Мысль'
+  thought: 'Мысль',
+  none: 'Без хука'
 };
 
 /** Слово из примерки субтитров (ASR отрывка), тайминги — абсолютные секунды трека */
@@ -68,6 +88,8 @@ export interface WizardStateData {
   timingTo: string;
   /** вводные трека перенесены из прошлого батча — визард один раз это проговаривает */
   carriedOverInputs: boolean;
+  /** Максимальный пройденный этап как индекс в STAGE_ORDER. */
+  reachedIndex: number;
   /**
    * Разделы фона настраиваются параллельно; пилюли пула — производные от настроенности.
    * «+» в футере не коммитит, а переводит к следующему разделу (правка UX).
@@ -75,6 +97,8 @@ export interface WizardStateData {
   background: {
     mode: BackgroundMode;
     footage: string[];
+    footageFormats?: Record<string, string>;
+    sourceFormat?: string;
     /**
      * Тип футажей (Figma W12, степпер «‹ Личности ›») — измерение, ортогональное группам:
      * footage[] отвечает «какие группы», footageType — «из какой библиотеки».
@@ -84,6 +108,8 @@ export interface WizardStateData {
     footageType: string;
     /** Свои исходники пользователя (Figma W39/W49) — имена загруженных файлов */
     uploads: string[];
+    /** Один пункт = одно будущее видео; sourceIds задают порядок клипов в монтаже. */
+    sourceVideos: SourceVideoPlan[];
     photo: string[];
     photoEffects: boolean;
     photoStyle?: string;
@@ -106,6 +132,7 @@ export interface WizardStateData {
     background: Record<string, number>;
     subtitles: Record<string, number>;
     hooks: Record<string, number>;
+    styles: Record<string, number>;
     strobeFont?: string;
     colorFont?: string;
     seeded: boolean;
@@ -119,8 +146,25 @@ export interface WizardStateData {
   };
 }
 
+/** Explicit migration of browser and server drafts from the old sound family. */
+export function migrateHooks(raw: Record<string, any>): WizardStateData['hooks'] {
+  const configs = { ...(raw.configs ?? {}) };
+  if (configs.sound) {
+    configs.warmup = configs.warmup ?? { ...configs.sound, warmupKind: 'audio' };
+    delete configs.sound;
+  }
+  for (const [kind, value] of Object.entries(configs)) {
+    const config = { ...((value as HookConfig | undefined) ?? {}) };
+    if (!config.effectStyles?.length && config.effectStyle) config.effectStyles = [config.effectStyle];
+    configs[kind] = config;
+  }
+  return { ...raw, kind: raw.kind === 'sound' ? 'warmup' : raw.kind, configs };
+}
+
 /** Пилюли фона — производные от настроенных разделов */
 export interface BackgroundPill {
+  /** Stable UI key; mode alone is not unique when own videos and library footage coexist. */
+  key: string;
   mode: BackgroundMode;
   label: string;
   count: number;
@@ -128,14 +172,15 @@ export interface BackgroundPill {
 
 export function backgroundPills(bg: WizardStateData['background']): BackgroundPill[] {
   const pills: BackgroundPill[] = [];
-  if (bg.footage.length) pills.push({ mode: 'footage', label: 'Футажи', count: bg.footage.length });
-  if (bg.photo.length) pills.push({ mode: 'photo', label: 'Фото', count: bg.photo.length });
-  if (bg.color) pills.push({ mode: 'color', label: bg.strobe ? 'Строб' : 'Цвет', count: 1 });
+  if (bg.sourceVideos.length) pills.push({ key: 'uploads', mode: 'footage', label: 'Свои видео', count: bg.sourceVideos.length });
+  if (bg.footage.length) pills.push({ key: 'footage', mode: 'footage', label: 'Футажи', count: bg.footage.length });
+  if (bg.photo.length) pills.push({ key: 'photo', mode: 'photo', label: 'Фото', count: bg.photo.length });
+  if (bg.color) pills.push({ key: 'color', mode: 'color', label: bg.strobe ? 'Строб' : 'Цвет', count: 1 });
   return pills;
 }
 
 export function backgroundVariations(bg: WizardStateData['background']): number {
-  return bg.footage.length + bg.photo.length + (bg.color ? 1 : 0);
+  return bg.sourceVideos.length + bg.footage.length + bg.photo.length + (bg.color ? 1 : 0);
 }
 
 /**
@@ -147,12 +192,25 @@ export function backgroundVariations(bg: WizardStateData['background']): number 
  */
 export function hookComplete(kind: HookKind, config?: HookConfig): boolean {
   if (!config) return false;
-  const own = kind === 'sound' ? Boolean(config.sound && config.soundUrl)
+  if (kind === 'none') return Boolean(config.effectGlue);
+  const own = kind === 'warmup' ? Boolean(config.sound && (config.warmupKind === 'video' ? config.videoUrl && config.videoWidth && config.videoHeight && config.videoDuration : config.soundUrl))
     : kind === 'object' ? Boolean(config.object)
       : kind === 'effects' ? Boolean(config.effectHook)
         : kind === 'motion' ? Boolean(config.motion)
           : Boolean(config.thought);
-  return own && Boolean(config.effectGlue) && Boolean(config.effectStyle);
+  return own && Boolean(config.effectGlue) && Boolean(config.effectStyles?.length || config.effectStyle);
+}
+
+/** Уникальный список стилизаций из всех настроенных типов хука, в порядке выбора. */
+export function selectedEffectStyles(hooks: WizardStateData['hooks']): string[] {
+  const result: string[] = [];
+  for (const kind of Object.keys(HOOK_LABELS) as HookKind[]) {
+    const config = hooks.configs[kind];
+    for (const style of config?.effectStyles?.length ? config.effectStyles : (config?.effectStyle ? [config.effectStyle] : [])) {
+      if (!result.includes(style)) result.push(style);
+    }
+  }
+  return result;
 }
 
 export function hookPills(hooks: WizardStateData['hooks']): { kind: HookKind; label: string }[] {
@@ -168,7 +226,7 @@ interface WizardStore extends WizardStateData {
   setTrack: (track: SavedTrack | null) => void;
   setField: <K extends keyof WizardStateData>(key: K, value: WizardStateData[K]) => void;
   setBackground: (patch: Partial<WizardStateData['background']>) => void;
-  toggleVibe: (vibe: string) => void;
+  toggleVibe: (vibe: string, format?: string) => void;
   setHooks: (patch: Partial<Omit<WizardStateData['hooks'], 'configs'>> & { config?: Partial<HookConfig> }) => void;
   /** Снять хук: стереть его конфиг и, если он был открыт, закрыть рабочую зону. */
   clearHook: (kind: HookKind) => void;
@@ -191,6 +249,17 @@ interface WizardStore extends WizardStateData {
   stageData: () => Record<string, unknown>;
 }
 
+/**
+ * Порядок прохождения визарда: Трек → Фон → Текст → Хук → Пул. Живёт здесь, а не в
+ * странице: по нему считают и «Продолжить/Назад», и доступность табов.
+ */
+export const STAGE_ORDER: number[] = [1, 2, 4, 3, 5];
+
+export function stageIndex(stage: number): number {
+  const index = STAGE_ORDER.indexOf(stage);
+  return index < 0 ? 0 : index;
+}
+
 /** Вводные трека заполнены — без них генерировать нечего (это lyric-video). */
 export function hasTrackInput(state: Pick<WizardStateData, 'track' | 'lyrics'>): boolean {
   return Boolean(state.track && state.lyrics.trim());
@@ -206,14 +275,19 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   lyrics: '',
   fragmentEnabled: false,
   fragmentLyrics: '',
-  timingMode: 'ai',
+  timingMode: 'manual',
   timingFrom: '',
   timingTo: '',
   carriedOverInputs: false,
-  background: { mode: 'footage', footage: [], footageType: DEFAULT_FOOTAGE_TYPE, uploads: [], photo: [], photoEffects: false, photoStyle: undefined, color: undefined, strobe: false, glue: undefined },
+  // Докуда человек уже дошёл (индекс в STAGE_ORDER). Настройки этапов и так лежат в
+  // сторе целиком, но без этой метки таб-бар считал пройденными только этапы ЛЕВЕЕ
+  // текущего: вернувшись из Пула в Фон, обратно приходилось идти «Продолжить» через
+  // Текст и FX, подтверждая каждый уже настроенный шаг заново.
+  reachedIndex: 0,
+  background: { mode: 'footage', footage: [], footageType: DEFAULT_FOOTAGE_TYPE, uploads: [], sourceVideos: [], photo: [], photoEffects: false, photoStyle: undefined, color: undefined, strobe: false, glue: undefined },
   hooks: { dropTime: undefined, kind: undefined, configs: {} },
   subtitles: { color: '#f6f5fd', pool: [] },
-  allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
+  allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, styles: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
   asr: emptyAsr(),
   final: { subtitleColor: '#ffffff', accentColor: '#8b6fe6', videosToGenerate: 1, idempotencyKey: crypto.randomUUID() }
 });
@@ -223,7 +297,10 @@ export const useWizardStore = create<WizardStore>()(
     (set, get) => ({
       ...initialData(),
       stage: 1,
-      setStage: (stage) => set({ stage: Math.max(1, Math.min(5, stage)) }),
+      setStage: (stage) => set((state) => {
+        const next = Math.max(1, Math.min(5, stage));
+        return { stage: next, reachedIndex: Math.max(state.reachedIndex, stageIndex(next)) };
+      }),
       // Смена проекта = смена черновика. Стор персистится и чистится только успешным
       // сабмитом, поэтому без сброса трек и выбор проекта A утекали в проект B.
       setProjectId: (projectId) => set((state) => (
@@ -231,15 +308,21 @@ export const useWizardStore = create<WizardStore>()(
           ? { ...initialData(projectId), stage: 1 }
           : { projectId }
       )),
-      setTrack: (track) => set({ track, hooks: initialData().hooks }),
+      setTrack: (track) => set((state) => (
+        // Другой трек = другой дроп: хуки сбрасываются, поэтому и пройденность
+        // откатывается к «Треку». Повторная установка того же трека ничего не трогает.
+        state.track?.id && track?.id === state.track.id
+          ? { track }
+          : { track, hooks: initialData().hooks, reachedIndex: 0 }
+      )),
       setField: (key, value) => set({ [key]: value } as Partial<WizardStore>),
       setBackground: (patch) => set((state) => ({ background: { ...state.background, ...patch } })),
-      toggleVibe: (vibe) => set((state) => {
+      toggleVibe: (vibe, format) => set((state) => {
         const bg = state.background;
         if (bg.mode === 'color') return state;
         const list = bg.mode === 'footage' ? bg.footage : bg.photo;
         const next = list.includes(vibe) ? list.filter((item) => item !== vibe) : [...list, vibe];
-        return { background: { ...bg, [bg.mode]: next } };
+        return { background: { ...bg, [bg.mode]: next, footageFormats: bg.mode === 'footage' ? { ...bg.footageFormats, [vibe]: format ?? '9:16' } : bg.footageFormats }, allocation: { ...state.allocation, seeded: false, background: {} } };
       }),
       setHooks: (patch) => set((state) => {
         const { config, ...rest } = patch;
@@ -247,7 +330,10 @@ export const useWizardStore = create<WizardStore>()(
         const configs = config && kind
           ? { ...state.hooks.configs, [kind]: { ...state.hooks.configs[kind], ...config } }
           : state.hooks.configs;
-        return { hooks: { ...state.hooks, ...rest, configs } };
+        return {
+          hooks: { ...state.hooks, ...rest, configs },
+          allocation: config ? { ...state.allocation, seeded: false } : state.allocation
+        };
       }),
       clearHook: (kind) => set((state) => {
         const { [kind]: _dropped, ...configs } = state.hooks.configs;
@@ -329,7 +415,7 @@ export const useWizardStore = create<WizardStore>()(
           lyrics: typeof raw.lyrics === 'string' ? raw.lyrics : '',
           fragmentEnabled: Boolean(fragment),
           fragmentLyrics: fragment,
-          timingMode: timing.mode === 'ai' ? 'ai' : 'manual',
+          timingMode: 'manual',
           timingFrom: typeof timing.from === 'string' ? timing.from : '',
           timingTo: typeof timing.to === 'string' ? timing.to : '',
           background: (() => {
@@ -338,9 +424,12 @@ export const useWizardStore = create<WizardStore>()(
             // (standard/persons/movies). Приводим здесь, иначе id уедет в render_job
             // как есть и подбор не найдёт такой план.
             merged.footageType = normalizeFootageType(merged.footageType);
+            if (!merged.sourceVideos.length && merged.uploads.length) {
+              merged.sourceVideos = [{ id: 'source-video-legacy', format: merged.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...merged.uploads] }];
+            }
             return merged;
           })(),
-          hooks: { ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) },
+          hooks: migrateHooks({ ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) }),
           subtitles: { ...fresh.subtitles, ...((raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {}) },
           allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },
           asr: (() => {
@@ -350,7 +439,8 @@ export const useWizardStore = create<WizardStore>()(
             return { ...fresh.asr, key: String(saved.key ?? ''), jobId: saved.jobId, status: 'COMPLETED', words: saved.words, source: saved.words, edited: Boolean(saved.edited) };
           })(),
           final: { ...fresh.final, ...((raw.final as Partial<WizardStateData['final']>) ?? {}) },
-          stage: Math.max(1, Math.min(5, Number(stage) || 1))
+          stage: Math.max(1, Math.min(5, Number(stage) || 1)),
+          reachedIndex: stageIndex(Math.max(1, Math.min(5, Number(stage) || 1)))
         };
       }),
       stageData: () => {
@@ -358,8 +448,16 @@ export const useWizardStore = create<WizardStore>()(
         return {
           track: state.track,
           lyrics: state.lyrics,
-          fragment: state.fragmentEnabled ? state.fragmentLyrics : null,
-          timing: state.timingMode === 'manual' ? { from: state.timingFrom, to: state.timingTo } : { mode: 'ai' },
+          // The track-step textarea contains the exact lyrics heard inside the
+          // selected window. Production local CTC needs that value explicitly
+          // as target_fragment; legacy selection mode can still override it.
+          fragment: state.fragmentEnabled ? state.fragmentLyrics : state.lyrics,
+          // The web UI always asks for an explicit window. Persisted drafts used
+          // to keep timingMode='ai' even after both fields were filled, which
+          // dropped the visible values from the production payload.
+          timing: state.timingFrom && state.timingTo
+            ? { from: state.timingFrom, to: state.timingTo }
+            : { mode: state.timingMode },
           background: state.background,
           hooks: state.hooks,
           subtitles: state.subtitles,
@@ -375,6 +473,16 @@ export const useWizardStore = create<WizardStore>()(
     }),
     {
       name: 'blast-wizard-v4',
+      version: 3,
+      migrate: (raw: any) => {
+        const background = { ...raw.background };
+        if (!background.sourceVideos?.length && background.uploads?.length) background.sourceVideos = [{
+          id: 'source-video-legacy', format: background.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...background.uploads]
+        }];
+        background.sourceVideos ??= [];
+        return { ...raw, background, hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {},
+          hooks: Object.fromEntries(Object.entries(raw.allocation?.hooks ?? {}).map(([key, value]) => [key === 'sound' ? 'warmup' : key, value])) } };
+      },
       partialize: (state) => ({
         projectId: state.projectId,
         track: state.track,
@@ -390,8 +498,32 @@ export const useWizardStore = create<WizardStore>()(
         allocation: state.allocation,
         asr: state.asr,
         final: state.final,
-        stage: state.stage
+        stage: state.stage,
+        reachedIndex: state.reachedIndex
       })
     }
   )
 );
+
+/*
+ * Общая точка входа в «ещё один батч по этому проекту»: «+» на странице проекта и
+ * «Сделать ещё» на странице проектов вели в разные места — вторая просто открывала тот же
+ * батч. Если трек и текст проекта уже в сторе, начинаем сразу с этапа «Фон», иначе с «Трека».
+ * Возвращает адрес визарда.
+ */
+export function startNextBatch(projectId: string): string {
+  const state = useWizardStore.getState();
+  const sameProject = state.projectId === projectId;
+  if (sameProject && hasTrackInput(state)) {
+    state.newBatch(projectId);
+    state.setStage(2);
+  } else if (sameProject && state.track) {
+    // трек загружен, но текста отрывка ещё нет — без него генерировать нечего
+    state.newBatch(projectId);
+    state.setStage(1);
+  } else {
+    state.reset(projectId);
+    state.setStage(1);
+  }
+  return `/app/generate?project=${projectId}`;
+}

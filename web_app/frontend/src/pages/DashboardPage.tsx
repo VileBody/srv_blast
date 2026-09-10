@@ -14,6 +14,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { statusLabel } from '../components/ui/StatusBadge';
 import { FigIcon } from '../components/ui/FigIcon';
+import { ProjectCover } from '../components/project/ProjectCover';
 
 const STATUS: Record<string, { key: string; dot: string }> = {
   ACTIVE: { key: 'active', dot: '#04BA38' },
@@ -62,11 +63,7 @@ function ProjectRow({ project }: { project: Project }) {
   const allPosted = generated > 0 && posted === generated;
   return (
     <Link to={`/app/projects/${project.id}`} className="group flex items-center gap-space-5">
-      <img
-        src={project.coverUrl ?? '/assets/cover-placeholder.svg'}
-        alt=""
-        className="h-[80px] w-[80px] shrink-0 rounded-[5px] object-cover"
-      />
+      <ProjectCover name={project.name} src={project.coverUrl} className="h-[80px] w-[80px] shrink-0 rounded-[5px]" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[24px] leading-none text-text-80 transition-colors group-hover:text-text">
           {project.name}
@@ -109,7 +106,7 @@ function Hero({ name, resume, onCreate, onResume }: {
 }) {
   const { t } = useTranslation();
   return (
-    <section className="card-2 relative flex min-h-[300px] items-center justify-center overflow-hidden md:min-h-0 md:flex-1">
+    <section className="card-2 relative flex min-h-[300px] items-center justify-center overflow-hidden lg:min-h-0 lg:flex-1">
       <img
         src="/assets/figma/home-lines.svg"
         alt=""
@@ -118,7 +115,7 @@ function Hero({ name, resume, onCreate, onResume }: {
       />
       <div className="relative flex flex-col items-center px-space-6 text-center">
         <h1
-          className="text-[clamp(40px,5vw,64px)] font-[400] leading-none text-transparent"
+          className="text-[clamp(40px,calc(var(--app-layout-w,100vw)*.05),64px)] font-[400] leading-none text-transparent"
           style={{
             backgroundImage: 'linear-gradient(184deg, #f6f5fd 8%, rgba(246,245,253,.8) 95%)',
             WebkitBackgroundClip: 'text',
@@ -260,17 +257,18 @@ function StatsCard({ connected, handle, published, created, previewData, analysi
   const enough = previewData || Boolean(bars);
   const left = analysis?.videosNeeded ?? 0;
   return (
-    <Link to={connected ? '/app/stats' : '/app/profile'} className="card-2 group relative flex flex-col overflow-hidden p-[40px]">
-      <span className="flex items-center gap-[14px] text-text">
+    <section className="card-2 group relative flex flex-col overflow-hidden p-[40px]">
+      <Link to="/app/stats" className="absolute inset-0" aria-label={t('dashboard.stats')} />
+      <span className="pointer-events-none relative flex items-center gap-[14px] text-text">
         <span className="text-[32px] font-[350] leading-none">{t('dashboard.stats')}</span>
         <FigIcon name="home-arrow.svg" h={16} className="translate-y-[1px] transition-transform duration-200 group-hover:translate-x-[4px]" />
       </span>
       {!connected ? (
-        <div className="flex flex-1 items-center justify-center">
+        <div className="relative z-[1] flex flex-1 items-center justify-center">
           <TiktokButton connected={false} />
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col justify-center gap-[20px]">
+        <div className="pointer-events-none relative flex min-h-0 flex-1 flex-col justify-center gap-[20px]">
           <span className="flex items-center gap-[10px] text-[16px] font-[350] leading-none text-text-60">
             <span className="h-[8px] w-[8px] rounded-full bg-accent-light" />
             @{handle}
@@ -317,7 +315,7 @@ function StatsCard({ connected, handle, published, created, previewData, analysi
           )}
         </div>
       )}
-    </Link>
+    </section>
   );
 }
 
@@ -360,7 +358,7 @@ export function DashboardPage() {
       : null;
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[20px] md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col gap-[20px] lg:h-[var(--app-page-h)] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       {/* «Создать проект» именно создаёт проект: раньше кнопка вела в визард уже существующего,
           а на нулевом аккаунте упиралась в гард «Сначала создай активный проект». */}
       <Hero
@@ -375,15 +373,15 @@ export function DashboardPage() {
       />
       <CreateProjectModal open={createOpen} onClose={() => setCreateOpen(false)} />
 
-      <section className="grid shrink-0 gap-[20px] md:h-[379px] md:grid-cols-2">
+      <section className="grid shrink-0 gap-[20px] lg:h-[379px] lg:grid-cols-2">
         {/* API упал (или сеть пропала и запрос встал на паузу) — вместо вечного скелетона
             показываем причину и кнопку повтора */}
         {queryDown(projectsQuery) ? (
-          <QueryError query={projectsQuery} className="md:col-span-2" />
+          <QueryError query={projectsQuery} className="lg:col-span-2" />
         ) : projectsQuery.isLoading ? (
           <>
-            <Skeleton className="min-h-[379px]" />
-            <Skeleton className="min-h-[379px]" />
+            <Skeleton className="min-h-[300px] lg:min-h-[379px]" />
+            <Skeleton className="min-h-[300px] lg:min-h-[379px]" />
           </>
         ) : (
           <>

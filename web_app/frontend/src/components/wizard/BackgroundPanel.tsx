@@ -4,18 +4,19 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { useChip } from '../../i18n/useChip';
 import { useToast } from '../../contexts/ToastContext';
 import { api } from '../../lib/api';
+import { isVideoUrl } from '../../lib/media';
 import { cn } from '../../lib/cn';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
 import type { Vibe } from '../../lib/types';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
-import { FigIcon } from '../ui/FigIcon';
 import { InlineError, queryDown } from '../ui/ErrorState';
 import { ChipIcon } from './HookPanel';
 import { PillsFooter } from './WizardFrame';
 import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useFragmentAudio } from './useFragmentAudio';
-import { SourcesModal } from './SourcesModal';
+import { SourcesModal } from './SourcesEditor';
 import { footageTypeKey, footageTypePlane, stepFootageType } from '../../data/footageTypes';
+import effectsRegistry from '../../data/effects-registry.json';
 import { BackgroundMode, backgroundPills, backgroundVariations, useWizardStore } from '../../stores/wizardStore';
 
 /** Стили фото (Figma W13/W30) — те же, что «стиль» у эффектов-хука */
@@ -32,12 +33,9 @@ const ACCENT = 'var(--accent-light)';
 const WHITE80 = 'var(--text-80)';
 
 /** Типы склеек (Figma W22) — для строба и стилизации фото */
-export const GLUE_TYPES = [
-  { id: 'snap-wipe', label: 'Snap Wipe', icon: '/assets/figma/glue-snapwipe.svg' },
-  { id: 'minimax', label: 'Minimax', icon: '/assets/figma/glue-minimax.svg' },
-  { id: 'extract', label: 'Extract', icon: '/assets/figma/glue-extract.svg' },
-  { id: 'invert', label: 'Invert', icon: '/assets/figma/glue-invert.svg' }
-];
+export const GLUE_TYPES = effectsRegistry.glue
+  .filter((effect) => Boolean(effect.altId))
+  .map((effect) => ({ id: effect.altId as string, label: effect.label }));
 
 /** Горизонтальный скролл: драг 1:1, колесо — плавно */
 export function useDragScroll() {
@@ -186,10 +184,12 @@ function FootageTypeStepper() {
   );
 
   return (
-    <span className="flex items-center gap-[15px]">
+    /* Стрелки держатся текста на постоянном отступе: фиксированная ширина ряда разносила
+       их по краям и у коротких подписей («16:9») зазор становился огромным. */
+    <span className="inline-flex items-center gap-[15px]">
       {arrow(-1)}
       <span
-        className="min-w-[120px] text-center text-[24px] font-[350] leading-normal text-transparent"
+        className="whitespace-nowrap text-center text-[24px] font-[350] leading-normal text-transparent"
         style={{ backgroundImage: 'var(--grad-main)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}
       >
         {label}
@@ -214,10 +214,10 @@ export function Toggle({ checked, onChange, label }: { checked: boolean; onChang
 /** Ширина фото-карточки: кратна 4, чтобы высота 4:3 (×3/4) вышла целым числом пикселей. */
 const PHOTO_CARD_W = 348;
 
-function MediaCard({ item, selected, wide, onToggle }: { item: Vibe; selected: boolean; wide?: boolean; onToggle: () => void }) {
+function MediaCard({ item, selected, wide, format, onToggle }: { item: Vibe; selected: boolean; wide?: boolean; format: string; onToggle: () => void }) {
   const chip = useChip();
   const [broken, setBroken] = useState(false);
-  const isVideo = /\.(mp4|webm|mov)$/i.test(item.previewUrl);
+  const isVideo = isVideoUrl(item.previewUrl);
   /*
    * Размер обеих карточек задаёт ВЫСОТА РЯДА, ширину выводит aspect-ratio: фото 4:3
    * (кадр 1920×1440), футаж — вертикаль 142:253.
@@ -228,16 +228,16 @@ function MediaCard({ item, selected, wide, onToggle }: { item: Vibe; selected: b
    * обрезался угол вместе с меткой выбора. Чистый CSS пересчитывается синхронно с версткой
    * и разъехаться не может; возможная полупиксельная кромка — цена меньшая, чем битый ряд.
    */
-  const sizing: CSSProperties = wide
-    ? { height: '100%', aspectRatio: '4 / 3', flexShrink: 0 }
+  const sizing: CSSProperties = wide || format === '16:9'
+    ? { height: '100%', aspectRatio: format === '16:9' ? '16 / 9' : '4 / 3', flexShrink: 0 }
     : { aspectRatio: '142 / 253' };
   return (
-    <button type="button" onClick={onToggle} aria-pressed={selected} className={cn('media-card', wide ? 'media-card--fit' : 'h-full')} style={sizing}>
+    <button type="button" onClick={onToggle} aria-pressed={selected} className={cn('media-card', wide || format === '16:9' ? 'media-card--fit' : 'h-full')} style={sizing}>
+      <span className="absolute left-2 top-2 z-10 rounded bg-black/60 px-2 py-1 text-xs text-white">{format}</span>
       {!broken && (isVideo
         ? <video src={item.previewUrl} muted loop playsInline autoPlay onError={() => setBroken(true)} />
         : <img src={item.previewUrl} alt="" onError={() => setBroken(true)} />)}
       {broken && <span className="media-card-fallback">{chip(item.name)}</span>}
-      {!broken && <span className="absolute bottom-space-2 left-0 right-0 z-[1] text-center text-[11px] text-text" style={{ textShadow: '0 1px 4px rgba(0,0,0,.8)' }}>{chip(item.name)}</span>}
       {selected && (
         <span
           aria-hidden="true"
@@ -317,19 +317,29 @@ function ColorRow({ value, onPick }: { value?: string; onPick: (hex?: string) =>
 
 export function StageBackground() {
   const { t } = useTranslation();
+  const chip = useChip();
   const { push } = useToast();
   const background = useWizardStore((state) => state.background);
   const setBackground = useWizardStore((state) => state.setBackground);
   const toggleVibe = useWizardStore((state) => state.toggleVibe);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
-  // План — часть ключа: переключил тип футажей → пришёл другой список примеров.
+  const lyrics = useWizardStore((state) => state.fragmentEnabled ? state.fragmentLyrics : state.lyrics);
+  // Lyrics and media plane both determine the semantic order.
   const footagePlane = footageTypePlane(background.footageType);
   const vibesQuery = useQuery({
-    queryKey: ['vibes', footagePlane],
-    queryFn: () => api.vibes(footagePlane),
-    enabled: background.mode === 'footage'
+    queryKey: ['vibes', footagePlane, footagePlane === 'vibes' ? lyrics : ''],
+    queryFn: async () => footagePlane === 'vibes'
+      ? { vibes: (await api.rankBackgrounds(lyrics, 'video')).items }
+      : api.vibes(footagePlane),
+    staleTime: 60_000,
+    enabled: background.mode === 'footage' && (footagePlane !== 'vibes' || Boolean(lyrics.trim()))
   });
-  const photosQuery = useQuery({ queryKey: ['photos'], queryFn: api.photos, enabled: background.mode === 'photo' });
+  const photosQuery = useQuery({
+    queryKey: ['photos', lyrics],
+    queryFn: async () => ({ photos: (await api.rankBackgrounds(lyrics, 'photo')).items }),
+    staleTime: 60_000,
+    enabled: background.mode === 'photo' && Boolean(lyrics.trim())
+  });
   const cardsScroll = useDragScroll();
   const gluesScroll = useDragScroll();
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -345,29 +355,16 @@ export function StageBackground() {
     row.scrollTo({ left: 0, behavior: 'smooth' });
   }, [background.mode, background.footageType, cardsScroll.ref]);
 
-  // Ссылка для загрузки с телефона (её же кодирует QR). Одноразовый токен выдаст бэкенд — эндпоинта пока нет.
-  const shareUrl = `${window.location.origin}/upload`;
-
-  const uploadSource = useMutation({
-    mutationFn: api.uploadSource,
-    onSuccess: (data) => {
-      const uploads = background.uploads.includes(data.source.name) ? background.uploads : [...background.uploads, data.source.name];
-      setBackground({ uploads });
-      push({ variant: 'success', title: t('wizard.sources.uploaded'), text: data.source.name });
-    },
-    onError: () => push({ variant: 'error', title: t('wizard.sources.uploadFail') })
-  });
-
-  const onSourceFiles = (files: FileList | null) => {
-    Array.from(files ?? []).forEach((file) => uploadSource.mutate(file));
-  };
-
   const isMedia = background.mode !== 'color';
   const listQuery = background.mode === 'photo' ? photosQuery : vibesQuery;
   const list = background.mode === 'photo' ? photosQuery.data?.photos : vibesQuery.data?.vibes;
   const loading = listQuery.isLoading;
   const selected = background.mode === 'photo' ? background.photo : background.footage;
 
+  const format = background.mode === 'photo' ? '4:3' : background.footageType === 'cine16x9' && background.mode === 'footage' ? '16:9' : '9:16';
+  const pickVibe = (name: string) => {
+    toggleVibe(name, format);
+  };
   const heading = loading && isMedia ? t('wizard.bg.headingShort') : t('wizard.bg.heading');
   const panelTitle = {
     footage: t('wizard.bg.typeFootage'),
@@ -383,14 +380,14 @@ export function StageBackground() {
           <BgSquaresIcon color="var(--accent-light)" />
           {heading}
         </h2>
-        {isMedia && meQuery.data?.capabilities?.customSources && (
+        {background.mode === 'footage' && meQuery.data?.capabilities?.customSources && (
           <button
             type="button"
             onClick={() => setSourcesOpen(true)}
-            className="wizard-body flex shrink-0 items-center gap-[10px] whitespace-nowrap transition hover:text-text"
+            className={cn('wizard-body flex h-[44px] shrink-0 items-center gap-[10px] whitespace-nowrap rounded-r15 px-[16px] transition hover:text-text', background.sourceVideos.length > 0 && 'border border-accent-light bg-grad-soft-20 !text-text')}
           >
             <SvgMaskIcon src="/assets/figma/bg-upload.svg" style={{ width: 20, height: 20, color: WHITE80 }} />
-            {background.mode === 'photo' ? t('wizard.bg.uploadPhoto') : t('wizard.bg.uploadFootage')}
+            {background.sourceVideos.length > 0 ? t('wizard.bg.ownFootageCount', { count: background.sourceVideos.length }) : t('wizard.bg.uploadFootage')}
           </button>
         )}
       </div>
@@ -401,9 +398,7 @@ export function StageBackground() {
 
       <SourcesModal
         open={sourcesOpen}
-        shareUrl={shareUrl}
         onClose={() => setSourcesOpen(false)}
-        onFiles={onSourceFiles}
       />
 
       <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px]">
@@ -448,8 +443,9 @@ export function StageBackground() {
                     key={item.id}
                     item={item}
                     wide={background.mode === 'photo'}
+                    format={format}
                     selected={selected.includes(item.name)}
-                    onToggle={() => { if (!cardsScroll.moved()) toggleVibe(item.name); }}
+                    onToggle={() => { if (!cardsScroll.moved()) pickVibe(item.name); }}
                   />
                 ))}
               </div>
@@ -460,11 +456,11 @@ export function StageBackground() {
             <div className="px-[40px]">
               <ColorRow value={background.color} onPick={(hex) => setBackground({ color: hex })} />
             </div>
-            <div className="flex items-center justify-between gap-space-4 px-[40px]">
-              <span className="wizard-body flex items-center gap-space-3">
-                <SvgMaskIcon src="/assets/figma/icon-strobe.svg" style={{ width: 20, height: 20, color: background.strobe ? ACCENT : WHITE80 }} />
-                {t('wizard.bg.strobe')}
-                <span className="ml-space-2">
+            <div className="flex min-h-[30px] items-center justify-between gap-space-4 px-[40px]">
+              <span className="wizard-body flex items-center gap-space-3 leading-none">
+                <SvgMaskIcon src="/assets/figma/icon-strobe.svg" className="-translate-y-px" style={{ width: 20, height: 20, color: background.strobe ? ACCENT : WHITE80 }} />
+                <span className="translate-y-px">{t('wizard.bg.strobe')}</span>
+                <span className="ml-space-2 flex items-center">
                   <Toggle checked={background.strobe} onChange={(value) => setBackground({ strobe: value })} label={t('wizard.bg.strobe')} />
                 </span>
               </span>
@@ -486,8 +482,8 @@ export function StageBackground() {
                     className={cn('glue-chip', background.glue === glue.id && background.strobe && 'is-selected')}
                     onClick={() => { if (!gluesScroll.moved()) setBackground({ glue: glue.id }); }}
                   >
-                    <img src={glue.icon} width="40" height="40" alt="" aria-hidden="true" />
-                    {glue.label}
+                    <ChipIcon label={glue.label} />
+                    {chip(glue.label)}
                   </button>
                 ))}
               </div>
@@ -507,14 +503,23 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
   const chip = useChip();
   const background = useWizardStore((state) => state.background);
   const setBackground = useWizardStore((state) => state.setBackground);
-  // План — часть ключа: переключил тип футажей → пришёл другой список примеров.
+  const lyrics = useWizardStore((state) => state.fragmentEnabled ? state.fragmentLyrics : state.lyrics);
+  // Lyrics and media plane both determine the semantic order.
   const footagePlane = footageTypePlane(background.footageType);
   const vibesQuery = useQuery({
-    queryKey: ['vibes', footagePlane],
-    queryFn: () => api.vibes(footagePlane),
-    enabled: background.mode === 'footage'
+    queryKey: ['vibes', footagePlane, footagePlane === 'vibes' ? lyrics : ''],
+    queryFn: async () => footagePlane === 'vibes'
+      ? { vibes: (await api.rankBackgrounds(lyrics, 'video')).items }
+      : api.vibes(footagePlane),
+    staleTime: 60_000,
+    enabled: background.mode === 'footage' && (footagePlane !== 'vibes' || Boolean(lyrics.trim()))
   });
-  const photosQuery = useQuery({ queryKey: ['photos'], queryFn: api.photos, enabled: background.mode === 'photo' });
+  const photosQuery = useQuery({
+    queryKey: ['photos', lyrics],
+    queryFn: async () => ({ photos: (await api.rankBackgrounds(lyrics, 'photo')).items }),
+    staleTime: 60_000,
+    enabled: background.mode === 'photo' && Boolean(lyrics.trim())
+  });
   const [index, setIndex] = useState(0);
   const [broken, setBroken] = useState<Record<string, boolean>>({});
   const pillsScroll = useDragScroll();
@@ -528,12 +533,15 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
   const selected = list.filter((item) => selectedNames.includes(item.name));
   const safeIndex = selected.length ? Math.min(index, selected.length - 1) : 0;
   const current = selected.length ? selected[safeIndex] : null;
+  const currentFormat = current && background.mode === 'footage'
+    ? background.footageFormats?.[current.name] ?? (background.footageType === 'cine16x9' ? '16:9' : '9:16')
+    : background.mode === 'photo' ? '4:3' : '9:16';
   const activeColor = background.mode === 'color' ? background.color : undefined;
   const variations = backgroundVariations(background);
   const pills = backgroundPills(background);
   const footerPills = pills.length > 0
     ? pills
-    : [{ mode: background.mode, label: modes.find((item) => item.value === background.mode)?.label ?? 'wizard.bg.modeFootage', count: 0 }];
+    : [{ key: background.mode, mode: background.mode, label: modes.find((item) => item.value === background.mode)?.label ?? 'wizard.bg.modeFootage', count: 0 }];
 
   const emptyText = { footage: t('wizard.bg.emptyFootage'), photo: t('wizard.bg.emptyPhoto'), color: t('wizard.bg.emptyColor') }[background.mode];
   const step = (delta: number) => {
@@ -542,7 +550,7 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
   };
 
   useEffect(() => setIndex(0), [background.mode, selectedNames.join('|')]);
-  const isVideo = current ? /\.(mp4|webm|mov)$/i.test(current.previewUrl) : false;
+  const isVideo = current ? isVideoUrl(current.previewUrl) : false;
 
   const nextMode = MODE_ORDER[MODE_ORDER.indexOf(background.mode) + 1];
 
@@ -589,11 +597,11 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
           {isMedia && selected.length > 0 ? (
             <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
               <button type="button" aria-label={t('wizard.bg.prevExample')} onClick={() => step(-1)} disabled={selected.length < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-                <FigIcon name="home-arrow.svg" h={11} className="rotate-180" />
+                <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)', transform: 'rotate(180deg)' }} />
               </button>
               <span className="text-[16px] font-[350] leading-none text-accent">{safeIndex + 1}/{selected.length}</span>
               <button type="button" aria-label={t('wizard.bg.nextExample')} onClick={() => step(1)} disabled={selected.length < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-                <FigIcon name="home-arrow.svg" h={11} />
+                <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)' }} />
               </button>
             </div>
           ) : (
@@ -664,26 +672,43 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
               </div>
             </div>
           </div>
+        ) : currentFormat === '16:9' && background.mode === 'footage' ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center">
+            <PreviewPlayer
+              key={current?.id ?? 'empty-wide'}
+              className="w-full rounded-r15 bg-grad-soft-10"
+              {...playerProps}
+              showSteps={playerProps.showSteps && Boolean(current)}
+              onTogglePlay={current ? playerProps.onTogglePlay : undefined}
+            >
+              <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
+                {current ? renderMedia(current) : <div className="flex h-full items-center justify-center"><p className="wizard-body">{emptyText}</p></div>}
+              </div>
+              <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
+            </PreviewPlayer>
+          </div>
+        ) : background.mode === 'footage' ? (
+          <div className="flex min-h-0 flex-1 justify-center">
+            <PreviewPlayer
+              className="h-full w-auto max-w-full rounded-r15 bg-grad-soft-10"
+              style={{ aspectRatio: '9 / 16' }}
+              {...playerProps}
+              showSteps={playerProps.showSteps && Boolean(current)}
+              onTogglePlay={current ? playerProps.onTogglePlay : undefined}
+            >
+              <div className="absolute inset-0">
+                {current ? renderMedia(current) : (
+                  <div className="flex h-full items-center justify-center p-space-5">
+                    <p className="wizard-body max-w-[223px] text-center">{emptyText}</p>
+                  </div>
+                )}
+              </div>
+              <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
+            </PreviewPlayer>
+          </div>
         ) : (
-          <PreviewPlayer
-            className={cn('min-h-0 flex-1 rounded-r15', !activeColor && 'bg-grad-soft-10')}
-            {...playerProps}
-            showSteps={playerProps.showSteps && Boolean(current)}
-            onTogglePlay={isMedia && current ? playerProps.onTogglePlay : undefined}
-          >
-            <div className="absolute inset-0" style={fillStyle}>
-              {background.mode === 'footage' && current && (
-                <>
-                  {renderMedia(current)}
-                  <span className="absolute bottom-space-6 left-0 right-0 text-center text-[22px] text-text" style={{ textShadow: '0 1px 6px rgba(0,0,0,.8)' }}>{chip(current.name)}</span>
-                </>
-              )}
-              {!current && !activeColor && (
-                <div className="flex h-full items-center justify-center p-space-5">
-                  <p className="wizard-body max-w-[223px] text-center">{emptyText}</p>
-                </div>
-              )}
-            </div>
+          <PreviewPlayer className="min-h-0 flex-1 rounded-r15" {...playerProps} showSteps={false} onTogglePlay={undefined}>
+            <div className="absolute inset-0" style={fillStyle} />
             <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
           </PreviewPlayer>
         )}
@@ -691,15 +716,18 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
 
       <PillsFooter
         pills={footerPills.map((pill) => ({
-          key: pill.mode,
+          key: pill.key,
           label: pill.label.startsWith('wizard.') ? t(pill.label) : chip(pill.label),
           // Figma W22: счётчик выбранных стейтов. Было «Хn» — читалось как код, а не как
           // «столько выбрано»; оставили голое число и подписали его в title.
           icon: <span className="text-[20px] font-[350] text-text-80" title={t('wizard.bg.pillCount', { count: pill.count })}>{pill.count}</span>
         }))}
-        activeKey={background.mode}
+        activeKey={background.mode === 'footage' ? 'footage' : background.mode}
         emptyLabel={t('wizard.bg.addNew')}
-        onPill={(key) => setBackground({ mode: key as BackgroundMode })}
+        onPill={(key) => {
+          if (key === 'uploads') { setBackground({ mode: 'footage' }); return; }
+          setBackground({ mode: key as BackgroundMode });
+        }}
         onPlus={() => { if (nextMode) setBackground({ mode: nextMode }); }}
         plusDisabled={!nextMode}
         ready={ready}

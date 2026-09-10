@@ -6,7 +6,7 @@ import { api, ApiError } from '../lib/api';
 import { BatchLayout, GenerationsCard, ProcessingAside, ProgressTrack, TrackCard } from '../components/project/BatchCards';
 
 /** Средняя длительность рендера одной вариации — из неё считаем «осталось NN минут». */
-const MINUTES_PER_VIDEO = 1.5;
+const MINUTES_PER_VIDEO = 3;
 
 /**
  * Генерация батча (Figma W51) — тот же макет, что и готовый батч (W36):
@@ -44,6 +44,23 @@ export function ProcessingPage() {
 
   const videos = job?.videos ?? [];
   const done = videos.filter((video) => video.status === 'COMPLETED');
+  const failedVideos = videos.filter((video) => video.status === 'FAILED');
+  const activeVideo = videos.find((video) => video.status === 'PROCESSING')
+    ?? videos.find((video) => video.status === 'PENDING' && video.stage !== 'waiting_previous')
+    ?? videos.find((video) => video.status === 'PENDING');
+  const activeVariation = job?.renderJob?.variations?.find((variation) => variation.index === activeVideo?.index);
+  const activeFormat = activeVideo?.format ?? activeVariation?.background?.sourceFormat;
+  const rootFailure = failedVideos.find((video) => video.stage !== 'skipped') ?? failedVideos[0];
+  const rawFailure = rootFailure?.error?.split('\n')[0].trim() ?? '';
+  const failureReason = rawFailure.includes('stage2_style_rotation_missing_artist_id')
+    ? t('processing.reasonSourceMetadata')
+    : rawFailure.includes('collection not found')
+      ? t('processing.reasonCollectionMissing')
+      : rawFailure.includes('solid backgrounds')
+        ? t('processing.reasonSolidColor')
+        : rawFailure
+          ? t('processing.reasonStage', { stage: rootFailure?.stage || 'render' })
+          : t('processing.reasonUnknown');
   const allDone = videos.length > 0 && done.length === videos.length;
   const project = projectQuery.data?.project;
 
@@ -101,7 +118,24 @@ export function ProcessingPage() {
       <div className="card-2 flex flex-1 flex-col items-center justify-center gap-space-4 p-[40px] text-center">
         <h1 className="text-[32px] font-[400]">{t('processing.failed')}</h1>
         <p className="max-w-[420px] text-[18px] leading-[23px] text-text-60">{t('processing.failedText')}</p>
+        <div className="max-w-[620px] rounded-r15 border border-[rgba(246,245,253,0.16)] bg-grad-soft-10 px-[24px] py-[18px] text-left">
+          <p className="text-[17px] leading-[22px] text-text">{failureReason}</p>
+          <p className="mt-[8px] text-[15px] text-text-60">
+            {t('processing.failedProgress', { done: done.length, total: videos.length, failed: failedVideos.length })}
+          </p>
+          {rawFailure && (
+            <details className="mt-[12px] text-[14px] text-text-60">
+              <summary className="cursor-pointer text-accent-light">{t('processing.technicalReason')}</summary>
+              <code className="mt-[8px] block max-h-[96px] overflow-auto whitespace-pre-wrap break-words">{rawFailure}</code>
+            </details>
+          )}
+        </div>
         <div className="flex flex-wrap items-center justify-center gap-space-3">
+          {job?.projectId && done.length > 0 && (
+            <button type="button" className="soft-btn h-[60px] px-space-6 text-[20px]" onClick={() => navigate(`/app/projects/${job.projectId}`)}>
+              {t('processing.openReady')}
+            </button>
+          )}
           {job?.projectId && (
             <button type="button" className="soft-btn h-[60px] px-space-6 text-[20px]" onClick={() => navigate(`/app/generate?project=${job.projectId}`)}>
               {t('processing.retry')}
@@ -121,9 +155,12 @@ export function ProcessingPage() {
             <ProgressTrack done={done.length} total={total} minutesLeft={minutesLeft} />
           </TrackCard>
           <GenerationsCard
-            videos={done}
+            videos={videos}
             loading={!allDone}
-            postOne={project ? (index) => navigate(`/app/projects/${project.id}/post?video=${index}`) : undefined}
+            postOne={project ? (video) => {
+              const index = done.findIndex((item) => item.id === video.id);
+              navigate(`/app/projects/${project.id}/post?batch=${job?.id}&video=${Math.max(0, index)}`);
+            } : undefined}
           />
         </>
       }
@@ -131,6 +168,8 @@ export function ProcessingPage() {
         <ProcessingAside
           done={done.length}
           total={total}
+          activeVideo={activeVideo}
+          renderFormat={activeFormat}
           telegram={Boolean(meQuery.data?.telegramNotifications)}
           onBack={() => navigate('/app/projects')}
         />

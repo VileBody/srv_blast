@@ -27,10 +27,12 @@ required=(
   S3_BUCKET_RAW_AUDIO S3_RAW_AUDIO_PREFIX S3_BUCKET_ASSET_STORAGE S3_WEB_ASSET_PREFIX
   TBANK_TERMINAL_KEY TBANK_PASSWORD TBANK_NOTIFY_URL
   TELEGRAM_BOT_TOKEN TELEGRAM_BOT_USERNAME
+  WEB_MANAGER_BOT_TOKEN WEB_MANAGER_CHAT_ID
   GOOGLE_REDIRECT_URI
   TIKTOK_REDIRECT_URI TIKTOK_TOKEN_KEY TIKTOK_UPLOAD_SOURCE
-  WEB_STAGE1_ALIGNMENT_BACKEND WEB_SUBTITLE_MODE_MAP_JSON WEB_FOOTAGE_ARTIST_MAP_JSON
-  WEB_FOOTAGE_CATALOG_JSON WEB_PHOTO_CATALOG_JSON WEB_SUBTITLE_CATALOG_JSON
+  WEB_STAGE1_ALIGNMENT_BACKEND WEB_SUBTITLE_MODE_MAP_JSON
+  WEB_FOOTAGE_CATALOG_JSON WEB_PHOTO_CATALOG_JSON
+  WEB_SUBTITLE_CATALOG_JSON WEB_FX_CATALOG_JSON
 )
 
 for name in "${required[@]}"; do
@@ -60,6 +62,15 @@ check_optional_pair() {
 check_optional_pair Google GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
 check_optional_pair TikTok TIKTOK_CLIENT_KEY TIKTOK_CLIENT_SECRET
 
+# Тот же гейт, что в runtime.py: пока приложение не прошло аудит TikTok, оно живёт в
+# песочнице, и ключи без списка доступа открыли бы кнопку всем — человек попал бы в
+# чужой sandbox-аккаунт. Проверяем здесь тоже, иначе деплой пропустит конфиг, на
+# котором контейнер не поднимется, и мы узнаем об этом только по откату.
+if grep -Eq '^TIKTOK_CLIENT_KEY=.+' "$ENV_FILE" && ! grep -Eq '^TIKTOK_ALLOWED_USER_IDS=.+' "$ENV_FILE"; then
+  echo "production env sets TikTok credentials without TIKTOK_ALLOWED_USER_IDS (use '*' to open it to everyone)" >&2
+  exit 1
+fi
+
 if ! grep -Eq '^MODE=prod$' "$ENV_FILE" || ! grep -Eq '^BLAST_BACKEND_MODE=production$' "$ENV_FILE"; then
   echo "production env must explicitly select MODE=prod and BLAST_BACKEND_MODE=production" >&2
   exit 1
@@ -69,6 +80,8 @@ if ! grep -Eq '^TIKTOK_UPLOAD_SOURCE=FILE_UPLOAD$' "$ENV_FILE"; then
   echo "production env must use TIKTOK_UPLOAD_SOURCE=FILE_UPLOAD until a Blast-owned media domain is verified" >&2
   exit 1
 fi
+
+python3 "$ROOT_DIR/scripts/validate_web_preview_catalog_env.py" "$ENV_FILE"
 
 wait_http() {
   local url="$1"

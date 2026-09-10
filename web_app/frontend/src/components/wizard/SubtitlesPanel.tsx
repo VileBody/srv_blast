@@ -7,8 +7,8 @@ import { HUE_GRADIENT, hueAt } from '../../lib/color';
 import { useDragScroll } from './BackgroundPanel';
 import { PillsFooter } from './WizardFrame';
 import { useWizardStore } from '../../stores/wizardStore';
-import { SubtitlePreview } from './SubtitlePreview';
 import { SubtitleTimeline } from './SubtitleTimeline';
+import { CatalogMedia, SubtitleCatalogPreview } from './CatalogPreview';
 import { FigIcon } from '../ui/FigIcon';
 import { InlineError, queryDown } from '../ui/ErrorState';
 
@@ -20,13 +20,11 @@ import { InlineError, queryDown } from '../ui/ErrorState';
 
 
 function StyleCard({ name, previewUrl, inPool, onClick }: { name: string; previewUrl: string; inPool: boolean; onClick: () => void }) {
-  const [broken, setBroken] = useState(false);
+
   return (
     <button type="button" onClick={onClick} aria-pressed={inPool} className="media-card h-full" style={{ aspectRatio: '4 / 3' }}>
-      {!broken && <img src={previewUrl} alt="" onError={() => setBroken(true)} />}
-      {broken && <span className="absolute inset-0 bg-grad-card" aria-hidden="true" />}
-      <span className="absolute inset-0 z-[1] bg-[rgba(5,1,15,0.5)] backdrop-blur-[1.5px]" aria-hidden="true" />
-      <span className="absolute inset-0 z-[2] flex items-center justify-center text-[32px] text-text">{name}</span>
+      <CatalogMedia url={previewUrl} className="absolute inset-0 h-full w-full" />
+      <span className="absolute bottom-2 left-0 right-0 z-[2] text-center text-sm text-text" style={{textShadow: '0 1px 4px black'}}>{name}</span>
       {/* Выбор показывает только обводка — галочку с примеров убрали (как у фото и футажа):
           она закрывала кадр и дублировала и без того заметную рамку. */}
       {inPool && (
@@ -74,7 +72,7 @@ export function StageSubtitles() {
   return (
     <div className="flex h-full flex-col">
       <h2 className="wizard-h flex items-center gap-space-3">
-        <em className="bg-grad-text bg-clip-text font-bold italic text-[30px] leading-none text-transparent">Т</em>
+        <em className="inline-block bg-grad-text bg-clip-text pb-[3px] pr-[3px] font-bold italic text-[30px] leading-[1.15] text-transparent">Т</em>
         {t('wizard.subs.title')}
       </h2>
 
@@ -159,7 +157,7 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
       <div className="card-2 flex min-h-0 flex-1 flex-col px-space-6 py-space-6 max-lg:px-space-5">
         <h2 className="wizard-h mb-space-5 shrink-0 whitespace-nowrap">{t('wizard.workZone')}</h2>
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10">
-          {currentName && <SubtitlePreview className="absolute inset-0" styleName={currentName} lyrics={previewLyrics} color={subtitles.color} />}
+          {currentName && <SubtitleCatalogPreview className="absolute inset-0" name={currentName} />}
           <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
           {!currentName && (
             <div className="flex h-full items-center justify-center p-space-5">

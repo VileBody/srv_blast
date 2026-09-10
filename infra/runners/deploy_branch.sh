@@ -403,6 +403,16 @@ normalize_repo_ownership
 
 git_run fetch origin "$BRANCH"
 
+# These preview-catalog helpers existed as runtime copies on early web hosts
+# before becoming tracked deploy tools. Remove only those exact untracked files
+# when the target revision owns them, so checkout can materialize its version.
+for path in scripts/migrate_web_preview_catalog_env.py scripts/validate_web_preview_catalog_env.py; do
+  if git cat-file -e "origin/$BRANCH:$path" 2>/dev/null \
+    && ! git ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+    rm -f -- "$REPO_DIR/$path"
+  fi
+done
+
 if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
   git_run checkout -f "$BRANCH"
 else

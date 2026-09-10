@@ -91,6 +91,25 @@ _STAGE_LABELS = {
 }
 
 _EVENT_LABELS = {
+    "app_entry": "Вход в веб-приложение",
+    "page_view": "Просмотр страницы сайта",
+    "wizard_stage_view": "Просмотр этапа визарда",
+    "wizard_stage_time": "Время на этапе визарда",
+    "wizard_back": "Возврат в визарде",
+    "signup_started": "Начало регистрации на сайте",
+    "signup_completed": "Регистрация на сайте завершена",
+    "project_created": "Проект создан на сайте",
+    "track_uploaded": "Трек загружен на сайте",
+    "generation_completed": "Ролики готовы на сайте",
+    "video_previewed": "Просмотр превью",
+    "video_downloaded": "Скачивание ролика",
+    "video_download_all": "Скачивание батча",
+    "guide_opened": "Методичка открыта",
+    "guide_downloaded": "Методичка скачана",
+    "pricing_viewed": "Тарифы открыты на сайте",
+    "plan_purchased": "Тариф оплачен на сайте",
+    "limit_hit": "Достигнут лимит на сайте",
+    "video_posted": "Ролик опубликован с сайта",
     "start": "Старт бота",
     "utm_touch": "UTM касание",
     "subscription_ok": "Подписка подтверждена",
@@ -199,9 +218,9 @@ _FUNNEL_COLORS = [
 # Package definitions
 _PACKAGES = {
     "5": "Триал (5 генераций)",
-    "15": "Бласт (15 генераций)",
-    "30": "Глоу (30 генераций)",
-    "50": "Импульс (50 генераций)",
+    "15": "Бласт (100 генераций)",
+    "30": "Глоу (400 генераций)",
+    "50": "Импульс (безлимит)",
 }
 
 # Unique-track allowance granted on manual package activation. Mirrors
@@ -1698,6 +1717,9 @@ def build_app(
         now_utc = _dt.now(_tz.utc)
         today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
         period_param = str(request.query_params.get("period", "")).strip()
+        channel = str(request.query_params.get("channel", "bot")).strip().lower()
+        if channel not in {"site", "bot", "all"}:
+            channel = "bot"
         date_from_param = str(request.query_params.get("date_from", "")).strip()
         date_to_param = str(request.query_params.get("date_to", "")).strip()
 
@@ -1736,7 +1758,7 @@ def build_app(
         if users_bucket not in {"week", "month"}:
             users_bucket = "month"
 
-        ratings_raw, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info, revenue_series, subs_summary, users_data = await asyncio.gather(
+        ratings_raw, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info, revenue_series, subs_summary, users_data, product_activity = await asyncio.gather(
             credits_db.rating_distribution(),
             credits_db.funnel_reach_counts(),
             state_store.list_stage_counts(),
@@ -1751,7 +1773,104 @@ def build_app(
             credits_db.revenue_timeseries(bucket=revenue_bucket, periods=revenue_periods),
             credits_db.subscriptions_summary(),
             credits_db.users_timeseries(bucket=users_bucket),
+            credits_db.product_activity(channel, period_from, period_to),
         )
+
+        product_events = {row["event"]: row for row in product_activity["byEvent"]}
+
+        def _product_ids(*names: str) -> set[str]:
+            result: set[str] = set()
+            for name in names:
+                result.update((product_events.get(name) or {}).get("identities") or set())
+            return result
+
+        def _product_count(*names: str) -> int:
+            return sum(int((product_events.get(name) or {}).get("events") or 0) for name in names)
+
+        if channel == "site":
+            product_steps = [
+                ("Вошли в приложение", _product_ids("app_entry", "signup_started", "signup_completed")),
+                ("Завершили регистрацию", _product_ids("signup_completed")),
+                ("Загрузили трек", _product_ids("track_uploaded")),
+                ("Запустили генерацию", _product_ids("generation_started")),
+                ("Получили ролики", _product_ids("generation_completed")),
+                ("Оплатили", _product_ids("plan_purchased")),
+            ]
+            generated_count = _product_count("generation_completed")
+        elif channel == "bot":
+            product_steps = [
+                ("Запустили бота", _product_ids("start")),
+                ("Прошли подписку", _product_ids("subscription_ok")),
+                ("Загрузили трек", _product_ids("audio_uploaded")),
+                ("Запустили генерацию", _product_ids("generation_started")),
+                ("Получили ролики", _product_ids("generation_done")),
+                ("Оплатили", _product_ids("payment_confirmed", "subscription_charged", "admin_activate")),
+            ]
+            generated_count = _product_count("generation_done")
+        else:
+            product_steps = [
+                ("Вошли в продукт", _product_ids("app_entry", "signup_started", "signup_completed", "start")),
+                ("Активировались", _product_ids("signup_completed", "subscription_ok")),
+                ("Загрузили трек", _product_ids("track_uploaded", "audio_uploaded")),
+                ("Запустили генерацию", _product_ids("generation_started")),
+                ("Получили ролики", _product_ids("generation_completed", "generation_done")),
+                ("Оплатили", _product_ids("plan_purchased", "payment_confirmed", "subscription_charged", "admin_activate")),
+            ]
+            generated_count = _product_count("generation_completed", "generation_done")
+
+        product_first = len(product_steps[0][1]) if product_steps else 0
+        product_funnel_html = ""
+        previous = product_first
+        for label, identities in product_steps:
+            count = len(identities)
+            from_start = count / product_first * 100 if product_first else 0
+            from_prev = count / previous * 100 if previous else 0
+            product_funnel_html += (
+                '<div class="funnel-bar-wrap">'
+                f'<div class="funnel-bar" style="width:{max(15, from_start):.0f}%;background:#5f42b9">'
+                f'<span class="flabel">{label}</span>'
+                f'<span class="fcount">{count} <small>({from_prev:.0f}% от пред.)</small></span>'
+                '</div></div>'
+            )
+            previous = count or previous
+
+        channel_labels = {"site": "Сайт", "bot": "Бот", "all": "Вместе"}
+        channel_buttons = " ".join(
+            f'<a href="/admin/?channel={key}&period={active_period}" class="btn" style="'
+            + ("background:linear-gradient(90deg,#8b6fe6,#5f42b9);font-weight:700" if channel == key else "background:#1c1436;color:#c3bce0")
+            + f'">{label}</a>'
+            for key, label in channel_labels.items()
+        )
+        product_recent_rows = "".join(
+            f'<tr><td>{html_mod.escape(row["channel"])}</td>'
+            f'<td>{html_mod.escape(row["identity"])}</td>'
+            f'<td>{html_mod.escape(_event_label(row["event"]))}</td>'
+            f'<td>{html_mod.escape(row["created_at"])}</td></tr>'
+            for row in product_activity["recent"]
+        )
+        product_card = f"""
+        <div class="card" style="border-color:rgba(139,111,230,.55)">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+            <div><h2 style="margin:0">Аналитика продукта · {channel_labels[channel]}</h2>
+              <p style="margin:5px 0 0">Действия сайта и Telegram-бота разделены по источнику; «Вместе» дедуплицирует пользователя по Telegram ID.</p>
+            </div>
+            <div style="display:flex;gap:6px">{channel_buttons}</div>
+          </div>
+          <div class="stat-grid" style="margin-top:18px">
+            <div class="stat-tile accent"><div class="stat-label">Активные пользователи</div><div class="stat-value">{int(product_activity['activeUsers'])}</div></div>
+            <div class="stat-tile"><div class="stat-label">Все действия</div><div class="stat-value">{int(product_activity['events'])}</div></div>
+            <div class="stat-tile"><div class="stat-label">Запуски генерации</div><div class="stat-value">{_product_count('generation_started')}</div></div>
+            <div class="stat-tile"><div class="stat-label">Готовые ролики</div><div class="stat-value">{generated_count}</div></div>
+          </div>
+          <div class="chart-row">
+            <div class="funnel-box"><h3>Воронка выбранного источника</h3>{product_funnel_html or '<p>Нет данных</p>'}</div>
+            <div class="funnel-box"><h3>Последние действия</h3><div class="table-wrap"><table>
+              <tr><th>Источник</th><th>Пользователь</th><th>Действие</th><th>Дата</th></tr>
+              {product_recent_rows or '<tr><td colspan="4">Нет данных</td></tr>'}
+            </table></div></div>
+          </div>
+        </div>
+        """
 
         # ── Rating distribution (3 buckets matching data we log: low/5-6/7-10) ──
         rating_map = {r["rating"]: r["count"] for r in ratings_raw}
@@ -1836,7 +1955,7 @@ def build_app(
         period_pills_html = ""
         for _pk, (_plbl, _, _) in _PERIOD_PRESETS.items():
             _pill_style = "background:linear-gradient(90deg,#8b6fe6,#5f42b9);font-weight:700" if active_period == _pk else "background:#1c1436;color:#c3bce0"
-            period_pills_html += f'<a href="/admin/?period={_pk}" class="btn" style="{_pill_style}">{_plbl}</a> '
+            period_pills_html += f'<a href="/admin/?period={_pk}&channel={channel}" class="btn" style="{_pill_style}">{_plbl}</a> '
         period_custom_badge = f'<span class="badge badge-stage">{html_mod.escape(date_from_param)} — {html_mod.escape(date_to_param)}</span>' if active_period == "custom" else ""
         period_date_from_val = date_from_param or period_from.strftime("%Y-%m-%d")
         period_date_to_val = date_to_param or (period_to - _td(days=1)).strftime("%Y-%m-%d")
@@ -1974,6 +2093,7 @@ def build_app(
         )
 
         body = f"""
+        {product_card}
         <div class="card">
           <h2>Пользователи: {users_active:,} активных
             <span style="font-size:0.6em;color:#8a80b3;font-weight:400">
@@ -2024,6 +2144,7 @@ def build_app(
             {period_pills_html}
           </div>
           <form method="get" action="/admin/" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <input type="hidden" name="channel" value="{channel}">
             <label>С: <input type="date" name="date_from" value="{period_date_from_val}"></label>
             <label>По: <input type="date" name="date_to" value="{period_date_to_val}"></label>
             <button type="submit">Показать</button>
@@ -4645,9 +4766,23 @@ def build_app(
 
         current_status = str(existing_payment.get("status", "")).strip().upper() if existing_payment else ""
         should_apply_status = _should_apply_payment_status_update(current_status, status)
+        confirmation = None
         if should_apply_status:
-            await credits_db.update_payment_status(order_id, status, payment_id)
-            payment = await credits_db.get_payment(order_id)
+            if status == "CONFIRMED":
+                try:
+                    confirmation = await credits_db.confirm_payment_once(
+                        order_id,
+                        payment_id,
+                        actor="tbank_webhook",
+                    )
+                except ValueError as exc:
+                    log.error("tbank notify: confirmation failed order=%s err=%s", order_id, exc)
+                    return PlainTextResponse(str(exc), status_code=500)
+                should_apply_status = bool(confirmation.get("applied", False))
+                payment = await credits_db.get_payment(order_id)
+            else:
+                await credits_db.update_payment_status(order_id, status, payment_id)
+                payment = await credits_db.get_payment(order_id)
         else:
             payment = existing_payment
             log.info(
@@ -4669,7 +4804,7 @@ def build_app(
         amount_rub = payment["amount_rub"] if payment else 0
 
         # Notify manager about every status change
-        if bot_ref and bot_ref[0] and settings.manager_chat_id and payment:
+        if should_apply_status and bot_ref and bot_ref[0] and settings.manager_chat_id and payment:
             status_labels = {
                 "CONFIRMED": "Оплачено",
                 "AUTHORIZED": "Авторизовано",
@@ -4696,18 +4831,10 @@ def build_app(
 
         # On confirmed payment — grant credits & redirect to generation
         if should_apply_status and effective_status == "CONFIRMED" and current_status != "CONFIRMED" and payment:
-            credits_to_add = (
-                confirmed_credits
-                if confirmed_credits is not None
-                else package_video_credits(pkg)
-            )
-
-            await credits_db.add_credits(
-                tg_id, credits_to_add,
-                reason="payment",
-                admin_note=f"pkg={pkg} order={order_id} amount={amount_rub}\u20bd",
-                actor="tbank_webhook",
-                order_id=order_id,
+            credits_to_add = int(
+                confirmation.get("credits_added", confirmed_credits or 0)
+                if confirmation
+                else (confirmed_credits or 0)
             )
             await credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} \u2014 {amount_rub}\u20bd")
             # Subscription bootstrap for recurrent payments. RebillId arrives in

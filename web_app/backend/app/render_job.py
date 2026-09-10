@@ -41,12 +41,15 @@ def _slice_keys(alloc_slice: dict[str, int], fallback: list[str]) -> list[str]:
 
 
 def _segment(timing: dict[str, Any] | None) -> dict[str, float] | None:
-    if not timing or timing.get("mode") == "ai":
+    if not timing:
         return None
     frm, to = timing.get("from"), timing.get("to")
     if not frm and not to:
         return None
-    return {"from": mmss_seconds(frm), "to": mmss_seconds(to)}
+    start, end = mmss_seconds(frm), mmss_seconds(to)
+    if start is None or end is None:
+        return None
+    return {"from": start, "to": end}
 
 
 def mmss_seconds(v: str | None) -> float | None:
@@ -68,7 +71,7 @@ def mmss_seconds(v: str | None) -> float | None:
 
 
 def _resolve_hook(kind: str | None, cfg: dict[str, Any], bg_glue_id: str | None,
-                  bg_style_id: str | None) -> tuple[dict[str, str | None], str | None]:
+                  bg_style_id: str | None) -> tuple[dict[str, Any], str | None]:
     """Вернуть (resolved {hook,transition,extra}, family_script). См. spec §5.4.
 
     Склейка и стилизация настраиваются у КАЖДОГО типа хука (решение продукта: разнообразие
@@ -79,15 +82,32 @@ def _resolve_hook(kind: str | None, cfg: dict[str, Any], bg_glue_id: str | None,
         "hook": None,
         "transition": em.map_glue(cfg.get("effectGlue")) or bg_glue_id,
         "extra": em.map_style(cfg.get("effectStyle")) or bg_style_id,
+        # id приёма «Мысли» (F5). Раньше выбор уезжал сырым RU-лейблом внутри hook.config
+        # и на стороне воркера ни во что не резолвился.
+        "device": None,
+        # грейд на весь ролик вместо «до дропа» (manifest: effect_extra_full)
+        # У «Без хука» нет дропа: выбранная стилизация относится ко всему ролику.
+        # Сохранённый effectStyleFull из другого типа хука здесь не меняет семантику.
+        "extraFull": (kind == "none" and bool(cfg.get("effectStyle")))
+        or (kind != "none" and bool(cfg.get("effectStyleFull")))
+        or em.style_is_full_window(cfg.get("effectStyle")),
+        "hookExtend": None,
     }
     family_script = None
     if kind == "effects":
         resolved["hook"] = em.map_hook(cfg.get("effectHook"))
+        extend = str(cfg.get("effectHookExtend") or "")
+        if extend not in {"", "to_end", "after_drop:3"}:
+            raise ValueError(f"Неизвестная длина слоу-шаттера: {extend}")
+        if resolved["hook"] == "flash_slow_shutter":
+            resolved["hookExtend"] = extend or None
     elif kind == "object":
         family_script = em.OBJECT_SCRIPT.get(cfg.get("object"))
     elif kind == "motion":
         family_script = em.MOTION_SCRIPT.get(cfg.get("motion"))
-    # sound / thought — отдельные шаги воркера, собственного run_job-хука не дают
+    elif kind == "thought":
+        resolved["device"] = em.map_thought(cfg.get("thought"))
+    # sound — отдельный шаг воркера, собственного run_job-хука не даёт
     return resolved, family_script
 
 
@@ -101,6 +121,8 @@ def _split_bg_key(key: str, default_mode: str) -> tuple[str, str]:
     for m in ("footage", "photo"):
         if key.startswith(f"{m}:"):
             return m, key[len(m) + 1:]
+    if key.startswith("upload:"):
+        return "upload", key[len("upload:"):]
     return ("color" if key == "__color__" else default_mode), key
 
 
@@ -120,34 +142,144 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
     # (SlicePanel.backgroundUnits). Батч может СМЕШИВАТЬ футаж и фото, поэтому mode берём из ключа
     # per-variation, а не один на батч; имя группы — то, что после префикса.
     mode = bg.get("mode", "footage")
-    bg_groups_all = [f"footage:{v}" for v in (bg.get("footage") or [])] + [f"photo:{v}" for v in (bg.get("photo") or [])]
-    bg_fallback = bg_groups_all or (["__color__"] if bg.get("color") else ["__default__"])
+    source_plans = list(bg.get("sourceVideos") or [])
+    if not source_plans and bg.get("uploads"):
+        source_plans = [{"id": "source-video-legacy", "format": bg.get("sourceFormat") or "9:16", "sourceIds": list(bg["uploads"])}]
+    for plan in source_plans:
+        if not isinstance(plan, dict) or not plan.get("id") or plan.get("format") not in {"9:16", "16:9"}:
+            raise ValueError("Личное видео имеет повреждённый формат или идентификатор")
+        if not isinstance(plan.get("sourceIds"), list) or not plan["sourceIds"]:
+            raise ValueError("Личное видео не содержит исходников")
+    source_assets = {}
+    for item in (bg.get("sourceAssets") or []):
+        if not isinstance(item, dict) or not item.get("id"):
+            raise ValueError("Личное видео содержит повреждённый исходник")
+        source_assets[str(item["id"])] = item
+    bg_groups_all = (
+        [f"upload:{plan['id']}" for plan in source_plans]
+        + [f"footage:{v}" for v in (bg.get("footage") or [])]
+        + [f"photo:{v}" for v in (bg.get("photo") or [])]
+    )
+    has_color = bool(bg.get("color"))
+    bg_fallback = bg_groups_all or (["__color__"] if has_color else ["__default__"])
     sub_fallback = subs.get("pool") or ["Impulse"]
     hook_fallback = [hooks["kind"]] if hooks.get("kind") else []
+    configs = hooks.get("configs") or {}
+    style_fallback: list[str] = []
+    for config in configs.values():
+        if not isinstance(config, dict):
+            continue
+        candidates = config.get("effectStyles") or ([config.get("effectStyle")] if config.get("effectStyle") else [])
+        for style_name in candidates:
+            if style_name and style_name not in style_fallback:
+                style_fallback.append(style_name)
 
-    bg_keys = _slice_keys(alloc.get("background") or {}, bg_fallback)
+    bg_allocation = alloc.get("background") or {}
+    if bg_allocation:
+        bg_seq = _expand(bg_allocation)
+        if has_color:
+            bg_seq.append("__color__")
+    elif has_color and not bg_groups_all:
+        bg_seq = ["__color__"]
+    else:
+        regular_total = total - (1 if has_color else 0)
+        bg_seq = _expand(distribute(bg_groups_all or bg_fallback, regular_total))
+        if has_color:
+            bg_seq.append("__color__")
+    if len(bg_seq) != total:
+        raise ValueError(
+            f"Пул фонов содержит {len(bg_seq)} вариаций вместо {total}"
+        )
+
+    expanded_backgrounds: list[tuple[str, str, dict[str, Any] | None, bool]] = []
+    footage_formats = bg.get("footageFormats") or {}
+    for group_key in bg_seq:
+        v_mode, group = _split_bg_key(group_key, mode)
+        source_plan = next((plan for plan in source_plans if plan["id"] == group), None) if v_mode == "upload" else None
+        if v_mode == "upload" and source_plan is None:
+            raise ValueError(f"Неизвестное личное видео: {group}")
+        hook_allowed = not (
+            v_mode in {"photo", "color"}
+            or (v_mode == "upload" and (source_plan or {}).get("format") == "16:9")
+            or (
+                v_mode == "footage"
+                and footage_formats.get(
+                    group,
+                    "16:9" if bg.get("footageType") == "cine16x9" else "9:16",
+                ) == "16:9"
+            )
+        )
+        expanded_backgrounds.append((v_mode, group, source_plan, hook_allowed))
+
+    non_color_total = sum(1 for v_mode, _, _, _ in expanded_backgrounds if v_mode != "color")
     sub_keys = _slice_keys(alloc.get("subtitles") or {}, sub_fallback)
+    sub_seq = _expand(alloc.get("subtitles") or distribute(sub_keys, non_color_total))
+    if len(sub_seq) != non_color_total:
+        raise ValueError(
+            f"Пул субтитров содержит {len(sub_seq)} вариаций вместо {non_color_total}"
+        )
     hook_keys = _slice_keys(alloc.get("hooks") or {}, hook_fallback)
-
-    bg_seq = _expand(alloc.get("background") or distribute(bg_keys, total))
-    sub_seq = _expand(alloc.get("subtitles") or distribute(sub_keys, total))
-    hook_seq = _expand(alloc.get("hooks") or distribute(hook_keys, total)) if hook_keys else []
+    hook_target = sum(1 for _, _, _, allowed in expanded_backgrounds if allowed)
+    hook_seq = _expand(alloc.get("hooks") or distribute(hook_keys, hook_target)) if hook_keys else []
+    if hook_keys and len(hook_seq) != hook_target:
+        raise ValueError(
+            f"Пул хуков содержит {len(hook_seq)} вариаций, а совместимых вертикальных фонов — {hook_target}"
+        )
+    style_keys = _slice_keys(alloc.get("styles") or {}, style_fallback)
+    style_seq = _expand(alloc.get("styles") or distribute(style_keys, hook_target)) if style_keys else []
+    if style_keys and len(style_seq) != hook_target:
+        raise ValueError(
+            f"Пул стилизаций содержит {len(style_seq)} вариаций, а совместимых вертикальных фонов — {hook_target}"
+        )
 
     # общие резолвы фона (одни на батч)
     bg_glue_id = em.map_glue(bg.get("glue"))
     bg_style_id = em.map_style(bg.get("photoStyle")) if bg.get("photoEffects") else None
     drop = em.parse_mmssms(hooks.get("dropTime"))
     kind = hooks.get("kind")
-    configs = hooks.get("configs") or {}
 
     variations: list[dict[str, Any]] = []
-    for i in range(total):
-        group_key = bg_seq[i % len(bg_seq)] if bg_seq else "__default__"
-        v_mode, group = _split_bg_key(group_key, mode)
-        style = sub_seq[i % len(sub_seq)] if sub_seq else "Impulse"
-        v_kind = hook_seq[i % len(hook_seq)] if hook_seq else None
-        cfg = configs.get(v_kind) or {} if v_kind else {}
+    subtitle_index = 0
+    hook_index = 0
+    for i, (v_mode, group, source_plan, hook_allowed) in enumerate(expanded_backgrounds):
+        source_ids = list((source_plan or {}).get("sourceIds") or [])
+        missing_source_ids = [source_id for source_id in source_ids if source_id not in source_assets]
+        if missing_source_ids:
+            raise ValueError(
+                "Личное видео содержит отсутствующие исходники: "
+                + ", ".join(missing_source_ids[:5])
+            )
+        variation_sources = [source_assets[source_id] for source_id in source_ids]
+        if v_mode == "color":
+            style = alloc.get("strobeFont" if bg.get("strobe") else "colorFont") or sub_fallback[0]
+        else:
+            style = sub_seq[subtitle_index] if sub_seq else sub_fallback[0]
+            subtitle_index += 1
+        compatible_index = hook_index
+        v_kind = hook_seq[compatible_index] if hook_allowed and hook_seq else None
+        if hook_allowed:
+            hook_index += 1
+        cfg = dict(configs.get(v_kind) or {}) if v_kind else {}
+        if hook_allowed and style_seq:
+            cfg["effectStyle"] = style_seq[compatible_index]
         resolved, family_script = _resolve_hook(v_kind, cfg, bg_glue_id, bg_style_id)
+
+        # Keep the output geometry on the variation itself. The web status UI and
+        # the production dispatcher must describe the same render; deriving it
+        # later from a translated source label made every job look vertical.
+        if v_mode == "upload":
+            source_format = str((source_plan or {}).get("format") or "")
+        elif v_mode == "footage":
+            source_format = str(footage_formats.get(
+                group,
+                "16:9" if bg.get("footageType") == "cine16x9" else "9:16",
+            ))
+        elif v_mode == "photo":
+            # Photo assets are 4:3, but the emitted video uses the vertical
+            # render preset; this field describes the output shown to users.
+            source_format = "9:16"
+        else:
+            source_format = "9:16"
 
         branding = em.HOOK_BRANDING.get(resolved["hook"], {"enabled": False}) if resolved["hook"] else {"enabled": False}
         variations.append({
@@ -159,11 +291,17 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
             },
             "background": {
                 "mode": v_mode,
-                "groups": [] if group.startswith("__") else [group],
+                "groups": [] if group.startswith("__") or v_mode == "upload" else [group],
                 # тип футажей (Figma W12) — из какой библиотеки берём группы; id из footage-types.json
                 "footageType": bg.get("footageType") if v_mode == "footage" else None,
                 # свои исходники (Figma W39/W49) — вместо библиотечного футажа
-                "uploads": list(bg.get("uploads") or []),
+                "uploads": list((source_plan or {}).get("sourceIds") or []),
+                "sourceAssets": variation_sources,
+                "sourceFormat": source_format,
+                "sourceLabel": (
+                    f"Своё видео {source_plans.index(source_plan) + 1} · {source_plan['format']}"
+                    if source_plan in source_plans else None
+                ),
                 "color": bg.get("color") if v_mode == "color" else None,
                 "strobe": bool(bg.get("strobe")),
                 "photoStyle": bg.get("photoStyle") if v_mode == "photo" else None,
@@ -178,7 +316,7 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
             },
             "branding": {"enabled": bool(branding.get("enabled")),
                           "style": branding.get("style")},
-            "sound": {"userSound": (cfg.get("sound") if v_kind == "sound" else None)},
+            "sound": {"userSound": (cfg.get("sound") if v_kind in {"sound", "warmup"} else None)},
         })
 
     return {
@@ -198,13 +336,29 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
     }
 
 
+def selected_hook_families(stage_data: dict[str, Any]) -> set[str]:
+    """Hook configs that will actually be expanded into batch variations."""
+    hooks = stage_data.get("hooks") or {}
+    allocated = (stage_data.get("allocation") or {}).get("hooks") or {}
+    selected = {
+        str(family)
+        for family, count in allocated.items()
+        if isinstance(count, (int, float)) and count > 0
+    }
+    if not selected and hooks.get("kind"):
+        selected.add(str(hooks["kind"]))
+    return selected
+
+
 def variation_label(variation: dict[str, Any]) -> dict[str, str]:
     """Короткие подписи для чипов W36 (source / subtitleStyle / hook)."""
     groups = variation["background"]["groups"]
     mode = variation["background"]["mode"]
     # groups уже без префикса режима (_split_bg_key), но старые джобы могли сохранить «photo:Имя»
-    source = groups[0].split(":", 1)[-1] if groups else ("Цвет" if mode == "color" else "Футаж")
+    source = groups[0].split(":", 1)[-1] if groups else (
+        variation["background"].get("sourceLabel") or ("Цвет" if mode == "color" else "Футаж")
+    )
     hook = variation["hook"]["family"]
     hook_label = {"effects": "Эффекты", "object": "Объект", "motion": "Движение",
-                  "sound": "Звук", "thought": "Мысль"}.get(hook, "Без хука")
+                  "sound": "Прогрев", "warmup": "Прогрев", "thought": "Мысль"}.get(hook, "Без хука")
     return {"source": source, "subtitleStyle": variation["subtitle"]["style"], "hook": hook_label}

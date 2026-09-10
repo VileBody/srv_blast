@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import os
 import secrets
 import threading
@@ -202,6 +203,9 @@ _UPLOAD_PATHS = (
     "/api/wizard/upload-track",
     "/api/wizard/upload-source",
     "/api/wizard/upload-hook-sound",
+    "/api/wizard/upload-hook-video",
+    "/api/wizard/upload-link",
+    "/api/mobile-upload",
     "/api/profile/avatar",
     "/cover",
 )
@@ -212,10 +216,15 @@ def rate_limit_enabled() -> bool:
 
 
 def _client_key(request: Request) -> str:
-    # За обратным прокси реальный адрес приходит в X-Forwarded-For
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    # Production nginx overwrites X-Real-IP with its own connection address.
+    # X-Forwarded-For may contain a client-supplied first value and therefore
+    # cannot be trusted as a rate-limit identity.
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    try:
+        if real_ip:
+            return str(ipaddress.ip_address(real_ip))
+    except ValueError:
+        pass
     return request.client.host if request.client else "unknown"
 
 
@@ -244,6 +253,9 @@ def _rate_failure(request: Request) -> JSONResponse | None:
 
 def guard(request: Request) -> JSONResponse | None:
     """Единая точка входа для middleware: CSRF, затем частота."""
+    # Phone upload uses an explicit short-lived capability header, never cookies.
+    if request.url.path == "/api/mobile-upload":
+        return _rate_failure(request)
     return _csrf_failure(request) or _rate_failure(request)
 
 

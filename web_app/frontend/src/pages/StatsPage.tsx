@@ -71,9 +71,9 @@ function StatCard({ icon, title, value, unit, trend }: {
   trend?: string;
 }) {
   return (
-    <div className="relative h-[192px] min-w-0 flex-1 rounded-r15 bg-grad-soft-20">
+    <div className="taste-metric relative h-[192px] min-w-0 flex-1 rounded-r15 bg-grad-soft-20">
       <span className="absolute left-[28px] top-[28px] flex items-center gap-[8px]">
-        <FigIcon name={icon} h={14} />
+        <img src={`/assets/figma/${icon}`} width={14} height={14} alt="" aria-hidden="true" className="h-[14px] w-[14px] shrink-0 object-contain" />
         <span className="whitespace-nowrap text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{title}</span>
       </span>
       {trend && <span className="absolute right-[28px] top-[28px]"><TrendBadge value={trend} /></span>}
@@ -397,11 +397,11 @@ export function StatsPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col lg:min-h-[var(--app-page-h)] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       <div className="flex min-h-0 flex-1 flex-col gap-[20px]">
       {/* «Статистика» 1192×379 */}
-      <section className="card-2 h-[379px] shrink-0 p-[40px]">
-        <div className="flex items-start justify-between gap-space-4">
+      <section className="card-2 h-auto min-h-[379px] shrink-0 p-[24px] sm:p-[32px] lg:h-[379px] lg:p-[40px]">
+        <div className="flex flex-col items-start justify-between gap-[20px] sm:flex-row sm:gap-space-4">
           <div>
             <h1 className="text-[32px] font-[400] leading-none text-text">{t('stats.title')}</h1>
             {/*
@@ -457,14 +457,14 @@ export function StatsPage() {
           )}
         </div>
 
-        <div className="mt-[28px] flex gap-[20px]">
+        <div className="mt-[28px] flex flex-col gap-[20px] lg:flex-row">
           <StatCard icon="st-views.svg" title={t('stats.viewsTitle')} value={previewData ? '122' : tiktok ? fmtViews(views) : '—'} unit={t('stats.thousand')} trend={previewData ? '37.8%' : tiktok ? trend(views, previousViews) : undefined} />
-          <StatCard icon="st-views.svg" title={t('stats.engagement')} value={previewData ? '3.6' : tiktok ? engagement.toFixed(engagement >= 10 ? 0 : 1) : '—'} unit="%" trend={previewData ? '1.8%' : undefined} />
+          <StatCard icon="st-engagement.png" title={t('stats.engagement')} value={previewData ? '3.6' : tiktok ? engagement.toFixed(engagement >= 10 ? 0 : 1) : '—'} unit="%" trend={previewData ? '1.8%' : undefined} />
           {/* «Опубликовано» — только реально выложенное. Без подключённого TikTok показываем
               прочерк, а не число сгенерированных: генерация ≠ публикация, и подстановка
               `created` превращала счётчик в неправду. */}
           <StatCard
-            icon="st-views.svg"
+            icon="st-published.png"
             title={t('stats.videos')}
             value={previewData ? '123' : tiktok ? String(currentVideos.length) : '—'}
             unit={t('stats.pieces')}
@@ -474,30 +474,27 @@ export function StatsPage() {
       </section>
 
       {/* «Эволюция контента» 1192×505 */}
-      <section className="card-2 min-h-0 flex-1 p-[40px]">
+      <section className="card-2 min-h-[505px] flex-none p-[24px] sm:p-[32px] lg:flex-1 lg:p-[40px]">
         <h2 className="text-[32px] font-[400] leading-none text-text">{t('stats.evolution')}</h2>
 
-        {/* таб-бар итераций: номер берётся из реальных итераций проекта (был захардкожен «№1»);
-            «+» — свой пил с обводкой ПОД основным (нахлёст 33px, тот же приём, что «+» у батчей) */}
+        {/* Небольшой нахлёст соединяет пилы визуально, но заканчивается внутри скругления:
+            кнопка больше не перекрывает номер итерации. */}
         <div className="mt-[28px] flex h-[60px] items-center rounded-r15 bg-grad-soft-10 pr-[20px]">
-          <span className="relative z-10 flex h-[60px] shrink-0 items-center whitespace-nowrap rounded-r15 border-2 border-accent-light bg-grad-soft-20 px-[21px] text-[24px] font-[400] leading-[29px] text-text [backdrop-filter:blur(40px)]">
+          <span className="relative z-10 flex h-[60px] shrink-0 items-center whitespace-nowrap rounded-r15 border-2 border-accent-light px-[21px] text-[24px] font-[400] leading-[29px] text-text" style={{ background: '#34245d' }}>
             {t('stats.iterationN', { n: iterationNumber })}
           </span>
-          {enough && (
-            /* Раньше кнопка ничего не делала. Теперь она запускает следующую итерацию —
-               тем же путём, что и панель справа: фиксируем сработавшее, тестируем то,
-               что проверить нельзя. */
-            <button
-              type="button"
-              aria-label={t('stats.addIteration')}
-              title={t('stats.addIteration')}
-              disabled={!iterationProject || createIteration.isPending}
-              onClick={() => createIteration.mutate({ count: 5, dimension: nextToTest(analysis)?.dimension ?? 'subtitles' })}
-              className="relative z-0 -ml-[33px] flex h-[60px] w-[78px] items-center justify-center rounded-r15 border-2 border-accent bg-grad-soft-20 pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              +
-            </button>
-          )}
+          {/* Кнопка остаётся на месте даже до накопления данных: меняется доступность,
+              а не геометрия rail. После готовности запускает следующую итерацию. */}
+          <button
+            type="button"
+            aria-label={t('stats.addIteration')}
+            title={t('stats.addIteration')}
+            disabled={!enough || !iterationProject || createIteration.isPending}
+            onClick={() => createIteration.mutate({ count: 5, dimension: nextToTest(analysis)?.dimension ?? 'subtitles' })}
+            className="relative z-0 -ml-[33px] flex h-[60px] w-[78px] shrink-0 items-center justify-center rounded-r15 border-2 border-accent bg-grad-soft-20 pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="translate-y-[1px]" aria-hidden="true">+</span>
+          </button>
           {enough && analysis && <VerdictChips analysis={analysis} />}
         </div>
 

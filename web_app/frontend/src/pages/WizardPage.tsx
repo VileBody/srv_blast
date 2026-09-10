@@ -1,7 +1,7 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import type { Vibe } from '../lib/types';
 import { Button } from '../components/ui/Button';
@@ -13,11 +13,11 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
-import { hasTrackInput, hookPills } from '../stores/wizardStore';
-import { SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
+import { hasTrackInput, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
+import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
-import { timingToSeconds } from '../components/wizard/useFragmentAudio';
+import { dropToSeconds, timingToSeconds } from '../components/wizard/useFragmentAudio';
 import { useAsrPreview } from '../components/wizard/useAsrPreview';
 import { BackSquareButton, WizardHeaderCard } from '../components/wizard/WizardFrame';
 import { useToast } from '../contexts/ToastContext';
@@ -54,6 +54,19 @@ function parseTime(value: string): number | null {
   const match = /^(\d+):([0-5]\d)$/.exec(value.trim());
   if (!match) return null;
   return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function apiErrorText(error: unknown): string | undefined {
+  if (!(error instanceof ApiError)) return undefined;
+  if (typeof error.detail === 'string') return error.detail;
+  if (error.detail && typeof error.detail === 'object') {
+    const detail = (error.detail as { detail?: unknown }).detail;
+    if (typeof detail === 'string') return detail;
+    if (detail && typeof detail === 'object' && typeof (detail as { message?: unknown }).message === 'string') {
+      return String((detail as { message: string }).message);
+    }
+  }
+  return undefined;
 }
 
 /** Максимальная длина отрывка: 15 с на триале, 30 с на платном тарифе. */
@@ -179,6 +192,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
       setField('fragmentEnabled', false);
       push({ variant: 'warning', title: t('wizard.text.resetTitle'), text: t('wizard.text.resetText') });
     }
+    setField('timingMode', 'manual');
     setField(field, next);
     return true;
   };
@@ -192,8 +206,8 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
   const roundSeconds = (value: number) => Math.round(value * 10) / 10;
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-space-4">
+    <div className="flex min-h-full flex-col">
+      <div className="flex shrink-0 items-center justify-between gap-space-4">
         <h2 className="wizard-h flex items-center gap-space-3">
           <FigIcon name="icon-note.svg" h={19} />
           {t('wizard.track.intro')}
@@ -255,7 +269,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
           type="button"
           onClick={() => fileInputRef.current?.click()}
           title={t('wizard.track.replaceFile')}
-          className="dash-panel mt-space-6 flex h-[90px] w-full items-center justify-between gap-space-4 px-space-5"
+          className="dash-panel mt-space-6 flex h-[90px] min-h-[90px] w-full shrink-0 items-center justify-between gap-space-4 px-space-5"
         >
           <span className="wizard-body truncate text-left">{baseName}</span>
           <span className="flex shrink-0 items-center gap-space-3">
@@ -266,7 +280,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
       )}
 
       {/* Лимит длины отрывка виден ДО ввода — рядом с заголовком, а не тостом постфактум */}
-      <div className="mt-space-6 flex flex-wrap items-baseline justify-between gap-space-3">
+      <div className="mt-space-6 flex shrink-0 flex-wrap items-baseline justify-between gap-space-3">
         <h2 className="wizard-h">{t('wizard.track.timing')}</h2>
         <span className="flex items-center gap-space-3">
           <span className={cn('soft-chip', overLimit && '!text-[var(--warning)]')}>{t('wizard.track.segmentCap', { seconds: maxSegmentSeconds })}</span>
@@ -278,7 +292,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
         </span>
       </div>
       {/* Акцентная обводка с момента загрузки трека и дальше — пройденный/активный этап */}
-      <div className={cn('mt-space-5 flex h-[190px] w-full items-center justify-center gap-space-4 px-space-5', track ? 'dash-panel' : 'dash-panel-white', (overLimit || backwards) && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
+      <div className={cn('mt-space-5 flex h-[190px] min-h-[190px] w-full shrink-0 items-center justify-center gap-space-4 px-space-5', track ? 'dash-panel' : 'dash-panel-white', (overLimit || backwards) && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
         <button
           type="button"
           aria-label={playing ? t('wizard.track.pause') : t('wizard.track.play')}
@@ -310,7 +324,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
         <input ref={timingToInputRef} value={timingTo} onChange={(e) => commitTiming('timingTo', clampTiming(e.target.value, track?.durationS))} inputMode="numeric" maxLength={8} aria-label={t('wizard.track.segEnd')} placeholder="00:00:00" className="soft-input" />
       </div>
       {/* Живая длина отрывка: перебор виден сразу, введённое не стирается */}
-      <p className={cn('mt-space-5 max-w-[520px] text-[15px] leading-[1.5]', overLimit || backwards ? 'text-[var(--warning)]' : 'wizard-body')}>
+      <p className={cn('mt-space-5 max-w-[520px] shrink-0 text-[15px] leading-[1.5]', overLimit || backwards ? 'text-[var(--warning)]' : 'wizard-body')}>
         {backwards
           ? t('wizard.track.segmentBackwards')
           : overLimit
@@ -334,6 +348,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
 export function WizardPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const { push } = useToast();
   const stage = useWizardStore((state) => state.stage);
@@ -358,7 +373,7 @@ export function WizardPage() {
     state.setField('timingFrom', '00:10:00');
     state.setField('timingTo', '00:22:00');
     state.setBackground({ mode: 'footage', footage: ['Ночной город', 'Неон'], photo: ['Крупный план'], color: '#8b6fe6', strobe: false, glue: 'Щелчок' });
-    state.setHooks({ dropTime: '00:15:00', kind: 'sound', config: { sound: 'Звук' } });
+    state.setHooks({ dropTime: '00:15:00', kind: 'warmup', config: { sound: 'Звук' } });
     state.setHooks({ kind: 'object', config: { object: 'Квадрат' } });
     state.setHooks({ kind: 'effects', config: { effectHook: 'Молния', effectGlue: 'Щелчок', effectStyle: 'Глитч' } });
     state.setHooks({ kind: 'motion', config: { motion: 'Зум' } });
@@ -408,7 +423,31 @@ export function WizardPage() {
     }
   }, [params, projectId, projectsQuery.data?.activeProject?.id, projectsQuery.data?.projects, setProjectId]);
 
-  const saveSessionMutation = useMutation({ mutationFn: () => api.saveWizardSession({ projectId, stage, data: state.stageData() }) });
+  const saveSessionMutation = useMutation({
+    mutationFn: () => api.saveWizardSession({ projectId, stage, data: state.stageData() }),
+    onError: () => {
+      // A failed persistence write must stop the stage transition.  Moving on
+      // would leave the next panel rendered from a draft the server never saw.
+      push({ variant: 'error', title: t('wizard.page.saveFail'), text: t('wizard.page.saveFailText') });
+    }
+  });
+  const renameProjectMutation = useMutation({
+    mutationFn: (name: string) => {
+      if (!projectId) throw new Error('Project is not selected');
+      return api.updateProject(projectId, { name });
+    },
+    onSuccess: async (data) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['projects'] }),
+        queryClient.invalidateQueries({ queryKey: ['project', data.project.id] })
+      ]);
+    },
+    onError: (error) => push({
+      variant: 'error',
+      title: t('wizard.page.renameFail'),
+      text: error instanceof Error ? error.message : undefined
+    })
+  });
   const submitMutation = useMutation({
     mutationFn: () => api.submitWizard({ projectId, stageData: state.stageData(), videosToGenerate: safeVideosToGenerate, idempotencyKey: state.final.idempotencyKey }),
     // newBatch, а НЕ reset: трек, текст и тайминги — вводные проекта, а не батча.
@@ -429,9 +468,7 @@ export function WizardPage() {
       push({
         variant: 'error',
         title: limitReached ? t('wizard.page.limitReached') : t('wizard.page.genFail'),
-        text: limitReached
-          ? String((error.detail as { detail?: string })?.detail ?? '')
-          : t('wizard.page.genFailText'),
+        text: apiErrorText(error) ?? t('wizard.page.genFailText'),
         action: limitReached ? { label: t('wizard.track.limitCta'), href: '/app/pricing' } : undefined
       });
     }
@@ -442,10 +479,17 @@ export function WizardPage() {
   const fixedColorCount = state.background.color ? 1 : 0;
   const allocBgSum = Object.values(state.allocation.background).reduce((a, b) => a + b, 0);
   const allocSubsSum = Object.values(state.allocation.subtitles).reduce((a, b) => a + b, 0);
+  const allocHooksSum = Object.values(state.allocation.hooks).reduce((a, b) => a + b, 0);
+  const allocStylesSum = Object.values(state.allocation.styles ?? {}).reduce((a, b) => a + b, 0);
+  const selectedHooks = hookPills(state.hooks);
+  const selectedStyles = selectedEffectStyles(state.hooks);
+  const hookTarget = compatibleHookTarget(state.background, state.allocation.background);
   const allocBalanced =
     state.allocation.total > 0 &&
     allocBgSum === state.allocation.total - fixedColorCount &&
-    (state.subtitles.pool.length === 0 || allocSubsSum === state.allocation.total - fixedColorCount);
+    (state.subtitles.pool.length === 0 || allocSubsSum === state.allocation.total - fixedColorCount) &&
+    (selectedHooks.length === 0 ? allocHooksSum === 0 : allocHooksSum === hookTarget) &&
+    (selectedStyles.length === 0 ? allocStylesSum === 0 : allocStylesSum === hookTarget);
   const safeVideosToGenerate = Math.max(1, state.allocation.total);
 
   // Трек и текст — обязательные вводные: без них рендерить lyric-video нечего.
@@ -460,6 +504,17 @@ export function WizardPage() {
     && timingToSeconds(state.timingFrom) !== null
     && timingToSeconds(state.timingTo) !== null
     && !segmentInvalid;
+  const dropSeconds = dropToSeconds(state.hooks.dropTime);
+  const clipFromSeconds = timingToSeconds(state.timingFrom);
+  const clipToSeconds = timingToSeconds(state.timingTo);
+  const dropReady = dropSeconds !== null
+    && clipFromSeconds !== null
+    && clipToSeconds !== null
+    && dropSeconds >= clipFromSeconds
+    && dropSeconds <= clipToSeconds;
+  const configuredHooks = hookPills(state.hooks);
+  const configuredHookCount = configuredHooks.length;
+  const configuredHooksNeedDrop = configuredHooks.some((pill) => pill.kind !== 'none');
 
   // Примерка субтитров: ASR стартует, как только человек ушёл с «Трека», и успевает к «Тексту»
   useAsrPreview(stage !== 1 && trackReady && timingReady);
@@ -472,22 +527,19 @@ export function WizardPage() {
 
   // «Продолжить» подсвечивается только при непустом выборе; кликабельность — отдельно
   const ready = useMemo(() => {
-    if (stage === 1) return trackReady && !segmentInvalid;
+    if (stage === 1) return trackReady && timingReady && !segmentInvalid;
     if (stage === 2) return backgroundVariations(state.background) > 0;
-    if (stage === 3) return hookPills(state.hooks).length > 0;
+    if (stage === 3) return configuredHookCount > 0 && (!configuredHooksNeedDrop || dropReady);
     if (stage === 4) return state.subtitles.pool.length > 0;
     if (stage === 5) return allocBalanced && trackReady;
     return false;
-  }, [allocBalanced, segmentInvalid, stage, state.background, state.hooks, state.subtitles.pool, trackReady]);
+  }, [allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.subtitles.pool, timingReady, trackReady]);
 
   const canContinue = useMemo(() => {
-    // Хук опционален — с этапа можно уйти без выбора
-    if (stage === 3) return true;
     return ready;
   }, [ready, stage]);
 
-  // Порядок прохождения этапов по макету: Трек → Фон → Текст → Хук → Пул
-  const STAGE_ORDER = [1, 2, 4, 3, 5];
+
 
   /*
    * Метрики прохождения визарда (из ревью): сколько времени человек проводит на этапе —
@@ -496,6 +548,13 @@ export function WizardPage() {
    * отдельного «ушёл со страницы» не нужно.
    */
   const stageEnteredRef = useRef<{ stage: number; at: number }>({ stage, at: Date.now() });
+  const trackedStageRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (trackedStageRef.current === stage) return;
+    trackedStageRef.current = stage;
+    void api.trackEvent('wizard_stage_view', { stage }).catch(() => {});
+  }, [stage]);
+
   useEffect(() => {
     const previous = stageEnteredRef.current;
     if (previous.stage === stage) return;
@@ -506,13 +565,15 @@ export function WizardPage() {
       back: STAGE_ORDER.indexOf(stage) < STAGE_ORDER.indexOf(previous.stage)
     });
     stageEnteredRef.current = { stage, at: Date.now() };
-    // STAGE_ORDER — константа модуля по смыслу, пересобирается каждый рендер
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage]);
 
   const next = async () => {
     if (!canContinue) return;
-    await saveSessionMutation.mutateAsync();
+    try {
+      await saveSessionMutation.mutateAsync();
+    } catch {
+      return;
+    }
     const idx = STAGE_ORDER.indexOf(stage);
     if (idx < STAGE_ORDER.length - 1) setStage(STAGE_ORDER[idx + 1]);
     else submitMutation.mutate();
@@ -528,7 +589,9 @@ export function WizardPage() {
   }
 
   const track = state.track;
-  const headerTitle = track ? track.filename.replace(/\.[^.]+$/, '') : t('wizard.track.nameFallback');
+  const currentProject = projectsQuery.data?.projects.find((project) => project.id === projectId);
+  const headerTitle = currentProject?.name
+    ?? (track ? track.filename.replace(/\.[^.]+$/, '') : t('wizard.track.nameFallback'));
   const artist = meQuery.data?.user.artistNick || meQuery.data?.user.name || undefined;
   const back = () => {
     const idx = STAGE_ORDER.indexOf(stage);
@@ -543,7 +606,7 @@ export function WizardPage() {
   // низ = аватар. Раньше визард жил на своём паттерне (-m-space-6 + h-dvh) и вставал по 32px,
   // из-за чего ужимался не так, как остальные страницы.
   return (
-    <div className="flex min-h-0 flex-1 gap-[20px] max-lg:h-auto max-lg:flex-col md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 gap-[20px] max-lg:h-auto max-lg:flex-col md:h-[var(--app-page-h)] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       {/*
         Новый батч наследует трек, текст и тайминги прошлого — но молча подменять
         вводные нельзя: человек либо не заметит, что генерит по старому отрывку,
@@ -562,7 +625,10 @@ export function WizardPage() {
         <WizardHeaderCard
           title={headerTitle}
           artist={artist}
-          onRename={track ? (value) => value && state.setTrack({ ...track, filename: `${value}.${track.filename.split('.').pop()}` }) : undefined}
+          onRename={projectId ? (value) => {
+            const name = value.trim();
+            if (name && name !== currentProject?.name) renameProjectMutation.mutate(name);
+          } : undefined}
         />
         {/* data-limits-dim: хост затемнения для LimitsIndicator (Figma W46 — на всю карточку) */}
         <div data-limits-dim className={cn('card-2 relative min-h-0 flex-1 px-space-7 py-space-6 max-lg:px-space-5', stage === 5 ? 'overflow-hidden' : 'subtle-scroll overflow-y-auto')}>

@@ -6,17 +6,24 @@ and tables, keyed by the verified Telegram chat id.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import uuid4
 
 from .runtime import SETTINGS
 
 
 class BillingError(RuntimeError):
     pass
+
+
+class PaymentInitError(BillingError):
+    def __init__(self, code: str, message: str, *, status_code: int) -> None:
+        super().__init__(message)
+        self.code = str(code)
+        self.status_code = int(status_code)
 
 
 class InsufficientCredits(BillingError):
@@ -70,6 +77,17 @@ def _iso(value: Any) -> str | None:
     return str(value)
 
 
+def credit_usage_view(base_total: int | None, balance: int, spent: int) -> tuple[int | None, int]:
+    """Build a truthful meter for the cumulative shared credit balance."""
+    used = max(0, int(spent))
+    if base_total is None:
+        return None, used
+    # Unused credits roll over between purchases. Their grants may make the
+    # real pool larger than the nominal allowance of the latest product.
+    total = max(int(base_total), max(0, int(balance)) + used)
+    return total, used
+
+
 class BillingBackend:
     def __init__(self) -> None:
         if SETTINGS.backend != "production":
@@ -104,11 +122,96 @@ class BillingBackend:
     async def close(self) -> None:
         await self._db.close()
 
+    async def queue_payment_notifications(self) -> None:
+        """Reconcile web Init events from the durable ledger, including a lost
+        HTTP response/restart between saving the payment and notifying ops.
+        Settlement notifications remain owned by the existing T-Bank webhook.
+        """
+        from . import notifications
+        from starlette.concurrency import run_in_threadpool
+
+        async with self._db._pool_or_fail().acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT order_id, tg_id, package, amount_rub, status, payment_url FROM payments "
+                "WHERE order_id LIKE '%-web-%'"
+            )
+        for row in rows:
+            status = str(row["status"])
+            # A saved URL proves Init succeeded even if the payment has already
+            # advanced to CONFIRMED before this monitor tick.
+            event = "created" if row["payment_url"] else status.lower()
+            if event not in {"created", "init_failed", "init_unknown"}:
+                continue
+            label = {"created": "Создана ссылка на оплату", "init_failed": "Не удалось создать платёж",
+                     "init_unknown": "Неопределённый результат создания платежа"}[event]
+            await run_in_threadpool(
+                notifications.manager_event, f"payment:{row['order_id']}:{event}",
+                f"{label} на сайте\nПользователь: {row['tg_id']}\nПакет: {row['package']}\n"
+                f"Сумма: {row['amount_rub']} ₽\nOrder: {row['order_id']}"
+            )
+
     async def healthcheck(self) -> None:
         pool = self._db._pool_or_fail()
         async with pool.acquire() as conn:
             if await conn.fetchval("SELECT 1") != 1:
                 raise BillingError("billing database healthcheck failed")
+
+    async def admin_bot_analytics(self, days: int) -> dict[str, Any]:
+        """Aggregate the bot event stream for the web admin analytics page.
+
+        The bot and web app intentionally keep separate event logs.  This read
+        joins neither database and therefore keeps attribution explicit; the
+        API layer may combine the returned identity sets with the web sets when
+        the operator selects the combined view.
+        """
+        period_days = max(1, min(int(days), 365))
+        pool = self._db._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT event, COUNT(*)::BIGINT AS events, "
+                "COUNT(DISTINCT tg_id)::BIGINT AS users, "
+                "ARRAY_AGG(DISTINCT tg_id) AS user_ids "
+                "FROM activity_log "
+                "WHERE created_at >= NOW() - ($1::INT * INTERVAL '1 day') "
+                "GROUP BY event ORDER BY events DESC, event",
+                period_days,
+            )
+            recent_rows = await conn.fetch(
+                "SELECT id, tg_id, event, detail, created_at "
+                "FROM activity_log "
+                "WHERE created_at >= NOW() - ($1::INT * INTERVAL '1 day') "
+                "ORDER BY created_at DESC, id DESC LIMIT 30",
+                period_days,
+            )
+
+        events: dict[str, dict[str, Any]] = {}
+        active_ids: set[str] = set()
+        for row in rows:
+            user_ids = {f"tg:{int(value)}" for value in (row["user_ids"] or [])}
+            active_ids.update(user_ids)
+            events[str(row["event"] or "")] = {
+                "events": int(row["events"] or 0),
+                "users": int(row["users"] or 0),
+                "userIds": user_ids,
+            }
+        return {
+            "days": period_days,
+            "activeUserIds": active_ids,
+            "events": events,
+            "recent": [
+                {
+                    "id": f"bot:{int(row['id'])}",
+                    "name": str(row["event"] or ""),
+                    "userId": f"tg:{int(row['tg_id'])}",
+                    "ts": _iso(row["created_at"]) or "",
+                    "props": {"detail": str(row["detail"] or "")},
+                }
+                for row in recent_rows
+            ],
+        }
+
+    async def sync_web_activity(self, events: list[dict[str, Any]]) -> int:
+        return await self._db.sync_web_activity(events)
 
     async def ensure_user(self, tg_id: int, username: str = "") -> None:
         await self._db.ensure_user(int(tg_id), username)
@@ -117,7 +220,11 @@ class BillingBackend:
         tg_id = int(tg_id)
         await self.ensure_user(tg_id)
         balance = await self._db.get_balance(tg_id)
+        generation_usage = await self._db.get_generation_usage(tg_id)
         track_balance = await self._db.get_track_balance(tg_id)
+        track_unlimited = await self._db.is_track_unlimited(tg_id)
+        bonuses_claimed = await self._db.count_web_subscription_bonuses(tg_id)
+        bonuses_earned = await self._db.count_earned_web_subscription_bonuses(tg_id)
         tracks_used = await self._db.count_user_tracks(tg_id)
         payments = await self._db.get_payments(tg_id=tg_id, limit=100)
         confirmed = next(
@@ -143,7 +250,7 @@ class BillingBackend:
             tracks_total = plan.tracks
             plan_kind = plan.kind
             billing_status = "active"
-            started_at = (confirmed or {}).get("created_at")
+            started_at = (active_sub or latest_sub or {}).get("created_at") or (confirmed or {}).get("created_at")
             renews_at = _iso((active_sub or {}).get("next_charge_at"))
             cancel_at_period_end = bool(
                 plan.kind == "subscription"
@@ -162,12 +269,13 @@ class BillingBackend:
                 except ValueError:
                     expires_at = None
 
+        total, generation_usage = credit_usage_view(total, balance, generation_usage)
         return {
             "tier": tier,
             "creditsTotal": total,
-            "creditsUsed": 0 if total is None else max(0, total - balance),
+            "creditsUsed": generation_usage,
             "creditsLeft": balance,
-            "tracksTotal": max(tracks_total, tracks_used + track_balance),
+            "tracksTotal": None if track_unlimited else max(tracks_total, tracks_used + track_balance),
             "tracksUsed": tracks_used,
             "tracksLeft": track_balance,
             "isActive": True,
@@ -178,12 +286,30 @@ class BillingBackend:
             "renewsAt": renews_at,
             "expiresAt": expires_at,
             "lastPaymentError": None,
+            "bonusesClaimed": bonuses_claimed,
+            "bonusMonthsEarned": bonuses_earned,
+            "payments": [
+                {
+                    "orderId": item["order_id"],
+                    "amountRub": item["amount_rub"],
+                    "package": item["package"],
+                    "status": item["status"],
+                    "createdAt": item["created_at"],
+                }
+                for item in payments[:6]
+            ],
         }
 
     async def can_upload_track(self, tg_id: int, audio_hash: str) -> bool:
         if await self._db.has_track_hash(int(tg_id), audio_hash):
             return True
+        if await self._db.is_track_unlimited(int(tg_id)):
+            return True
         return await self._db.get_track_balance(int(tg_id)) > 0
+
+    async def claim_bonus(self, tg_id: int) -> dict[str, Any]:
+        await self._db.claim_web_subscription_bonus(int(tg_id))
+        return await self.snapshot(int(tg_id))
 
     async def consume_track(self, tg_id: int, audio_hash: str) -> str:
         result = await self._db.consume_track_slot(int(tg_id), audio_hash)
@@ -242,6 +368,10 @@ class BillingBackend:
         amount = int(amount)
         if amount < 1:
             return await self._db.get_balance(tg_id)
+        # The shared ledger has a global uniqueness constraint on non-empty
+        # context_order_id. Reserve and refund are two distinct transactions,
+        # so their ledger identities must also be distinct.
+        refund_context = f"{job_id}:refund"
         pool = self._db._pool_or_fail()
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -249,7 +379,7 @@ class BillingBackend:
                     "SELECT amount FROM transactions WHERE tg_id = $1 "
                     "AND reason = 'web_generation_refund' AND context_order_id = $2",
                     tg_id,
-                    job_id,
+                    refund_context,
                 )
                 if existing is not None:
                     return int(await conn.fetchval("SELECT credits FROM users WHERE tg_id = $1", tg_id) or 0)
@@ -277,7 +407,7 @@ class BillingBackend:
                     tg_id,
                     amount,
                     f"web job={job_id}",
-                    job_id,
+                    refund_context,
                 )
                 return int(row["credits"])
 
@@ -288,6 +418,7 @@ class BillingBackend:
         package_type: str,
         email: str,
         recurrent_accepted: bool,
+        idempotency_key: str,
     ) -> dict[str, str]:
         plan = PLANS.get(str(package_type or "").upper())
         if plan is None:
@@ -295,14 +426,49 @@ class BillingBackend:
         recurrent = plan.kind == "subscription"
         if recurrent and not recurrent_accepted:
             raise BillingError("recurrent payment consent is required for BLAST")
-        order_id = f"{int(tg_id)}-{plan.payment_name}-web{'sub' if recurrent else ''}{uuid4().hex[:8]}"
-        if recurrent:
-            await self._db.create_recurrent_payment(
-                order_id, int(tg_id), plan.price_rub, plan.payment_name
+        clean_key = str(idempotency_key or "").strip()
+        if not clean_key:
+            raise PaymentInitError(
+                "payment_idempotency_required",
+                "payment idempotency key is required",
+                status_code=422,
             )
-        else:
-            await self._db.create_payment(
-                order_id, int(tg_id), plan.price_rub, plan.payment_name
+        digest = hashlib.sha256(f"{int(tg_id)}:{clean_key}".encode("utf-8")).hexdigest()[:16]
+        order_id = f"{int(tg_id)}-{plan.code.lower()}-web-{digest}"
+        intent, created = await self._db.claim_web_payment_intent(
+            order_id=order_id,
+            tg_id=int(tg_id),
+            amount_rub=plan.price_rub,
+            package=plan.payment_name,
+            recurrent=recurrent,
+            idempotency_key=clean_key,
+        )
+        if (
+            int(intent.get("tg_id", 0)) != int(tg_id)
+            or int(intent.get("amount_rub", 0)) != plan.price_rub
+            or str(intent.get("package") or "") != plan.payment_name
+            or bool(intent.get("is_recurrent", False)) != recurrent
+        ):
+            raise PaymentInitError(
+                "payment_idempotency_conflict",
+                "payment idempotency key was already used for another order",
+                status_code=409,
+            )
+        if not created:
+            saved_url = str(intent.get("payment_url") or "").strip()
+            if saved_url:
+                return {"orderId": str(intent["order_id"]), "paymentUrl": saved_url}
+            status = str(intent.get("status") or "").strip().upper()
+            code = {
+                "INIT_IN_PROGRESS": "payment_init_in_progress",
+                "INIT_FAILED": "payment_init_failed",
+                "INIT_UNKNOWN": "payment_init_unknown",
+            }.get(status, "payment_init_unknown")
+            status_code = 409 if status == "INIT_IN_PROGRESS" else 503
+            raise PaymentInitError(
+                code,
+                f"payment order {intent['order_id']} has no reusable payment URL (status={status or 'UNKNOWN'})",
+                status_code=status_code,
             )
         try:
             url = await self._tbank.create_payment(
@@ -319,12 +485,41 @@ class BillingBackend:
                 success_url=f"{SETTINGS.app_url}/app/pricing?payment=success",
                 fail_url=f"{SETTINGS.app_url}/app/pricing?payment=failed",
             )
-        except Exception:
-            await self._db.update_payment_status(order_id, "INIT_FAILED")
-            raise
+        except Exception as exc:
+            # A transport failure is ambiguous: T-Bank may have accepted Init
+            # before our client lost the response.  Keep this exact order for
+            # reconciliation and never create a second one implicitly.
+            await self._db.mark_web_payment_init(order_id, "INIT_UNKNOWN", str(exc))
+            raise PaymentInitError(
+                "payment_init_unknown",
+                f"T-Bank Init outcome is unknown for order {order_id}",
+                status_code=503,
+            ) from exc
         if not url:
-            await self._db.update_payment_status(order_id, "INIT_FAILED")
-            raise BillingError("T-Bank Init did not return PaymentURL")
+            await self._db.mark_web_payment_init(
+                order_id,
+                "INIT_FAILED",
+                "T-Bank Init did not return PaymentURL",
+            )
+            raise PaymentInitError(
+                "payment_init_failed",
+                "T-Bank Init did not return PaymentURL",
+                status_code=502,
+            )
+        try:
+            saved = await self._db.complete_web_payment_init(order_id, url)
+        except Exception as exc:
+            raise PaymentInitError(
+                "payment_init_unknown",
+                f"payment link could not be persisted for order {order_id}",
+                status_code=503,
+            ) from exc
+        if not saved:
+            raise PaymentInitError(
+                "payment_init_unknown",
+                f"payment order {order_id} changed before its link was persisted",
+                status_code=409,
+            )
         return {"orderId": order_id, "paymentUrl": url}
 
     async def cancel(self, tg_id: int) -> bool:
@@ -354,7 +549,7 @@ class BillingBackend:
         pool = self._db._pool_or_fail()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT status, next_charge_at, cancelled_at FROM subscriptions "
+                "SELECT package, status, next_charge_at, cancelled_at, created_at FROM subscriptions "
                 "WHERE tg_id = $1 ORDER BY id DESC LIMIT 1",
                 int(tg_id),
             )

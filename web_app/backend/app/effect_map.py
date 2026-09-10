@@ -9,7 +9,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 _REGISTRY_PATH = Path(__file__).resolve().parents[2] / "frontend" / "src" / "data" / "effects-registry.json"
@@ -17,11 +16,12 @@ _REGISTRY_PATH = Path(__file__).resolve().parents[2] / "frontend" / "src" / "dat
 
 def _load_registry() -> dict:
     try:
-        return json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
+        registry = json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
-        if os.getenv("MODE") == "prod":
-            raise RuntimeError(f"effects registry is unavailable: {_REGISTRY_PATH}") from exc
-        return {}
+        raise RuntimeError(f"effects registry is unavailable: {_REGISTRY_PATH}") from exc
+    if not isinstance(registry, dict) or not all(registry.get(group) for group in ("hook", "glue", "style")):
+        raise RuntimeError(f"effects registry has no required hook/glue/style groups: {_REGISTRY_PATH}")
+    return registry
 
 
 _REG = _load_registry()
@@ -40,6 +40,9 @@ def _build_map(group: str, *, include_alt: bool = False) -> dict[str, str]:
 HOOK_MAP: dict[str, str] = _build_map("hook")
 GLUE_MAP: dict[str, str] = _build_map("glue", include_alt=True)   # + GLUE_TYPES dashed-id
 STYLE_MAP: dict[str, str] = _build_map("style")
+# Стили, которые манифест всегда растягивает на весь ролик (manifest.full_window):
+# у них охват не спрашивается, флаг ставится сам.
+STYLE_FULL_WINDOW: set[str] = {e["label"] for e in _REG.get("style", []) if e.get("fullWindow")}
 
 # branding по manifestId хука (из поля registry.hook[].branding)
 HOOK_BRANDING: dict[str, dict] = {}
@@ -50,24 +53,23 @@ for _e in _REG.get("hook", []):
     else:
         HOOK_BRANDING[_e["manifestId"]] = {"enabled": False}
 
-# --- фолбэк, если реестр не прочитался (например, отдельный деплой бэка) ---
-if not HOOK_MAP:
-    HOOK_MAP = {"Молния": "hook_light", "Затвор": "shutter_effect",
-                "Слоу-шаттер": "flash_slow_shutter", "Негатив зум": "negative_zoom"}
-if not GLUE_MAP:
-    GLUE_MAP = {"Щелчок": "snap_wipe", "Минимакс": "minimax", "Экстракт": "extract_flash",
-                "Инверт": "invert_flash", "Вспышка": "flash_on_cuts",
-                "snap-wipe": "snap_wipe", "minimax": "minimax", "extract": "extract_flash", "invert": "invert_flash"}
-if not STYLE_MAP:
-    STYLE_MAP = {"Ксерокс": "xerox", "Глитч": "analog_glitch", "Неон": "neon_extract", "Старая камера": "old_camera"}
+# «Мысль» — TTS-вставка (mlcore/hooks/f5_cognition). Своего run_job-хука не даёт: воркеру
+# нужен id приёма, а стор визарда хранит RU-лейбл. Зеркало F5-набора из tg_bot_public.
+THOUGHT_DEVICE: dict[str, str] = {
+    "Панчлайн": "punchline",
+    "Пропущенное слово": "missing_word",
+    "Эхо": "lyric_echo",
+    "Вопрос": "question_to_track",
+    "Инверсия": "inverse_lyric",
+}
 
 # object/motion — не идут в run_job, зовутся отдельными скриптами (spec §4.4)
 OBJECT_SCRIPT: dict[str, str] = {
     "Круг": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_elipse.jsx",
     "Квадрат": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_square.jsx",
     "Ромб": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_rhomb.jsx",
-    "Звезда-5": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_star1.jsx",
-    "Звезда-10": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_star2.jsx",
+    "Звезда-5": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_star2.jsx",
+    "Звезда-10": "Хуки/Лого и шейпы/Шейпы/rebuild_shape_star1.jsx",
 }
 MOTION_SCRIPT: dict[str, str] = {
     "Свайп": "Хуки/Движение/ш3/rebuild_swipe.jsx",
@@ -88,6 +90,14 @@ def map_glue(label: str | None) -> str | None:
 
 def map_style(label: str | None) -> str | None:
     return STYLE_MAP.get(label) if label else None
+
+
+def map_thought(label: str | None) -> str | None:
+    return THOUGHT_DEVICE.get(label) if label else None
+
+
+def style_is_full_window(label: str | None) -> bool:
+    return bool(label) and label in STYLE_FULL_WINDOW
 
 
 def parse_mmssms(value: str | None) -> float | None:

@@ -7,7 +7,7 @@ import json
 import logging
 import secrets
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional
 
 import asyncpg
@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS users (
     username            TEXT      NOT NULL DEFAULT '',
     credits             INTEGER   NOT NULL DEFAULT 0,
     track_credits       INTEGER   NOT NULL DEFAULT 0,
+    track_unlimited     BOOLEAN   NOT NULL DEFAULT FALSE,
     created_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMP NOT NULL DEFAULT NOW(),
     source              TEXT      NOT NULL DEFAULT '',
@@ -111,6 +112,19 @@ CREATE INDEX IF NOT EXISTS idx_act_tg_event   ON activity_log(tg_id, event);
 CREATE INDEX IF NOT EXISTS idx_act_tg_event_created ON activity_log(tg_id, event, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_act_tg_created ON activity_log(tg_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS web_activity_log (
+    id          TEXT PRIMARY KEY,
+    user_id     TEXT NOT NULL,
+    tg_id       BIGINT,
+    event       TEXT NOT NULL,
+    props       JSONB NOT NULL DEFAULT '{}'::JSONB,
+    created_at  TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_web_act_created_at ON web_activity_log(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_web_act_event ON web_activity_log(event);
+CREATE INDEX IF NOT EXISTS idx_web_act_tg_id ON web_activity_log(tg_id);
+
 CREATE TABLE IF NOT EXISTS payments (
     id            BIGSERIAL PRIMARY KEY,
     order_id      TEXT      NOT NULL UNIQUE,
@@ -119,6 +133,9 @@ CREATE TABLE IF NOT EXISTS payments (
     package       TEXT      NOT NULL DEFAULT '',
     status        TEXT      NOT NULL DEFAULT 'NEW',
     payment_id    TEXT      NOT NULL DEFAULT '',
+    payment_url   TEXT      NOT NULL DEFAULT '',
+    idempotency_key TEXT    NOT NULL DEFAULT '',
+    init_error    TEXT      NOT NULL DEFAULT '',
 
     utm_source    TEXT      NOT NULL DEFAULT '',
     utm_medium    TEXT      NOT NULL DEFAULT '',
@@ -186,6 +203,13 @@ CREATE TABLE IF NOT EXISTS user_tracks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_tracks_tg_id ON user_tracks(tg_id);
+
+CREATE TABLE IF NOT EXISTS web_subscription_bonuses (
+    tg_id       BIGINT    NOT NULL,
+    bonus_index INTEGER   NOT NULL CHECK (bonus_index BETWEEN 1 AND 3),
+    claimed_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (tg_id, bonus_index)
+);
 """
 
 
@@ -195,6 +219,33 @@ def _fmt_ts(value: Any) -> str:
     if isinstance(value, datetime):
         return value.strftime("%Y-%m-%d %H:%M:%S")
     return str(value)
+
+
+def completed_subscription_months(started_at: datetime, now: datetime | None = None) -> int:
+    """Return completed calendar months, capped at the three loyalty rewards."""
+    current = now or datetime.now(timezone.utc)
+    if started_at.tzinfo is None:
+        started_at = started_at.replace(tzinfo=timezone.utc)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=timezone.utc)
+    started_at = started_at.astimezone(timezone.utc)
+    current = current.astimezone(timezone.utc)
+    months = (current.year - started_at.year) * 12 + current.month - started_at.month
+    if current.day < started_at.day:
+        months -= 1
+    return max(0, min(3, months))
+
+
+def earned_subscription_bonuses(
+    started_at: datetime,
+    paid_periods: int,
+    now: datetime | None = None,
+) -> int:
+    """Rewards require an elapsed month and its confirmed renewal payment."""
+    return max(
+        0,
+        min(3, completed_subscription_months(started_at, now), int(paid_periods) - 1),
+    )
 
 
 def _rowcount_from_tag(tag: str) -> int:
@@ -335,6 +386,7 @@ class CreditsDB:
         # Keep old databases compatible when tables were created before UTM columns existed.
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS track_credits INTEGER NOT NULL DEFAULT 0")
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS track_unlimited BOOLEAN NOT NULL DEFAULT FALSE")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_source TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_medium TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_utm_campaign TEXT NOT NULL DEFAULT ''")
@@ -365,6 +417,16 @@ class CreditsDB:
         # Recurrent payments support
         await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS rebill_id TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS is_recurrent BOOLEAN NOT NULL DEFAULT FALSE")
+        # Web checkout persists its Init result.  The partial unique index makes
+        # one browser attempt map to one acquiring order without changing the
+        # Telegram bot's existing rows, whose idempotency_key stays empty.
+        await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS payment_url TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS idempotency_key TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS init_error TEXT NOT NULL DEFAULT ''")
+        await conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_pay_web_idempotency "
+            "ON payments(tg_id, idempotency_key) WHERE idempotency_key <> ''"
+        )
 
         await conn.execute("CREATE TABLE IF NOT EXISTS utm_touches ("
                            "id BIGSERIAL PRIMARY KEY,"
@@ -1036,6 +1098,122 @@ class CreditsDB:
             bal = await conn.fetchval("SELECT track_credits FROM users WHERE tg_id = $1", int(tg_id))
             return int(bal) if bal is not None else 0
 
+    async def is_track_unlimited(self, tg_id: int) -> bool:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            return bool(await conn.fetchval("SELECT track_unlimited FROM users WHERE tg_id = $1", int(tg_id)))
+
+    async def count_web_subscription_bonuses(self, tg_id: int) -> int:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            value = await conn.fetchval(
+                "SELECT COUNT(*) FROM web_subscription_bonuses WHERE tg_id = $1",
+                int(tg_id),
+            )
+        return int(value or 0)
+
+    async def get_generation_usage(self, tg_id: int) -> int:
+        """Return net video credits spent across bot and web generations.
+
+        Reservations count immediately, while explicit failure refunds cancel
+        the matching spend. Payment and admin balance changes are deliberately
+        excluded because they change capacity, not usage.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            net = await conn.fetchval(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+                "WHERE tg_id = $1 AND reason IN "
+                "('generation', 'generation_failed_refund', "
+                "'web_generation_reserve', 'web_generation_refund')",
+                int(tg_id),
+            )
+        return max(0, -int(net or 0))
+
+    async def count_earned_web_subscription_bonuses(self, tg_id: int) -> int:
+        """Return Blast rewards backed by both elapsed time and paid renewals.
+
+        The first confirmed payment opens the current billing period. Each
+        later confirmed Blast charge proves that one more full paid month was
+        completed. Rejected and expired attempts never unlock the timeline.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            subscription = await conn.fetchrow(
+                "SELECT created_at FROM subscriptions WHERE tg_id = $1 "
+                "AND package IN ('15', 'Бласт') ORDER BY id DESC LIMIT 1",
+                int(tg_id),
+            )
+            if not subscription:
+                return 0
+            paid_periods = int(await conn.fetchval(
+                "SELECT COUNT(*) FROM payments WHERE tg_id = $1 "
+                "AND UPPER(status) = 'CONFIRMED' AND package IN ('15', 'Бласт') "
+                "AND created_at >= $2",
+                int(tg_id),
+                subscription["created_at"],
+            ) or 0)
+        return earned_subscription_bonuses(subscription["created_at"], paid_periods)
+
+    async def claim_web_subscription_bonus(self, tg_id: int) -> int:
+        """Claim the next earned Blast loyalty bonus and return claimed count.
+
+        Eligibility is based on full paid subscription months. The row lock and
+        unique key make browser retries and concurrent claims idempotent.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                subscription = await conn.fetchrow(
+                    "SELECT package, status, created_at, next_charge_at FROM subscriptions "
+                    "WHERE tg_id = $1 ORDER BY id DESC LIMIT 1 FOR UPDATE",
+                    int(tg_id),
+                )
+                if not subscription or normalize_package_code(str(subscription["package"])) != "15":
+                    raise ValueError("no_active_blast_subscription")
+                status = str(subscription["status"] or "")
+                next_charge_at = subscription["next_charge_at"]
+                if next_charge_at is not None and next_charge_at.tzinfo is None:
+                    next_charge_at = next_charge_at.replace(tzinfo=timezone.utc)
+                if status != "active" and not (
+                    status == "cancelled"
+                    and next_charge_at is not None
+                    and next_charge_at > datetime.now(timezone.utc)
+                ):
+                    raise ValueError("no_active_blast_subscription")
+                started = subscription["created_at"]
+                paid_periods = int(await conn.fetchval(
+                    "SELECT COUNT(*) FROM payments WHERE tg_id = $1 "
+                    "AND UPPER(status) = 'CONFIRMED' AND package IN ('15', 'Бласт') "
+                    "AND created_at >= $2",
+                    int(tg_id),
+                    started,
+                ) or 0)
+                earned = earned_subscription_bonuses(started, paid_periods)
+                claimed = int(await conn.fetchval(
+                    "SELECT COUNT(*) FROM web_subscription_bonuses WHERE tg_id = $1",
+                    int(tg_id),
+                ) or 0)
+                if claimed >= earned or claimed >= 3:
+                    raise ValueError("no_bonus_available")
+                bonus_index = claimed + 1
+                await conn.execute(
+                    "INSERT INTO web_subscription_bonuses (tg_id, bonus_index) VALUES ($1, $2)",
+                    int(tg_id), bonus_index,
+                )
+                if bonus_index == 3:
+                    await conn.execute(
+                        "UPDATE users SET track_unlimited = TRUE, updated_at = NOW() WHERE tg_id = $1",
+                        int(tg_id),
+                    )
+                else:
+                    await conn.execute(
+                        "UPDATE users SET track_credits = track_credits + 1, updated_at = NOW() WHERE tg_id = $1",
+                        int(tg_id),
+                    )
+        await self.log_event(tg_id, "web_subscription_bonus_claimed", f"bonus={bonus_index}")
+        return bonus_index
+
     async def count_confirmed_track_payments(self, tg_id: int) -> int:
         """Count CONFIRMED payments for track-eligible tariffs (Бласт/Глоу/Импульс).
 
@@ -1105,6 +1283,12 @@ class CreditsDB:
                     )
                     if inserted is None:
                         return "known"
+                    unlimited = bool(await conn.fetchval(
+                        "SELECT track_unlimited FROM users WHERE tg_id = $1 FOR UPDATE",
+                        int(tg_id),
+                    ))
+                    if unlimited:
+                        return "consumed"
                     row = await conn.fetchrow(
                         "UPDATE users SET track_credits = track_credits - 1, updated_at = NOW() "
                         "WHERE tg_id = $1 AND track_credits >= 1 RETURNING tg_id",
@@ -1661,7 +1845,192 @@ class CreditsDB:
             for r in rows
         ]
 
+    async def sync_web_activity(self, events: List[Dict[str, Any]]) -> int:
+        """Idempotently copy the web app event stream into the shared analytics DB."""
+        if not events:
+            return 0
+        values = []
+        for event in events:
+            event_id = str(event.get("id") or "").strip()
+            user_id = str(event.get("userId") or "").strip()
+            name = str(event.get("name") or "").strip()
+            created_at = event.get("ts")
+            if not event_id or not user_id or not name or not created_at:
+                raise ValueError("web activity event requires id, userId, name and ts")
+            tg_id = event.get("tgId")
+            values.append((
+                event_id,
+                user_id,
+                int(tg_id) if tg_id is not None else None,
+                name,
+                json.dumps(event.get("props") or {}, ensure_ascii=False),
+                created_at,
+            ))
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.executemany(
+                "INSERT INTO web_activity_log(id, user_id, tg_id, event, props, created_at) "
+                "VALUES($1,$2,$3,$4,$5::JSONB,$6::TIMESTAMP) ON CONFLICT(id) DO NOTHING",
+                values,
+            )
+        return len(values)
+
+    async def product_activity(
+        self,
+        channel: str,
+        date_from: datetime,
+        date_to: datetime,
+        *,
+        recent_limit: int = 20,
+    ) -> Dict[str, Any]:
+        """Read site, bot or de-duplicated combined product activity."""
+        selected = str(channel or "").strip().lower()
+        if selected not in {"site", "bot", "all"}:
+            raise ValueError("channel must be site, bot or all")
+        df = date_from.replace(tzinfo=None) if date_from.tzinfo else date_from
+        dt = date_to.replace(tzinfo=None) if date_to.tzinfo else date_to
+        bot_sql = (
+            "SELECT 'tg:' || tg_id::TEXT AS identity, event, detail, created_at, 'bot' AS channel "
+            "FROM activity_log WHERE created_at >= $1 AND created_at < $2"
+        )
+        site_sql = (
+            "SELECT CASE WHEN tg_id IS NULL THEN 'web:' || user_id ELSE 'tg:' || tg_id::TEXT END AS identity, "
+            "event, props::TEXT AS detail, created_at, 'site' AS channel "
+            "FROM web_activity_log WHERE created_at >= $1 AND created_at < $2"
+        )
+        source_sql = bot_sql if selected == "bot" else site_sql if selected == "site" else f"{bot_sql} UNION ALL {site_sql}"
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            grouped = await conn.fetch(
+                "WITH events AS (" + source_sql + ") "
+                "SELECT event, COUNT(*)::BIGINT AS events, COUNT(DISTINCT identity)::BIGINT AS users, "
+                "ARRAY_AGG(DISTINCT identity) AS identities FROM events "
+                "GROUP BY event ORDER BY events DESC, event",
+                df,
+                dt,
+            )
+            recent = await conn.fetch(
+                "WITH events AS (" + source_sql + ") "
+                "SELECT identity, event, detail, created_at, channel FROM events "
+                "ORDER BY created_at DESC LIMIT $3",
+                df,
+                dt,
+                max(1, min(int(recent_limit), 100)),
+            )
+        rows = [
+            {
+                "event": str(row["event"] or ""),
+                "events": int(row["events"] or 0),
+                "users": int(row["users"] or 0),
+                "identities": {str(value) for value in (row["identities"] or [])},
+            }
+            for row in grouped
+        ]
+        return {
+            "channel": selected,
+            "activeUsers": len({identity for row in rows for identity in row["identities"]}),
+            "events": sum(row["events"] for row in rows),
+            "byEvent": rows,
+            "recent": [
+                {
+                    "identity": str(row["identity"] or ""),
+                    "event": str(row["event"] or ""),
+                    "detail": str(row["detail"] or ""),
+                    "created_at": _fmt_ts(row["created_at"]),
+                    "channel": str(row["channel"] or ""),
+                }
+                for row in recent
+            ],
+        }
+
     # Payments
+
+    async def claim_web_payment_intent(
+        self,
+        *,
+        order_id: str,
+        tg_id: int,
+        amount_rub: int,
+        package: str,
+        recurrent: bool,
+        idempotency_key: str,
+    ) -> tuple[Dict[str, Any], bool]:
+        """Create or retrieve the one payment row for a web checkout attempt.
+
+        The INSERT and conflict lookup share a transaction.  A concurrent
+        request with the same (tg_id, idempotency_key) waits for the winner and
+        receives that exact row; it never creates another acquiring order.
+        """
+        clean_key = _norm_text(idempotency_key, max_len=128)
+        if not clean_key:
+            raise ValueError("web payment idempotency key is required")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow(
+                    "INSERT INTO payments "
+                    "(order_id, tg_id, amount_rub, package, status, is_recurrent, idempotency_key) "
+                    "VALUES ($1, $2, $3, $4, 'INIT_IN_PROGRESS', $5, $6) "
+                    "ON CONFLICT DO NOTHING "
+                    "RETURNING id, order_id, tg_id, amount_rub, package, status, payment_id, "
+                    "rebill_id, is_recurrent, payment_url, idempotency_key, init_error, "
+                    "created_at, updated_at",
+                    str(order_id),
+                    int(tg_id),
+                    int(amount_rub),
+                    str(package or ""),
+                    bool(recurrent),
+                    clean_key,
+                )
+                created = row is not None
+                if row is None:
+                    row = await conn.fetchrow(
+                        "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, "
+                        "rebill_id, is_recurrent, payment_url, idempotency_key, init_error, "
+                        "created_at, updated_at FROM payments "
+                        "WHERE tg_id = $1 AND idempotency_key = $2 FOR UPDATE",
+                        int(tg_id),
+                        clean_key,
+                    )
+                if row is None:
+                    raise RuntimeError("web payment intent conflict row is unavailable")
+                return dict(row), created
+
+    async def complete_web_payment_init(self, order_id: str, payment_url: str) -> bool:
+        """Persist the successful Init response before it reaches the browser."""
+        clean_url = str(payment_url or "").strip()
+        if not clean_url:
+            raise ValueError("payment URL is required")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tag = await conn.execute(
+                "UPDATE payments SET status = 'NEW', payment_url = $1, init_error = '', updated_at = NOW() "
+                "WHERE order_id = $2 AND status = 'INIT_IN_PROGRESS'",
+                clean_url,
+                str(order_id),
+            )
+        return _rowcount_from_tag(tag) == 1
+
+    async def mark_web_payment_init(
+        self,
+        order_id: str,
+        status: str,
+        error: str = "",
+    ) -> bool:
+        """Record an explicit failed or ambiguous Init outcome."""
+        clean_status = str(status or "").strip().upper()
+        if clean_status not in {"INIT_FAILED", "INIT_UNKNOWN"}:
+            raise ValueError(f"invalid web payment init status: {status!r}")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tag = await conn.execute(
+                "UPDATE payments SET status = $1, init_error = $2, updated_at = NOW() "
+                "WHERE order_id = $3 AND status = 'INIT_IN_PROGRESS'",
+                clean_status,
+                _norm_text(error, max_len=512),
+                str(order_id),
+            )
+        return _rowcount_from_tag(tag) == 1
 
     async def create_payment(
         self,
@@ -1715,7 +2084,7 @@ class CreditsDB:
         async with pool.acquire() as conn:
             r = await conn.fetchrow(
                 "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, "
-                "rebill_id, is_recurrent, "
+                "rebill_id, is_recurrent, payment_url, idempotency_key, init_error, "
                 "utm_source, utm_medium, utm_campaign, utm_content, utm_term, utm_payload, "
                 "created_at, updated_at "
                 "FROM payments WHERE order_id = $1",
@@ -1733,6 +2102,9 @@ class CreditsDB:
             "payment_id": str(r["payment_id"] or ""),
             "rebill_id": str(r["rebill_id"] or ""),
             "is_recurrent": bool(r["is_recurrent"]),
+            "payment_url": str(r["payment_url"] or ""),
+            "idempotency_key": str(r["idempotency_key"] or ""),
+            "init_error": str(r["init_error"] or ""),
             "utm_source": str(r["utm_source"] or ""),
             "utm_medium": str(r["utm_medium"] or ""),
             "utm_campaign": str(r["utm_campaign"] or ""),
@@ -1742,6 +2114,129 @@ class CreditsDB:
             "created_at": _fmt_ts(r["created_at"]),
             "updated_at": _fmt_ts(r["updated_at"]),
         }
+
+    async def confirm_payment_once(
+        self,
+        order_id: str,
+        payment_id: str,
+        *,
+        actor: str,
+    ) -> Dict[str, Any]:
+        """Confirm one acquiring payment and grant all entitlements atomically.
+
+        Webhook delivery and the polling loop can observe CONFIRMED at the same
+        time.  Locking the payment row keeps the status transition, video
+        credits, and unique-track quota in one transaction, so only the winner
+        applies the grant.  The return value always describes the committed
+        payment and balances; ``applied`` is false for a replay.
+        """
+        clean_order_id = _norm_text(order_id, max_len=128)
+        clean_payment_id = _norm_text(payment_id, max_len=128)
+        clean_actor = _norm_text(actor, max_len=64)
+        if not clean_order_id:
+            raise ValueError("payment order id is required")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                payment = await conn.fetchrow(
+                    "SELECT id, order_id, tg_id, amount_rub, package, status, payment_id, "
+                    "rebill_id, is_recurrent, payment_url, idempotency_key, init_error, "
+                    "created_at, updated_at FROM payments WHERE order_id = $1 FOR UPDATE",
+                    clean_order_id,
+                )
+                if payment is None:
+                    raise ValueError(f"unknown payment order: {clean_order_id}")
+
+                tg_id = int(payment["tg_id"])
+                package = str(payment["package"] or "")
+                current_status = str(payment["status"] or "").strip().upper()
+                credits_to_add = package_video_credits(package)
+                package_code = normalize_package_code(package)
+                track_base = {"15": 4, "30": 10, "50": 24}.get(package_code, 0)
+
+                await conn.execute(
+                    "INSERT INTO users (tg_id, username) VALUES ($1, '') ON CONFLICT (tg_id) DO NOTHING",
+                    tg_id,
+                )
+                if current_status == "CONFIRMED":
+                    balances = await conn.fetchrow(
+                        "SELECT credits, track_credits FROM users WHERE tg_id = $1",
+                        tg_id,
+                    )
+                    result = dict(payment)
+                    result.update(
+                        {
+                            "applied": False,
+                            "credits_added": 0,
+                            "tracks_added": 0,
+                            "credits_balance": int(balances["credits"] or 0),
+                            "track_balance": int(balances["track_credits"] or 0),
+                        }
+                    )
+                    return result
+
+                if current_status in {
+                    "REJECTED",
+                    "REFUNDED",
+                    "PARTIAL_REFUNDED",
+                    "REVERSED",
+                    "DEADLINE_EXPIRED",
+                    "CANCELED",
+                }:
+                    raise ValueError(
+                        f"cannot confirm terminal payment order {clean_order_id} from {current_status}"
+                    )
+
+                prior_track_payments = 0
+                if track_base:
+                    prior_track_payments = int(
+                        await conn.fetchval(
+                            "SELECT COUNT(*) FROM payments "
+                            "WHERE tg_id = $1 AND UPPER(status) = 'CONFIRMED' "
+                            "AND package IN ('15', 'Бласт', '30', 'Глоу', '50', 'Импульс')",
+                            tg_id,
+                        )
+                        or 0
+                    )
+                tracks_to_add = track_base if track_base and prior_track_payments == 0 else (1 if track_base else 0)
+
+                await conn.execute(
+                    "UPDATE payments SET status = 'CONFIRMED', payment_id = $1, updated_at = NOW() "
+                    "WHERE order_id = $2",
+                    clean_payment_id,
+                    clean_order_id,
+                )
+                balances = await conn.fetchrow(
+                    "UPDATE users SET credits = credits + $1, "
+                    "track_credits = track_credits + $2, updated_at = NOW() "
+                    "WHERE tg_id = $3 RETURNING credits, track_credits",
+                    int(credits_to_add),
+                    int(tracks_to_add),
+                    tg_id,
+                )
+                await conn.execute(
+                    "INSERT INTO transactions "
+                    "(tg_id, amount, reason, admin_note, actor, context_order_id) "
+                    "VALUES ($1, $2, 'payment', $3, $4, $5)",
+                    tg_id,
+                    int(credits_to_add),
+                    f"pkg={package} order={clean_order_id} amount={int(payment['amount_rub'])}₽",
+                    clean_actor,
+                    clean_order_id,
+                )
+                result = dict(payment)
+                result.update(
+                    {
+                        "status": "CONFIRMED",
+                        "payment_id": clean_payment_id,
+                        "applied": True,
+                        "credits_added": int(credits_to_add),
+                        "tracks_added": int(tracks_to_add),
+                        "credits_balance": int(balances["credits"] or 0),
+                        "track_balance": int(balances["track_credits"] or 0),
+                    }
+                )
+                return result
 
     async def get_payments(self, tg_id: int = 0, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         pool = self._pool_or_fail()

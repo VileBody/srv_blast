@@ -5,172 +5,80 @@ import { api } from '../../lib/api';
 import { isSubscriptionPlan, type Subscription } from '../../lib/types';
 import { useToast } from '../../contexts/ToastContext';
 
-/** Фантомная «строка счёта» — тот же приём, что в пустом состоянии проектов на дашборде. */
-function GhostBillingRow() {
-  return (
-    <div aria-hidden="true" className="flex items-center gap-space-5 opacity-[0.18]">
-      <span className="h-[44px] w-[44px] shrink-0 rounded-[8px] border border-dashed border-[rgba(246,245,253,0.18)]" />
-      <div className="min-w-0 flex-1">
-        <span className="block h-[14px] w-[45%] rounded-[4px] bg-[rgba(246,245,253,0.10)]" />
-        <span className="mt-[10px] block h-[10px] w-[70px] rounded-[4px] bg-[rgba(246,245,253,0.10)]" />
-      </div>
-      <span className="block h-[24px] w-[64px] shrink-0 rounded-[4px] bg-[rgba(246,245,253,0.10)]" />
-    </div>
-  );
-}
+/*
+ * Статусы приходят кодами эквайринга Т-банка (NEW, DEADLINE_EXPIRED, INIT_FAILED…).
+ * Пользователю нужен исход платежа, а не код интеграции, поэтому сводим их к пяти
+ * понятным состояниям; незнакомый код — это заведомо не успешная оплата, поэтому
+ * он попадает в «не завершён», а не показывается как есть.
+ */
+const PAYMENT_STATE: Record<string, string> = {
+  CONFIRMED: 'paid', AUTHORIZED: 'paid',
+  NEW: 'unfinished', FORM_SHOWED: 'unfinished', AUTHORIZING: 'unfinished', CONFIRMING: 'unfinished', INIT_IN_PROGRESS: 'unfinished',
+  DEADLINE_EXPIRED: 'expired', ATTEMPTS_EXPIRED: 'expired',
+  REJECTED: 'declined', INIT_FAILED: 'declined', CANCELED: 'declined', AUTH_FAIL: 'declined',
+  REFUNDED: 'refunded', PARTIAL_REFUNDED: 'refunded'
+};
 
-function formatDate(iso?: string | null): string {
+function formatDate(iso: string | null | undefined, locale: string): string {
   if (!iso) return '';
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-/**
- * Состояние оплаты подписки (Профиль).
- *
- * Подписка не «заканчивается» сама: она либо продлевается, либо повисает в `past_due`,
- * пока юзер не обновит платёж. Отмена доступна всегда, включая `past_due` — это условие
- * оферты, и запирать юзера в неудачной оплате нельзя.
- */
 export function BillingCard({ subscription }: { subscription: Subscription }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language.startsWith('en') ? 'en-GB' : 'ru-RU';
   const queryClient = useQueryClient();
   const { push } = useToast();
   const [confirmCancel, setConfirmCancel] = useState(false);
-
   const status = subscription.billingStatus ?? (subscription.tier === 'TRIAL' ? 'trial' : 'active');
-  const renews = formatDate(subscription.renewsAt);
-
+  const renews = formatDate(subscription.renewsAt, locale);
   const refresh = () => queryClient.invalidateQueries({ queryKey: ['me'] });
-  const fail = (error: unknown) => push({
-    variant: 'error',
-    title: error instanceof Error ? error.message : t('simple.error')
-  });
-
-  const retryMutation = useMutation({
-    mutationFn: api.retryPayment,
-    onSuccess: async () => { await refresh(); push({ variant: 'success', title: t('billing.retryOk') }); },
-    onError: fail
-  });
-  const cancelMutation = useMutation({
-    mutationFn: () => api.cancelSubscription(false),
-    onSuccess: async () => { setConfirmCancel(false); await refresh(); push({ variant: 'info', title: t('billing.cancelOk') }); },
-    onError: fail
-  });
-  const resumeMutation = useMutation({
-    mutationFn: api.resumeSubscription,
-    onSuccess: async () => { await refresh(); push({ variant: 'success', title: t('billing.resumeOk') }); },
-    onError: fail
-  });
-
+  const fail = (error: unknown) => push({ variant: 'error', title: error instanceof Error ? error.message : t('simple.error') });
+  const retryMutation = useMutation({ mutationFn: api.retryPayment, onSuccess: async () => { await refresh(); push({ variant: 'success', title: t('billing.retryOk') }); }, onError: fail });
+  const cancelMutation = useMutation({ mutationFn: () => api.cancelSubscription(false), onSuccess: async () => { setConfirmCancel(false); await refresh(); push({ variant: 'info', title: t('billing.cancelOk') }); }, onError: fail });
+  const resumeMutation = useMutation({ mutationFn: api.resumeSubscription, onSuccess: async () => { await refresh(); push({ variant: 'success', title: t('billing.resumeOk') }); }, onError: fail });
   const busy = retryMutation.isPending || cancelMutation.isPending || resumeMutation.isPending;
-
-  // Триал оплачивать нечего — карточка состояния оплаты не нужна
   if (subscription.tier === 'TRIAL') return null;
 
-  /*
-   * Разовая покупка (Glow/Impulse) — не подписка: продлевать и отменять нечего.
-   * Раньше ей рисовали ровно ту же карточку, что и подписке Blast, и человек считал,
-   * что с него будут списывать каждый месяц.
-   */
-  if (!isSubscriptionPlan(subscription)) {
-    const until = formatDate(subscription.expiresAt);
-    return (
-      <section className="card-2 shrink-0 p-[40px]">
-        <div className="flex items-baseline justify-between gap-space-4">
-          <h2 className="text-[24px] font-[350] leading-none text-text">{t('billing.title')}</h2>
-          <span
-            className="rounded-[15px] px-[14px] py-[6px] text-[14px] leading-none"
-            style={{ background: 'var(--success-bg)', color: 'var(--success)' }}
-          >
-            {t('billing.status.paid')}
-          </span>
-        </div>
-        <p className="mt-[20px] text-[18px] leading-[23px] text-text">{t('billing.oneTimeTitle')}</p>
-        <p className="mt-[8px] max-w-[520px] text-[15px] leading-[20px] text-text-60">
-          {until ? t('billing.oneTimeUntil', { date: until }) : t('billing.oneTimeText')}
-        </p>
-      </section>
-    );
-  }
-
-  const view = status === 'past_due'
-    ? { title: t('billing.failedTitle'), text: t('billing.failedText'), cta: t('billing.retryCta'), onCta: () => retryMutation.mutate(), tone: 'warning' as const }
-    : status === 'canceled'
-      ? { title: t('billing.canceledTitle'), text: renews ? t('billing.canceledText', { date: renews }) : t('billing.canceledTextNoDate'), cta: t('billing.resumeCta'), onCta: () => resumeMutation.mutate(), tone: 'muted' as const }
-      : { title: t('billing.activeTitle'), text: renews ? t('billing.activeText', { date: renews }) : '', cta: null, onCta: undefined, tone: 'ok' as const };
-
-  return (
-    <section className="card-2 shrink-0 p-[40px]">
-      <div className="flex items-baseline justify-between gap-space-4">
-        <h2 className="text-[24px] font-[350] leading-none text-text">{t('billing.title')}</h2>
-        <span
-          className="rounded-[15px] px-[14px] py-[6px] text-[14px] leading-none"
-          style={{
-            background: view.tone === 'warning' ? 'var(--warning-bg)' : view.tone === 'ok' ? 'var(--success-bg)' : 'var(--neutral-bg)',
-            color: view.tone === 'warning' ? 'var(--warning)' : view.tone === 'ok' ? 'var(--success)' : 'var(--text-40)'
-          }}
-        >
-          {t(`billing.status.${status}`)}
-        </span>
-      </div>
-
-      <div className="relative mt-[28px]">
-        {/* фантомы — фон под сообщением, как в пустом состоянии проектов */}
-        <GhostBillingRow />
-        <div className="my-[24px] h-px w-full bg-[rgba(246,245,253,0.06)]" />
-        <GhostBillingRow />
-
-        <div className="absolute inset-[-12px] flex flex-col items-center justify-center gap-space-3 rounded-r15 bg-[rgba(16,9,34,0.72)] text-center backdrop-blur-[2px]">
-          <p className="text-[18px] leading-[23px] text-text">{view.title}</p>
-          {view.text && <p className="max-w-[360px] text-[15px] leading-[20px] text-text-60">{view.text}</p>}
-          {view.cta && (
-            <button
-              type="button"
-              onClick={view.onCta}
-              disabled={busy}
-              className="mt-[4px] flex h-[48px] items-center rounded-r15 bg-accent px-space-5 text-[18px] font-[400] leading-none text-text transition hover:brightness-110 disabled:opacity-60 focus-visible:outline-none"
-            >
-              {busy ? t('common.loading') : view.cta}
-            </button>
-          )}
+  const recurring = isSubscriptionPlan(subscription);
+  const until = formatDate(subscription.expiresAt, locale);
+  const view = !recurring
+    ? { title: t('billing.oneTimeTitle'), text: until ? t('billing.oneTimeUntil', { date: until }) : t('billing.oneTimeText'), tone: 'ok' }
+    : status === 'past_due'
+      ? { title: t('billing.failedTitle'), text: t('billing.failedText'), tone: 'warning' }
+      : status === 'canceled'
+        ? { title: t('billing.canceledTitle'), text: renews ? t('billing.canceledText', { date: renews }) : t('billing.canceledTextNoDate'), tone: 'muted' }
+        : { title: t('billing.activeTitle'), text: renews ? t('billing.activeText', { date: renews }) : '', tone: 'ok' };
+  const payments = subscription.payments ?? [];
+  return <section className="card-2 shrink-0 p-[40px]">
+    <h2 className="text-[24px] font-[350] leading-none text-text">{t('billing.title')}</h2>
+    <div className="mt-[28px] grid gap-[20px] lg:grid-cols-[minmax(280px,.8fr)_minmax(420px,1.2fr)]">
+      <div className="relative flex min-h-[190px] flex-col rounded-r15 border border-[rgba(139,111,230,.28)] bg-[rgba(16,9,34,.32)] p-[24px]">
+        <span className="relative z-[1] text-[14px] text-text-40">{t('billing.currentPlan')}</span>
+        <strong className="relative z-[1] mt-[14px] text-[24px] font-[400] text-text">{view.title}</strong>
+        {view.text && <p className="relative z-[1] mt-[8px] text-[15px] leading-[21px] text-text-60">{view.text}</p>}
+        <div className="relative z-[1] mt-auto flex flex-wrap gap-[10px] pt-[24px]">
+          {status === 'past_due' && <button type="button" disabled={busy} onClick={() => retryMutation.mutate()} className="h-[42px] rounded-r15 bg-accent px-[18px] text-[15px] text-text disabled:opacity-50">{t('billing.retryCta')}</button>}
+          {status === 'canceled' && <button type="button" disabled={busy} onClick={() => resumeMutation.mutate()} className="h-[42px] rounded-r15 bg-accent px-[18px] text-[15px] text-text disabled:opacity-50">{t('billing.resumeCta')}</button>}
+          {recurring && !subscription.cancelAtPeriodEnd && !confirmCancel && <button type="button" disabled={busy} onClick={() => setConfirmCancel(true)} className="h-[42px] rounded-r15 border border-[rgba(246,245,253,.22)] px-[18px] text-[15px] text-text-60 transition hover:border-accent-light hover:text-text">{t('billing.cancelCta')}</button>}
+          {confirmCancel && <>
+            <button type="button" disabled={busy} onClick={() => cancelMutation.mutate()} className="h-[42px] rounded-r15 border border-[var(--warning)] px-[18px] text-[15px] text-[var(--warning)]">{t('billing.cancelYes')}</button>
+            <button type="button" onClick={() => setConfirmCancel(false)} className="h-[42px] rounded-r15 px-[16px] text-[15px] text-text-60">{t('common.cancel')}</button>
+          </>}
         </div>
       </div>
 
-      {/* Отмена — всегда на виду и доступна в любом состоянии платного плана (условие оферты) */}
-      <div className="mt-[28px] flex flex-wrap items-center justify-between gap-space-3">
-        {confirmCancel ? (
-          <div className="flex flex-wrap items-center gap-space-3">
-            <span className="text-[15px] leading-[20px] text-text-80">
-              {renews ? t('billing.cancelConfirm', { date: renews }) : t('billing.cancelConfirmNoDate')}
-            </span>
-            <button
-              type="button"
-              onClick={() => cancelMutation.mutate()}
-              disabled={busy}
-              className="h-[40px] rounded-r10 border border-[var(--warning)] px-[18px] text-[15px] leading-none text-[var(--warning)] transition hover:brightness-125 disabled:opacity-60 focus-visible:outline-none"
-            >
-              {t('billing.cancelYes')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setConfirmCancel(false)}
-              className="h-[40px] rounded-r10 px-[14px] text-[15px] leading-none text-text-60 transition hover:text-text focus-visible:outline-none"
-            >
-              {t('common.cancel')}
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setConfirmCancel(true)}
-            disabled={busy || subscription.cancelAtPeriodEnd}
-            className="text-[15px] leading-none text-text-60 underline underline-offset-4 transition hover:text-text disabled:opacity-40 focus-visible:outline-none"
-          >
-            {t('billing.cancelCta')}
-          </button>
-        )}
+      <div className="min-w-0 px-[24px] py-[8px]">
+        <h3 className="text-[18px] font-[400] text-text">{t('billing.history')}</h3>
+        {payments.length ? <div className="mt-[16px] divide-y divide-[rgba(246,245,253,.08)]">
+          {payments.map(payment => <div key={payment.orderId} className="grid grid-cols-[1fr_auto_auto] items-center gap-[18px] py-[13px] text-[14px]">
+            <span className="min-w-0 truncate text-text-80">{formatDate(payment.createdAt, locale)}</span>
+            <span className="text-text">{payment.amountRub.toLocaleString(locale)} ₽</span>
+            <span className="min-w-[92px] text-right text-text-60">{t(`billing.paymentStatus.${PAYMENT_STATE[payment.status.toUpperCase()] ?? 'unfinished'}`)}</span>
+          </div>)}
+        </div> : <p className="mt-[20px] text-[15px] text-text-60">{t('billing.noHistory')}</p>}
       </div>
-    </section>
-  );
+    </div>
+  </section>;
 }

@@ -104,7 +104,7 @@ function FreeTariff() {
         to="/app/pricing"
         className="group absolute bottom-[28px] right-[28px] flex h-[60px] w-[320px] items-center justify-center gap-[16px] rounded-r15 border border-accent bg-grad-soft-20 text-[24px] font-[400] leading-none text-transparent backdrop-blur-[80px] transition hover:brightness-125"
       >
-        <span style={gradSoft}>{t('profile.expandAccess')}</span>
+        <span className="translate-y-[2px]" style={gradSoft}>{t('profile.expandAccess')}</span>
         <FigIcon name="home-arrow.svg" h={15.464} className="transition-transform duration-150 group-hover:translate-x-[2px]" />
       </Link>
     </div>
@@ -119,8 +119,9 @@ function FreeTariff() {
  *  - будущие → пусто.
  * Текст меняется на ховере (wf44 → wf62), причём только у ТОГО сегмента, на который наведён.
  */
-function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
+function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
   startedAt?: string;
+  earned: number;
   claimed: number;
   onClaim: () => void;
   claiming?: boolean;
@@ -128,13 +129,13 @@ function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
   const { t, i18n } = useTranslation();
   const locale = i18n.language.startsWith('en') ? 'en-US' : 'ru-RU';
   const now = new Date();
-  const start = startedAt ? new Date(startedAt) : now;
-  // сколько ПОЛНЫХ месяцев прошло с начала подписки = столько бонусов ЗАРАБОТАНО
-  let earned = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth());
-  if (now.getDate() < start.getDate()) earned -= 1;
-  earned = Math.max(0, Math.min(3, earned));
+  const parsedStart = startedAt ? new Date(startedAt) : now;
+  const start = Number.isNaN(parsedStart.getTime()) ? now : parsedStart;
+  const safeEarned = Math.max(0, Math.min(3, earned));
+  // Три сегмента принадлежат конкретным первым месяцам подписки. Они не съезжают
+  // вместе с календарём и потому всегда совпадают с оплаченными периодами на сервере.
   const monthName = (offset: number) =>
-    new Date(start.getFullYear(), start.getMonth() + offset, 1).toLocaleString(locale, { month: 'short' }).replace('.', '');
+    new Date(start.getFullYear(), start.getMonth() + offset, 1).toLocaleString(locale, { month: 'short' }).replace('.', '').toLocaleLowerCase(locale);
   const months = [0, 1, 2].map(monthName);
   /*
    * Бонус за месяц открывается, когда месяц ЗАКОНЧИЛСЯ, то есть в начале следующего.
@@ -142,7 +143,10 @@ function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
    * нужен четвёртый месяц. Раньше у текущего сегмента брался месяц i+1, а у будущих — i,
    * и первые два сегмента показывали один и тот же месяц.
    */
-  const availableIn = (index: number) => monthName(index + 1);
+  const availableIn = (index: number) => {
+    const date = new Date(start.getFullYear(), start.getMonth() + index + 1, 1);
+    return t(`profile.monthLocative.${date.getMonth()}`);
+  };
   const rewards = [t('profile.bonusTrack'), t('profile.bonusTrack'), t('profile.bonusUnlimited')];
   const CURRENT_BG = 'bg-[linear-gradient(179deg,#6b52c4_0%,#463086_100%)]'; // чуть темнее grad-main
   /*
@@ -152,8 +156,8 @@ function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
    */
   const segs = months.map((_, i) => {
     if (i < claimed) return { def: t('profile.claimed'), hov: t('profile.claimed'), bg: 'bg-grad-main', claimable: false };
-    if (i < earned) return { def: rewards[i], hov: t('profile.claim'), bg: CURRENT_BG, claimable: true };
-    if (i === earned) return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: CURRENT_BG, claimable: false };
+    if (i < safeEarned) return { def: rewards[i], hov: t('profile.claim'), bg: CURRENT_BG, claimable: i === claimed };
+    if (i === safeEarned) return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: CURRENT_BG, claimable: false };
     return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: '', claimable: false };
   });
   const labelCls = 'text-[24px] font-[400] leading-none text-transparent';
@@ -163,8 +167,9 @@ function BlastProgress({ startedAt, claimed, onClaim, claiming }: {
       <div className="relative mt-[40px] grid grid-cols-3">
         {months.map((m, index) => (
           <span key={index} className={cn(index > 0 && 'ml-[41px]')}>
-            <span className="inline-flex h-[35px] w-[80px] items-center justify-center rounded-r15 border border-accent bg-grad-soft-20 text-[24px] font-[400] leading-none text-transparent backdrop-blur-[15px]" style={gradSoft}>
-              {m}
+            <span className="inline-flex h-[35px] w-[80px] items-center justify-center rounded-r15 border border-accent bg-grad-soft-20 backdrop-blur-[15px]">
+              {/* метрики Point сажают строчные буквы выше геометрического центра пила */}
+              <span className="translate-y-[1px] text-[24px] font-[400] leading-none text-transparent" style={gradSoft}>{m}</span>
             </span>
           </span>
         ))}
@@ -234,12 +239,13 @@ function ImpulseValidity({ expiresAt }: { expiresAt?: string | null }) {
 }
 
 /** Нижняя зона тарифа зависит от продукта: Blast — прогресс подписки, Glow/Impulse — своё */
-function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, claimed, onClaim, claiming, showBonuses }: {
+function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, earned, claimed, onClaim, claiming, showBonuses }: {
   tier: string;
   videosTotal: number | null;
   tracksTotal: number | null;
   startedAt?: string;
   expiresAt?: string | null;
+  earned: number;
   claimed: number;
   onClaim: () => void;
   claiming?: boolean;
@@ -262,7 +268,7 @@ function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, clai
 
       {/* Glow — продукт без прогресса: нижняя зона пустая; Impulse — срок+менеджер; Blast — прогресс */}
       {tier === 'IMPULSE' ? <ImpulseValidity expiresAt={expiresAt} /> : tier === 'GLOW' || !showBonuses ? null : (
-        <BlastProgress startedAt={startedAt} claimed={claimed} onClaim={onClaim} claiming={claiming} />
+        <BlastProgress startedAt={startedAt} earned={earned} claimed={claimed} onClaim={onClaim} claiming={claiming} />
       )}
     </>
   );
@@ -482,7 +488,7 @@ export function ProfilePage() {
      * карточка оплаты просто обрезалась и доскроллить до неё было нельзя. Теперь колонка
      * растёт по контенту и скроллится страницей, как в админке.
      */
-    <div className="flex min-h-0 flex-1 flex-col gap-[20px] pb-space-6 md:pt-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-full shrink-0 flex-col gap-[20px] pb-[calc(var(--rail-pad-y)_-_var(--space-6))] md:pt-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       {/* шапка 1192×202: аватар 120 в кольце, имя 24, ник 32 с карандашом, справа TikTok */}
       <section className="card-2 flex h-[202px] shrink-0 items-center gap-[40px] px-[40px]">
         <label className="relative h-[120px] w-[120px] shrink-0 cursor-pointer">
@@ -637,6 +643,7 @@ export function ProfilePage() {
             startedAt={subscription.startedAt}
             expiresAt={subscription.expiresAt}
             claimed={subscription.bonusesClaimed ?? 0}
+            earned={subscription.bonusMonthsEarned ?? 0}
             onClaim={() => claimMutation.mutate()}
             claiming={claimMutation.isPending}
             showBonuses={Boolean(meQuery.data?.capabilities?.subscriptionBonuses)}

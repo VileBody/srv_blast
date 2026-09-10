@@ -1,9 +1,9 @@
-import { ChangeEvent, type RefObject, useEffect, useRef, useState } from 'react';
+import { WarmupInput } from './WarmupInput';
+import { ChangeEvent, Fragment, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useChip } from '../../i18n/useChip';
 import { api } from '../../lib/api';
-import { useToast } from '../../contexts/ToastContext';
 import { cn } from '../../lib/cn';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { ArrowRight, useDragScroll } from './BackgroundPanel';
@@ -11,7 +11,8 @@ import { FullscreenZone } from '../ui/FullscreenZone';
 import { PillsFooter } from './WizardFrame';
 import { HookConfig, HookKind, HOOK_LABELS, hookComplete, hookPills, useWizardStore } from '../../stores/wizardStore';
 import effectsRegistry from '../../data/effects-registry.json';
-import { SubtitlePreview } from './SubtitlePreview';
+import { CatalogMedia } from './CatalogPreview';
+import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
 
 /*
  * Этап «Хук» (Figma W18 → W24/32 → W25/34 → W26/28/29/30 → W27 → W31):
@@ -21,7 +22,8 @@ import { SubtitlePreview } from './SubtitlePreview';
  */
 
 const HOOK_TYPES: { kind: HookKind; icon: string; iconW: number; iconH: number; hint: string }[] = [
-  { kind: 'sound', icon: '/assets/figma/hook-sound.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintSound' },
+  { kind: 'none', icon: '/assets/figma/icon-bolt.svg', iconW: 15, iconH: 18, hint: 'wizard.fx.hintNoHook' },
+  { kind: 'warmup', icon: '/assets/figma/hook-sound.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintSound' },
   { kind: 'object', icon: '/assets/figma/hook-object.svg', iconW: 18, iconH: 18, hint: 'wizard.fx.hintObject' },
   { kind: 'effects', icon: '/assets/figma/hook-effects.svg', iconW: 16, iconH: 17, hint: 'wizard.fx.hintEffects' },
   { kind: 'motion', icon: '/assets/figma/hook-motion.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintMotion' },
@@ -37,6 +39,21 @@ const EFFECT_GLUES = effectsRegistry.glue.map((e) => e.label);
 const EFFECT_STYLES = effectsRegistry.style.map((e) => e.label);
 const MOTIONS = ['Свайп', 'Тап', 'Зум', 'Задержи', 'Голова'];
 const THOUGHTS = ['Панчлайн', 'Пропущенное слово', 'Эхо', 'Вопрос', 'Инверсия'];
+
+const OBJECT_PREVIEW_IDS: Record<string, string> = {
+  'Круг': 'shape__elipse',
+  'Квадрат': 'shape__square',
+  'Ромб': 'shape__rhomb',
+  'Звезда-5': 'shape__star2',
+  'Звезда-10': 'shape__star1'
+};
+const MOTION_PREVIEW_IDS: Record<string, string> = {
+  'Свайп': 'motion__swipe',
+  'Тап': 'motion__tap',
+  'Зум': 'motion__pinch',
+  'Задержи': 'motion__holdfinger',
+  'Голова': 'motion__head'
+};
 
 /*
  * Иконки чипов из Figma. baked — SVG уже содержит фиолетовый круг 40×40;
@@ -129,9 +146,86 @@ export interface HookStep {
 const GLUE_STEP: HookStep = { key: 'effectGlue', title: 'wizard.fx.stepGlue', options: EFFECT_GLUES };
 const STYLE_STEP: HookStep = { key: 'effectStyle', title: 'wizard.fx.stepStyle', options: EFFECT_STYLES };
 
+/** Стили, которые манифест всегда тянет на весь ролик — у них выбора нет. */
+const FULL_WINDOW_STYLES = new Set(effectsRegistry.style.filter((e) => e.fullWindow).map((e) => e.label));
+
+/**
+ * Охват грейда: до дропа (по умолчанию) или на весь ролик — то же, что спрашивает бот
+ * (effect_extra_full). Живёт строкой в шапке шага «Стилизация», рядом с его заголовком.
+ */
+export function StyleScopeToggle({ config, onPick }: { config: HookConfig; onPick: (full: boolean) => void }) {
+  const { t } = useTranslation();
+  const locked = Boolean(config.effectStyle && FULL_WINDOW_STYLES.has(config.effectStyle));
+  const full = locked || Boolean(config.effectStyleFull);
+  // Живёт в строке заголовка шага, без подписи: два сегмента объясняют себя сами, а
+  // лишнее слово съедало название шага в узкой рабочей зоне.
+  return (
+    <span className="flex shrink-0 items-center whitespace-nowrap" aria-label={t('wizard.fx.scopeLabel')}>
+      <span className="inline-flex items-center gap-[3px] rounded-r15 bg-[rgba(8,3,19,.5)] p-[3px]" title={locked ? t('wizard.fx.scopeLocked') : undefined}>
+        {([[false, t('wizard.fx.scopeDrop')], [true, t('wizard.fx.scopeFull')]] as const).map(([value, label]) => (
+          <button
+            key={String(value)}
+            type="button"
+            aria-pressed={full === value}
+            disabled={locked && value === false}
+            onClick={() => onPick(value)}
+            className={cn(
+              'flex h-[28px] items-center justify-center whitespace-nowrap rounded-[9px] px-[7px] text-[11px] transition disabled:cursor-not-allowed disabled:opacity-40',
+              full === value ? 'bg-grad-soft-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-60 hover:text-text'
+            )}
+          >
+            {label}
+          </button>
+        ))}
+      </span>
+    </span>
+  );
+}
+
+const SLOW_EXTEND_OPTIONS = [
+  ['', 'wizard.fx.slowStandard'],
+  ['to_end', 'wizard.fx.slowToEnd'],
+  ['after_drop:3', 'wizard.fx.slowThree']
+] as const;
+
+/** Дополнительная длина echo-шлейфа доступна только выбранному slow shutter. */
+export function SlowShutterExtendToggle({ config, onPick }: { config: HookConfig; onPick: (value: HookConfig['effectHookExtend']) => void }) {
+  const { t } = useTranslation();
+  const value = config.effectHookExtend ?? '';
+  return (
+    <span className="inline-flex shrink-0 items-center gap-[3px] rounded-r15 bg-[rgba(8,3,19,.5)] p-[3px]" aria-label={t('wizard.fx.slowLength')}>
+      {SLOW_EXTEND_OPTIONS.map(([option, label]) => (
+        <button
+          key={option || 'standard'}
+          type="button"
+          aria-pressed={value === option}
+          onClick={() => onPick(option)}
+          className={cn(
+            'flex h-[28px] items-center justify-center whitespace-nowrap rounded-[9px] px-[7px] text-[11px] transition',
+            value === option ? 'bg-grad-soft-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-60 hover:text-text'
+          )}
+        >
+          {t(label)}
+        </button>
+      ))}
+    </span>
+  );
+}
+
+function selectedStyles(config: HookConfig): string[] {
+  return config.effectStyles?.length ? config.effectStyles : (config.effectStyle ? [config.effectStyle] : []);
+}
+
+function toggleStyle(config: HookConfig, option?: string): Partial<HookConfig> {
+  if (!option) return {};
+  const current = selectedStyles(config);
+  const next = current.includes(option) ? current.filter((style) => style !== option) : [...current, option];
+  return { effectStyles: next, effectStyle: next.includes(option) ? option : next[next.length - 1] };
+}
+
 /** Первый шаг зависит от типа хука, два следующих общие. */
-const FIRST_STEP: Record<HookKind, HookStep> = {
-  sound: { key: 'sound', title: 'wizard.fx.loadSound', options: [] },
+const FIRST_STEP: Record<Exclude<HookKind, 'none'>, HookStep> = {
+  warmup: { key: 'sound', title: 'wizard.fx.loadSound', options: [] },
   object: { key: 'object', title: 'wizard.fx.chooseObject', options: OBJECTS },
   effects: { key: 'effectHook', title: 'wizard.fx.stepFx', options: EFFECT_HOOKS },
   motion: { key: 'motion', title: 'wizard.fx.chooseMotion', options: MOTIONS },
@@ -139,7 +233,30 @@ const FIRST_STEP: Record<HookKind, HookStep> = {
 };
 
 export function hookSteps(kind: HookKind): HookStep[] {
+  if (kind === 'none') return [GLUE_STEP, STYLE_STEP];
   return [FIRST_STEP[kind], GLUE_STEP, STYLE_STEP];
+}
+
+/** Stable S3 catalog id for the exact option edited at this step. */
+function previewIdFor(key: keyof HookConfig, value?: string): string | undefined {
+  if (!value) return undefined;
+  if (key === 'object') return OBJECT_PREVIEW_IDS[value];
+  if (key === 'motion') return MOTION_PREVIEW_IDS[value];
+  const group = key === 'effectHook' ? 'hook' : key === 'effectGlue' ? 'glue' : key === 'effectStyle' ? 'style' : null;
+  if (!group) return undefined;
+  const item = effectsRegistry[group].find((entry) => entry.label === value);
+  const prefix = key === 'effectHook' ? 'effect_hook' : key === 'effectGlue' ? 'effect_transition' : 'effect_extra';
+  return item ? `${prefix}__${item.manifestId}` : undefined;
+}
+
+function configuredPreviewId(kind: HookKind, config: HookConfig, active?: HookStep): string | undefined {
+  if (active) {
+    const selected = previewIdFor(active.key, config[active.key] as string | undefined);
+    if (selected) return selected;
+  }
+  return hookSteps(kind)
+    .map((step) => previewIdFor(step.key, config[step.key] as string | undefined))
+    .find(Boolean);
 }
 
 function maskTiming(raw: string): string {
@@ -167,24 +284,30 @@ export function StageHooks() {
   const setHooks = useWizardStore((state) => state.setHooks);
   const clearHook = useWizardStore((state) => state.clearHook);
   const track = useWizardStore((state) => state.track);
-  const timingMode = useWizardStore((state) => state.timingMode);
   const timingFrom = useWizardStore((state) => state.timingFrom);
   const timingTo = useWizardStore((state) => state.timingTo);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
   // Окно отрывка — часть ключа: выбрал другой кусок трека → другие кандидаты дропа.
-  // На «ai»-тайминге окна ещё нет, и анализировать нечего (в боте фокус-клип известен
-  // всегда — здесь это состояние «сначала выбери отрывок»).
-  const clipReady = timingMode === 'manual' && Boolean(timingFrom) && Boolean(timingTo);
+  // Сохранённый режим тайминга может быть старым, поэтому готовность определяют сами
+  // валидные границы — ровно те значения, которые отправляются в API.
+  const clipFromS = timingToSeconds(timingFrom);
+  const clipToS = timingToSeconds(timingTo);
+  const clipReady = clipFromS !== null && clipToS !== null && clipToS > clipFromS;
   const dropsQuery = useQuery({
-    queryKey: ['drops', timingFrom, timingTo],
-    queryFn: () => api.drops(timingFrom, timingTo),
-    enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops) && clipReady,
+    queryKey: ['drops', track?.id, timingFrom, timingTo],
+    queryFn: () => api.drops(track!.id, timingFrom, timingTo),
+    enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops) && Boolean(track) && clipReady,
   });
   const [customDrop, setCustomDrop] = useState(false);
+  const [dropError, setDropError] = useState(false);
   const [hint, setHint] = useState<HookKind | null>(null);
 
   const drops = dropsQuery.data?.drops ?? [];
-  const customActive = Boolean(hooks.dropTime && !drops.some((d) => d.time === hooks.dropTime));
+  // В сторе тайминг всегда трёхчастный, в списке — «mm:ss»: сравниваем в одной форме
+  const customActive = Boolean(hooks.dropTime && !drops.some((d) => normalizeDropTime(d.time) === hooks.dropTime));
+  // Пока анализ идёт, ряд занимают заглушки: иначе человек видит один «Свой вариант»
+  // и уходит вписывать тайминг руками, не дождавшись кандидатов.
+  const dropsLoading = drops.length === 0 && clipReady && dropsQuery.isFetching;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -214,17 +337,23 @@ export function StageHooks() {
 
       {/* Тайминг дропа (Figma 606:217): панель 620×60, активный чип — пил во всю высоту */}
       <div className="mt-[20px] flex h-[60px] shrink-0 items-stretch rounded-r15 bg-grad-soft-10">
+        {dropsLoading && [0, 1, 2].map((index) => (
+          <span key={index} className="flex h-full flex-1 items-center justify-center" aria-hidden="true">
+            <span className="h-[26px] w-[92px] animate-pulse rounded-[8px] bg-accent-20" />
+          </span>
+        ))}
         {drops.map((drop) => (
           <button
             key={drop.time}
             type="button"
             className={cn(
               'flex h-full flex-1 items-center justify-center rounded-r15 text-[24px] font-[350] text-text-80 transition hover:text-text max-xl:text-[17px]',
-              hooks.dropTime === drop.time && 'border-2 border-accent-light bg-grad-soft-20 !text-text'
+              hooks.dropTime === normalizeDropTime(drop.time) && 'border-2 border-accent-light bg-grad-soft-20 !text-text'
             )}
-            onClick={() => { setCustomDrop(false); setHooks({ dropTime: drop.time }); }}
+            onClick={() => { setDropError(false); setCustomDrop(false); setHooks({ dropTime: normalizeDropTime(drop.time) }); }}
           >
-            {drop.time}
+            {/* глиф Point сидит выше геометрического центра пила */}
+            <span className="translate-y-[1px]">{drop.time}<small className="ml-2 text-xs opacity-70">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small></span>
           </button>
         ))}
         {customDrop ? (
@@ -234,7 +363,14 @@ export function StageHooks() {
             placeholder="00:00:00"
             defaultValue={customActive ? hooks.dropTime : ''}
             onChange={(e: ChangeEvent<HTMLInputElement>) => { e.target.value = clampDrop(e.target.value, track?.durationS); }}
-            onBlur={(e) => { if (e.target.value) setHooks({ dropTime: clampDrop(e.target.value, track?.durationS) }); setCustomDrop(false); }}
+            onBlur={(e) => {
+              const value = clampDrop(e.target.value, track?.durationS);
+              const seconds = dropToSeconds(value);
+              const valid = seconds !== null && clipFromS !== null && clipToS !== null && seconds >= clipFromS && seconds <= clipToS;
+              setDropError(Boolean(value) && !valid);
+              if (valid) setHooks({ dropTime: value });
+              setCustomDrop(false);
+            }}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
           />
         ) : (
@@ -246,22 +382,23 @@ export function StageHooks() {
             )}
             onClick={() => setCustomDrop(true)}
           >
-            {customActive ? hooks.dropTime : t('wizard.fx.customDrop')}
+            <span className="translate-y-[1px]">{customActive ? hooks.dropTime : t('wizard.fx.customDrop')}</span>
           </button>
         )}
       </div>
+
+      {dropError && <p className="mt-[8px] shrink-0 text-[14px] leading-[1.3] text-[var(--warning)]">{t('wizard.fx.dropOutsideClip')}</p>}
 
       <p className="wizard-body mt-[28px] shrink-0">{t('wizard.fx.chooseType')}</p>
 
       {/* Список типов: строки 620×80, скролл уходит под градиентные фейды (Figma Rectangle 771/772) */}
       <div className="relative mt-[12px] min-h-0 flex-1">
-        <span className="pointer-events-none absolute inset-x-0 top-0 z-[2] h-[28px]" style={{ background: 'linear-gradient(180deg, #140e24 0%, rgba(20,14,36,0) 100%)' }} />
-        <span className="pointer-events-none absolute inset-x-0 bottom-0 z-[2] h-[28px]" style={{ background: 'linear-gradient(0deg, #140e24 0%, rgba(20,14,36,0) 100%)' }} />
-        <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px]">
+        <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px]" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
           {HOOK_TYPES.map((item) => {
             const active = hooks.kind === item.kind;
             const configured = hookPills(hooks).some((pill) => pill.kind === item.kind);
-            const locked = !hooks.dropTime;
+            // «Без хука» не использует дроп, поэтому его можно настроить сразу.
+            const locked = !hooks.dropTime && item.kind !== 'none';
             return (
               <button
                 key={item.kind}
@@ -272,7 +409,7 @@ export function StageHooks() {
                   // Подсвечены все настроенные типы, а не только открытый (правка ревью)
                   (active || configured) && 'border-2 border-accent-light',
                   active && 'bg-grad-soft-20',
-                  // Типы неактивны, пока не выбран тайминг дропа (правка ревью)
+                  // Только типы, которым действительно нужен дроп, ждут его тайминг.
                   locked && 'cursor-not-allowed opacity-45'
                 )}
                 // Повторный клик по выбранному/настроенному типу снимает его: раньше хук,
@@ -316,9 +453,10 @@ export function StageHooks() {
  * прозрачность, сквозь них виден реальный фон → всегда в тон, при любом фоне.
  * Слева фейд у 0; справа встаёт перед кнопкой подтверждения (`rightGap`).
  */
-function ChipRow({ options, value, onPick, rightGap = 0, edgePad = 0 }: {
+function ChipRow({ options, value, values, onPick, rightGap = 0, edgePad = 0 }: {
   options: string[];
   value?: string;
+  values?: string[];
   onPick: (option?: string) => void;
   /** ширина зоны под кнопкой справа (кнопка + зазор): лента прокручивается под неё, фейд встаёт перед */
   rightGap?: number;
@@ -356,23 +494,27 @@ function ChipRow({ options, value, onPick, rightGap = 0, edgePad = 0 }: {
         onScroll={syncFades}
         {...scroll.handlers}
       >
-        {options.map((option) => (
+        {options.map((option) => {
+          const selected = values ? values.includes(option) : value === option;
+          return (
           <button
             key={option}
             type="button"
-            className={cn('glue-chip !h-[52px] !gap-space-3 !pl-[6px] !pr-space-4 !text-[18px]', value === option && 'is-selected relative z-[2]')}
-            onClick={() => { if (!scroll.moved()) onPick(value === option ? undefined : option); }}
+            aria-pressed={selected}
+            className={cn('glue-chip !h-[52px] !gap-space-3 !pl-[6px] !pr-space-4 !text-[18px]', selected && 'is-selected relative z-[2]')}
+            onClick={() => { if (!scroll.moved()) onPick(selected && !values ? undefined : option); }}
           >
             <span className="scale-[0.8]"><ChipIcon label={option} /></span>
             {chip(option)}
           </button>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 }
 
-const KIND_ORDER: HookKind[] = ['sound', 'object', 'effects', 'motion', 'thought'];
+const KIND_ORDER: HookKind[] = ['warmup', 'object', 'effects', 'motion', 'thought', 'none'];
 
 /** Подпись выбранного варианта в рабочей зоне. Звук — имя файла юзера, его не переводим. */
 function hookPickLabel(config: HookConfig, chip: (label: string) => string): string | undefined {
@@ -394,57 +536,26 @@ function nextFreeKind(hooks: { configs: Partial<Record<HookKind, HookConfig>> },
  * то есть у каждого хука своя пара — это и даёт уникальность вариаций.
  * Геометрия: контейнеры 390×160 и 390×175 (шаг 195), плеер 373×665 + «Продолжить» 373×60.
  */
-interface FullscreenSoundControls {
-  inputRef: RefObject<HTMLInputElement>;
-  playing: boolean;
-  canPlay: boolean;
-  onToggle: () => void;
-  onRemove: () => void;
-}
-
-/**
- * Плеер использует только заранее подготовленный composite preview. Никаких AE/LLM-вызовов
- * из интерактива: если файла для комбинации ещё нет, остаётся нейтральный Figma-fallback.
- */
-function EffectPreview({ style, hook, lyrics }: { style: string; hook?: string; lyrics?: string }) {
-  const [broken, setBroken] = useState(false);
-  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
-  const previewQuery = useQuery({
-    queryKey: ['composite-preview', style, hook],
-    queryFn: () => api.compositePreview(style, hook!),
-    enabled: Boolean(hook) && Boolean(meQuery.data?.capabilities?.remoteCompositePreviews),
-    staleTime: Infinity,
-    retry: false
-  });
-
-  useEffect(() => setBroken(false), [previewQuery.data?.previewUrl]);
-
-  return (
-    <>
-      {hook && previewQuery.data?.previewUrl && !broken && (
-        <video key={previewQuery.data.previewUrl} src={previewQuery.data.previewUrl} className="absolute inset-0 h-full w-full object-cover" muted loop playsInline autoPlay preload="metadata" onError={() => setBroken(true)} />
-      )}
-      {(!previewQuery.data?.previewUrl || broken) && <SubtitlePreview className="absolute inset-0" styleName={style} lyrics={lyrics} effect={hook} />}
-    </>
-  );
+/** The selected hook/shape/motion sample is already rendered and stored in S3. */
+function EffectPreview({ previewId }: { previewId?: string }) {
+  const query = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews });
+  if (!previewId || query.isLoading) return null;
+  const effect = query.data?.previews.find(item => item.id === previewId);
+  return <CatalogMedia url={effect?.previewUrl} className="absolute inset-0 h-full w-full" />;
 }
 
 function HooksFullscreen({
   onCollapse,
   canContinue,
-  onNext,
-  soundControls
+  onNext
 }: {
   onCollapse: () => void;
   canContinue: boolean;
   onNext: () => void;
-  soundControls: FullscreenSoundControls;
 }) {
   const { t } = useTranslation();
   const chip = useChip();
   const hooks = useWizardStore((state) => state.hooks);
-  const subtitleStyle = useWizardStore((state) => state.subtitles.pool[0] ?? 'Impulse');
-  const lyrics = useWizardStore((state) => state.fragmentLyrics || state.lyrics);
   const setHooks = useWizardStore((state) => state.setHooks);
   const [step, setStep] = useState(0);
   const pillsScroll = useDragScroll();
@@ -475,9 +586,19 @@ function HooksFullscreen({
   /* Контейнер 390×175: заголовок с отступом, лента на всю ширину (фейды у краёв контейнера, а не ленты) */
   const section = (title: string, index: number, options: string[], key: keyof HookConfig) => (
     <div className={cn('h-[175px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10 py-[28px]', step === index && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
-      <p className="wizard-body px-[28px] leading-[29px]">{title}</p>
+      <div className="flex items-center justify-between gap-[8px] px-[28px]">
+        <p className="wizard-body min-w-0 truncate leading-[29px]">{title}</p>
+        {key === 'effectStyle' && kind !== 'none' && <StyleScopeToggle config={config} onPick={(full) => { setHooks({ config: { effectStyleFull: full } }); setStep(index); }} />}
+        {key === 'effectHook' && config.effectHook === 'Слоу-шаттер' && <SlowShutterExtendToggle config={config} onPick={(value) => { setHooks({ config: { effectHookExtend: value } }); setStep(index); }} />}
+      </div>
       <div className="mt-[28px]">
-        <ChipRow options={options} value={config[key] as string | undefined} edgePad={28} onPick={(option) => { setHooks({ config: { [key]: option } }); setStep(index); }} />
+        <ChipRow
+          options={options}
+          value={config[key] as string | undefined}
+          values={key === 'effectStyle' ? selectedStyles(config) : undefined}
+          edgePad={28}
+          onPick={(option) => { setHooks({ config: key === 'effectStyle' ? toggleStyle(config, option) : { [key]: option } }); setStep(index); }}
+        />
       </div>
     </div>
   );
@@ -489,12 +610,8 @@ function HooksFullscreen({
    * Для «Звука» первый шаг — не список, а загрузка/прослушивание своего файла.
    */
   const steps = hookSteps(kind);
-  const first = steps[0].options.length > 0 ? steps[0] : null;
   const currentDef = steps[Math.min(step, steps.length - 1)];
-  const previewHook = (currentDef && config[currentDef.key] as string | undefined)
-    ?? config.effectHook
-    ?? hookPickLabel(config, (label) => label)
-    ?? HOOK_LABELS[kind];
+  const previewId = configuredPreviewId(kind, config, currentDef);
 
   /** Стрелки плеера листают варианты ВНУТРИ активной группы, не переключая группы. */
   const cycleVariant = (delta: number) => {
@@ -504,7 +621,8 @@ function HooksFullscreen({
     const nextIndex = index < 0
       ? (delta > 0 ? 0 : currentDef.options.length - 1)
       : (index + delta + currentDef.options.length) % currentDef.options.length;
-    setHooks({ config: { [currentDef.key]: currentDef.options[nextIndex] } });
+    const option = currentDef.options[nextIndex];
+    setHooks({ config: currentDef.key === 'effectStyle' ? toggleStyle(config, option) : { [currentDef.key]: option } });
   };
 
   const left = (
@@ -548,52 +666,18 @@ function HooksFullscreen({
         </div>
       </div>
 
-      {first ? section(t(first.title), 0, first.options, first.key) : (
-        <div className={cn('h-[175px] shrink-0 rounded-r15 bg-grad-soft-10 p-[28px]', step === 0 && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
-          <p className="wizard-body leading-[29px]">{t('wizard.fx.loadSound')}</p>
-          <div className="mt-[28px]">
-            {config.sound ? (
-              <div className="dash-panel-r10 flex h-[60px] w-full items-center gap-space-3 px-space-4 text-[18px] text-text-80">
-                <button
-                  type="button"
-                  disabled={!soundControls.canPlay}
-                  aria-label={soundControls.playing ? t('wizard.track.pause') : t('wizard.fx.listenSound')}
-                  onClick={soundControls.onToggle}
-                  className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-accent-light leading-[0] text-text transition hover:opacity-85 disabled:opacity-40"
-                >
-                  {soundControls.playing ? (
-                    <span className="flex gap-[3px]" aria-hidden="true"><span className="h-[9px] w-[2.5px] rounded-[1px] bg-text" /><span className="h-[9px] w-[2.5px] rounded-[1px] bg-text" /></span>
-                  ) : (
-                    <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M3.5 1.8v8.4L10.5 6 3.5 1.8Z" fill="currentColor" /></svg>
-                  )}
-                </button>
-                <button type="button" className="min-w-0 flex-1 truncate text-left transition hover:text-text" title={t('wizard.track.replaceFile')} onClick={() => soundControls.inputRef.current?.click()}>
-                  {config.sound}
-                </button>
-                <button type="button" aria-label={t('wizard.fx.deleteSound')} onClick={soundControls.onRemove} className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-text-60 transition hover:bg-accent-20 hover:text-text">
-                  <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-                </button>
-              </div>
-            ) : (
-              <button type="button" className="dash-panel-r10 flex h-[60px] w-full items-center justify-center gap-space-3 text-[18px] text-text-80 transition hover:brightness-125" onClick={() => soundControls.inputRef.current?.click()}>
-                <span aria-hidden="true" className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-accent-light leading-[0] text-text">
-                  <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-                </span>
-                {t('wizard.fx.soundFormats')}
-              </button>
-            )}
-          </div>
+      {steps.map((definition, index) => kind === 'warmup' && index === 0 ? (
+        <div key={definition.key} className={cn('min-h-[175px] shrink-0 rounded-r15 bg-grad-soft-10 p-[28px]', step === 0 && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
+          <WarmupInput />
         </div>
-      )}
-      {section(t(steps[1].title), 1, steps[1].options, steps[1].key)}
-      {section(t(steps[2].title), 2, steps[2].options, steps[2].key)}
+      ) : <Fragment key={definition.key}>{section(t(definition.title), index, definition.options, definition.key)}</Fragment>)}
     </div>
   );
 
   const right = (
     <div className="flex h-full flex-col">
       <div className="group relative h-[665px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10">
-        <EffectPreview style={subtitleStyle} hook={previewHook} lyrics={lyrics} />
+        <EffectPreview previewId={previewId} />
         <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
         {/* стрелки: пролистывание вариантов активной группы (Figma 746:1412) */}
         <button type="button" aria-label={t('wizard.fx.prevStep')} disabled={!currentDef} onClick={() => cycleVariant(-1)} className="absolute left-[25px] top-1/2 z-[4] -translate-y-1/2 text-text opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-30">
@@ -608,9 +692,6 @@ function HooksFullscreen({
           <span className="h-[20px] w-[5px] rounded-[2px] bg-text" />
         </span>
 
-        <span className="absolute bottom-[40px] left-0 right-0 z-[4] text-center text-[16px] font-[400] leading-[19px] text-text-60">
-          {currentDef && config[currentDef.key] ? chip(config[currentDef.key] as string) : t('wizard.fx.chooseBelow')}
-        </span>
       </div>
 
       <button
@@ -632,12 +713,8 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const { t } = useTranslation();
   const chip = useChip();
   const hooks = useWizardStore((state) => state.hooks);
-  const subtitleStyle = useWizardStore((state) => state.subtitles.pool[0] ?? 'Impulse');
-  const lyrics = useWizardStore((state) => state.fragmentLyrics || state.lyrics);
   const setHooks = useWizardStore((state) => state.setHooks);
-  const { push } = useToast();
   const pillsScroll = useDragScroll();
-  const soundInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
 
@@ -660,62 +737,6 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
     : configuredPills;
   const nextKind = nextFreeKind(hooks, kind);
 
-  // Прослушивание загруженного звука (правка ревью): blob живёт в ref до замены/удаления
-  const soundAudioRef = useRef<HTMLAudioElement | null>(null);
-  const soundUrlRef = useRef<string | null>(null);
-  const [soundPlaying, setSoundPlaying] = useState(false);
-
-  useEffect(() => {
-    soundUrlRef.current = config.soundPlaybackUrl ?? null;
-  }, [config.soundPlaybackUrl]);
-
-  const onSoundUpload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    soundAudioRef.current?.pause();
-    soundAudioRef.current = null;
-    setSoundPlaying(false);
-    try {
-      const uploaded = await api.uploadHookSound(file);
-      soundUrlRef.current = uploaded.playbackUrl;
-      setHooks({ config: {
-        sound: file.name.replace(/\.[^.]+$/, ''),
-        soundUrl: uploaded.url,
-        soundPlaybackUrl: uploaded.playbackUrl
-      } });
-    } catch {
-      soundUrlRef.current = null;
-      setHooks({ config: { sound: undefined, soundUrl: undefined, soundPlaybackUrl: undefined } });
-      push({ variant: 'error', title: t('wizard.fx.soundUploadFailed') });
-    } finally {
-      event.target.value = '';
-    }
-  };
-
-  const toggleSoundPlay = () => {
-    if (!soundUrlRef.current) return;
-    if (!soundAudioRef.current) {
-      soundAudioRef.current = new Audio(soundUrlRef.current);
-      soundAudioRef.current.onended = () => setSoundPlaying(false);
-    }
-    if (soundPlaying) {
-      soundAudioRef.current.pause();
-      setSoundPlaying(false);
-    } else {
-      void soundAudioRef.current.play();
-      setSoundPlaying(true);
-    }
-  };
-
-  const removeSound = () => {
-    soundAudioRef.current?.pause();
-    soundAudioRef.current = null;
-    setSoundPlaying(false);
-    soundUrlRef.current = null;
-    // Без звука хук «Звук» перестаёт быть настроенным — пилюля уходит сама
-    setHooks({ config: { sound: undefined, soundUrl: undefined, soundPlaybackUrl: undefined } });
-  };
-
   /*
    * Единый мастер настройки хука: шаг 1 — сам хук, шаг 2 — склейка, шаг 3 — стиль.
    * Раньше так работали только «Эффекты», а остальные типы показывали один список и
@@ -726,7 +747,9 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const stepIndex = Math.min(step, Math.max(0, steps.length - 1));
   const stepDef = steps[stepIndex];
   const stepValue = stepDef ? (config[stepDef.key] as string | undefined) : undefined;
-  const canAdvance = Boolean(stepValue) && stepIndex < steps.length - 1;
+  const styleValues = selectedStyles(config);
+  const previewId = kind ? configuredPreviewId(kind, config, stepDef) : undefined;
+  const canAdvance = Boolean(stepDef && (stepDef.key === 'effectStyle' ? styleValues.length : stepValue)) && stepIndex < steps.length - 1;
 
   const confirmButton = canAdvance && (
     /* Подтверждение шага галочкой (Figma W28) — переход только по клику */
@@ -741,52 +764,15 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   );
 
   /** Шаг «Звук» — не выбор из списка, а загрузка своего файла. */
-  const soundStep = (
-    <>
-      <input ref={soundInputRef} type="file" accept="audio/*" className="sr-only" onChange={onSoundUpload} />
-      {config.sound ? (
-        <div className="dash-panel-r10 flex h-[52px] w-full items-center gap-space-3 px-space-4 text-[18px] text-text-80">
-          {/* Плей/пауза загруженного звука (правка ревью) */}
-          <button
-            type="button"
-            aria-label={soundPlaying ? t('wizard.track.pause') : t('wizard.fx.listenSound')}
-            onClick={toggleSoundPlay}
-            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-accent-light leading-[0] text-text transition hover:opacity-85"
-          >
-            {soundPlaying ? (
-              <span className="flex gap-[3px]" aria-hidden="true"><span className="h-[9px] w-[2.5px] rounded-[1px] bg-text" /><span className="h-[9px] w-[2.5px] rounded-[1px] bg-text" /></span>
-            ) : (
-              <svg viewBox="0 0 12 12" width="10" height="10" aria-hidden="true"><path d="M3.5 1.8v8.4L10.5 6 3.5 1.8Z" fill="currentColor" /></svg>
-            )}
-          </button>
-          <button type="button" className="min-w-0 flex-1 truncate text-left transition hover:text-text" title={t('wizard.track.replaceFile')} onClick={() => soundInputRef.current?.click()}>
-            {config.sound}
-          </button>
-          {/* Крестик: удаляет звук и отменяет хук (правка ревью) */}
-          <button type="button" aria-label={t('wizard.fx.deleteSound')} onClick={removeSound} className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-text-60 transition hover:bg-accent-20 hover:text-text">
-            <svg viewBox="0 0 12 12" width="11" height="11" aria-hidden="true"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-          </button>
-        </div>
-      ) : (
-        <button
-          type="button"
-          className="dash-panel-r10 flex h-[52px] w-full items-center justify-center gap-space-3 text-[18px] text-text-80 transition hover:brightness-125"
-          onClick={() => soundInputRef.current?.click()}
-        >
-          <span aria-hidden="true" className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-accent-light leading-[0] text-text">
-            <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="M6 2v8M2 6h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
-          </span>
-          {t('wizard.fx.soundFormats')}
-        </button>
-      )}
-    </>
-  );
+  const soundStep = <WarmupInput />;
 
   const settings = kind && stepDef && (
     <div className="shrink-0 rounded-r15 bg-grad-soft-10 p-space-5">
-      <div className="mb-space-4 flex items-center justify-between gap-space-3">
-        <p className="wizard-body">{t(stepDef.title)}</p>
-        <span className="flex items-center gap-space-1 rounded-r40 bg-accent-20 px-space-3 py-space-1 text-[14px] text-text-80">
+      <div className="mb-space-4 flex items-center justify-between gap-[10px]">
+        <p className="wizard-body min-w-0 truncate">{t(stepDef.title)}</p>
+        {stepDef.key === 'effectStyle' && kind !== 'none' && <StyleScopeToggle config={config} onPick={(full) => setHooks({ config: { effectStyleFull: full } })} />}
+        {stepDef.key === 'effectHook' && config.effectHook === 'Слоу-шаттер' && <SlowShutterExtendToggle config={config} onPick={(value) => setHooks({ config: { effectHookExtend: value } })} />}
+        <span className="flex shrink-0 items-center gap-space-1 rounded-r40 bg-accent-20 px-space-2 py-space-1 text-[14px] text-text-80">
           <button type="button" aria-label={t('wizard.fx.prevStep')} disabled={stepIndex === 0} className="disabled:opacity-40" onClick={() => setStep(stepIndex - 1)}>‹</button>
           {stepIndex + 1}/{steps.length}
           <button type="button" aria-label={t('wizard.fx.nextStep')} disabled={stepIndex === steps.length - 1} className="disabled:opacity-40" onClick={() => setStep(stepIndex + 1)}>›</button>
@@ -800,7 +786,8 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
           <ChipRow
             options={stepDef.options}
             value={stepValue}
-            onPick={(option) => setHooks({ config: { [stepDef.key]: option } })}
+            values={stepDef.key === 'effectStyle' ? styleValues : undefined}
+            onPick={(option) => setHooks({ config: stepDef.key === 'effectStyle' ? toggleStyle(config, option) : { [stepDef.key]: option } })}
             rightGap={canAdvance ? 64 : 0}
           />
         )}
@@ -816,13 +803,6 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
           onCollapse={() => setFullscreen(false)}
           canContinue={canContinue}
           onNext={onNext}
-          soundControls={{
-            inputRef: soundInputRef,
-            playing: soundPlaying,
-            canPlay: Boolean(soundUrlRef.current),
-            onToggle: toggleSoundPlay,
-            onRemove: removeSound
-          }}
         />
       )}
       <div className="card-2 flex min-h-0 flex-1 flex-col gap-space-5 px-space-6 py-space-6 max-lg:px-space-5">
@@ -842,30 +822,13 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
         </div>
 
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10">
-          <EffectPreview
-            style={subtitleStyle}
-            lyrics={lyrics}
-            hook={config.effectHook ?? hookPickLabel(config, (label) => label) ?? (kind ? HOOK_LABELS[kind] : undefined)}
-          />
+          {kind && <EffectPreview previewId={previewId} />}
           <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
           {!kind ? (
             <div className="flex h-full items-center justify-center p-space-5">
               <p className="wizard-body max-w-[223px] text-center">{t('wizard.fx.empty')}</p>
             </div>
-          ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-space-3 p-space-5 text-center">
-              <SvgMaskIcon
-                src={HOOK_TYPES.find((item) => item.kind === kind)!.icon}
-                style={{ width: 42, height: 46, color: 'var(--accent-light)' }}
-              />
-              <p className="wizard-body">{chip(HOOK_LABELS[kind])}</p>
-              <p className="text-[15px] text-text-60">
-                {kind === 'effects'
-                  ? [config.effectHook, config.effectGlue, config.effectStyle].filter(Boolean).map((v) => chip(v as string)).join(' · ') || t('wizard.fx.configureThree')
-                  : hookPickLabel(config, chip) ?? t('wizard.fx.chooseBelow')}
-              </p>
-            </div>
-          )}
+          ) : null}
         </div>
 
         {settings}
