@@ -1183,24 +1183,29 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         if not track_hash:
             store.rollback_job_creation(live_job["id"])
             raise HTTPException(status_code=422, detail="Uploaded track has no content hash")
+        # Примерка субтитров: ещё считается → «подожди» ДО резерва кредитов и списания
+        # трека, чтобы откатывать было нечего. Упала/протухла → reuse снимается явно
+        # внутри prepare_asr_reuse, генерация идёт со свежим ASR.
+        from .production_backend import AsrPreviewPending
+
+        try:
+            await run_in_threadpool(_production_backend().prepare_asr_reuse, live_job)
+        except AsrPreviewPending as exc:
+            store.rollback_job_creation(live_job["id"])
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "asr_preview_pending", "message": str(exc)},
+            ) from exc
+        except Exception as exc:
+            store.rollback_job_creation(live_job["id"])
+            raise _production_error(exc) from exc
         try:
             await _billing_backend().reserve(tg_id, live_job["id"], len(live_job.get("videos") or []))
             await _billing_backend().consume_track(tg_id, track_hash)
             await run_in_threadpool(_production_backend().enqueue_job, live_job)
         except Exception as exc:
             from .billing_backend import InsufficientCredits, TrackQuotaExhausted
-            from .production_backend import AsrPreviewPending
 
-            if isinstance(exc, AsrPreviewPending):
-                # Примерка ещё считается: резерв снимаем, джобу откатываем, фронт покажет «подожди»
-                await _billing_backend().refund(
-                    tg_id, live_job["id"], len(live_job.get("videos") or [])
-                )
-                store.rollback_job_creation(live_job["id"])
-                raise HTTPException(
-                    status_code=409,
-                    detail={"code": "asr_preview_pending", "message": str(exc)},
-                ) from exc
             if isinstance(exc, InsufficientCredits):
                 store.rollback_job_creation(live_job["id"])
                 raise HTTPException(status_code=402, detail=f"Доступно {exc.available} генераций") from exc

@@ -577,7 +577,10 @@ class ProductionBackend:
                 "custom source uploads are not supported by the production orchestrator contract"
             )
 
-        self._push_asr_edits(job)
+        # Готовность примерки проверяется раньше — в submit до резерва кредитов
+        # (`prepare_asr_reuse`). Здесь — только если сабмит её пропустил (старый путь).
+        if "asrReuseJobId" not in job:
+            self.prepare_asr_reuse(job)
         self._enqueue_next(job)
         job["status"] = "PROCESSING"
         job["mock"] = False
@@ -599,9 +602,13 @@ class ProductionBackend:
         )
         return asr_preview.stage_data_asr(stage_data, expected_key=key)
 
-    def _push_asr_edits(self, job: dict[str, Any]) -> None:
+    def prepare_asr_reuse(self, job: dict[str, Any]) -> None:
         """Правки таймингов уезжают в оркестратор ДО постановки первой вариации:
         она подхватит stage1_asr из asr_preview-джобы через reuse_text_job_id.
+
+        Зовётся из submit ДО резерва кредитов и списания трека: если примерка ещё
+        считается, наружу уходит `AsrPreviewPending` (409 «подожди»), и откатывать
+        нечего — ни резерва, ни постановки в очередь ещё не было.
 
         Перед этим примерка сверяется с оркестратором: джоба могла протухнуть
         (TTL стора) или упасть — reuse с такой джобой роняет рендер целиком.
@@ -955,7 +962,7 @@ class ProductionBackend:
         target_fragment = str(render_job.get("lyrics", {}).get("fragment") or "").strip()
         lyrics = str(render_job.get("lyrics", {}).get("full") or "").strip()
         asr_block = self._asr_preview_block(job)
-        # reuse только после сверки в _push_asr_edits (job["asrReuseJobId"]);
+        # reuse только после сверки в prepare_asr_reuse (job["asrReuseJobId"]);
         # фокус-слова — без reuse тоже работают: Stage2 матчит их по тексту+старту.
         asr_job_id = str(job.get("asrReuseJobId") or "") or None
         focus = asr_preview.focus_words(list(asr_block.get("words") or [])) if asr_block else []

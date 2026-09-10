@@ -668,7 +668,11 @@ def create_app() -> FastAPI:
         if not audio_s3_url.lower().startswith("s3://"):
             raise HTTPException(status_code=422, detail="audio_s3_url must use s3://")
         expected_bucket = str(os.environ.get("S3_BUCKET_RAW_AUDIO") or "").strip()
-        expected_prefix = str(os.environ.get("S3_RAW_AUDIO_PREFIX") or "raw_audio").strip("/")
+        # Префикс сверяем только когда он задан ЯВНО: у ботов дефолт `raw_audio`,
+        # у веб-бэка свой `S3_RAW_AUDIO_PREFIX` — молчаливый дефолт здесь давал бы
+        # 422 на каждый веб-трек при расхождении env. Бакет проверяется всегда
+        # (это и есть защита от SSRF из воркера), префикс — по договорённости env.
+        expected_prefix = str(os.environ.get("S3_RAW_AUDIO_PREFIX") or "").strip("/")
         if not expected_bucket:
             raise HTTPException(status_code=503, detail="S3_BUCKET_RAW_AUDIO is empty")
         bucket, separator, key = audio_s3_url[5:].partition("/")
