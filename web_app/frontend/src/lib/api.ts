@@ -91,11 +91,17 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!response.ok) {
-    let detail: unknown = response.statusText;
-    try {
-      detail = await response.json();
-    } catch {
-      detail = await response.text();
+    // A Response body is a one-shot stream.  Reading json() and then text()
+    // in the catch path used to turn every non-JSON backend error into the
+    // misleading "body stream already read" message.
+    let detail: unknown = response.statusText || `Request failed (${response.status})`;
+    const body = await response.text().catch(() => '');
+    if (body) {
+      try {
+        detail = JSON.parse(body) as unknown;
+      } catch {
+        detail = body;
+      }
     }
     /*
      * Сессия кончилась или её не было — уводим на вход, а не показываем пустой экран.
@@ -158,7 +164,8 @@ export const api = {
   unlinkGoogle: () => request<{ ok: boolean }>('/api/auth/google/link', { method: 'DELETE' }),
 
   /** Аналитика админки: сводка + воронка + удержание */
-  adminAnalytics: (days = 30) => request<AnalyticsResponse>(`/api/admin/analytics?days=${days}`),
+  adminAnalytics: (days = 30, source: 'site' | 'bot' | 'all' = 'all') =>
+    request<AnalyticsResponse>(`/api/admin/analytics?days=${days}&source=${source}`),
   /** Клиентское событие воронки (то, чего не видно на бэке) */
   trackEvent: (name: string, props: Record<string, unknown> = {}) =>
     request<{ ok: boolean; id: string }>('/api/analytics/track', { method: 'POST', body: JSON.stringify({ name, props }) }),
@@ -182,7 +189,7 @@ export const api = {
     return request<{ coverUrl: string }>(`/api/projects/${projectId}/cover`, { method: 'POST', body: form });
   },
 
-  createOrder: (payload: { packageType: string; projectId?: string; name?: string; coverChoice?: string; recurrentAccepted?: boolean }) =>
+  createOrder: (payload: { packageType: string; idempotencyKey: string; projectId?: string; name?: string; coverChoice?: string; recurrentAccepted?: boolean }) =>
     request<{ orderId: string; paymentUrl: string; project?: Project | null }>('/api/payments/create-order', {
       method: 'POST',
       body: JSON.stringify(payload)
@@ -213,27 +220,53 @@ export const api = {
   tiktokVideos: (days = 30) => request<{ videos: TiktokVideo[]; hasMore: boolean; retentionAvailable: false; mock?: boolean }>(`/api/tiktok/videos?days=${days}`),
 
   previousTrack: () => request<{ track: SavedTrack | null }>('/api/wizard/previous-track'),
+  trackPlayback: (trackId: string) => request<{ url: string }>(`/api/wizard/track-playback?trackId=${encodeURIComponent(trackId)}`),
   uploadTrack: (file: File) => {
     const form = new FormData();
     form.append('file', file);
     return request<{ track: SavedTrack }>('/api/wizard/upload-track', { method: 'POST', body: form });
   },
-  uploadSource: (file: File) => {
+  sources: (projectId: string) => request<{ sources: UserSource[] }>(`/api/wizard/sources?projectId=${encodeURIComponent(projectId)}`),
+  deleteSource: (id: string) => request(`/api/wizard/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  uploadLink: (projectId: string, format: string) => request<{ url: string; expiresAt: number; qrSvg: string }>(`/api/wizard/upload-link?projectId=${encodeURIComponent(projectId)}&format=${encodeURIComponent(format)}`, { method: 'POST' }),
+  uploadSource: (file: File, projectId: string, format: string, onProgress?: (percent: number) => void) => {
     const form = new FormData();
     form.append('file', file);
-    return request<{ source: UserSource }>('/api/wizard/upload-source', { method: 'POST', body: form });
+    const path = `/api/wizard/upload-source?projectId=${encodeURIComponent(projectId)}&format=${encodeURIComponent(format)}`;
+    return new Promise<{ source: UserSource }>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_BASE}${path}`);
+      xhr.withCredentials = true;
+      const token = csrfToken();
+      if (token) xhr.setRequestHeader(CSRF_HEADER, token);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
+      };
+      xhr.onerror = () => reject(new ApiError(0, 'Network error'));
+      xhr.onload = () => {
+        const data = (() => { try { return JSON.parse(xhr.responseText); } catch { return xhr.responseText; } })();
+        if (xhr.status >= 200 && xhr.status < 300) resolve(data as { source: UserSource });
+        else reject(new ApiError(xhr.status, data));
+      };
+      xhr.send(form);
+    });
+  },
+  fxPreviews: () => request<{ previews: { id: string; name: string; previewUrl: string }[] }>('/api/wizard/fx-previews'),
+  uploadHookVideo: (file: File) => {
+    const form = new FormData(); form.append('file', file);
+    return request<{ name: string; url: string; playbackUrl: string; duration: number; width: number; height: number; hasAudio: boolean }>('/api/wizard/upload-hook-video', { method: 'POST', body: form });
   },
   uploadHookSound: (file: File) => {
     const form = new FormData();
     form.append('file', file);
-    return request<{ name: string; url: string; playbackUrl: string; mock: boolean }>('/api/wizard/upload-hook-sound', { method: 'POST', body: form });
+    return request<{ name: string; url: string; playbackUrl: string; duration: number; width?: number; height?: number; hasAudio?: boolean; mock: boolean }>('/api/wizard/upload-hook-sound', { method: 'POST', body: form });
   },
   // Окно отрывка обязательно: кандидаты дропа ищутся ВНУТРИ него, как в боте.
   // Без окна прод отвечает status:'NEEDS_CLIP' (не ошибкой — это нормальное
   // состояние визарда до выбора отрывка).
-  drops: (clipFrom = '', clipTo = '') =>
+  drops: (trackId: string, clipFrom = '', clipTo = '') =>
     request<{ status: string; bpm: number; drops: DropCandidate[] }>(
-      `/api/wizard/drops?clipFrom=${encodeURIComponent(clipFrom)}&clipTo=${encodeURIComponent(clipTo)}`
+      `/api/wizard/drops?trackId=${encodeURIComponent(trackId)}&clipFrom=${encodeURIComponent(clipFrom)}&clipTo=${encodeURIComponent(clipTo)}`
     ),
   // plane — план подбора (vibes 9:16 / cine16x9 / films). Без него степпер типов
   // футажей листался, а список примеров не менялся.
@@ -245,6 +278,10 @@ export const api = {
   vibes: (plane = 'vibes') =>
     request<{ status: string; vibes: Vibe[] }>(`/api/wizard/vibes?plane=${encodeURIComponent(plane)}`),
   photos: () => request<{ status: string; photos: Vibe[] }>('/api/wizard/photos'),
+  rankBackgrounds: (lyrics: string, mediaType: 'video' | 'photo') =>
+    request<{ items: Vibe[] }>('/api/wizard/rank-backgrounds', {
+      method: 'POST', body: JSON.stringify({ lyrics, mediaType })
+    }),
   subtitleStyles: () => request<{ status: string; styles: { id: string; name: string; previewUrl: string }[] }>('/api/wizard/subtitle-styles'),
   wizardSession: () => request<{ session: WizardSession | null }>('/api/wizard/session'),
   saveWizardSession: (payload: { projectId?: string | null; stage: number; data: Record<string, unknown> }) =>

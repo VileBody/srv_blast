@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import json
 import logging
 import os
 import secrets
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -26,6 +28,33 @@ from .runtime import SETTINGS as RUNTIME
 
 
 logger = logging.getLogger(__name__)
+_web_analytics_sync_task: asyncio.Task[None] | None = None
+
+
+def _shared_web_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        row = dict(event)
+        chat_id = auth_store.chat_id_for_user(str(event.get("userId") or ""))
+        if chat_id is not None:
+            row["tgId"] = int(chat_id)
+        rows.append(row)
+    return rows
+
+
+async def _sync_web_analytics_loop() -> None:
+    backfill_complete = False
+    while True:
+        try:
+            await _billing_backend().sync_web_activity(
+                _shared_web_events(analytics.EVENTS if not backfill_complete else analytics.EVENTS[-2000:])
+            )
+            backfill_complete = True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("shared web analytics sync failed")
+        await asyncio.sleep(10)
 
 
 def _production_backend():
@@ -63,6 +92,26 @@ def _telegram_chat_id() -> int:
 
 async def _sync_billing_bundle(data: dict[str, Any]) -> dict[str, Any]:
     snapshot = await _billing_backend().snapshot(_telegram_chat_id())
+    user_id = store.current_user_id()
+    for payment in snapshot.get("payments") or []:
+        status = str(payment.get("status") or "").upper()
+        order_id = str(payment.get("orderId") or "")
+        props = {
+            "orderId": order_id,
+            "tier": str(payment.get("package") or "").upper(),
+            "amountRub": int(payment.get("amountRub") or 0),
+        }
+        if not order_id:
+            continue
+        try:
+            if status == "CONFIRMED":
+                analytics.track_once("plan_purchased", user_id, f"payment:{order_id}:confirmed", props)
+            elif status in {"REJECTED", "DEADLINE_EXPIRED", "AUTH_FAIL"}:
+                analytics.track_once("payment_failed", user_id, f"payment:{order_id}:{status.lower()}", props)
+        except Exception:
+            # Analytics retries on the next billing snapshot and must never
+            # make the balance/profile endpoint unavailable to the customer.
+            logger.exception("billing analytics reconciliation failed order=%s", order_id)
     subscription = data["subscription"]
     subscription.update({key: value for key, value in snapshot.items() if key not in {"creditsLeft", "tracksLeft"}})
     data["creditsLeft"] = snapshot["creditsLeft"]
@@ -172,7 +221,7 @@ async def bind_workspace(request: Request, call_next):
         return JSONResponse({"detail": "Not found"}, status_code=404)
 
     if REQUIRE_AUTH and not user_id:
-        if path.startswith("/api/") and not path.startswith(PUBLIC_API_PREFIXES):
+        if path.startswith("/api/") and path != "/api/mobile-upload" and not path.startswith(PUBLIC_API_PREFIXES):
             # code — машинный маркер: фронт уводит на /login только по нему, потому что
             # 401 может прилететь и от TikTok (протухший токен), и это не разлогин юзера
             return JSONResponse({"detail": "Требуется вход", "code": "auth_required"}, status_code=401)
@@ -223,6 +272,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def _restore_state() -> None:
     """Поднять сохранённое состояние. До этого рестарт стирал проекты, батчи и подписку."""
+    global _web_analytics_sync_task
     persistence.load_all()
     auth_store.purge_expired_tokens()
     # Бот поднимается СРАЗУ, а не по первому «Войти через Telegram». Раньше между выдачей
@@ -233,15 +283,39 @@ async def _restore_state() -> None:
         # unhealthy.  Do not accept uploads and silently leave jobs stranded.
         await run_in_threadpool(_production_backend().healthcheck)
         await _billing_backend().init()
+        _web_analytics_sync_task = asyncio.create_task(
+            _sync_web_analytics_loop(), name="shared-web-analytics-sync"
+        )
         await _billing_backend().healthcheck()
         await run_in_threadpool(security.healthcheck)
-        await run_in_threadpool(telegram_bot.healthcheck)
+        # Телеграм — НЕ фатальная зависимость старта. Очередь и S3 без ответа означают,
+        # что принимать загрузки нельзя, а недоступный на секунду api.telegram.org (мы
+        # ходим туда через прокси на гейтвее) означает лишь, что временно не работает
+        # вход через бота. Раньше таймаут этого запроса ронял lifespan: контейнер уходил
+        # в рестарт, деплой падал на «unhealthy», и сайт отдавал 502 — из-за проверки
+        # того, что и так переподнимается поллером бота.
+        try:
+            await run_in_threadpool(telegram_bot.healthcheck)
+        except Exception:
+            logger.exception("telegram healthcheck failed at startup; login via bot may be degraded")
         await run_in_threadpool(tiktok_token_store.healthcheck)
+        from . import production_monitor
+        production_monitor.start()
 
 
 @app.on_event("shutdown")
 async def _close_dependencies() -> None:
+    global _web_analytics_sync_task
     if RUNTIME.backend == "production":
+        if _web_analytics_sync_task is not None:
+            _web_analytics_sync_task.cancel()
+            try:
+                await _web_analytics_sync_task
+            except asyncio.CancelledError:
+                pass
+            _web_analytics_sync_task = None
+        from . import production_monitor
+        await production_monitor.stop()
         from .production_backend import close_backend
         from .billing_backend import close_billing
 
@@ -263,6 +337,7 @@ class ProjectUpdatePayload(BaseModel):
 
 class PaymentPayload(BaseModel):
     packageType: str = "BLAST"
+    idempotencyKey: str = Field(min_length=32, max_length=128)
     projectId: str | None = None
     name: str | None = None
     coverChoice: str = "auto"
@@ -273,6 +348,11 @@ class WizardSessionPayload(BaseModel):
     projectId: str | None = None
     stage: int = 1
     data: dict[str, Any] = Field(default_factory=dict)
+
+
+class RankBackgroundsPayload(BaseModel):
+    lyrics: str = Field(min_length=1, max_length=20000)
+    mediaType: Literal["video", "photo"]
 
 
 class SubmitPayload(BaseModel):
@@ -298,7 +378,7 @@ class RatePayload(BaseModel):
 
 
 class TrackPayload(BaseModel):
-    name: str
+    name: str = Field(min_length=1, max_length=64, pattern="^[a-z][a-z0-9_]*$")
     props: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -591,24 +671,32 @@ async def api_me() -> dict[str, Any]:
             data["billingLinkRequired"] = True
         except Exception as exc:
             raise _production_error(exc) from exc
+        # Не показываем старую persisted mock-запись как реальное подключение,
+        # если TikTok credentials отключены на production-инстансе.
+        if not _tiktok_ready():
+            data["tiktok"] = None
     # Экран ожидания обещает «пришлём в Telegram» — обещать это можно только когда бот
     # реально настроен И у юзера есть привязанный чат. Иначе фронт молчит про уведомления.
     data["telegramNotifications"] = bool(
         telegram_bot.configured() and auth_store.chat_id_for_user(store.current_user_id() or "")
     )
     data["mock"] = RUNTIME.backend == "mock"
+    data["isAdmin"] = bool(
+        store.current_user_id() in ADMIN_USER_IDS
+        or (not ADMIN_USER_IDS and not RUNTIME.production)
+    )
     data["capabilities"] = {
-        "customSources": RUNTIME.backend == "mock",
+        "customSources": True,
         # Кандидаты дропа есть в обоих режимах: в моке — фикстура, в проде —
         # `POST /hook/analyze` оркестратора (та же ручка, что у бота).
         "analyzedDrops": True,
         "remoteCompositePreviews": RUNTIME.backend == "mock",
-        "subscriptionBonuses": RUNTIME.backend == "mock",
+        "subscriptionBonuses": True,
     }
     return data
 
 
-# ------------------------- Mock API: projects -------------------------
+# ------------------------- Projects -------------------------
 
 @app.get("/api/projects", tags=["projects"])
 def api_projects() -> dict[str, Any]:
@@ -619,7 +707,7 @@ def api_projects() -> dict[str, Any]:
 def api_create_project(payload: ProjectPayload) -> dict[str, Any]:
     project = store.create_project(payload.name, payload.packageType, payload.coverChoice)
     analytics.track("project_created", store.current_user_id(), {"projectId": project["id"]})
-    return {"project": project, "redirectTo": f"/app/projects/{project['id']}", "mock": True}
+    return {"project": project, "redirectTo": f"/app/projects/{project['id']}", "mock": RUNTIME.backend == "mock"}
 
 
 @app.get("/api/projects/{project_id}", tags=["projects"])
@@ -627,7 +715,36 @@ def api_project(project_id: str) -> dict[str, Any]:
     project = store.get_project(project_id)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    return {"project": project, "mock": True}
+    if RUNTIME.backend == "production":
+        try:
+            backend = _production_backend()
+            changed_jobs: set[str] = set()
+            for live_job in store.JOBS.values():
+                if (
+                    live_job.get("projectId") != project_id
+                    or live_job.get("userId") != store.current_user_id()
+                ):
+                    continue
+                for video in live_job.get("videos", []):
+                    if video.get("status") != "COMPLETED":
+                        continue
+                    locator = str(video.get("outputLocator") or video.get("downloadUrl") or "")
+                    if not locator:
+                        continue
+                    video["playbackUrl"] = backend.playback_url(
+                        locator, video.get("id") or "video.mp4"
+                    )
+                    video["downloadUrl"] = backend.download_url(
+                        locator, video.get("id") or "video.mp4"
+                    )
+                    changed_jobs.add(str(live_job["id"]))
+            for job_id in changed_jobs:
+                persistence.save_job(job_id)
+            if changed_jobs:
+                project = store.get_project(project_id) or project
+        except Exception as exc:
+            raise _production_error(exc) from exc
+    return {"project": project, "mock": RUNTIME.backend == "mock"}
 
 
 @app.patch("/api/projects/{project_id}", tags=["projects"])
@@ -644,17 +761,32 @@ def api_update_project(project_id: str, payload: ProjectUpdatePayload) -> dict[s
         project = store.set_project_archived(project_id, payload.archived)
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    return {"project": project, "mock": True}
+    return {"project": project, "mock": RUNTIME.backend == "mock"}
 
 
 @app.delete("/api/projects/{project_id}", tags=["projects"])
 def api_delete_project(project_id: str) -> dict[str, Any]:
     """Удаление вместе с батчами. Лимит треков не возвращается — он считается
     по загруженным трекам, а не по проектам."""
-    if not store.delete_project(project_id):
+    if not store.get_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
+    from . import upload_store
+    owner = store.current_user_id()
+    assets = upload_store.assets(owner, project_id)
+    try:
+        if RUNTIME.backend == "production":
+            backend = _production_backend()
+            for asset in assets:
+                backend.delete_uploaded_asset(asset["s3Key"])
+        else:
+            for asset in assets:
+                (SOURCE_DIR / Path(asset["s3Key"]).name).unlink(missing_ok=True)
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    upload_store.remove_project(owner, project_id)
+    store.delete_project(project_id)
     analytics.track("project_deleted", store.current_user_id(), {"projectId": project_id})
-    return {"ok": True, "mock": True}
+    return {"ok": True, "mock": RUNTIME.backend == "mock"}
 
 
 # ------------------------- Mock API: payments -------------------------
@@ -662,6 +794,8 @@ def api_delete_project(project_id: str) -> dict[str, Any]:
 @app.post("/api/payments/create-order", tags=["payments"])
 async def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
     if RUNTIME.backend == "production":
+        from .billing_backend import PaymentInitError
+
         tg_id = _telegram_chat_id()
         try:
             order = await _billing_backend().create_order(
@@ -669,17 +803,30 @@ async def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
                 package_type=payload.packageType,
                 email=str(store.USER.get("email") or store.USER.get("googleEmail") or ""),
                 recurrent_accepted=payload.recurrentAccepted,
+                idempotency_key=payload.idempotencyKey,
             )
+        except PaymentInitError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
         except Exception as exc:
             raise HTTPException(
                 status_code=502,
                 detail={"code": "payment_init_failed", "message": str(exc)},
             ) from exc
-        analytics.track(
-            "payment_link_created",
-            store.current_user_id(),
-            {"tier": payload.packageType.upper(), "orderId": order["orderId"]},
-        )
+        # T-Bank Init is an external side effect.  A best-effort analytics
+        # write must never turn a successfully created payment into a 500:
+        # the browser would retry and create a second order.  Persistence
+        # failures remain visible in logs and are repaired separately.
+        try:
+            analytics.track(
+                "payment_link_created",
+                store.current_user_id(),
+                {"tier": payload.packageType.upper(), "orderId": order["orderId"]},
+            )
+        except Exception:
+            logger.exception("payment_link_created analytics write failed order_id=%s", order["orderId"])
         return {**order, "project": None, "mock": False}
 
     order_id = f"order_{uuid4().hex[:8]}"
@@ -699,13 +846,17 @@ async def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
 
 
 @app.post("/api/payments/claim-bonus", tags=["payments"])
-def api_claim_bonus() -> dict[str, Any]:
+async def api_claim_bonus() -> dict[str, Any]:
     """Забрать бонус со шкалы месяцев: +1 трек, за третий месяц — снятие лимита треков."""
     if RUNTIME.backend == "production":
-        raise HTTPException(
-            status_code=501,
-            detail={"code": "bonus_claim_unavailable", "message": "Бонусы ещё не подключены к общему балансу."},
-        )
+        try:
+            snapshot = await _billing_backend().claim_bonus(_telegram_chat_id())
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Бонус ещё не заработан") from exc
+        data = await _sync_billing_bundle(store.get_user_bundle())
+        subscription = data["subscription"]
+        analytics.track("bonus_claimed", store.current_user_id(), {"claimed": snapshot["bonusesClaimed"]})
+        return {"ok": True, "subscription": subscription, "mock": False}
     try:
         subscription = store.claim_bonus()
     except ValueError:
@@ -812,6 +963,7 @@ async def api_upload_track(file: UploadFile = File(...)) -> dict[str, Any]:
     safe_name = f"{uuid4().hex}{ext}"
     display_name = security.sanitize_filename(file.filename, safe_name)
     if RUNTIME.backend == "production":
+        uploaded: dict[str, str] | None = None
         try:
             uploaded = await run_in_threadpool(
                 _production_backend().upload_track,
@@ -820,8 +972,27 @@ async def api_upload_track(file: UploadFile = File(...)) -> dict[str, Any]:
                 filename=display_name,
                 content_type=file.content_type,
             )
+            # Track quota is spent when the track is successfully uploaded, which
+            # matches the UI and mock contract. Submit then sees this hash as
+            # `known`; an enqueue failure cannot consume a hidden extra slot.
+            await _billing_backend().consume_track(_telegram_chat_id(), audio_hash)
         except Exception as exc:  # dependency failure is explicit, never a local-file fallback
+            from .billing_backend import TrackQuotaExhausted
+
+            if uploaded:
+                try:
+                    await run_in_threadpool(
+                        _production_backend().delete_uploaded_track,
+                        uploaded["s3_url"],
+                        user_id=store.current_user_id(),
+                    )
+                except Exception:
+                    logger.exception("failed to clean up rejected uploaded track")
+            if isinstance(exc, TrackQuotaExhausted):
+                analytics.track("limit_hit", store.current_user_id(), {"limit": "tracks"})
+                raise HTTPException(status_code=402, detail="Лимит уникальных треков исчерпан") from exc
             raise _production_error(exc) from exc
+        assert uploaded is not None
         track = store.save_track(
             display_name,
             s3_url=uploaded["s3_url"],
@@ -836,91 +1007,147 @@ async def api_upload_track(file: UploadFile = File(...)) -> dict[str, Any]:
     return {"track": track, "tracksLeft": store.tracks_left(), "mock": RUNTIME.backend == "mock"}
 
 
+def _upload_project(project_id: str) -> str:
+    if not project_id or not any(p["id"] == project_id for p in store.list_projects()["projects"]):
+        raise HTTPException(404, detail="Проект не найден")
+    return project_id
+
+
 @app.post("/api/wizard/upload-source", tags=["wizard"])
-async def api_upload_source(file: UploadFile = File(...)) -> dict[str, Any]:
-    """Свои исходники пользователя (Figma W39/W49) — видео-футаж вместо библиотечного."""
-    if RUNTIME.backend == "production":
-        raise HTTPException(
-            status_code=501,
-            detail={
-                "code": "custom_sources_not_supported",
-                "message": "Текущий orchestrator contract не принимает пользовательские видео-исходники.",
-            },
-        )
-    content = await file.read()
-    if not content:
-        raise HTTPException(status_code=422, detail="Пустой файл")
-    if len(content) > 500 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="Source is larger than 500 MB")
-    # Видео-контейнеров много, сигнатуры по ним ненадёжны — ограничиваемся белым списком
-    # расширений и размером; распознавание кодека делает уже рендер-нода.
-    ext = security.safe_extension(file.filename, {".mp4", ".mov", ".webm", ".m4v"}, ".mp4")
-    safe_name = f"{uuid4().hex}{ext}"
-    display_name = security.sanitize_filename(file.filename, safe_name)
-    if RUNTIME.backend == "production":
-        try:
-            uploaded = await run_in_threadpool(
-                _production_backend().upload_source,
-                content=content,
-                user_id=store.current_user_id(),
-                filename=display_name,
-                content_type=file.content_type,
-            )
-        except Exception as exc:
-            raise _production_error(exc) from exc
-        source = store.save_source(
-            display_name,
-            s3_url=uploaded["s3_url"],
-            playback_url=uploaded["playback_url"],
-        )
-    else:
-        target = SOURCE_DIR / safe_name
-        target.write_bytes(content)
-        source = store.save_source(display_name, target)
+async def api_upload_source(file: UploadFile = File(...), projectId: str = "", format: str = "9:16") -> dict[str, Any]:
+    from .source_uploads import upload
+    _upload_project(projectId)
+    if format not in {"9:16", "16:9"}:
+        raise HTTPException(422, detail="Выберите формат 9:16 или 16:9")
+    source = await upload(file, user_id=store.current_user_id(), project_id=projectId, kind="source", format=format,
+                          local_dir=SOURCE_DIR, backend=_production_backend() if RUNTIME.backend == "production" else None)
     return {"source": source, "mock": RUNTIME.backend == "mock"}
+
+
+@app.get("/api/wizard/sources", tags=["wizard"])
+def api_sources(projectId: str = "") -> dict[str, Any]:
+    from . import upload_store
+    _upload_project(projectId)
+    sources = [item for item in upload_store.assets(store.current_user_id(), projectId) if item["kind"] == "source"]
+    if RUNTIME.backend == "production":
+        for item in sources:
+            item["localUrl"] = _production_backend()._preview_url(item["s3Key"], filename=item["name"])
+    return {"sources": sources}
+
+
+@app.delete("/api/wizard/sources/{source_id}", tags=["wizard"])
+def api_delete_source(source_id: str) -> dict[str, Any]:
+    from . import upload_store
+    owner = store.current_user_id()
+    asset = next((item for item in upload_store.assets(owner) if item["id"] == source_id), None)
+    if not asset:
+        raise HTTPException(404, detail="Исходник не найден")
+    if RUNTIME.backend == "production":
+        _production_backend().delete_uploaded_asset(asset["s3Key"])
+    else:
+        path = SOURCE_DIR / Path(asset["s3Key"]).name
+        path.unlink(missing_ok=True)
+    upload_store.remove(owner, source_id)
+    return {"ok": True}
 
 
 @app.post("/api/wizard/upload-hook-sound", tags=["wizard"])
 async def api_upload_hook_sound(file: UploadFile = File(...)) -> dict[str, Any]:
-    content = await file.read()
-    security.check_audio(content, max_mb=20)
-    ext = security.safe_extension(file.filename, {".mp3", ".wav", ".m4a", ".ogg", ".flac"}, ".mp3")
-    safe_name = f"{uuid4().hex}{ext}"
-    display_name = security.sanitize_filename(file.filename, safe_name)
-    if RUNTIME.backend == "production":
-        try:
-            uploaded = await run_in_threadpool(
-                _production_backend().upload_hook_sound,
-                content=content,
-                user_id=store.current_user_id(),
-                filename=display_name,
-                content_type=file.content_type,
-            )
-        except Exception as exc:
-            raise _production_error(exc) from exc
-        return {
-            "name": display_name,
-            "url": uploaded["s3_url"],
-            "playbackUrl": uploaded["playback_url"],
-            "mock": False,
-        }
-    target = SOURCE_DIR / safe_name
-    target.write_bytes(content)
-    return {
-        "name": display_name,
-        "url": f"/static/uploads/sources/{safe_name}",
-        "playbackUrl": f"/static/uploads/sources/{safe_name}",
-        "mock": True,
-    }
+    return await _upload_warmup(file, "warmup-audio")
+
+
+@app.post("/api/wizard/upload-hook-video", tags=["wizard"])
+async def api_upload_hook_video(file: UploadFile = File(...)) -> dict[str, Any]:
+    return await _upload_warmup(file, "warmup-video")
+
+
+async def _upload_warmup(file: UploadFile, kind: str) -> dict[str, Any]:
+    from .source_uploads import upload
+    asset = await upload(file, user_id=store.current_user_id(), project_id="", kind=kind, format=None,
+                         local_dir=SOURCE_DIR, backend=_production_backend() if RUNTIME.backend == "production" else None)
+    return {**asset, "url": asset["s3Key"], "playbackUrl": asset["localUrl"], "mock": RUNTIME.backend == "mock"}
+
+
+@app.post("/api/wizard/upload-link", tags=["wizard"])
+def api_upload_link(projectId: str = "", format: str = "9:16") -> dict[str, Any]:
+    from . import upload_store
+    from io import BytesIO
+    import qrcode
+    import qrcode.image.svg
+    _upload_project(projectId)
+    try:
+        token, expires = upload_store.make_link(store.current_user_id(), projectId, format)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
+    # Fragment is never sent in HTTP access logs or Referer headers.
+    url = f"{RUNTIME.app_url.rstrip('/')}/upload/#{token}"
+    svg = BytesIO()
+    qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage).save(svg)
+    return {"url": url, "expiresAt": expires, "qrSvg": svg.getvalue().decode("utf-8")}
+
+
+def _phone_link(request: Request, consume: bool = False) -> dict[str, Any]:
+    from . import upload_store
+    try:
+        link = upload_store.link(request.headers.get("X-Upload-Token", ""), consume=consume)
+    except ValueError as exc:
+        raise HTTPException(410, detail=str(exc)) from exc
+    if fraud_guard.ban_status(link["userId"]) is not None:
+        raise HTTPException(403, detail="Загрузка недоступна")
+    return link
+
+
+@app.get("/api/mobile-upload")
+def api_phone_status(request: Request) -> dict[str, Any]:
+    link = _phone_link(request)
+    return {key: link[key] for key in ("format", "expiresAt", "remaining")}
+
+
+@app.post("/api/mobile-upload")
+async def api_phone_upload(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+    from . import upload_store
+    from .source_uploads import upload
+    token = request.headers.get("X-Upload-Token", "")
+    link = _phone_link(request, consume=True)
+    try:
+        asset = await upload(file, user_id=link["userId"], project_id=link["projectId"], kind="source", format=link["format"],
+                             local_dir=SOURCE_DIR, backend=_production_backend() if RUNTIME.backend == "production" else None)
+    except Exception:
+        upload_store.restore_link(token)
+        raise
+    return {"name": asset["name"], "uploaded": True}
 
 
 @app.get("/api/wizard/previous-track", tags=["wizard"])
 def api_previous_track() -> dict[str, Any]:
-    return {"track": store.previous_track(), "mock": RUNTIME.backend == "mock"}
+    track = store.previous_track()
+    if track and RUNTIME.backend == "production":
+        # localUrl сохранён в момент загрузки как presigned-ссылка на 24 ч — для
+        # «предыдущего трека» она почти всегда уже мёртвая (403), плеер молчит.
+        track["localUrl"] = _production_backend()._preview_url(str(track["s3Key"]), filename=str(track.get("filename") or "track"))
+    return {"track": track, "mock": RUNTIME.backend == "mock"}
+
+
+@app.get("/api/wizard/track-playback", tags=["wizard"])
+def api_track_playback(trackId: str = "") -> dict[str, Any]:
+    """Свежая ссылка на прослушивание сохранённого трека текущего юзера.
+
+    Presigned-URL живёт 24 ч, а черновик визарда в localStorage — сколько угодно:
+    плеер примерки субтитров и превью отрывка берут ссылку отсюда, а не из стора.
+    """
+    track = next((item for item in store.ws().saved_tracks if item.get("id") == trackId), None)
+    if track is None:
+        raise HTTPException(status_code=404, detail="track not found")
+    url = str(track.get("localUrl") or "")
+    if RUNTIME.backend == "production":
+        url = _production_backend()._preview_url(str(track["s3Key"]), filename=str(track.get("filename") or "track"))
+    if not url:
+        raise HTTPException(status_code=404, detail="track has no playable source")
+    return {"url": url, "mock": RUNTIME.backend == "mock"}
 
 
 @app.get("/api/wizard/drops", tags=["wizard"])
-async def api_drops(clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
+async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
     """Кандидаты дропа для выбранного отрывка — то же, что показывает бот.
 
     Бот не хранит три фиксированных тайминга: он зовёт `POST /hook/analyze`
@@ -943,7 +1170,9 @@ async def api_drops(clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
         # показывает «выбери отрывок», а не «сервер прилёг».
         return {"status": "NEEDS_CLIP", "bpm": 0, "drops": [], "mock": False}
 
-    track = store.previous_track() or {}
+    # Analyze the track selected in this draft. `previous_track()` is not enough:
+    # after uploading a replacement it can differ from a restored browser draft.
+    track = store.saved_track(str(trackId or "")) or {}
     audio_s3_url = str(track.get("s3Key") or "").strip()
     if not audio_s3_url:
         return {"status": "NEEDS_TRACK", "bpm": 0, "drops": [], "mock": False}
@@ -1101,8 +1330,28 @@ def api_vibes(plane: str = "vibes") -> dict[str, Any]:
     else:
         vibes = store.VIBES
     wanted = str(plane or "vibes").strip() or "vibes"
+    if wanted not in {"vibes", "cine16x9", "films"}:
+        raise HTTPException(status_code=422, detail=f"Неизвестный тип футажей: {wanted}")
     vibes = [item for item in vibes if str(item.get("plane") or "vibes") == wanted]
+    if not vibes:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Каталог футажей {wanted} пуст. Сообщите поддержке — это ошибка конфигурации.",
+        )
     return {"status": "COMPLETED", "vibes": vibes, "mock": RUNTIME.backend == "mock"}
+
+
+@app.post("/api/wizard/rank-backgrounds", tags=["wizard"])
+def api_rank_backgrounds(payload: RankBackgroundsPayload) -> dict[str, Any]:
+    if not payload.lyrics.strip():
+        raise HTTPException(status_code=422, detail="Для подбора вайбов нужен текст отрывка")
+    if RUNTIME.backend == "production":
+        try:
+            items = _production_backend().ranked_backgrounds(lyrics=payload.lyrics, media_type=payload.mediaType)
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        return {"items": items, "mock": False}
+    return {"items": store.PHOTOS if payload.mediaType == "photo" else [item for item in store.VIBES if item.get("plane") == "vibes"], "mock": True}
 
 
 @app.get("/api/wizard/photos", tags=["wizard"])
@@ -1114,6 +1363,16 @@ def api_photos() -> dict[str, Any]:
             raise _production_error(exc) from exc
         return {"status": "COMPLETED", "photos": photos, "mock": False}
     return {"status": "COMPLETED", "photos": store.PHOTOS, "mock": True}
+
+
+@app.get("/api/wizard/fx-previews", tags=["wizard"])
+def api_fx_previews() -> dict[str, Any]:
+    if RUNTIME.backend == "production":
+        try:
+            return {"previews": _production_backend().preview_catalog("fx"), "mock": False}
+        except Exception as exc:
+            raise _production_error(exc) from exc
+    return {"previews": [], "mock": True}
 
 
 @app.get("/api/wizard/subtitle-styles", tags=["wizard"])
@@ -1141,18 +1400,23 @@ def api_save_wizard_session(payload: WizardSessionPayload) -> dict[str, Any]:
 async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     # Трек и текст — обязательные вводные: без них рендерить lyric-video нечего.
     # Фронт не пускает дальше этапа «Трек», но ручка не должна полагаться на это.
-    stage_data = payload.stageData or {}
+    stage_data = store.normalize_web_stage_data(
+        payload.stageData or {},
+        project_id=payload.projectId,
+    )
     if not (stage_data.get("track") or {}):
         raise HTTPException(status_code=422, detail="Не выбран трек")
     if not str(stage_data.get("lyrics") or "").strip():
         raise HTTPException(status_code=422, detail="Не заполнен текст трека")
+    if RUNTIME.backend == "production":
+        track_id = str((stage_data.get("track") or {}).get("id") or "")
+        owned_track = store.saved_track(track_id)
+        if not owned_track:
+            raise HTTPException(status_code=422, detail="Трек не найден в вашем аккаунте. Загрузите его заново.")
+        # Use the server-owned locator/hash even when the browser draft is stale
+        # or has been edited. This also upgrades pre-audioHash saved tracks.
+        stage_data["track"] = owned_track
 
-    # projectId приходит от клиента и раньше принимался на веру. Черновик визарда лежит
-    # в localStorage вместе с projectId, и если проект успели удалить (или аккаунт
-    # сбросили), батч уезжал в НЕСУЩЕСТВУЮЩИЙ проект: страница проекта отдавала 404,
-    # автопереход с экрана рендера не срабатывал, а готовые ролики оставались сиротами —
-    # их нельзя было ни найти, ни выложить. Проверяем принадлежность и молча падаем на
-    # текущий проект, а если проектов нет — заводим новый.
     projects = store.list_projects()["projects"]
     requested = payload.projectId if any(p["id"] == payload.projectId for p in projects) else None
     project_id = (
@@ -1160,6 +1424,70 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         or store.current_project_id()
         or (projects[0]["id"] if projects else store.create_project("Новый проект")["id"])
     )
+
+    from . import upload_store
+    bg = stage_data.get("background") or {}
+    owned = upload_store.assets(store.current_user_id())
+    by_id = {item["id"]: item for item in owned}
+    raw_plans = bg.get("sourceVideos") or []
+    if not raw_plans and bg.get("uploads"):
+        raw_plans = [{"id": "source-video-legacy", "format": bg.get("sourceFormat") or "9:16", "sourceIds": bg["uploads"]}]
+    plans: list[dict[str, Any]] = []
+    sources: list[dict[str, Any]] = []
+    seen_plan_ids: set[str] = set()
+    seen_source_ids: set[str] = set()
+    if not isinstance(raw_plans, list):
+        raise HTTPException(422, detail="Пересоберите личные видео: набор должен быть списком")
+    for raw_plan in raw_plans:
+        if not isinstance(raw_plan, dict):
+            raise HTTPException(422, detail="Пересоберите личные видео: найден повреждённый пункт")
+        plan_id = str(raw_plan.get("id") or "")
+        source_ids = [str(value) for value in raw_plan.get("sourceIds") or []]
+        plan_format = str(raw_plan.get("format") or "")
+        if (not plan_id or plan_id in seen_plan_ids or plan_format not in {"9:16", "16:9"}
+                or not source_ids or len(source_ids) != len(set(source_ids))):
+            raise HTTPException(422, detail="Пересоберите личные видео: найден пустой или повреждённый набор")
+        if seen_source_ids.intersection(source_ids):
+            raise HTTPException(422, detail="Один исходник нельзя добавить в несколько личных видео")
+        seen_plan_ids.add(plan_id)
+        seen_source_ids.update(source_ids)
+        plan_assets = []
+        for source_id in source_ids:
+            item = by_id.get(source_id)
+            if not item or item["kind"] != "source" or item["projectId"] != project_id:
+                raise HTTPException(422, detail="Исходник не принадлежит этому проекту. Загрузите файл заново.")
+            if item.get("format") != plan_format:
+                raise HTTPException(422, detail="В одном личном видео нельзя смешивать 9:16 и 16:9")
+            plan_assets.append(item)
+        plans.append({"id": plan_id, "format": plan_format, "sourceIds": source_ids})
+        sources.extend(plan_assets)
+    bg["sourceVideos"] = plans
+    bg["uploads"] = list(dict.fromkeys(item["id"] for item in sources))
+    bg["sourceAssets"] = sources
+    by_url = {item["s3Key"]: item for item in owned}
+    hooks = stage_data.get("hooks") or {}
+    configs = hooks.get("configs") or {}
+    selected_hook_families = render_job_builder.selected_hook_families(stage_data)
+    for family in ("sound", "warmup"):
+        if family not in selected_hook_families:
+            continue
+        cfg = configs.get(family)
+        if not cfg: continue
+        video = cfg.get("warmupKind") == "video"
+        url = cfg.get("videoUrl" if video else "soundUrl")
+        asset = by_url.get(url)
+        if not asset or asset["kind"] != ("warmup-video" if video else "warmup-audio"):
+            raise HTTPException(422, detail="Загрузите файл прогрева заново")
+        if video:
+            cfg.update(videoDuration=asset["duration"], videoWidth=asset["width"], videoHeight=asset["height"], videoHasAudio=asset["hasAudio"])
+        else:
+            cfg["soundDuration"] = asset["duration"]
+    if RUNTIME.backend == "production":
+        try:
+            _production_backend().validate_stage(stage_data)
+        except ValueError as exc:
+            raise HTTPException(422, detail=str(exc)) from exc
+
     # Лимит роликов производный: 5 на триале без TikTok, безлимит (None) — с подключённым
     credits_total = store.video_limit()
     # Повтор по тому же ключу возвращает уже созданный джоб — и не должен упираться в лимит
@@ -1178,6 +1506,11 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     )
     if RUNTIME.backend == "production":
         live_job = store.JOBS[job["id"]]
+        try:
+            _production_backend().validate_job(live_job)
+        except (ValueError, RuntimeError) as exc:
+            store.rollback_job_creation(live_job["id"])
+            raise HTTPException(422, detail=str(exc)) from exc
         tg_id = _telegram_chat_id()
         track_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
         if not track_hash:
@@ -1202,7 +1535,8 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         try:
             await _billing_backend().reserve(tg_id, live_job["id"], len(live_job.get("videos") or []))
             await _billing_backend().consume_track(tg_id, track_hash)
-            await run_in_threadpool(_production_backend().enqueue_job, live_job)
+            from . import production_monitor
+            await production_monitor.enqueue_job(live_job)
         except Exception as exc:
             from .billing_backend import InsufficientCredits, TrackQuotaExhausted
 
@@ -1229,6 +1563,7 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
                 store.rollback_job_creation(live_job["id"])
             raise _production_error(exc) from exc
         live_job.pop("enqueueError", None)
+        live_job["productionNotifications"] = True
         persistence.save_job(live_job["id"])
         job = store.get_job(live_job["id"]) or live_job
     analytics.track("generation_started", store.current_user_id(), {"jobId": job["id"], "videos": job["versions"], "projectId": project_id})
@@ -1260,9 +1595,8 @@ async def api_active_job() -> dict[str, Any]:
     if job and RUNTIME.backend == "production":
         try:
             live_job = store.JOBS[job["id"]]
-            await run_in_threadpool(_production_backend().sync_job, live_job)
-            await _refund_terminal_failures(live_job)
-            persistence.save_job(live_job["id"])
+            from . import production_monitor
+            await production_monitor.sync_job(live_job)
             job = store.get_job(live_job["id"])
         except Exception as exc:
             raise _production_error(exc) from exc
@@ -1277,22 +1611,12 @@ async def api_job(job_id: str) -> dict[str, Any]:
     if RUNTIME.backend == "production":
         try:
             live_job = store.JOBS[job_id]
-            await run_in_threadpool(_production_backend().sync_job, live_job)
-            await _refund_terminal_failures(live_job)
-            persistence.save_job(job_id)
+            from . import production_monitor
+            await production_monitor.sync_job(live_job)
             job = store.get_job(job_id) or live_job
         except Exception as exc:
             raise _production_error(exc) from exc
     return {"job": job, "mock": RUNTIME.backend == "mock"}
-
-
-async def _refund_terminal_failures(job: dict[str, Any]) -> None:
-    if job.get("status") != "FAILED" or job.get("failedCreditsRefunded"):
-        return
-    failed = sum(1 for video in job.get("videos", []) if video.get("status") == "FAILED")
-    if failed:
-        await _billing_backend().refund(_telegram_chat_id(), job["id"], failed)
-    job["failedCreditsRefunded"] = failed
 
 
 @app.post("/api/jobs/{job_id}/rate", tags=["jobs"])
@@ -1303,6 +1627,11 @@ def api_rate_job(job_id: str, payload: RatePayload) -> dict[str, Any]:
     job["rating"] = payload.rating
     job["feedback"] = payload.feedback
     persistence.save_job(job_id)
+    analytics.track(
+        "generation_rated",
+        store.current_user_id(),
+        {"jobId": job_id, "rating": payload.rating, "hasFeedback": bool(payload.feedback)},
+    )
     return {"ok": True, "job": store.get_job(job_id), "mock": RUNTIME.backend == "mock"}
 
 
@@ -1332,6 +1661,11 @@ def api_create_iteration(project_id: str, payload: IterationPayload) -> dict[str
         iteration, job = store.create_iteration(project_id, payload.videosToGenerate, payload.testParameter)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    analytics.track(
+        "iteration_started",
+        store.current_user_id(),
+        {"projectId": project_id, "videos": payload.videosToGenerate, "parameter": payload.testParameter},
+    )
     return {
         "iteration": iteration,
         "job": job,
@@ -1341,8 +1675,9 @@ def api_create_iteration(project_id: str, payload: IterationPayload) -> dict[str
 
 
 # ------------------------- TikTok (Login Kit) and profile -------------------------
-# Ключи — только из окружения (.env, он в .gitignore). Нет ключей → мок-подключение,
-# чтобы флоу «подключил аккаунт → безлимит в рамках трека» гонялся локально.
+# Ключи — только из окружения (.env, он в .gitignore). Мок-подключение разрешено
+# только в dev; production без ключей должен завершаться понятным состоянием
+# «провайдер не настроен», чтобы не выдавать пользователю фиктивный безлимит.
 
 def _app_url() -> str:
     """Куда вернуть пользователя после OAuth."""
@@ -1399,6 +1734,21 @@ def _apply_token_profile(record: dict[str, Any]) -> None:
             "expires_in": max(0, int((datetime.fromisoformat(record["expiresAt"]) - datetime.now(timezone.utc)).total_seconds())) if record.get("expiresAt") else 0,
         },
     )
+
+
+def _tiktok_ready(cfg: tiktok_config.TiktokConfig | None = None) -> bool:
+    """Готова ли интеграция ДЛЯ ЭТОГО человека: ключи заданы и он в списке доступа.
+
+    Пока заявка не одобрена, приложение живёт в песочнице TikTok: авторизоваться и
+    публиковать может только владелец приложения. Для всех остальных интеграция должна
+    выглядеть ровно так же, как при незаданных ключах, — иначе кнопка приведёт человека
+    в чужой sandbox-аккаунт и на ошибку авторизации.
+    """
+    cfg = cfg or tiktok_config.load()
+    if not cfg.configured:
+        return False
+    user = store.ws().user
+    return cfg.allows(store.current_user_id(), user.get("email"), user.get("tgChatId"))
 
 
 def _refresh_tiktok_tokens(force: bool = False) -> dict[str, Any] | None:
@@ -1491,7 +1841,9 @@ def _finish_tiktok_connect(*, handle: str, open_id: str, mock: bool = False,
 def api_tiktok_auth(request: Request, reuse: bool = False) -> RedirectResponse:
     """Старт OAuth: уводим на TikTok. state и PKCE-verifier кладём в серверную сессию."""
     cfg = tiktok_config.load()
-    if not cfg.configured:
+    if not _tiktok_ready(cfg):
+        if RUNTIME.production:
+            return RedirectResponse(f"{_app_url()}/app/profile?tiktok=not_configured", status_code=302)
         return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True)
 
     state = secrets.token_urlsafe(24)
@@ -1506,7 +1858,9 @@ def api_tiktok_callback(request: Request, code: str | None = None, state: str | 
                         error: str | None = None, reuse: bool = False) -> RedirectResponse:
     """Возврат от TikTok: сверяем state (CSRF), меняем code на токен, тянем профиль."""
     cfg = tiktok_config.load()
-    if not cfg.configured:
+    if not _tiktok_ready(cfg):
+        if RUNTIME.production:
+            return RedirectResponse(f"{_app_url()}/app/profile?tiktok=not_configured", status_code=302)
         return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True)
 
     if error:
@@ -1557,8 +1911,11 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     if not privacy:
         raise HTTPException(status_code=422, detail="Unsupported TikTok privacy level")
     cfg = tiktok_config.load()
+    ready = _tiktok_ready(cfg)
+    if not ready and RUNTIME.production:
+        raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
     try:
-        if cfg.configured:
+        if ready:
             token = _access_token()
             creator = tiktok_api.query_creator_info(token)
         else:
@@ -1604,7 +1961,7 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
             post_info["brand_organic_toggle"],
             "is_aigc" in post_info,
         )
-        if not cfg.configured:
+        if not ready:
             publish_id = f"mock_tt_{uuid4().hex[:8]}"
             video.update({"tiktokPublishId": publish_id, "tiktokStatus": "PUBLISH_COMPLETE", "postedAt": datetime.now(timezone.utc).isoformat()})
             analytics.track("video_posted", store.current_user_id(), {"videoId": payload.videoId, "projectId": payload.projectId, "mock": True})
@@ -1642,7 +1999,9 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
 
 @app.get("/api/tiktok/post/{publish_id}", tags=["tiktok"])
 def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
-    if not tiktok_config.load().configured:
+    if not _tiktok_ready():
+        if RUNTIME.production:
+            raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         return {"publishId": publish_id, "status": "PUBLISH_COMPLETE", "mock": True}
     try:
         result = tiktok_api.fetch_publish_status(_access_token(), publish_id)
@@ -1669,7 +2028,7 @@ def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
 def api_tiktok_creator_info() -> dict[str, Any]:
     if store.TIKTOK is None:
         raise HTTPException(status_code=409, detail="TikTok is not connected")
-    if not tiktok_config.load().configured:
+    if not _tiktok_ready():
         if RUNTIME.production:
             raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         return {
@@ -1690,7 +2049,7 @@ def api_tiktok_creator_info() -> dict[str, Any]:
 def api_tiktok_videos(days: int = 30) -> dict[str, Any]:
     if store.TIKTOK is None:
         raise HTTPException(status_code=409, detail="TikTok is not connected")
-    if not tiktok_config.load().configured:
+    if not _tiktok_ready():
         if RUNTIME.production:
             raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         posted = [video for job in store.JOBS.values() for video in job.get("videos", []) if video.get("tiktokStatus") == "PUBLISH_COMPLETE"]
@@ -1760,7 +2119,8 @@ def api_tiktok_status() -> dict[str, Any]:
     """Готовы ли ключи. Фронту нужно, чтобы честно сказать «идёт мок-подключение»."""
     cfg = tiktok_config.load()
     return {
-        "configured": cfg.configured,
+        # Для не-разрешённого человека интеграция «не настроена» — фронт прячет кнопку
+        "configured": _tiktok_ready(cfg),
         "scopes": cfg.scopes,
         "redirectUri": cfg.redirect_uri,
         "uploadSource": cfg.upload_source,
@@ -1775,7 +2135,7 @@ def api_profile(payload: ProfilePayload) -> dict[str, Any]:
     # ФИО обязательны: очистить их через профиль нельзя
     if not (user.get("name") or "").strip():
         raise HTTPException(status_code=422, detail="Имя обязательно")
-    return {"user": user, "mock": True}
+    return {"user": user, "mock": RUNTIME.backend == "mock"}
 
 
 @app.delete("/api/profile", tags=["profile"])
@@ -1790,6 +2150,11 @@ def api_delete_account(request: Request, payload: DeleteAccountPayload) -> dict[
             _production_backend().delete_user_objects(user_id)
         except Exception as exc:
             raise _production_error(exc) from exc
+    from . import upload_store
+    if RUNTIME.backend != "production":
+        for asset in upload_store.assets(user_id):
+            (SOURCE_DIR / Path(asset["s3Key"]).name).unlink(missing_ok=True)
+    upload_store.remove_account(user_id)
     tiktok_token_store.delete(user_id)
     deleted = persistence.delete_account(user_id)
     request.session.clear()
@@ -1920,17 +2285,25 @@ ADMIN_USER_IDS = {uid.strip() for uid in os.getenv("BLAST_ADMIN_USER_IDS", "").s
 
 
 def _require_admin() -> None:
-    if ADMIN_USER_IDS and store.current_user_id() not in ADMIN_USER_IDS:
+    if not ADMIN_USER_IDS:
+        if RUNTIME.production:
+            raise HTTPException(status_code=403, detail="Администраторы не настроены")
+        return
+    if store.current_user_id() not in ADMIN_USER_IDS:
         raise HTTPException(status_code=403, detail="Недостаточно прав")
 
 
 @app.get("/api/admin/analytics", tags=["admin"])
-def api_admin_analytics(days: int = 30, weeks: int = 4) -> dict[str, Any]:
-    """Сводка, воронка и удержание для раздела аналитики."""
+async def api_admin_analytics(
+    days: int = 30,
+    weeks: int = 4,
+    source: Literal["site", "bot", "all"] = "site",
+) -> dict[str, Any]:
+    """Analytics for the site, the Telegram bot, or both channels combined."""
     _require_admin()
     if not 1 <= days <= 365:
         raise HTTPException(status_code=422, detail="days: 1..365")
-    return {
+    site_payload = {
         "summary": analytics.summary(days),
         "funnel": analytics.funnel(days),
         "retention": analytics.retention(weeks),
@@ -1938,8 +2311,140 @@ def api_admin_analytics(days: int = 30, weeks: int = 4) -> dict[str, Any]:
         "delivery": analytics.delivery_summary(days),
         # прохождение: отвал на ожидании, время на «Пуле», возвраты назад
         "flow": analytics.flow_metrics(days),
+        # маркетинговый путь внутри web app: страницы, этапы визарда и действия
+        "web": analytics.web_product_metrics(days),
         "journeys": analytics.user_journeys(days)[:100],
         "recent": analytics.recent(30),
+        "source": "site",
+        "isAdmin": True,
+    }
+    if source == "site":
+        return site_payload
+    if RUNTIME.backend != "production":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "bot_analytics_unavailable", "message": "Bot analytics require the production billing database"},
+        )
+
+    bot_raw = await _billing_backend().admin_bot_analytics(days)
+    bot_events = bot_raw["events"]
+
+    def bot_ids(*names: str) -> set[str]:
+        result: set[str] = set()
+        for name in names:
+            result.update((bot_events.get(name) or {}).get("userIds") or set())
+        return result
+
+    def bot_count(*names: str) -> int:
+        return sum(int((bot_events.get(name) or {}).get("events") or 0) for name in names)
+
+    paying_ids = bot_ids("payment_confirmed", "subscription_charged", "admin_activate")
+    bot_signups = bot_ids("start")
+    bot_started = bot_count("generation_started")
+    bot_failed = bot_count("generation_failed")
+    bot_summary = {
+        "days": days,
+        "activeUsers": len(bot_raw["activeUserIds"]),
+        "signups": len(bot_signups),
+        "payingUsers": len(paying_ids),
+        "conversionToPaid": round(len(paying_ids & bot_signups) / len(bot_signups) * 100, 1) if bot_signups else 0.0,
+        "videosGenerated": bot_count("generation_done"),
+        "videosPosted": 0,
+        "generationFailRate": round(bot_failed / (bot_started + bot_failed) * 100, 1) if bot_started + bot_failed else 0.0,
+        "paymentFailures": bot_count("subscription_charge_failed"),
+        "cancellations": bot_count("cancel_subscription_request"),
+        "limitHits": bot_count("no_credits"),
+        "events": sum(int(row.get("events") or 0) for row in bot_events.values()),
+    }
+
+    def funnel_rows(steps: list[tuple[str, set[str]]]) -> list[dict[str, Any]]:
+        first = len(steps[0][1]) if steps else 0
+        previous = first
+        rows: list[dict[str, Any]] = []
+        for step, identities in steps:
+            count = len(identities)
+            rows.append({
+                "step": step,
+                "users": count,
+                "fromPrev": round(count / previous * 100, 1) if previous else 0.0,
+                "fromStart": round(count / first * 100, 1) if first else 0.0,
+            })
+            previous = count or previous
+        return rows
+
+    bot_funnel_steps = [
+        ("bot_start", bot_ids("start")),
+        ("bot_subscription", bot_ids("subscription_ok")),
+        ("track_uploaded", bot_ids("audio_uploaded")),
+        ("generation_started", bot_ids("generation_started")),
+        ("generation_completed", bot_ids("generation_done")),
+        ("plan_purchased", paying_ids),
+    ]
+    bot_actions = [
+        {"name": name, "events": int(row["events"]), "users": int(row["users"])}
+        for name, row in bot_events.items()
+    ]
+    bot_actions.sort(key=lambda row: (row["users"], row["events"]), reverse=True)
+    bot_payload = {
+        "summary": bot_summary,
+        "funnel": funnel_rows(bot_funnel_steps),
+        "bot": {"actions": bot_actions, "recent": bot_raw["recent"]},
+        "recent": bot_raw["recent"],
+        "source": "bot",
+        "isAdmin": True,
+    }
+    if source == "bot":
+        return bot_payload
+
+    site_raw = analytics.channel_snapshot(days)
+
+    def canonical_site(values: set[str]) -> set[str]:
+        result: set[str] = set()
+        for user_id in values:
+            chat_id = auth_store.chat_id_for_user(user_id)
+            result.add(f"tg:{int(chat_id)}" if chat_id is not None else f"web:{user_id}")
+        return result
+
+    def site_ids(*names: str) -> set[str]:
+        values: set[str] = set()
+        for name in names:
+            values.update((site_raw["events"].get(name) or {}).get("userIds") or set())
+        return canonical_site(values)
+
+    def site_count(*names: str) -> int:
+        return sum(int((site_raw["events"].get(name) or {}).get("events") or 0) for name in names)
+
+    combined_signups = site_ids("signup_completed") | bot_ids("start")
+    combined_paying = site_ids("plan_purchased") | paying_ids
+    combined_started = site_count("generation_started") + bot_started
+    combined_failed = site_count("generation_failed") + bot_failed
+    combined_summary = {
+        "days": days,
+        "activeUsers": len(canonical_site(site_raw["activeUserIds"]) | bot_raw["activeUserIds"]),
+        "signups": len(combined_signups),
+        "payingUsers": len(combined_paying),
+        "conversionToPaid": round(len(combined_paying & combined_signups) / len(combined_signups) * 100, 1) if combined_signups else 0.0,
+        "videosGenerated": int(site_payload["summary"]["videosGenerated"]) + bot_count("generation_done"),
+        "videosPosted": int(site_payload["summary"]["videosPosted"]),
+        "generationFailRate": round(combined_failed / (combined_started + combined_failed) * 100, 1) if combined_started + combined_failed else 0.0,
+        "paymentFailures": site_count("payment_failed") + bot_count("subscription_charge_failed"),
+        "cancellations": site_count("subscription_canceled") + bot_count("cancel_subscription_request"),
+        "limitHits": site_count("limit_hit") + bot_count("no_credits"),
+        "events": int(site_payload["summary"]["events"]) + int(bot_summary["events"]),
+    }
+    combined_funnel = funnel_rows([
+        ("audience_entered", site_ids("app_entry", "signup_started", "signup_completed") | bot_ids("start")),
+        ("activated", site_ids("signup_completed") | bot_ids("subscription_ok")),
+        ("track_uploaded", site_ids("track_uploaded") | bot_ids("audio_uploaded")),
+        ("generation_started", site_ids("generation_started") | bot_ids("generation_started")),
+        ("generation_completed", site_ids("generation_completed") | bot_ids("generation_done")),
+        ("plan_purchased", combined_paying),
+    ])
+    return {
+        "summary": combined_summary,
+        "funnel": combined_funnel,
+        "channels": {"site": site_payload["summary"], "bot": bot_summary},
+        "source": "all",
         "isAdmin": True,
     }
 
@@ -1947,6 +2452,13 @@ def api_admin_analytics(days: int = 30, weeks: int = 4) -> dict[str, Any]:
 @app.post("/api/analytics/track", tags=["analytics"])
 def api_track(payload: TrackPayload) -> dict[str, Any]:
     """Событие с фронта (клиентские шаги воронки, которых не видно на бэке)."""
+    if payload.name not in analytics.CLIENT_EVENTS:
+        raise HTTPException(status_code=422, detail="Unsupported analytics event")
+    unexpected = set(payload.props) - analytics.CLIENT_EVENT_PROPS[payload.name]
+    if unexpected:
+        raise HTTPException(status_code=422, detail="Unsupported analytics properties")
+    if len(json.dumps(payload.props, ensure_ascii=False).encode("utf-8")) > 4096:
+        raise HTTPException(status_code=422, detail="Analytics properties are too large")
     event = analytics.track(payload.name, store.current_user_id(), payload.props)
     return {"ok": True, "id": event["id"]}
 

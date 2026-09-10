@@ -39,7 +39,8 @@ export function TiktokButton({
       title={locked ? t('tiktok.soonHint') : undefined}
       onClick={locked ? undefined : (onClick ?? (connected ? undefined : connect))}
       className={cn(
-        'flex h-[60px] w-[240px] shrink-0 items-center justify-center gap-[15px] rounded-r15 border bg-grad-soft-20 backdrop-blur-[15px] transition',
+        'flex h-[60px] shrink-0 items-center justify-center gap-[15px] rounded-r15 border bg-grad-soft-20 backdrop-blur-[15px] transition',
+        locked ? 'w-auto min-w-[150px] px-[22px]' : 'w-[240px]',
         locked ? 'cursor-not-allowed opacity-45' : 'hover:brightness-125',
         connected ? 'border-accent' : 'border-transparent',
         className

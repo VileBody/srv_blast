@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import math
 from collections import defaultdict
 from contextvars import ContextVar
@@ -689,6 +690,7 @@ def get_user_bundle() -> dict[str, Any]:
     space = ws()
     sub = deepcopy(space.subscription)
     sub["creditsTotal"] = total
+    sub["bonusMonthsEarned"] = bonuses_earned(sub.get("startedAt"))
     user = deepcopy(space.user)
     # Вход через Telegram не спрашивает ФИО — по флагу фронт требует дозаполнить профиль
     user["profileComplete"] = bool((user.get("name") or "").strip())
@@ -864,16 +866,17 @@ def delete_project(project_id: str) -> bool:
     return True
 
 
-def _new_video(job_id: str, index: int, source: str, style: str, hook: str) -> dict[str, Any]:
+def _new_video(job_id: str, index: int, source: str, style: str, hook: str, render_format: str) -> dict[str, Any]:
     return {
         "id": f"{job_id}_v{index}",
         "index": index,
         "status": "PENDING",
         "progress": 0,
         "source": source,
+        "format": render_format,
         "subtitleStyle": style,
         "hook": hook,
-        "thumbnailUrl": "/assets/cover-placeholder.svg",
+        "thumbnailUrl": None,
         "downloadUrl": None,
     }
 
@@ -898,7 +901,10 @@ def create_job(
     videos = []
     for var in render_job["variations"]:
         lbl = variation_label(var)
-        videos.append(_new_video(jid, var["index"], lbl["source"], lbl["subtitleStyle"], lbl["hook"]))
+        videos.append(_new_video(
+            jid, var["index"], lbl["source"], lbl["subtitleStyle"], lbl["hook"],
+            str((var.get("background") or {}).get("sourceFormat") or "9:16"),
+        ))
     job = {
         "id": jid,
         "projectId": project_id,
@@ -1069,10 +1075,12 @@ def save_source(
     *,
     s3_url: str | None = None,
     playback_url: str | None = None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Свой исходник (Figma W39/W49): имя = ключ в background.uploads → render_job."""
+    """Saved source: stable id plus server-inspected media metadata."""
     space = ws()
     item = {
+        **(metadata or {}),
         "id": f"src_{uuid4().hex[:8]}",
         "userId": space.user["id"],
         "s3Key": s3_url or f"{BASE_S3}/sources/{space.user['id']}/{uuid4().hex[:8]}/{file_path.name if file_path else 'source.mp4'}",
@@ -1093,17 +1101,40 @@ def find_track(track_id: str) -> dict[str, Any] | None:
 
 def previous_track() -> dict[str, Any] | None:
     tracks = ws().saved_tracks
-    return deepcopy(tracks[0]) if tracks else None
+    return _track_with_identity(tracks[0]) if tracks else None
+
+
+def saved_track(track_id: str) -> dict[str, Any] | None:
+    """Resolve a track only inside the current user's workspace.
+
+    The browser is not trusted to provide its S3 locator or content hash. Legacy
+    records created before audioHash existed receive a stable, namespaced identity
+    derived from their owned S3 object, so the same stored track remains reusable.
+    """
+    item = next((track for track in ws().saved_tracks if track.get("id") == track_id), None)
+    return _track_with_identity(item) if item else None
+
+
+def _track_with_identity(item: dict[str, Any]) -> dict[str, Any]:
+    if not str(item.get("audioHash") or "").strip():
+        locator = str(item.get("s3Key") or "").strip()
+        if locator:
+            item["audioHash"] = "legacy-s3:" + hashlib.sha256(locator.encode("utf-8")).hexdigest()
+    return deepcopy(item)
 
 
 def set_wizard_session(payload: dict[str, Any]) -> dict[str, Any]:
     space = ws()
+    data = normalize_web_stage_data(
+        payload.get("data", {}),
+        project_id=payload.get("projectId"),
+    )
     space.wizard_session = {
         "id": "session_1",
         "userId": space.user["id"],
         "projectId": payload.get("projectId"),
         "stage": payload.get("stage", 1),
-        "data": payload.get("data", {}),
+        "data": data,
         "updatedAt": iso(utcnow()),
     }
     return deepcopy(space.wizard_session)
@@ -1120,6 +1151,57 @@ def get_asr_preview() -> dict[str, Any] | None:
 def set_asr_preview(state: dict[str, Any] | None) -> dict[str, Any] | None:
     ws().asr_preview = deepcopy(state) if state else None
     return deepcopy(ws().asr_preview)
+
+
+def preserve_explicit_timing(
+    incoming: dict[str, Any],
+    *,
+    project_id: str | None,
+) -> dict[str, Any]:
+    """Keep an explicit saved clip when an older open client sends ``mode=ai``.
+
+    A previous frontend displayed ``from/to`` fields but omitted them from both
+    session saves and submit payloads. Once an explicit window has reached the
+    server, a stale tab must not erase it. We only reuse the exact stored values
+    for the same project and track; no timing is guessed.
+    """
+    data = deepcopy(incoming) if isinstance(incoming, dict) else {}
+    current = ws().wizard_session
+    if not current or current.get("projectId") != project_id:
+        return data
+    stored_data = current.get("data") or {}
+    current_track = str((data.get("track") or {}).get("id") or "")
+    stored_track = str((stored_data.get("track") or {}).get("id") or "")
+    if not current_track or current_track != stored_track:
+        return data
+    incoming_timing = data.get("timing") or {}
+    stored_timing = stored_data.get("timing") or {}
+    incoming_explicit = all(isinstance(incoming_timing.get(key), str) and incoming_timing[key] for key in ("from", "to"))
+    stored_explicit = all(isinstance(stored_timing.get(key), str) and stored_timing[key] for key in ("from", "to"))
+    if not incoming_explicit and stored_explicit:
+        data["timing"] = deepcopy(stored_timing)
+    return data
+
+
+def normalize_web_stage_data(
+    incoming: dict[str, Any],
+    *,
+    project_id: str | None,
+) -> dict[str, Any]:
+    """Normalize the web track step into the production alignment contract."""
+    data = preserve_explicit_timing(incoming, project_id=project_id)
+    timing = data.get("timing") or {}
+    explicit_window = all(
+        isinstance(timing.get(key), str) and timing[key]
+        for key in ("from", "to")
+    )
+    lyrics = str(data.get("lyrics") or "").strip()
+    # The current web form asks for the exact text heard inside the selected
+    # window. Older clients only named that value `lyrics`; local CTC receives
+    # the same user-authored value as its explicit target fragment.
+    if explicit_window and lyrics and not str(data.get("fragment") or "").strip():
+        data["fragment"] = lyrics
+    return data
 
 
 def register_user(payload: dict[str, Any]) -> dict[str, Any]:

@@ -2,15 +2,27 @@
 @tailwind components;
 @tailwind utilities;
 
-@keyframes batch-loading-sweep {
-  from { transform: translateX(-9%); }
-  to { transform: translateX(9%); }
+@keyframes batch-loading-glow {
+  0%, 100% { transform: translate3d(-18%, 0, 0) scaleX(.92); opacity: .32; }
+  50% { transform: translate3d(18%, 0, 0) scaleX(1.08); opacity: .68; }
 }
 
 .batch-loading-stripes {
-  background: repeating-linear-gradient(112deg, transparent 0 58px, rgba(139, 111, 230, 0.92) 58px 69px, transparent 69px 136px);
-  animation: batch-loading-sweep 1.35s linear infinite alternate;
-  filter: drop-shadow(0 0 8px rgba(139, 111, 230, 0.18));
+  left: -20%;
+  right: -20%;
+  background: radial-gradient(ellipse at center, rgba(139, 111, 230, .3) 0%, rgba(139, 111, 230, .12) 28%, transparent 68%);
+  animation: batch-loading-glow 3.2s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+
+.project-cover-frame { border-radius: clamp(7px, 7cqi, 18px); }
+.project-cover-gem { width: clamp(4px, 2.7cqi, 7px); height: clamp(4px, 2.7cqi, 7px); }
+.project-cover-initial { font-size: clamp(22px, 22cqi, 48px); transform: translateY(1px); }
+
+/* Hover-capable screens keep the video clear until the player is engaged.
+   Touch users have no hover state, so controls remain visible for them. */
+@media (hover: none), (pointer: coarse) {
+  .preview-player-control { opacity: 1; }
 }
 
 /*
@@ -81,7 +93,7 @@
   /* Пилюля слова на таймлайне примерки: НЕПРОЗРАЧНАЯ, на тон светлее контейнера
      (card-2 → soft-10 → soft-20 даёт ≈#35295a; пилюля должна читаться поверх него). */
   --tl-pill: #3f3170;
-  --sidebar-w: clamp(112px, 13vw, 188px);
+  --sidebar-w: clamp(112px, calc(var(--app-layout-w, 100vw) * .13), 188px);
   --rail-pad-y: 60px; /* Figma W37: лого top 60 / аватар bottom 60 (симметрично) */
 
   --grad-main: linear-gradient(175deg, #8b6fe6 0%, #5f42b9 100%);
@@ -152,7 +164,6 @@ a { color: inherit; text-decoration: none; }
 @media (max-width: 768px) {
   body { font-size: 14px; }
 }
-
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
@@ -172,9 +183,18 @@ a { color: inherit; text-decoration: none; }
 @keyframes strobeFlicker { 0%, 45% { background-color: var(--strobe-color, #8b6fe6); } 50%, 95% { background-color: #000; } 100% { background-color: var(--strobe-color, #8b6fe6); } }
 
 @layer components {
-  .app-frame { display: flex; min-height: 100dvh; }
+  .app-scale-viewport {
+    position: fixed; inset: 0; overflow: hidden;
+    background:
+      radial-gradient(900px 620px at 63% -18%, rgba(95, 66, 185, .17), transparent 68%),
+      radial-gradient(760px 620px at -8% 92%, rgba(139, 111, 230, .08), transparent 70%),
+      linear-gradient(145deg, #05010f 0%, #070215 55%, #04010c 100%);
+  }
+  .app-frame {
+    position: relative; z-index: 1; display: flex; min-height: var(--app-layout-h, 100dvh);
+  }
   .app-content {
-    flex: 1; min-height: 100dvh; overflow: hidden; padding: var(--space-6);
+    flex: 1; height: 100%; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; padding: var(--space-6);
     /* Скейлинг (c): контент прилегает к сайдбару и тянется во всю ширину. Старый
        max-width:1440 + margin auto собирал сайт в островок по центру (на 2780 — 1440 в центре,
        сайдбар остаётся у левого края). На ≤1627px кап и так не срабатывал → на 1440 без изменений. */
@@ -185,11 +205,11 @@ a { color: inherit; text-decoration: none; }
      Минимум нужен только узкому desktop; верхнего cap нет, иначе после 1920 левая
      колонка снова разъезжается и на 2780 получает неверное соотношение 2.5:1. */
   .wizard-aside { width: 39.6%; min-width: 340px; }
-  @media (max-width: 1024px) {
+  @media (max-width: 1023px) {
     .wizard-aside { width: 100%; min-width: 0; }
   }
   .sidebar {
-    width: var(--sidebar-w); height: 100dvh; position: fixed; left: 0; top: 0;
+    width: var(--sidebar-w); height: var(--app-layout-h, 100dvh); position: fixed; left: 0; top: 0;
     background: transparent; display: flex; flex-direction: column;
     align-items: center; padding: var(--rail-pad-y) 0; z-index: var(--z-sidebar);
   }
@@ -210,7 +230,31 @@ a { color: inherit; text-decoration: none; }
     background: var(--grad-card); border: 1px solid var(--border); border-radius: var(--r20); padding: var(--space-5);
   }
   /* Новый визуальный язык (Figma Wireframe 7–17) */
-  .card-2 { background: var(--card-2); border-radius: var(--r25); }
+  .card-2 {
+    border: 1px solid rgba(246, 245, 253, .045);
+    border-radius: var(--r25);
+    background:
+      linear-gradient(155deg, rgba(246, 245, 253, .025) 0%, transparent 35%),
+      var(--card-2);
+    box-shadow:
+      inset 0 1px 0 rgba(246, 245, 253, .035),
+      0 22px 64px rgba(0, 0, 0, .18);
+  }
+  .taste-metric {
+    border: 1px solid rgba(139, 111, 230, .14);
+    background:
+      linear-gradient(145deg, rgba(139, 111, 230, .18), rgba(95, 66, 185, .10)),
+      rgba(246, 245, 253, .015);
+    box-shadow: inset 0 1px 0 rgba(246, 245, 253, .045);
+    transition: transform var(--t-base), border-color var(--t-base), box-shadow var(--t-base);
+  }
+  .taste-metric:hover {
+    transform: translateY(-2px);
+    border-color: rgba(139, 111, 230, .32);
+    box-shadow: inset 0 1px 0 rgba(246, 245, 253, .07), 0 14px 36px rgba(5, 1, 15, .24);
+  }
+  @media (max-width: 1023px) {
+  }
   /* Пунктир как в Figma: stroke-dasharray 24 24 (CSS border-dashed слишком частый) */
   .dash-panel {
     border-radius: var(--r15);
@@ -255,14 +299,14 @@ a { color: inherit; text-decoration: none; }
     font-size: 24px; font-weight: 350; cursor: pointer; white-space: nowrap;
     transition: box-shadow var(--t-fast), color var(--t-fast), opacity var(--t-fast), transform var(--t-fast);
   }
-  .soft-btn:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--border-hover); }
-  .soft-btn:active { transform: scale(.98); }
+  .soft-btn:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--border-hover), 0 12px 30px rgba(5, 1, 15, .22); transform: translateY(-1px); }
+  .soft-btn:active { transform: translateY(0) scale(.98); }
   .soft-btn:disabled { opacity: .45; cursor: not-allowed; }
   .soft-btn-ready { box-shadow: inset 0 0 0 1.5px var(--accent-light); color: var(--text); }
   .soft-input {
     height: 60px; width: 121px; border: 0; border-radius: var(--r10);
     background: var(--grad-soft-20); color: var(--text-80); text-align: center;
-    font-size: 24px; font-weight: 350; outline: none; backdrop-filter: blur(50px);
+    font-size: 24px; font-weight: 350; outline: none;
     transition: box-shadow var(--t-fast);
   }
   /* своя обводка + глобальный focus-visible outline давали ДВОЙНУЮ рамку → гасим внешний outline */
@@ -276,7 +320,7 @@ a { color: inherit; text-decoration: none; }
   }
   .wizard-h { font-size: 32px; font-weight: 400; color: var(--text); line-height: 1.2; }
   .wizard-body { font-size: 24px; font-weight: 350; color: var(--text-80); }
-  @media (max-width: 1280px) {
+  @media (max-width: 1023px) {
     .wizard-h { font-size: 26px; }
     .wizard-body { font-size: 18px; }
     .soft-btn { font-size: 18px; }
@@ -326,7 +370,7 @@ a { color: inherit; text-decoration: none; }
     width: 60px; height: 60px; border-radius: var(--r15); border: 2px solid var(--accent-light);
     background: var(--grad-soft-20); color: var(--text-80);
   }
-  @media (max-width: 1280px) {
+  @media (max-width: 1023px) {
     .glue-chip, .pool-pill { font-size: 17px; height: 48px; }
     .pool-pill { padding-left: 60px; }
     .pool-pill-count { width: 48px; height: 48px; }
@@ -363,7 +407,7 @@ a { color: inherit; text-decoration: none; }
   }
   .mode-switch-btn.is-active { color: var(--text); }
   .mode-switch-btn:hover:not(.is-active) { color: var(--text); }
-  @media (max-width: 1280px) {
+  @media (max-width: 1023px) {
     .mode-switch-btn { font-size: 17px; gap: var(--space-1); }
     .overlay-chip { font-size: 16px; height: 48px; }
     .overlay-btn { height: 48px; width: 48px; }
@@ -491,10 +535,10 @@ a { color: inherit; text-decoration: none; }
   .modal-overlay { position: fixed; inset: 0; z-index: var(--z-overlay); background: rgba(5,1,15,.78); backdrop-filter: blur(15px); }
   .modal-panel {
     position: fixed; inset: auto; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: var(--z-modal);
-    width: min(720px, calc(100vw - var(--space-5) * 2)); max-height: calc(100dvh - var(--space-5) * 2); overflow-y: auto;
+    width: min(720px, calc(var(--app-layout-w, 100vw) - var(--space-5) * 2)); max-height: calc(var(--app-layout-h, 100dvh) - var(--space-5) * 2); overflow-y: auto;
     background: var(--card-2); border: 1px solid var(--accent-20); border-radius: var(--r25); padding: 28px; box-shadow: 0 28px 100px rgba(0,0,0,.5);
   }
-  .toast-stack { position: fixed; top: 60px; right: 32px; z-index: var(--z-toast); display: flex; width: min(390px, calc(100vw - 40px)); flex-direction: column; gap: 12px; }
+  .toast-stack { position: fixed; top: 60px; right: 32px; z-index: var(--z-toast); display: flex; width: min(390px, calc(var(--app-layout-w, 100vw) - 40px)); flex-direction: column; gap: 12px; }
   .toast-item { display: flex; align-items: flex-start; gap: 14px; width: 100%; border-radius: var(--r15); border: 1px solid var(--accent-20); padding: 18px; background: rgba(20,14,36,.96); box-shadow: 0 18px 60px rgba(0,0,0,.42); backdrop-filter: blur(50px); animation: slideUpFade var(--t-base); }
   /* однострочный тост: маркер-пил и текст выравниваем по центру, иначе текст (22px) съезжает
      вверх относительно 30px-пила при flex-start. Многострочные остаются top-aligned. */
@@ -514,12 +558,8 @@ a { color: inherit; text-decoration: none; }
 }
 
 @media (max-width: 768px) {
-  .app-content { padding: var(--space-4); overflow: visible; min-height: 100dvh; }
+  .app-content { padding: var(--space-4); }
   .with-sidebar { margin-left: 0; }
   .sidebar { display: none; }
   .btn { height: 52px; padding: 0 var(--space-5); font-size: 14px; }
-}
-
-@media (max-height: 720px) {
-  .app-content { height: auto; min-height: 100dvh; overflow-y: auto; }
 }

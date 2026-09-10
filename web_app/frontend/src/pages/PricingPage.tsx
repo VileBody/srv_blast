@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import type { PackageType } from '../lib/types';
 import { cn } from '../lib/cn';
 import { LEGAL_LINKS } from '../lib/legal';
@@ -27,6 +27,34 @@ const gradWhitey = {
   WebkitBackgroundClip: 'text',
   backgroundClip: 'text'
 } as const;
+
+const PAYMENT_ATTEMPT_PREFIX = 'blast:payment-attempt:';
+const PAYMENT_PACKAGES: PackageType[] = ['BLAST', 'GLOW', 'IMPULSE'];
+
+function paymentAttemptKey(packageType: PackageType): string {
+  const storageKey = `${PAYMENT_ATTEMPT_PREFIX}${packageType}`;
+  const existing = window.sessionStorage.getItem(storageKey);
+  if (existing) return existing;
+  const created = window.crypto.randomUUID();
+  window.sessionStorage.setItem(storageKey, created);
+  return created;
+}
+
+function clearPaymentAttempt(packageType?: PackageType): void {
+  const packages = packageType ? [packageType] : PAYMENT_PACKAGES;
+  packages.forEach((type) => window.sessionStorage.removeItem(`${PAYMENT_ATTEMPT_PREFIX}${type}`));
+}
+
+function paymentErrorCode(error: unknown): string {
+  if (!(error instanceof ApiError) || typeof error.detail !== 'object' || error.detail === null) return '';
+  const body = error.detail as { code?: unknown; detail?: unknown };
+  if (typeof body.code === 'string') return body.code;
+  if (typeof body.detail === 'object' && body.detail !== null) {
+    const nested = body.detail as { code?: unknown };
+    return typeof nested.code === 'string' ? nested.code : '';
+  }
+  return '';
+}
 
 interface Bullet {
   icon: 'scissors' | 'note' | 'check';
@@ -298,6 +326,7 @@ export function PricingPage() {
   useEffect(() => {
     const payment = searchParams.get('payment');
     if (!payment) return;
+    clearPaymentAttempt();
     push({
       variant: payment === 'success' ? 'success' : 'error',
       title: t(payment === 'success' ? 'pricing.paymentSuccess' : 'pricing.paymentFailed')
@@ -321,12 +350,19 @@ export function PricingPage() {
   const orderMutation = useMutation({
     mutationFn: (packageType: PackageType) => api.createOrder({
       packageType,
+      idempotencyKey: paymentAttemptKey(packageType),
       recurrentAccepted: packageType === 'BLAST' ? Boolean(recurrentAgreed.BLAST) : false
     }),
     onSuccess: (data) => {
       window.location.assign(data.paymentUrl);
     },
-    onError: () => push({ variant: 'error', title: t('pricing.orderFailed') })
+    onError: (error, packageType) => {
+      const code = paymentErrorCode(error);
+      if (code === 'payment_init_failed' || code === 'payment_idempotency_conflict') {
+        clearPaymentAttempt(packageType);
+      }
+      push({ variant: 'error', title: t('pricing.orderFailed') });
+    }
   });
 
   const plans: Plan[] = [
@@ -369,7 +405,7 @@ export function PricingPage() {
   ];
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none">
+    <div className="flex min-h-0 flex-1 flex-col md:h-[var(--app-page-h)] md:flex-none">
       <div className="card-2 relative flex min-h-0 flex-1 flex-col p-[40px]">
         <div className="flex shrink-0 items-center gap-[20px]">
           <button

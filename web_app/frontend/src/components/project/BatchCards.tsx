@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { isVideoPosted, type VideoVersion } from '../../lib/types';
 import { cn } from '../../lib/cn';
@@ -6,6 +6,8 @@ import { LimitsIndicator } from '../ui/LimitsIndicator';
 import { FigIcon } from '../ui/FigIcon';
 import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useChip } from '../../i18n/useChip';
+import { SvgMaskIcon } from '../layout/SvgMaskIcon';
+import { api } from '../../lib/api';
 
 /*
  * Общая оболочка батча: W36 (готовый батч) и W51 (идёт генерация) — ОДИН макет.
@@ -19,6 +21,82 @@ export const gradLight = {
   WebkitBackgroundClip: 'text',
   backgroundClip: 'text'
 } as const;
+
+/** Горизонтальная лента: мышью/тачем тянется, вертикальное колесо листает по горизонтали. */
+function useHorizontalScroll() {
+  const ref = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ active: boolean; moved: boolean; startX: number; startScroll: number; pointerId?: number }>({ active: false, moved: false, startX: 0, startScroll: 0 });
+  const [fade, setFade] = useState({ left: false, right: false });
+
+  const syncFades = () => {
+    const element = ref.current;
+    if (!element) return;
+    setFade({
+      left: element.scrollLeft > 4,
+      right: element.scrollLeft + element.clientWidth < element.scrollWidth - 4
+    });
+  };
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    syncFades();
+    const resize = new ResizeObserver(syncFades);
+    resize.observe(element);
+    const onWheel = (event: WheelEvent) => {
+      if (element.scrollWidth <= element.clientWidth + 1) return;
+      const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+      if (!delta) return;
+      event.preventDefault();
+      element.scrollLeft += delta;
+    };
+    element.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      resize.disconnect();
+      element.removeEventListener('wheel', onWheel);
+    };
+  }, []);
+
+  /*
+   * Захват указателя ставим только когда лента реально поехала. Захват на pointerdown
+   * перенаправлял и последующий click на саму ленту — из-за этого пилюли батчей и «+»
+   * переставали нажиматься.
+   */
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const element = ref.current;
+    if (!element) return;
+    drag.current = { active: true, moved: false, startX: event.clientX, startScroll: element.scrollLeft, pointerId: event.pointerId };
+  };
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const element = ref.current;
+    if (!drag.current.active || !element) return;
+    const dx = event.clientX - drag.current.startX;
+    if (Math.abs(dx) > 5) {
+      if (!drag.current.moved) element.setPointerCapture?.(event.pointerId);
+      drag.current.moved = true;
+      element.scrollLeft = drag.current.startScroll - dx;
+    }
+  };
+  const end = () => {
+    const element = ref.current;
+    if (drag.current.moved && drag.current.pointerId !== undefined) element?.releasePointerCapture?.(drag.current.pointerId);
+    drag.current.active = false;
+    window.setTimeout(() => { drag.current.moved = false; }, 0);
+  };
+
+  return {
+    ref,
+    fade,
+    moved: () => drag.current.moved,
+    handlers: { onPointerDown, onPointerMove, onPointerUp: end, onPointerCancel: end, onPointerLeave: end, onScroll: syncFades }
+  };
+}
+
+function edgeMask(left: boolean, right: boolean, width = 24) {
+  const leftStop = left ? width : 0;
+  const rightStop = right ? width : 0;
+  return `linear-gradient(to right, transparent 0, #000 ${leftStop}px, #000 calc(100% - ${rightStop}px), transparent 100%)`;
+}
 
 /** Чип-тег в строке генерации (h25, r5): иконбокс 25×25 + подпись (Figma 712:333/318/324). */
 export function TagChip({ label, icon }: { label: string; icon: 'bg' | 'sub' | 'hook' }) {
@@ -49,13 +127,20 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
   // Опубликованный ролик выглядел ровно как неопубликованный: юзер не понимал, что уже ушло
   // в TikTok, а «Выложить все» молча пропускала выложенные.
   const posted = isVideoPosted(video);
+  const chips = useHorizontalScroll();
+  const chipsMask = edgeMask(chips.fade.left, chips.fade.right, 20);
   return (
     <div className={cn('relative flex h-[60px] shrink-0 items-center rounded-[15px] bg-[#1d1534] pl-[28px] pr-[24px]', posted && 'opacity-70')}>
       <span className="flex w-[110px] shrink-0 items-center gap-[8px] truncate text-[16px] leading-none text-text">
         <span className="translate-y-px truncate">{t('projectDetail.videoN', { n: video.index })}</span>
         {posted && <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-success" aria-hidden="true" />}
       </span>
-      <div className="mx-[20px] flex min-w-0 flex-1 items-center gap-[10px] overflow-x-auto no-scrollbar">
+      <div
+        ref={chips.ref}
+        className="no-scrollbar mx-[20px] flex min-w-0 flex-1 cursor-grab select-none items-center gap-[10px] overflow-x-auto active:cursor-grabbing"
+        style={{ maskImage: chipsMask, WebkitMaskImage: chipsMask }}
+        {...chips.handlers}
+      >
         {/* Через chip(): бакеты футажа и типы хуков хранятся по-русски (по ним матчит бэк),
             а показывать их надо на языке интерфейса. */}
         <TagChip icon="bg" label={chip(video.source)} />
@@ -63,7 +148,11 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
         <TagChip icon="hook" label={chip(video.hook)} />
       </div>
       {/* Figma W36: звезда заменена на постинг в TikTok (18×20), скачивание рядом (gap 12) */}
-      {posted ? (
+      {video.status === 'FAILED' ? (
+        <span className="ml-[8px] shrink-0 whitespace-nowrap text-[14px] leading-none text-warning" title={video.error ?? undefined}>
+          {t('processing.failedShort')}
+        </span>
+      ) : posted ? (
         <span className="ml-[8px] flex shrink-0 items-center gap-[6px] whitespace-nowrap text-[14px] leading-none text-success" title={t('projectDetail.postedHint')}>
           <FigIcon name="pd-tiktok.svg" h={16} />
           {t('projectDetail.posted')}
@@ -80,6 +169,7 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
       <a
         href={video.downloadUrl ?? '#'}
         download=""
+        onClick={() => { if (video.downloadUrl) void api.trackEvent('video_downloaded', { videoId: video.id }).catch(() => {}); }}
         aria-label={t('common.download')}
         className={`ml-[12px] shrink-0 transition-opacity hover:opacity-70 ${video.downloadUrl ? '' : 'pointer-events-none opacity-40'}`}
       >
@@ -90,12 +180,15 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
 }
 
 /** Строка-загрузка W51: диагональные полосы мягко движутся под фейдом до появления готового ролика. */
-export function LoadingRow() {
+export function LoadingRow({ video, active = true }: { video?: VideoVersion; active?: boolean }) {
   const { t } = useTranslation();
   return (
-    <div className="batch-loading-row relative h-[60px] shrink-0 overflow-hidden rounded-[15px] bg-[#1d1534]" role="status" aria-label={t('processing.rendering')}>
-      <span className="batch-loading-stripes absolute inset-y-0 left-[-35%] w-[170%]" aria-hidden="true" />
-      <span className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,#1d1534_0%,rgba(29,21,52,0.08)_18%,rgba(29,21,52,0.08)_82%,#1d1534_100%)]" aria-hidden="true" />
+    <div className="batch-loading-row relative flex h-[60px] shrink-0 items-center overflow-hidden rounded-[15px] bg-[#1d1534] px-[28px]" role="status" aria-label={t('processing.rendering')}>
+      {active && <span className="batch-loading-stripes absolute inset-0" aria-hidden="true" />}
+      <span className="relative z-[1] text-[16px] text-text">{video ? t('projectDetail.videoN', { n: video.index }) : t('processing.rendering')}</span>
+      <span className="relative z-[1] ml-auto text-[14px] text-text-60">
+        {active ? t('processing.videoProgress', { progress: Math.max(1, Math.round(video?.progress ?? 1)) }) : t('processing.queued')}
+      </span>
     </div>
   );
 }
@@ -142,25 +235,80 @@ export function TrackCard({
   );
 }
 
-/** Трек батчей (W36): «+»-пил уходит ПОД пил батча (нахлёст 33px), «+» ведёт в визард на этап фона. */
-export function BatchTrack({ onAddBatch }: { onAddBatch: () => void }) {
+/** Переключатель сохранённых батчей проекта; «+» ведёт в визард на этап фона. */
+export function BatchTrack({
+  batches,
+  selectedId,
+  onSelect,
+  onAddBatch
+}: {
+  batches: { id: string; number: number }[];
+  selectedId?: string;
+  onSelect: (id: string) => void;
+  onAddBatch: () => void;
+}) {
   const { t } = useTranslation();
+  const scroll = useHorizontalScroll();
+  const mask = edgeMask(scroll.fade.left, scroll.fade.right, 28);
+  const lastBatchSelected = Boolean(batches.length && batches[batches.length - 1]?.id === selectedId);
+  useEffect(() => {
+    const rail = scroll.ref.current;
+    if (!rail || !selectedId) return;
+    const selected = Array.from(rail.querySelectorAll<HTMLElement>('[data-batch-id]'))
+      .find((element) => element.dataset.batchId === selectedId);
+    if (!selected) return;
+    const isLast = batches[batches.length - 1]?.id === selectedId;
+    if (isLast) {
+      // У последнего батча сразу показываем и соседний «+», иначе он остаётся за краем.
+      rail.scrollLeft = rail.scrollWidth - rail.clientWidth;
+    } else {
+      const left = selected.offsetLeft;
+      const right = left + selected.offsetWidth;
+      if (left < rail.scrollLeft) rail.scrollLeft = left;
+      else if (right > rail.scrollLeft + rail.clientWidth) rail.scrollLeft = right - rail.clientWidth;
+    }
+    rail.dispatchEvent(new Event('scroll'));
+  }, [batches.length, selectedId, scroll.ref]);
   return (
-    <div className="flex h-[60px] items-stretch rounded-[15px]" style={{ background: 'var(--grad-soft-10)' }}>
-      <span
-        className="relative z-10 flex items-center whitespace-nowrap rounded-[15px] border-2 border-accent-light px-[21px] text-[24px] font-[350] leading-none text-text [backdrop-filter:blur(40px)]"
-        style={{ background: 'var(--grad-soft-20)' }}
-      >
-        {t('projectDetail.batchVideo')}
-      </span>
+    <div
+      ref={scroll.ref}
+      className="no-scrollbar flex h-[60px] cursor-grab select-none items-stretch overflow-x-auto rounded-[15px] active:cursor-grabbing"
+      style={{ background: 'var(--grad-soft-10)', maskImage: mask, WebkitMaskImage: mask }}
+      {...scroll.handlers}
+    >
+      {(batches.length ? batches : [{ id: 'empty', number: 1 }]).map((batch) => {
+        const selected = batches.length === 0 || batch.id === selectedId;
+        return (
+          <button
+            key={batch.id}
+            data-batch-id={batch.id}
+            type="button"
+            disabled={batches.length === 0}
+            onClick={() => { if (!scroll.moved()) onSelect(batch.id); }}
+            aria-pressed={selected}
+            className={cn(
+              'relative z-10 flex shrink-0 items-center whitespace-nowrap rounded-[15px] border-2 px-[21px] text-[24px] font-[350] leading-none transition',
+              selected ? 'border-accent-light text-text' : 'border-transparent text-text-60 hover:text-text'
+            )}
+            style={{ background: selected ? '#34245d' : 'transparent' }}
+          >
+            {t('projectDetail.batchVideo', { n: batch.number })}
+          </button>
+        );
+      })}
       <button
         type="button"
-        onClick={onAddBatch}
+        onClick={() => { if (!scroll.moved()) onAddBatch(); }}
         aria-label={t('projects.addBatch')}
-        className="relative z-0 -ml-[33px] flex w-[78px] items-center justify-center rounded-[15px] border-2 border-[var(--accent)] pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text"
+        className={cn(
+          'relative z-0 flex shrink-0 items-center justify-center rounded-[15px] border-2 border-[var(--accent)] text-[24px] leading-none text-text-80 transition-[width,margin,padding,color] hover:text-text',
+          lastBatchSelected
+            ? '-ml-[33px] w-[78px] pl-[33px]'
+            : 'ml-[12px] w-[48px] px-[12px]'
+        )}
         style={{ background: 'var(--grad-soft-20)' }}
       >
-        +
+        <span className="translate-y-[1px]" aria-hidden="true">+</span>
       </button>
     </div>
   );
@@ -204,7 +352,7 @@ export function GenerationsCard({
   videos: VideoVersion[];
   postAll?: () => void;
   /** постинг одного ролика: индекс в списке (Figma W36 — иконка TikTok в строке) */
-  postOne?: (index: number) => void;
+  postOne?: (video: VideoVersion) => void;
   /** Пустой триал не подделываем демо-роликами: ведём в реальный визард создания батча. */
   onEmptyAction?: () => void;
   loading?: boolean;
@@ -213,10 +361,14 @@ export function GenerationsCard({
   ratingPending?: boolean;
 }) {
   const { t } = useTranslation();
-  const postedCount = videos.filter(isVideoPosted).length;
+  const ready = videos.filter((video) => video.status === 'COMPLETED');
+  const postedCount = ready.filter(isVideoPosted).length;
   const downloadable = videos.filter((video) => video.downloadUrl);
+  const pending = videos.filter((video) => video.status === 'PENDING' || video.status === 'PROCESSING');
+  const activePending = pending.find((video) => video.status === 'PROCESSING' || video.stage !== 'waiting_previous') ?? pending[0];
   // Браузер блокирует пачку одновременных скачиваний — разносим по времени
   const downloadAll = () => {
+    void api.trackEvent('video_download_all', { videos: downloadable.length }).catch(() => {});
     downloadable.forEach((video, index) => {
       setTimeout(() => {
         const link = document.createElement('a');
@@ -244,8 +396,8 @@ export function GenerationsCard({
             )}
           >
             <FigIcon name="pd-tiktok.svg" h={20} />
-            {postedCount > 0 && videos.length > 0
-              ? t('projectDetail.postAllProgress', { done: postedCount, total: videos.length })
+            {postedCount > 0 && ready.length > 0
+              ? t('projectDetail.postAllProgress', { done: postedCount, total: ready.length })
               : t('projectDetail.postAll')}
           </button>
           {/* Скачивание всего батча: раньше ролики можно было забрать только по одному */}
@@ -265,7 +417,15 @@ export function GenerationsCard({
         </span>
       </div>
       <div className="relative min-h-0 flex-1">
-        <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto">
+        <div
+          className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto"
+          /* Прячем строки прозрачностью, а не цветной накладкой. Тогда сквозь
+             фейд всегда виден фактический многослойный фон card-2 без шва. */
+          style={{
+            maskImage: 'linear-gradient(to bottom, transparent 0, #000 2px, #000 calc(100% - 12px), transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 2px, #000 calc(100% - 12px), transparent 100%)',
+          }}
+        >
           {videos.length === 0 && !loading ? (
             <div className="flex h-full min-h-[160px] flex-col items-center justify-center gap-[20px] text-center">
               <p className="text-[16px] leading-[19px] text-text-60">{t('projectDetail.noGenerations')}</p>
@@ -276,16 +436,12 @@ export function GenerationsCard({
               )}
             </div>
           ) : (
-            videos.map((v, i) => {
-              const postIndex = videos.slice(0, i + 1).filter((item) => item.status === 'COMPLETED').length - 1;
-              return <GenerationRow key={v.id} video={v} onPost={postOne && v.status === 'COMPLETED' ? () => postOne(postIndex) : undefined} />;
-            })
+            videos.map((v) => v.status === 'PENDING' || v.status === 'PROCESSING'
+              ? <LoadingRow key={v.id} video={v} active={v.id === activePending?.id} />
+              : <GenerationRow key={v.id} video={v} onPost={postOne && v.status === 'COMPLETED' ? () => postOne(v) : undefined} />)
           )}
-          {loading && <LoadingRow />}
+          {loading && pending.length === 0 && <LoadingRow />}
         </div>
-        {/* скролл-фейды сверху/снизу (цвет карты) */}
-        <div className="pointer-events-none absolute inset-x-0 -top-[10px] h-[24px]" style={{ background: 'linear-gradient(180deg, #140e24, rgba(20,14,36,0))' }} />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[24px]" style={{ background: 'linear-gradient(0deg, #140e24, rgba(20,14,36,0))' }} />
       </div>
       {onRate && (
         <div className="mt-[18px] flex shrink-0 items-center justify-between gap-[16px] border-t border-[rgba(246,245,253,0.12)] pt-[18px]">
@@ -325,10 +481,12 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
   const video = videos[current - 1];
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
+  const [previewError, setPreviewError] = useState(false);
 
   // смена ролика — всегда с начала и на паузе, иначе звук едет из предыдущего
   useEffect(() => {
     setPlaying(false);
+    setPreviewError(false);
     const element = videoRef.current;
     if (element) element.pause();
   }, [current]);
@@ -343,6 +501,7 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
     }
     void element.play();
     setPlaying(true);
+    void api.trackEvent('video_previewed', { videoId: video?.id }).catch(() => {});
   };
 
   return (
@@ -354,11 +513,11 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
         {videos.length > 0 && (
           <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
             <button type="button" aria-label={t('common.prev')} onClick={() => step(-1)} disabled={total < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-              <FigIcon name="home-arrow.svg" h={11} className="rotate-180" />
+              <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)', transform: 'rotate(180deg)' }} />
             </button>
             <span className="text-[16px] font-[350] leading-none text-accent">{current}/{total}</span>
             <button type="button" aria-label={t('common.next')} onClick={() => step(1)} disabled={total < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-              <FigIcon name="home-arrow.svg" h={11} />
+              <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)' }} />
             </button>
           </div>
         )}
@@ -373,20 +532,25 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
         onNext={() => step(1)}
         showSteps={total > 1}
       >
-        {video?.downloadUrl ? (
+        {video && (video.playbackUrl || video.downloadUrl) && !previewError ? (
           <video
             ref={videoRef}
             key={video.id}
-            src={video.downloadUrl}
-            poster={video.thumbnailUrl ?? undefined}
+            src={video.playbackUrl ?? video.downloadUrl ?? undefined}
+            poster={video.thumbnailUrl && !video.thumbnailUrl.endsWith('/cover-placeholder.svg') ? video.thumbnailUrl : undefined}
             playsInline
+            preload="auto"
+            onError={() => setPreviewError(true)}
             onEnded={() => setPlaying(false)}
-            className="absolute inset-0 h-full w-full rounded-r15 object-cover"
+            className="absolute inset-0 h-full w-full rounded-r15 bg-black object-contain"
           />
         ) : (
-          <span className="absolute inset-0 flex items-center justify-center px-space-5 text-center text-[16px] text-text-60">
+          <span className="absolute inset-0 flex flex-col items-center justify-center gap-[14px] px-space-5 text-center text-[16px] text-text-60">
             {/* Пустой проект и ролик без файла — разные вещи, и текст у них разный */}
-            {videos.length === 0 ? t('projectDetail.previewEmpty') : t('projectDetail.videoN', { n: current })}
+            {previewError ? t('projectDetail.previewFailed') : videos.length === 0 ? t('projectDetail.previewEmpty') : t('projectDetail.videoN', { n: current })}
+            {previewError && video?.downloadUrl && (
+              <a href={video.downloadUrl} className="text-accent-light underline underline-offset-4">{t('common.download')}</a>
+            )}
           </span>
         )}
       </PreviewPlayer>
@@ -406,18 +570,34 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
 /**
  * Правая колонка на время генерации (W51). Раньше здесь стояла та же пустая панель превью,
  * что и на готовом батче: человек смотрел в белый прямоугольник и не понимал ни сколько ждать,
- * ни можно ли уйти. Теперь — «можно закрыть вкладку» (бот уже шлёт уведомления) и разбор,
- * что именно сейчас делают с треком; текущий шаг считаем от доли готовых роликов.
+ * ни можно ли уйти. Теперь — «можно закрыть вкладку» (бот уже шлёт уведомления) и разбор
+ * этапа активного ролика, который приходит от оркестратора.
  */
-export function ProcessingAside({ done, total, telegram, onBack }: { done: number; total: number; telegram: boolean; onBack: () => void }) {
+export function ProcessingAside({ done, total, activeVideo, renderFormat, telegram, onBack }: { done: number; total: number; activeVideo?: VideoVersion; renderFormat?: VideoVersion['format']; telegram: boolean; onBack: () => void }) {
   const { t } = useTranslation();
-  const steps = [1, 2, 3, 4, 5].map((n) => ({ title: t(`processing.step${n}`), text: t(`processing.step${n}Text`) }));
-  // первые два шага — разбор трека, он общий на батч; дальше шаги идут по мере готовности роликов
-  const ratio = total > 0 ? done / total : 0;
-  const active = done === 0 ? Math.min(1, steps.length - 1) : Math.min(steps.length - 1, 2 + Math.floor(ratio * (steps.length - 2)));
+  const legacyFormat = activeVideo?.source.match(/(?:^|[·\s])(16:9|9:16|4:3|1:1)(?:$|[·\s])/)?.[1];
+  const renderSize: Record<string, string> = {
+    '9:16': '1080×1920', '16:9': '1920×1080', '4:3': '1920×1440', '1:1': '1080×1080',
+  };
+  const exactFormat = renderFormat ?? activeVideo?.format ?? legacyFormat;
+  const size = exactFormat ? renderSize[exactFormat] : t('processing.renderSizePending');
+  const steps = [1, 2, 3, 4, 5].map((n) => ({
+    title: t(`processing.step${n}`),
+    text: t(`processing.step${n}Text`, n === 5 ? { size } : undefined),
+  }));
+  // Оркестратор отдаёт этап активной вариации. Поэтому правая колонка сбрасывается
+  // для каждого следующего ролика и больше не опережает строки слева по общему проценту батча.
+  const stage = activeVideo?.stage ?? 'queued';
+  const stageIndex: Record<string, number> = { queued: 0, build: 0, alignment: 1, dispatch: 2, render: 3, poll: 4, done: 4 };
+  const active = activeVideo
+    ? (stageIndex[stage] ?? Math.min(4, Math.floor(Math.max(0, activeVideo.progress) / 20)))
+    : (total > 0 && done >= total ? 4 : 0);
   return (
     <aside className="wizard-aside card-2 flex shrink-0 flex-col overflow-hidden p-[40px]">
-      <h2 className="shrink-0 truncate text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{t('processing.asideTitle')}</h2>
+      <div className="flex shrink-0 items-center justify-between gap-[16px]">
+        <h2 className="min-w-0 truncate text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{t('processing.asideTitle')}</h2>
+        {activeVideo && <span className="shrink-0 rounded-r10 bg-grad-soft-20 px-[12px] py-[7px] text-[14px] text-text-80">{t('processing.videoOf', { current: activeVideo.index, total })}</span>}
+      </div>
 
       <div className="no-scrollbar mt-[28px] flex min-h-0 flex-1 flex-col gap-[10px] overflow-y-auto">
         {steps.map((step, index) => {
@@ -449,8 +629,19 @@ export function ProcessingAside({ done, total, telegram, onBack }: { done: numbe
 
       {/* главное сообщение экрана: ждать необязательно */}
       <div className="mt-[20px] shrink-0 rounded-r15 border border-accent-light bg-grad-soft-10 px-[20px] py-[16px]">
-        <p className="text-[18px] leading-none text-text">{t('processing.closeTabTitle')}</p>
-        <p className="mt-[8px] text-[15px] leading-[19px] text-text-60">{t(telegram ? 'processing.closeTabText' : 'processing.closeTabTextNoBot')}</p>
+        <p className="text-[16px] leading-none text-text">{t('processing.closeTabTitle')}</p>
+        <p className="mt-[8px] text-[14px] leading-[18px] text-text-60">{t(telegram ? 'processing.closeTabText' : 'processing.closeTabTextNoBot')}</p>
+      </div>
+
+      <div className="mt-[10px] flex shrink-0 items-center justify-between gap-[16px] rounded-r15 bg-grad-soft-10 px-[20px] py-[14px]">
+        <span className="min-w-0">
+          <span className="block truncate text-[16px] leading-none text-text">{t('processing.guideTitle')}</span>
+          <span className="mt-[6px] block text-[14px] leading-[18px] text-text-60">PDF · {t('processing.guideCaption')}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-[8px]">
+          <a href="/assets/resources/blast-tiktok-guide.pdf" target="_blank" rel="noreferrer" onClick={() => { void api.trackEvent('guide_opened').catch(() => {}); }} className="rounded-r10 border border-[rgba(246,245,253,.18)] px-[12px] py-[8px] text-[14px] text-text-80 transition hover:border-accent-light hover:text-text">{t('common.view')}</a>
+          <a href="/assets/resources/blast-tiktok-guide.pdf" download onClick={() => { void api.trackEvent('guide_downloaded').catch(() => {}); }} className="rounded-r10 border border-accent bg-grad-soft-20 px-[12px] py-[8px] text-[14px] text-text-80 transition hover:text-text">{t('common.download')}</a>
+        </span>
       </div>
 
       <button
@@ -469,7 +660,7 @@ export function ProcessingAside({ done, total, telegram, onBack }: { done: numbe
 /** Общий каркас страницы батча (W36/W51): две колонки, fill-height по сайдбару. */
 export function BatchLayout({ left, right }: { left: ReactNode; right: ReactNode }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[20px] md:h-[calc(100dvh_-_2*var(--space-6))] md:flex-none md:flex-row md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="flex min-h-0 flex-1 flex-col gap-[20px] md:h-[var(--app-page-h)] md:flex-none md:flex-row md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[25px]">{left}</div>
       {right}
     </div>

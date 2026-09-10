@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import logging
 import os
 import threading
 import time
@@ -20,6 +22,8 @@ import urllib.request
 from typing import Any
 
 from . import auth_store, tiktok_config
+
+log = logging.getLogger(__name__)
 
 tiktok_config.load_env()  # подтянуть backend/.env в окружение
 
@@ -66,21 +70,40 @@ def _http() -> urllib.request.OpenerDirector:
     return _opener
 
 
-def _api(method: str, params: dict) -> dict:
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
+def _api(method: str, params: dict, *, token: str | None = None) -> dict:
+    url = f"https://api.telegram.org/bot{BOT_TOKEN if token is None else token}/{method}"
     data = urllib.parse.urlencode(params).encode()
     with _http().open(urllib.request.Request(url, data=data), timeout=35) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _send(chat_id: object, text: str, markup: dict | None = None) -> None:
+def _send(chat_id: object, text: str, markup: dict | None = None, *, manager: bool = False) -> bool:
     try:
         params: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if markup:
             params["reply_markup"] = json.dumps(markup)
-        _api("sendMessage", params)
-    except Exception:
-        pass
+        if manager:
+            token = os.getenv("WEB_MANAGER_BOT_TOKEN", "").strip()
+            if not token:
+                log.error("telegram_auth: WEB_MANAGER_BOT_TOKEN is not configured")
+                return False
+            result = _api("sendMessage", params, token=token)
+        else:
+            result = _api("sendMessage", params)
+        if not result.get("ok"):
+            log.error("telegram_auth: sendMessage rejected code=%s description=%s",
+                      result.get("error_code"), result.get("description"))
+            return False
+        log.info("telegram_auth: sendMessage delivered")
+        return True
+    except Exception as exc:
+        # Exceptions may contain the Bot API URL (including its token). Log
+        # only their type/status; a timeout does not prove non-delivery and
+        # must not cause an immediate resend of the same message. Durable
+        # notifications retry separately with backoff and a persisted event key.
+        log.error("telegram_auth: sendMessage delivery unknown error=%s status=%s",
+                  type(exc).__name__, getattr(exc, "code", None))
+        return False
 
 
 # Сколько поштучных сообщений «Ролик N готов» отправляем, прежде чем перейти на сводку.
@@ -172,7 +195,19 @@ def _handle_start(chat_id: object, token: str, profile: dict[str, Any]) -> None:
     # allow_create=False: по кнопке «Войти» аккаунт не заводим (см. auth_store.confirm_token)
     result = auth_store.confirm_token(token, chat_id, profile, allow_create=False)
     if result == "ok":
-        _send(chat_id, "✅ Аккаунт Blast подтверждён. Возвращайтесь на сайт.", _back_button())
+        message = (
+            "✅ Аккаунт Blast подтверждён.\n"
+            "Ролики можно генерировать и в Telegram-боте: @blast808bot\n"
+            "Вход выполнен — возвращайтесь на сайт."
+        )
+        if os.getenv("BLAST_BACKEND_MODE") == "production":
+            from .notifications import enqueue
+            # Each login has its own event, including repeat logins by an
+            # existing user. Keep the actual login token out of queue/log IDs.
+            event = hashlib.sha256(token.encode()).hexdigest()
+            enqueue(f"login:{event}", chat_id=chat_id, text=message, markup=_back_button())
+        else:
+            _send(chat_id, message, _back_button())
         return
     if result == "no_account":
         _send(chat_id, "Аккаунта Blast с этим Telegram ещё нет. Нажми «Зарегистрироваться» — "

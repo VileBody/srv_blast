@@ -6,6 +6,7 @@ import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { AsrWord, useWizardStore } from '../../stores/wizardStore';
+import { usePlaybackUrl } from './useFragmentAudio';
 
 /*
  * Примерка субтитров (этап «Текст»): плеер отрывка + таймлайн слов из ASR.
@@ -77,6 +78,7 @@ type Drag = {
 export function SubtitleTimeline() {
   const { t } = useTranslation();
   const track = useWizardStore((state) => state.track);
+  const playbackUrl = usePlaybackUrl(track);
   const asr = useWizardStore((state) => state.asr);
   const setAsrWord = useWizardStore((state) => state.setAsrWord);
   const toggleAsrFocus = useWizardStore((state) => state.toggleAsrFocus);
@@ -139,7 +141,7 @@ export function SubtitleTimeline() {
   // --- волна отрывка: декодируем файл один раз, пики считаем под текущий масштаб
   const waveRef = useRef<HTMLCanvasElement>(null);
   const [wave, setWave] = useState<{ url: string; data: Float32Array; rate: number } | null>(null);
-  const waveUrl = track?.localUrl ?? null;
+  const waveUrl = playbackUrl;
   useEffect(() => {
     if (!waveUrl || asr.status !== 'COMPLETED') return;
     if (wave && wave.url === waveUrl) return;
@@ -219,7 +221,7 @@ export function SubtitleTimeline() {
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
   }, [asr.status]);
-  const url = track?.localUrl ?? null;
+  const url = playbackUrl;
 
   useEffect(() => {
     audioRef.current?.pause();

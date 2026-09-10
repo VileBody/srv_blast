@@ -100,7 +100,12 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
     if (!host) return;
     const ring = ringRef.current.getBoundingClientRect();
     const box = host.getBoundingClientRect();
-    setAnchor({ host, x: ring.left - box.left, y: ring.top - box.top });
+    // getBoundingClientRect() возвращает уже уменьшенные CSS-zoom координаты, тогда
+    // как absolute left/top внутри host задаются в его исходной системе. Без деления
+    // поповер и портированная копия кольца уезжали влево при масштабе страницы < 100%.
+    const scaleX = box.width / host.offsetWidth || 1;
+    const scaleY = box.height / host.offsetHeight || scaleX;
+    setAnchor({ host, x: (ring.left - box.left) / scaleX, y: (ring.top - box.top) / scaleY });
   }, [open]);
 
   const sub = meQuery.data?.subscription;
@@ -115,7 +120,7 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
   return (
     <span
       ref={ringRef}
-      className="relative inline-flex"
+      className="relative z-[8] inline-flex"
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
     >
@@ -125,7 +130,7 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
         aria-expanded={open}
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
-        className={open ? 'block opacity-0' : 'block'}
+        className="block"
       >
         <LimitRing pct={pct} />
       </button>
@@ -133,8 +138,7 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
       {open && anchor && createPortal(
         <>
           <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-[6] rounded-r25 bg-[rgba(20,14,36,0.4)]" />
-          <span className="pointer-events-none absolute z-[8]" style={{ left: anchor.x, top: anchor.y }}>
-            <LimitRing pct={pct} />
+          <span className="pointer-events-none absolute z-[8] h-[25px] w-[25px]" style={{ left: anchor.x, top: anchor.y }}>
             <span
               role="tooltip"
               className="absolute right-0 block w-[522px] rounded-r15 bg-grad-soft-20 px-[28px] pb-[25px] pt-[29px] backdrop-blur-[50px]"

@@ -8106,13 +8106,21 @@ class BlastBotApp:
                     status_label = "Подписка создана" if recurrent else "Создан"
                     await self._notify_manager_payment(username, pkg, price, status_label)
                     return True
+                if payment_record_created:
+                    updated = await self.credits_db.update_payment_status(order_id, "INIT_FAILED")
+                    if not updated:
+                        log.error("failed to mark rejected T-Bank Init order=%s", order_id)
+                    payment_record_created = False
                 raise RuntimeError("T-Bank Init did not return PaymentURL")
             except Exception as e:
                 log.exception("tbank payment creation failed: %s", e)
                 if payment_record_created:
-                    updated = await self.credits_db.update_payment_status(order_id, "INIT_FAILED")
+                    # Transport/DB exceptions can happen after T-Bank accepted
+                    # Init. Preserve the order for reconciliation instead of
+                    # presenting the next click as a safe new operation.
+                    updated = await self.credits_db.update_payment_status(order_id, "INIT_UNKNOWN")
                     if not updated:
-                        log.error("failed to mark T-Bank Init failure order=%s", order_id)
+                        log.error("failed to mark ambiguous T-Bank Init order=%s", order_id)
         else:
             log.error(
                 "tbank payment creation unavailable configured=%s package=%s price=%s",
@@ -9527,30 +9535,14 @@ class BlastBotApp:
                             if status == "CONFIRMED":
                                 pkg = pay["package"]
                                 tg_id = pay["tg_id"]
-                                credits_to_add = package_video_credits(pkg)
-                                await self.credits_db.update_payment_status(order_id, "CONFIRMED", payment_id)
-                                await self.credits_db.add_credits(
-                                    tg_id,
-                                    credits_to_add,
-                                    "payment",
-                                    f"Пакет «{pkg}» order={order_id}",
+                                confirmation = await self.credits_db.confirm_payment_once(
+                                    order_id,
+                                    payment_id,
                                     actor="tbank_poll",
-                                    order_id=order_id,
                                 )
-                                # Track quota: the FIRST track-eligible payment grants
-                                # the tariff base; every later one adds just +1 (a
-                                # renewal tops up the limit by a single track). Count
-                                # is taken after the status flip, so it includes this one.
-                                track_base = self._PKG_TRACKS.get(pkg, 0)
-                                if track_base:
-                                    prior = await self.credits_db.count_confirmed_track_payments(tg_id)
-                                    tracks_to_add = track_base if prior <= 1 else 1
-                                    await self.credits_db.add_track_credits(
-                                        tg_id,
-                                        tracks_to_add,
-                                        "payment",
-                                        f"Пакет «{pkg}» order={order_id}",
-                                    )
+                                if not bool(confirmation.get("applied", False)):
+                                    continue
+                                credits_to_add = int(confirmation["credits_added"])
                                 await self.credits_db.log_event(tg_id, "payment_confirmed", f"{pkg} +{credits_to_add} кредитов")
                                 # Save RebillId and create subscription for recurrent payments.
                                 # GetState does NOT carry RebillId — reading it from there was
@@ -9685,16 +9677,16 @@ class BlastBotApp:
 
         success, err = await self.tbank.charge(payment_id, rebill_id)
         if success:
-            credits_to_add = package_video_credits(pkg)
-            await self.credits_db.update_payment_status(order_id, "confirmed", payment_id)
-            await self.credits_db.add_credits(tg_id, credits_to_add, "subscription", f"Подписка «{pkg}»")
-            # First track-eligible charge grants the tariff base; renewals +1.
-            track_base = self._PKG_TRACKS.get(pkg, 0)
-            if track_base:
-                prior = await self.credits_db.count_confirmed_track_payments(tg_id)
-                tracks_to_add = track_base if prior <= 1 else 1
-                await self.credits_db.add_track_credits(tg_id, tracks_to_add, "subscription", f"Подписка «{pkg}»")
+            confirmation = await self.credits_db.confirm_payment_once(
+                order_id,
+                payment_id,
+                actor="tbank_subscription",
+            )
             await self.credits_db.subscription_charge_success(sub_id)
+            if not bool(confirmation.get("applied", False)):
+                log.info("subscription charge already confirmed order=%s sub=%s", order_id, sub_id)
+                return True, ""
+            credits_to_add = int(confirmation["credits_added"])
             event = "subscription_charged_manual" if manual else "subscription_charged"
             await self.credits_db.log_event(tg_id, event, f"{pkg} +{credits_to_add}")
             bal = await self.credits_db.get_balance(tg_id)

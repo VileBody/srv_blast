@@ -45,6 +45,15 @@ export interface Subscription {
   expiresAt?: string | null;
   /** Сколько бонусов со шкалы месяцев уже забрано */
   bonusesClaimed?: number;
+  /** Number of rewards the server has verified from elapsed paid periods. */
+  bonusMonthsEarned?: number;
+  payments?: Array<{
+    orderId: string;
+    amountRub: number;
+    package: string;
+    status: string;
+    createdAt: string;
+  }>;
 }
 
 /** Подписка ли это — от ответа зависят состояния оплаты и наличие отмены */
@@ -171,10 +180,17 @@ export interface VideoVersion {
   status: JobStatus;
   progress: number;
   source: string;
+  /** Exact output aspect ratio attached by the render-job builder. */
+  format?: '9:16' | '16:9' | '4:3' | '1:1';
   subtitleStyle: string;
   hook: string;
   thumbnailUrl?: string | null;
+  /** Inline media URL without attachment disposition; use downloadUrl for saving the file. */
+  playbackUrl?: string | null;
   downloadUrl?: string | null;
+  /** Renderer diagnostic for a failed variation. */
+  error?: string | null;
+  stage?: string | null;
   /** проставляется бэком после успешной публикации в TikTok */
   postedAt?: string | null;
   tiktokStatus?: string | null;
@@ -198,6 +214,12 @@ export interface GenerationJob {
   userId: string;
   status: JobStatus;
   stageData: Record<string, unknown>;
+  renderJob?: {
+    variations?: Array<{
+      index?: number;
+      background?: { sourceFormat?: VideoVersion['format'] };
+    }>;
+  };
   versions: number;
   rating?: number | string | null;
   outputUrls?: string[];
@@ -208,6 +230,11 @@ export interface GenerationJob {
 
 /** Свой исходник пользователя (Figma W39/W49) */
 export interface UserSource {
+  duration: number;
+  width: number;
+  height: number;
+  format: string;
+  bytes: number;
   id: string;
   userId: string;
   s3Key: string;
@@ -225,6 +252,8 @@ export interface SavedTrack {
   localUrl?: string;
   createdAt: string;
   expiresAt: string;
+  /** SHA-256 content identity; legacy server records may be upgraded on read. */
+  audioHash?: string;
 }
 
 export interface Vibe {
@@ -259,6 +288,7 @@ export interface MeResponse {
   /** бот настроен И чат привязан — только тогда можно обещать «пришлём в Telegram» */
   telegramNotifications?: boolean;
   billingLinkRequired?: boolean;
+  isAdmin?: boolean;
   capabilities?: {
     customSources: boolean;
     analyzedDrops: boolean;
@@ -379,14 +409,28 @@ export interface FlowMetrics {
   backByStage: Record<string, number>;
 }
 
+export interface WebProductMetrics {
+  attribution: Array<{ source: string; medium: string; campaign: string; events: number; users: number }>;
+  pages: Array<{ route: string; events: number; users: number }>;
+  wizardStages: Array<{ stage: string; events: number; users: number }>;
+  actions: Array<{ name: string; events: number; users: number }>;
+}
+
 export interface AnalyticsResponse {
+  source: 'site' | 'bot' | 'all';
   summary: AnalyticsSummary;
   funnel: FunnelRow[];
-  retention: RetentionRow[];
-  delivery: DeliverySummary;
-  flow: FlowMetrics;
-  journeys: UserJourney[];
-  recent: { id: string; name: string; userId: string; ts: string; props: Record<string, unknown> }[];
+  retention?: RetentionRow[];
+  delivery?: DeliverySummary;
+  flow?: FlowMetrics;
+  web?: WebProductMetrics;
+  bot?: {
+    actions: Array<{ name: string; events: number; users: number }>;
+    recent: { id: string; name: string; userId: string; ts: string; props: Record<string, unknown> }[];
+  };
+  channels?: { site: AnalyticsSummary; bot: AnalyticsSummary };
+  journeys?: UserJourney[];
+  recent?: { id: string; name: string; userId: string; ts: string; props: Record<string, unknown> }[];
   isAdmin: boolean;
 }
 

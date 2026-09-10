@@ -323,7 +323,10 @@ def collect_collections(kind: str) -> list[Entry]:
                     name=str(coll.label or folder),
                     selector={
                         "rotationTheme": "collection",
-                        "rotationTagsGroup": folder,
+                        # Collection exact-slot contract uses the stable
+                        # ``<kind>__<folder>`` slug. Sending only the folder
+                        # works for neither the catalog lookup nor the picker.
+                        "rotationTagsGroup": str(coll.slug),
                         "renderPreset": str(coll.default_format),
                         "bgMode": "footage",
                     },
@@ -518,6 +521,7 @@ def build(entries: list[Entry], uploader: Uploader | None, *, force: bool) -> tu
             {
                 "id": entry.id,
                 "name": entry.name,
+                "plane": entry.plane,
                 "previewUrl": preview_url,
                 "selector": entry.selector,
                 "score": 1.0,

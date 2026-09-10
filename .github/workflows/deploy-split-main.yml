@@ -179,6 +179,12 @@ jobs:
             -c "url.https://x-access-token:${token}@github.com/.insteadof=ssh://git@github.com/" \
             -c "url.https://x-access-token:${token}@github.com/.insteadof=https://github.com/" \
             fetch origin "$BRANCH"
+          for path in scripts/migrate_web_preview_catalog_env.py scripts/validate_web_preview_catalog_env.py; do
+            if git -C "$REPO_DIR" cat-file -e "origin/$BRANCH:$path" 2>/dev/null \
+              && ! git -C "$REPO_DIR" ls-files --error-unmatch "$path" >/dev/null 2>&1; then
+              rm -f -- "$REPO_DIR/$path"
+            fi
+          done
           if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/$BRANCH"; then
             git -C "$REPO_DIR" checkout -f "$BRANCH"
           else

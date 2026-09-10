@@ -8,6 +8,22 @@
 (function () {
   'use strict';
 
+  /* ─── Preserve campaign attribution into the web app ─────── */
+  const campaignKeys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
+  const campaign = new URLSearchParams();
+  const landingParams = new URLSearchParams(window.location.search);
+  campaignKeys.forEach(key => {
+    const value = landingParams.get(key);
+    if (value) campaign.set(key, value.slice(0, 160));
+  });
+  if (campaign.size) {
+    document.querySelectorAll('a[href^="https://app.blast808.com/"]').forEach(link => {
+      const target = new URL(link.href);
+      campaign.forEach((value, key) => target.searchParams.set(key, value));
+      link.href = target.toString();
+    });
+  }
+
   /* ─── Burger menu ─────────────────────────────────────────── */
   const burger     = document.querySelector('.burger');
   const mobileMenu = document.querySelector('.mobile-menu');

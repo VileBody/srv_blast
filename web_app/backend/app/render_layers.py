@@ -46,6 +46,8 @@ def effects_slice(variation: dict[str, Any]) -> dict[str, Any]:
         "hook": resolved.get("hook"),
         "transition": resolved.get("transition"),
         "extra": resolved.get("extra"),
+        "extraFull": bool(resolved.get("extraFull")),
+        "hookExtend": resolved.get("hookExtend"),
     }
     # прокидываем окно extra-грейда, если задано
     bg = variation.get("background", {})

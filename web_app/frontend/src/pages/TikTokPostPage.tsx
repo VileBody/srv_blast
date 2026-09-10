@@ -213,6 +213,7 @@ export function TikTokPostPage() {
   const { id } = useParams();
   const [params] = useSearchParams();
   const qaPost = import.meta.env.DEV ? params.get('qaPost') : null;
+  const batchId = params.get('batch');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const resetWizard = useWizardStore((state) => state.reset);
@@ -227,7 +228,9 @@ export function TikTokPostPage() {
   });
 
   const videos: VideoVersion[] = useMemo(() => {
-    const generated = projectQuery.data?.project.jobs?.flatMap((job) => job.videos).filter((v) => v.status === 'COMPLETED') ?? [];
+    const jobs = projectQuery.data?.project.jobs ?? [];
+    const selectedJobs = batchId ? jobs.filter((job) => job.id === batchId) : jobs;
+    const generated = selectedJobs.flatMap((job) => job.videos).filter((v) => v.status === 'COMPLETED');
     if (generated.length || !qaPost) return generated;
     return [1, 2].map((index) => ({
       id: `qa-video-${index}`,
@@ -240,7 +243,7 @@ export function TikTokPostPage() {
       thumbnailUrl: '/assets/cover-placeholder.svg',
       downloadUrl: `/qa/video-${index}.mp4`
     }));
-  }, [projectQuery.data, qaPost]);
+  }, [projectQuery.data, qaPost, batchId]);
 
   // ?video=N — постинг конкретной строки из батча (иконка TikTok в строке, Figma W36)
   const explicitIndex = params.get('video');
