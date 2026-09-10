@@ -41,7 +41,10 @@ export function useAsrPreview(active: boolean) {
     api.asrStart({ clipFrom: timingFrom, clipTo: timingTo, fragment, lyrics })
       .then(({ asr }) => { if (!cancelled) setAsrResult(asr); })
       .catch(() => { if (!cancelled) startedForRef.current = ''; });
-    return () => { cancelled = true; };
+    // Размонтирование до ответа (StrictMode дважды монтирует эффект) — ответ уже
+    // не применится, и следующий монтаж обязан стартовать заново, иначе слова
+    // никогда не доедут до стора. Бэк идемпотентен по ключу — второй start дёшев.
+    return () => { cancelled = true; startedForRef.current = ''; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inputsKey]);
 
