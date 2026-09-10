@@ -17,7 +17,7 @@ import { hasTrackInput, hookPills, selectedEffectStyles, STAGE_ORDER } from '../
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
-import { dropToSeconds, timingToSeconds } from '../components/wizard/useFragmentAudio';
+import { dropToSeconds, timingToSeconds, usePlaybackUrl } from '../components/wizard/useFragmentAudio';
 import { useAsrPreview } from '../components/wizard/useAsrPreview';
 import { BackSquareButton, WizardHeaderCard } from '../components/wizard/WizardFrame';
 import { useToast } from '../contexts/ToastContext';
@@ -94,6 +94,9 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
   const timingToInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  // Трек из черновика / прошлого батча: blob-ссылки нет, играем по свежей presigned-ссылке
+  const playbackUrl = usePlaybackUrl(track);
+  const effectiveAudioUrl = audioUrl ?? playbackUrl;
   const [playing, setPlaying] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const previousQuery = useQuery({
@@ -144,13 +147,21 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
     handleFile(event.dataTransfer.files?.[0]);
   };
 
+  // Плеер создаётся заранее и подгружает файл (preload=auto): клик по «плей» тогда
+  // не ждёт метаданных и сикает мгновенно.
+  useEffect(() => {
+    if (!effectiveAudioUrl) return;
+    const audio = new Audio();
+    audio.preload = 'auto';
+    audio.src = effectiveAudioUrl;
+    audio.onended = () => setPlaying(false);
+    audioRef.current = audio;
+    setPlaying(false);
+    return () => { audio.pause(); if (audioRef.current === audio) audioRef.current = null; };
+  }, [effectiveAudioUrl]);
   const togglePlay = () => {
-    if (!audioUrl) return;
-    if (!audioRef.current) {
-      audioRef.current = new Audio(audioUrl);
-      audioRef.current.onended = () => setPlaying(false);
-    }
     const audio = audioRef.current;
+    if (!audio) return;
     if (playing) {
       audio.pause();
       setPlaying(false);
@@ -162,8 +173,10 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
     audio.ontimeupdate = to !== null && (from === null || to > from)
       ? () => { if (audio.currentTime >= to) { audio.pause(); setPlaying(false); audio.ontimeupdate = null; } }
       : null;
-    audio.currentTime = from ?? 0;
-    void audio.play();
+    const start = () => { audio.currentTime = from ?? 0; void audio.play(); };
+    // Сик до загрузки метаданных браузер молча игнорирует — ждём их, если ещё не пришли
+    if (audio.readyState >= 1) start();
+    else audio.addEventListener('loadedmetadata', start, { once: true });
     setPlaying(true);
   };
 
@@ -296,7 +309,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
         <button
           type="button"
           aria-label={playing ? t('wizard.track.pause') : t('wizard.track.play')}
-          disabled={!audioUrl}
+          disabled={!effectiveAudioUrl}
           onClick={togglePlay}
           className="soft-btn h-[60px] w-[60px] shrink-0"
         >
