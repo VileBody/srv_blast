@@ -1,6 +1,8 @@
 import type React from 'react';
 import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { AsrWord, useWizardStore } from '../../stores/wizardStore';
 
@@ -20,7 +22,11 @@ const MIN_WORD_S = 0.08;
 const GAP_S = 0.01;
 /** в окне дорожки — не больше трёх секунд-зон между пунктиром; ниже этого не сжимаем */
 const ZONES_VISIBLE = 3;
-const MIN_PX_PER_SEC = 130;
+/** сетка по битам мельче секундной: в окне два такта, чтобы слова не растягивались на пол-экрана */
+const BEATS_VISIBLE = 8;
+/** минимальная ширина зоны между пунктиром — иначе подписи наезжают друг на друга */
+const MIN_ZONE_PX = 150;
+const MIN_PX_PER_SEC = 60;
 /* Геометрия по Figma: контейнер 540×180; сверху 20 → слова 60 → 20 → ползунок 20 → 20 → тайминги.
    Пунктир секунд и плейхед идут от верха контейнера до ползунка. */
 const BOX_H = 180;
@@ -32,7 +38,10 @@ const LABEL_TOP = 144; // 16px текста → низ на 160, до края �
 /** пунктир секунд и полосы-подложки — от верха до НИЗА ползунка */
 const GRID_H = BAR_TOP + BAR_H;
 /** пунктир не упирается в края: чуть короче сверху и снизу */
-const DASH_INSET = 8;
+const DASH_INSET = 8; // только снизу: сверху пунктир идёт от самого края
+/** магнит к биту при переносе слова: в пределах этого окна старт прилипает к сетке */
+const SNAP_S = 0.07;
+const TOOLTIP_DELAY_MS = 350;
 /** боковые поля контейнера (Figma: минимум 20 слева и справа) — и у дорожки, и у ползунка */
 const X0 = 20;
 const PLAYHEAD_TICK_MS = 50;
@@ -78,7 +87,121 @@ export function SubtitleTimeline() {
 
   // ширина дорожки меряется по факту: три зоны на любую ширину колонки
   const [laneW, setLaneW] = useState(0);
-  const pxPerSec = Math.max(MIN_PX_PER_SEC, (laneW - X0 * 2) / ZONES_VISIBLE);
+
+  // --- сетка битов: bpm и якорь (лучший дроп приснапан к биту) — из того же /hook/analyze, что у FX
+  const timingFrom = useWizardStore((state) => state.timingFrom);
+  const timingTo = useWizardStore((state) => state.timingTo);
+  const dropsQuery = useQuery({
+    queryKey: ['drops', timingFrom, timingTo],
+    queryFn: () => api.drops(timingFrom, timingTo),
+    enabled: Boolean(timingFrom && timingTo),
+    staleTime: 5 * 60_000
+  });
+  const beats = useMemo(() => {
+    const bpm = dropsQuery.data?.bpm ?? 0;
+    if (!bpm || bpm < 40) return [] as number[];
+    const period = 60 / bpm;
+    const anchor = dropsQuery.data?.drops.find((d) => d.best)?.seconds ?? dropsQuery.data?.drops[0]?.seconds ?? clipStart;
+    const first = anchor - Math.ceil((anchor - clipStart) / period) * period;
+    const out: number[] = [];
+    for (let b = first; b <= clipEnd + 1e-6; b += period) if (b >= clipStart - 1e-6) out.push(Math.round(b * 1000) / 1000);
+    return out;
+  }, [dropsQuery.data, clipStart, clipEnd]);
+  // Сетка таймлайна = биты (когда bpm известен): пунктир, полосы-подложки и подписи идут по
+  // битам, а не по секундам. Без bpm — секунды. В окно помещается ZONES_VISIBLE зон сетки.
+  const beatPeriod = dropsQuery.data?.bpm && dropsQuery.data.bpm >= 40 ? 60 / dropsQuery.data.bpm : 0;
+  // общий зум: 1 = базовый масштаб (два такта в окне), меньше — обзор всех слов, больше — точная правка
+  const [zoom, setZoom] = useState(1);
+  const pxPerSec = Math.max(MIN_PX_PER_SEC, (zoom * (laneW - X0 * 2)) / (beats.length ? BEATS_VISIBLE * beatPeriod : ZONES_VISIBLE));
+  /*
+   * Шаг сетки — стабильная лестница, а не «что влезло»: с bpm это 1 → 2 → 4 (такт) → 8 битов,
+   * без bpm — 0.5 → 1 → 2 → 5 с. Берём первый шаг, при котором между пунктиром не меньше
+   * MIN_ZONE_PX: при уменьшении зума сетка редеет ступенями (бит → пара → такт), подписи не
+   * накладываются, а сами линии остаются на тех же музыкальных долях.
+   */
+  const gridStep = useMemo(() => {
+    const ladder = beats.length ? [1, 2, 4, 8, 16].map((n) => n * beatPeriod) : [0.5, 1, 2, 5, 10];
+    return ladder.find((step) => step * pxPerSec >= MIN_ZONE_PX) ?? ladder[ladder.length - 1];
+  }, [beats.length, beatPeriod, pxPerSec]);
+  const gridUnit = gridStep;
+  const snapToBeat = (sec: number) => {
+    if (!beats.length) return sec;
+    let best = sec;
+    let dist = SNAP_S;
+    for (const b of beats) {
+      const d = Math.abs(b - sec);
+      if (d < dist) { dist = d; best = b; }
+    }
+    return best;
+  };
+
+  // --- волна отрывка: декодируем файл один раз, пики считаем под текущий масштаб
+  const waveRef = useRef<HTMLCanvasElement>(null);
+  const [wave, setWave] = useState<{ url: string; data: Float32Array; rate: number } | null>(null);
+  const waveUrl = track?.localUrl ?? null;
+  useEffect(() => {
+    if (!waveUrl || asr.status !== 'COMPLETED') return;
+    if (wave && wave.url === waveUrl) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const buf = await fetch(waveUrl).then((r) => r.arrayBuffer());
+        const ctx = new AudioContext();
+        const decoded = await ctx.decodeAudioData(buf);
+        void ctx.close();
+        const rate = decoded.sampleRate;
+        const from = Math.max(0, Math.floor(clipStart * rate));
+        const to = Math.min(decoded.length, Math.ceil(clipEnd * rate));
+        const mono = new Float32Array(Math.max(0, to - from));
+        for (let ch = 0; ch < decoded.numberOfChannels; ch += 1) {
+          const src = decoded.getChannelData(ch);
+          for (let i = from; i < to; i += 1) mono[i - from] += src[i] / decoded.numberOfChannels;
+        }
+        if (!cancelled) setWave({ url: waveUrl, data: mono, rate });
+      } catch {
+        /* волна — украшение: без неё таймлайн работает как раньше */
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waveUrl, asr.status, clipStart, clipEnd]);
+  useEffect(() => {
+    const canvas = waveRef.current;
+    if (!canvas || !wave) return;
+    const w = Math.ceil(duration * pxPerSec);
+    const h = BAR_TOP;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    const g = canvas.getContext('2d');
+    if (!g) return;
+    g.scale(dpr, dpr);
+    g.clearRect(0, 0, w, h);
+    g.fillStyle = 'rgba(246,245,253,0.16)';
+    const perPx = wave.data.length / w;
+    const mid = h / 2;
+    for (let x = 0; x < w; x += 1) {
+      const a = Math.floor(x * perPx);
+      const b = Math.min(wave.data.length, Math.floor((x + 1) * perPx));
+      let peak = 0;
+      for (let i = a; i < b; i += 1) { const v = Math.abs(wave.data[i]); if (v > peak) peak = v; }
+      const hh = Math.max(1, peak * (h - 24) * 0.5);
+      g.fillRect(x, mid - hh, 1, hh * 2);
+    }
+  }, [wave, duration, pxPerSec]);
+
+  // --- кастомный тултип на слове (вместо нативного title): текст + точные тайминги
+  const [hovered, setHovered] = useState<number | null>(null);
+  const hoverTimer = useRef<number | null>(null);
+  const hoverIn = (index: number) => {
+    if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = window.setTimeout(() => setHovered(index), TOOLTIP_DELAY_MS);
+  };
+  const hoverOut = () => {
+    if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = null;
+    setHovered(null);
+  };
   const [selected, setSelected] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   /** слово во время перетаскивания — локально, в стор коммитим на pointerup */
@@ -157,6 +280,7 @@ export function SubtitleTimeline() {
       /* синтетический pointerId */
     }
     setSelected(index);
+    hoverOut();
     setDrag({ index, mode, originX: e.clientX, tStart: word.tStart, tEnd: word.tEnd, moved: false });
   };
   const onPillMove = (e: ReactPointerEvent<HTMLElement>) => {
@@ -168,7 +292,8 @@ export function SubtitleTimeline() {
     let tStart = drag.tStart;
     let tEnd = drag.tEnd;
     if (drag.mode === 'move') {
-      tStart = Math.min(max - len, Math.max(min, drag.tStart + dx));
+      const raw = drag.tStart + dx;
+      tStart = Math.min(max - len, Math.max(min, e.altKey ? raw : snapToBeat(raw)));
       tEnd = tStart + len;
     } else if (drag.mode === 'start') {
       tStart = Math.min(drag.tEnd - MIN_WORD_S, Math.max(min, drag.tStart + dx));
@@ -202,10 +327,15 @@ export function SubtitleTimeline() {
   };
 
   const ticks = useMemo(() => {
+    if (beats.length) {
+      // каждый k-й бит от якоря (первый бит в окне) — линии сетки всегда лежат на битах
+      const every = Math.max(1, Math.round(gridStep / beatPeriod));
+      return beats.filter((_, i) => i % every === 0);
+    }
     const out: number[] = [];
-    for (let s = Math.ceil(clipStart); s <= clipEnd; s += 1) out.push(s);
+    for (let s = Math.ceil(clipStart / gridStep) * gridStep; s <= clipEnd + 1e-6; s += gridStep) out.push(Math.round(s * 1000) / 1000);
     return out;
-  }, [clipStart, clipEnd]);
+  }, [beats, beatPeriod, gridStep, clipStart, clipEnd]);
 
   // --- ползунок = прокрутка дорожки слов влево-вправо (не перемотка: плейхед он не трогает) ---
   const barRef = useRef<HTMLDivElement>(null);
@@ -215,7 +345,7 @@ export function SubtitleTimeline() {
     if (!box) return;
     setScroll({ left: box.scrollLeft, visible: box.clientWidth, total: Math.max(1, box.scrollWidth) });
   };
-  useEffect(() => { onLaneScroll(); }, [asr.words.length, asr.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { onLaneScroll(); }, [asr.words.length, asr.status, pxPerSec]); // eslint-disable-line react-hooks/exhaustive-deps
   const thumbFrac = Math.min(1, scroll.visible / scroll.total);
   const thumbGrab = useRef<{ originX: number; scrollLeft: number } | null>(null);
   const capture = (e: ReactPointerEvent<HTMLElement>) => {
@@ -286,7 +416,7 @@ export function SubtitleTimeline() {
             <button
               type="button"
               aria-label={t('wizard.subs.timeline.help')}
-              className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 text-[18px] text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98]"
+              className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 pt-[2px] text-[18px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98]"
             >
               ?
             </button>
@@ -303,7 +433,7 @@ export function SubtitleTimeline() {
             disabled={!asr.edited}
             aria-label={t('wizard.subs.timeline.reset')}
             title={t('wizard.subs.timeline.reset')}
-            className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 text-[18px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-35"
+            className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 pt-[2px] text-[16px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-35"
           >
             ✕
           </button>
@@ -338,6 +468,22 @@ export function SubtitleTimeline() {
           <span aria-hidden className={cn('flex h-[42px] w-[42px] items-center justify-center rounded-full text-[18px] transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105', focusOn ? 'bg-text text-accent' : 'bg-accent text-text')}>★</span>
           {focusOn ? t('wizard.subs.timeline.unfocus') : t('wizard.subs.timeline.focus')}
         </button>
+        {/* зум дорожки: та же пилюля-контейнер, внутри бегунок; крайние значения — обзор / точная правка */}
+        <label className="flex h-[64px] min-w-[180px] flex-1 items-center gap-[12px] rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] leading-none text-text-80 max-lg:min-w-0">
+          <span aria-hidden className="select-none">−</span>
+          <input
+            type="range"
+            min={0.5}
+            max={2.5}
+            step={0.05}
+            value={zoom}
+            onChange={(e) => setZoom(Number(e.target.value))}
+            aria-label={t('wizard.subs.timeline.zoom')}
+            className="zoom-range min-w-0 flex-1"
+            disabled={!ready}
+          />
+          <span aria-hidden className="select-none">+</span>
+        </label>
       </div>
 
       {/* Таймлайн (Figma 540×180): один контейнер дефолтного цвета, внутри — дорожка слов,
@@ -368,12 +514,14 @@ export function SubtitleTimeline() {
               {/* подложка: каждая ВТОРАЯ секунда (между пунктиром 1–2, 3–4, …) чуть светлее фона —
                   так таймлайн читается и через одно окно */}
               {ticks.filter((_, i) => i % 2 === 0).map((s) => (
-                <span key={`b${s}`} aria-hidden className="pointer-events-none absolute top-0 bg-[rgba(246,245,253,0.05)]" style={{ left: X0 + (s - clipStart) * pxPerSec, width: Math.min(pxPerSec, (clipEnd - s) * pxPerSec), height: GRID_H }} />
+                <span key={`b${s}`} aria-hidden className="pointer-events-none absolute top-0 bg-[rgba(246,245,253,0.05)]" style={{ left: X0 + (s - clipStart) * pxPerSec, width: Math.min(gridUnit * pxPerSec, (clipEnd - s) * pxPerSec), height: GRID_H }} />
               ))}
               {/* пунктир секунд: от верха до низа ползунка */}
               {ticks.map((s) => (
-                <span key={s} aria-hidden className="pointer-events-none absolute border-l-2 border-dashed border-[rgba(246,245,253,0.28)]" style={{ left: X0 + (s - clipStart) * pxPerSec - 1, top: DASH_INSET, height: GRID_H - DASH_INSET * 2 }} />
+                <span key={s} aria-hidden className="pointer-events-none absolute top-0 border-l-[3px] border-dashed border-[rgba(246,245,253,0.28)]" style={{ left: X0 + (s - clipStart) * pxPerSec - 1.5, height: GRID_H - DASH_INSET }} />
               ))}
+              {/* волна отрывка — фоном под словами */}
+              <canvas ref={waveRef} aria-hidden className="pointer-events-none absolute top-0" style={{ left: X0, width: Math.ceil(duration * pxPerSec), height: BAR_TOP }} />
               {/* слова: не выделено / выделено (обводка) / фокусное (белое) */}
               {asr.words.map((word, index) => {
                 const cur = live && live.index === index ? live : word;
@@ -386,14 +534,15 @@ export function SubtitleTimeline() {
                     key={index}
                     role="button"
                     tabIndex={-1}
-                    title={`${word.text} · ${fmt(word.tStart - clipStart)}–${fmt(word.tEnd - clipStart)}`}
+                    onPointerEnter={() => hoverIn(index)}
+                    onPointerLeave={hoverOut}
                     onPointerDown={onPillDown(index, 'move')}
                     onPointerMove={onPillMove}
                     onPointerUp={onPillUp}
                     onPointerCancel={onPillUp}
                     onDoubleClick={(e) => { e.stopPropagation(); toggleAsrFocus(index); }}
                     className={cn(
-                      'absolute flex cursor-grab select-none items-center justify-center overflow-hidden rounded-r12 px-[16px] text-[24px] font-[350] leading-none transition-[box-shadow,background-color,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] active:cursor-grabbing',
+                      'absolute flex cursor-grab select-none items-center justify-center rounded-r12 px-[16px] text-[24px] font-[350] leading-none transition-[box-shadow,background-color,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] active:cursor-grabbing',
                       // три состояния (макет): обычное / выделенное / фокусное — все НЕПРОЗРАЧНЫЕ
                       word.focus
                         ? 'bg-text text-accent'
@@ -406,7 +555,12 @@ export function SubtitleTimeline() {
                     )}
                     style={{ left, width: w, top: WORD_TOP, height: WORD_H }}
                   >
-                    <span className="truncate">{word.text}</span>
+                    {w >= 44 && <span className="truncate">{word.text}</span>}
+                    {hovered === index && !drag && (
+                      <span role="tooltip" className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-[6] -translate-x-1/2 whitespace-nowrap rounded-r9 bg-[#2b2145] px-[10px] py-[6px] text-[13px] font-[350] leading-none tabular-nums text-text shadow-[0_8px_28px_rgba(0,0,0,.45)] ring-1 ring-[var(--accent-light)]">
+                        {fmt(cur.tStart - clipStart)} – {fmt(cur.tEnd - clipStart)}
+                      </span>
+                    )}
                     {/* ручки длительности — тянут только край */}
                     <span onPointerDown={onPillDown(index, 'start')} className="absolute inset-y-0 left-0 w-[8px] cursor-ew-resize hover:bg-[rgba(246,245,253,0.18)]" />
                     <span onPointerDown={onPillDown(index, 'end')} className="absolute inset-y-0 right-0 w-[8px] cursor-ew-resize hover:bg-[rgba(246,245,253,0.18)]" />
@@ -416,7 +570,7 @@ export function SubtitleTimeline() {
               {/* подписи секунд */}
               {ticks.map((s) => (
                 <span key={`l${s}`} aria-hidden className={cn('pointer-events-none absolute text-[16px] leading-none tabular-nums text-text-60', s !== ticks[0] && '-translate-x-1/2')} style={{ left: X0 + (s - clipStart) * pxPerSec, top: LABEL_TOP }}>
-                  {fmt(s - clipStart).slice(0, 5)}
+                  {gridStep < 1 || beats.length ? fmt(s - clipStart) : fmt(s - clipStart).slice(0, 5)}
                 </span>
               ))}
               {/* плейхед: линия с ромбиками, от верха до ползунка; тянется */}
@@ -425,11 +579,10 @@ export function SubtitleTimeline() {
                 onPointerDown={onHeadDown}
                 onPointerMove={onHeadMove}
                 className="absolute left-0 top-0 z-[3] w-[14px] cursor-ew-resize will-change-transform"
-                style={{ transform: `translateX(${X0 + progress * duration * pxPerSec - 7}px)`, height: BAR_TOP }}
+                style={{ transform: `translateX(${X0 + progress * duration * pxPerSec - 7}px)`, height: BAR_TOP + BAR_H / 2 }}
               >
                 <span aria-hidden className="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-text" />
                 <span aria-hidden className="absolute left-1/2 top-0 h-[12px] w-[12px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] bg-text" />
-                <span aria-hidden className="absolute bottom-0 left-1/2 h-[12px] w-[12px] -translate-x-1/2 translate-y-1/2 rotate-45 rounded-[2px] bg-text" />
               </span>
             </div>
           )}

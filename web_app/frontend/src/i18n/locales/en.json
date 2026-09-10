@@ -423,6 +423,7 @@
       "add": "Add subtitles",
       "footerEmpty": "Add subtitles",
       "timeline": {
+        "zoom": "Timeline zoom",
         "help": "How it works",
         "wordsCount": "{{count}} words",
         "title": "Subtitle fitting",
@@ -440,7 +441,7 @@
         "unfocus": "Remove focus",
         "idleHint": "Pick the clip window and lyrics on the “Track” step — words will show up here",
         "runningHint": "Aligning words to the track…",
-        "hint": "Drag a word to shift its timing; drag its edges to change duration. Click selects a word, ★ or double-click marks it as a focus word (accent in subtitles). Arrow keys ← → nudge the selection by 0.05 s (0.2 s with Shift)."
+        "hint": "Drag a word to shift its timing, drag its edges to change duration. Click selects a word; double-click or the Focus button makes it the accent in subtitles. While dragging, the word start snaps to the beat."
       }
     },
     "pool": {
