@@ -271,3 +271,21 @@ def test_pre_reset_does_not_cold_start_ae_just_to_empty_it() -> None:
     assert "reason=no_session" in reset
     # the running check must gate the actual reset, not follow it
     assert reset.index("_afterfx_is_running()") < reset.index("_best_effort_reset_ae_project")
+
+
+def test_job_finishes_on_its_status_not_on_ae_exiting() -> None:
+    """A finished render used to wait here for AE to quit and then be reported
+    as a failure: job c494756 wrote its OK status and a 29 MB output at
+    11:41:32 and was failed on the idle timeout at 11:46:34. Shutting AE down
+    belongs to the recycle step, not to the definition of "done"."""
+    runtime = (RUNTIME_DIR / "ae_sdk.py").read_text(encoding="utf-8")
+    run = runtime[runtime.index("def _run_afterfx") : runtime.index("def _status_is_terminal")]
+
+    assert "_status_is_terminal(status_path)" in run
+    # a terminal status must be checked before the idle guard can fire
+    assert run.index("_status_is_terminal(status_path)") < run.index("idle_timeout_s > 0")
+    # and a still-running launcher must not then be reported as a failure
+    assert "not status_terminal and rc != 0" in runtime
+
+    helper = runtime[runtime.index("def _status_is_terminal") : runtime.index("def _wait_for_status")]
+    assert '"OK", "ERROR"' in helper  # RUNNING is not terminal

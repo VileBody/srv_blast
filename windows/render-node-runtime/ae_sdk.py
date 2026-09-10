@@ -1440,6 +1440,7 @@ class AeRenderer:
             initial_stdout_sig = self._file_progress_sig(stdout_log_path)
             initial_stderr_sig = self._file_progress_sig(stderr_log_path)
             startup_seen = False
+            status_terminal = False
             last_progress_sig = None
             last_progress_at = time.time()
 
@@ -1459,6 +1460,19 @@ class AeRenderer:
                     )
 
                 if rc is not None:
+                    break
+
+                # The job is done when the script says so, not when AE decides
+                # to exit. A finished render used to sit here until the idle
+                # timeout and then be reported as a failure: job c494756 wrote
+                # its OK status and a 29MB output at 11:41:32 and was failed at
+                # 11:46:34. Shutting AE down is the recycle step's business.
+                if self._status_is_terminal(status_path):
+                    log.info(
+                        "AfterFX reported a terminal status; not waiting for process exit job_id=%s",
+                        job_id,
+                    )
+                    status_terminal = True
                     break
 
                 # hb.txt and run_live.log are the builder's own heartbeat and
@@ -1505,11 +1519,22 @@ class AeRenderer:
             f_out.flush()
             f_err.flush()
 
-        if rc != 0:
+        if not status_terminal and rc != 0:
             raise RuntimeError(
                 f"AfterFX failed with code {rc}; "
                 f"logs={stdout_log_path};{stderr_log_path}"
             )
+
+    @staticmethod
+    def _status_is_terminal(status_path: Path) -> bool:
+        """True once the JSX has written its final OK/ERROR verdict."""
+        try:
+            if not status_path.exists():
+                return False
+            head = status_path.read_text(encoding="utf-8-sig", errors="ignore").splitlines()
+            return bool(head) and head[0].strip().upper() in ("OK", "ERROR")
+        except Exception:
+            return False
 
     def _wait_for_status(
         self,
