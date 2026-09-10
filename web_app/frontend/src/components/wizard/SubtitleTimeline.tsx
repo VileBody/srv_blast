@@ -26,6 +26,8 @@ const WORD_H = 60;
 const BAR_TOP = 100;
 const BAR_H = 20;
 const LABEL_TOP = 140;
+/** пунктир секунд и полосы-подложки — от верха до НИЗА ползунка */
+const GRID_H = BAR_TOP + BAR_H;
 /** боковые поля контейнера (Figma: минимум 20 слева и справа) — и у дорожки, и у ползунка */
 const X0 = 20;
 const PLAYHEAD_TICK_MS = 50;
@@ -190,20 +192,49 @@ export function SubtitleTimeline() {
     return out;
   }, [clipStart, clipEnd]);
 
-  // --- перемотка: ползунок (весь отрывок) и плейхед (тянется по дорожке) ---
+  // --- ползунок = прокрутка дорожки слов влево-вправо (не перемотка: плейхед он не трогает) ---
   const barRef = useRef<HTMLDivElement>(null);
-  const seekFromBar = (clientX: number) => {
-    const bar = barRef.current;
-    if (!bar) return;
-    const rect = bar.getBoundingClientRect();
-    const pct = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-    seek(clipStart + pct * duration);
+  const [scroll, setScroll] = useState({ left: 0, visible: 1, total: 1 });
+  const onLaneScroll = () => {
+    const box = scrollRef.current;
+    if (!box) return;
+    setScroll({ left: box.scrollLeft, visible: box.clientWidth, total: Math.max(1, box.scrollWidth) });
   };
+  useEffect(() => { onLaneScroll(); }, [asr.words.length, asr.status]); // eslint-disable-line react-hooks/exhaustive-deps
+  const thumbFrac = Math.min(1, scroll.visible / scroll.total);
+  const thumbGrab = useRef<{ originX: number; scrollLeft: number } | null>(null);
   const capture = (e: ReactPointerEvent<HTMLElement>) => {
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* синтетический pointerId */ }
   };
-  const onBarDown = (e: ReactPointerEvent<HTMLDivElement>) => { e.stopPropagation(); capture(e); seekFromBar(e.clientX); };
-  const onBarMove = (e: ReactPointerEvent<HTMLDivElement>) => { if (e.buttons) seekFromBar(e.clientX); };
+  const onBarDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const box = scrollRef.current;
+    const bar = barRef.current;
+    if (!box || !bar) return;
+    capture(e);
+    const rect = bar.getBoundingClientRect();
+    const thumbW = Math.max(60, rect.width * thumbFrac);
+    const thumbX = rect.left + (scroll.left / Math.max(1, scroll.total - scroll.visible)) * (rect.width - thumbW);
+    // клик мимо бегунка — прыгнуть туда, дальше тянем как обычный скроллбар
+    if (e.clientX < thumbX || e.clientX > thumbX + thumbW) {
+      const pct = Math.min(1, Math.max(0, (e.clientX - rect.left - thumbW / 2) / Math.max(1, rect.width - thumbW)));
+      box.scrollLeft = pct * (scroll.total - scroll.visible);
+      onLaneScroll();
+    }
+    thumbGrab.current = { originX: e.clientX, scrollLeft: box.scrollLeft };
+  };
+  const onBarMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const box = scrollRef.current;
+    const bar = barRef.current;
+    const grab = thumbGrab.current;
+    if (!box || !bar || !grab || !e.buttons) return;
+    const rect = bar.getBoundingClientRect();
+    const thumbW = Math.max(60, rect.width * thumbFrac);
+    const perPx = (scroll.total - scroll.visible) / Math.max(1, rect.width - thumbW);
+    box.scrollLeft = grab.scrollLeft + (e.clientX - grab.originX) * perPx;
+    onLaneScroll();
+  };
+  const onBarUp = () => { thumbGrab.current = null; };
   const seekFromLane = (clientX: number) => {
     const box = scrollRef.current;
     if (!box) return;
@@ -250,7 +281,7 @@ export function SubtitleTimeline() {
             <span aria-hidden className="ml-[5px] h-0 w-0 border-y-[11px] border-l-[18px] border-y-transparent border-l-[var(--text)]" />
           )}
         </button>
-        <span className="flex h-[64px] items-center rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] tabular-nums leading-none text-text">
+        <span className="flex h-[64px] items-center rounded-r15 bg-grad-soft-20 px-[18px] text-[16px] tabular-nums leading-none text-text">
           {fmt(time - clipStart)}
         </span>
         <button
@@ -270,9 +301,11 @@ export function SubtitleTimeline() {
       <div className="relative mt-[20px] overflow-hidden rounded-r15 bg-grad-soft-20" style={{ height: BOX_H }}>
         <div
           ref={scrollRef}
+          id="subtitle-timeline-lane"
           tabIndex={0}
           onKeyDown={onKey}
           className="no-scrollbar relative h-full overflow-x-auto overflow-y-hidden outline-none focus-visible:ring-1 focus-visible:ring-accent-light"
+          onScroll={onLaneScroll}
           onPointerDown={(e) => {
             // клик по пустому месту дорожки — перемотка
             seekFromLane(e.clientX);
@@ -287,11 +320,14 @@ export function SubtitleTimeline() {
             </div>
           ) : (
             <div className="relative h-full" style={{ width }}>
-              {/* подложка отрывка: чуть светлее фона, от верха до ползунка — таймлайн читается сквозь окно */}
-              <span aria-hidden className="pointer-events-none absolute top-0 bg-[rgba(246,245,253,0.05)]" style={{ left: X0, width: duration * pxPerSec, height: BAR_TOP }} />
-              {/* пунктир секунд */}
+              {/* подложка: каждая ВТОРАЯ секунда (между пунктиром 1–2, 3–4, …) чуть светлее фона —
+                  так таймлайн читается и через одно окно */}
+              {ticks.filter((_, i) => i % 2 === 0).map((s) => (
+                <span key={`b${s}`} aria-hidden className="pointer-events-none absolute top-0 bg-[rgba(246,245,253,0.05)]" style={{ left: X0 + (s - clipStart) * pxPerSec, width: Math.min(pxPerSec, (clipEnd - s) * pxPerSec), height: GRID_H }} />
+              ))}
+              {/* пунктир секунд: от верха до низа ползунка */}
               {ticks.map((s) => (
-                <span key={s} aria-hidden className="pointer-events-none absolute top-0 border-l-2 border-dashed border-[rgba(246,245,253,0.28)]" style={{ left: X0 + (s - clipStart) * pxPerSec - 1, height: BAR_TOP }} />
+                <span key={s} aria-hidden className="pointer-events-none absolute top-0 border-l-2 border-dashed border-[rgba(246,245,253,0.28)]" style={{ left: X0 + (s - clipStart) * pxPerSec - 1, height: GRID_H }} />
               ))}
               {/* слова: не выделено / выделено (обводка) / фокусное (белое) */}
               {asr.words.map((word, index) => {
@@ -329,7 +365,7 @@ export function SubtitleTimeline() {
               })}
               {/* подписи секунд */}
               {ticks.map((s) => (
-                <span key={`l${s}`} aria-hidden className="pointer-events-none absolute -translate-x-1/2 text-[16px] leading-none tabular-nums text-text-60" style={{ left: X0 + (s - clipStart) * pxPerSec, top: LABEL_TOP }}>
+                <span key={`l${s}`} aria-hidden className={cn('pointer-events-none absolute text-[16px] leading-none tabular-nums text-text-60', s !== ticks[0] && '-translate-x-1/2')} style={{ left: X0 + (s - clipStart) * pxPerSec, top: LABEL_TOP }}>
                   {fmt(s - clipStart).slice(0, 5)}
                 </span>
               ))}
@@ -348,21 +384,30 @@ export function SubtitleTimeline() {
             </div>
           )}
         </div>
-        {/* ползунок: вся ширина контейнера, весь отрывок; белая пилюля — текущее время */}
+        {/* ползунок: крутилка дорожки влево-вправо (кастомный скроллбар), непрозрачный */}
         <div
           ref={barRef}
-          role="slider"
-          aria-label={t('wizard.subs.timeline.play')}
+          role="scrollbar"
+          aria-controls="subtitle-timeline-lane"
+          aria-orientation="horizontal"
           aria-valuemin={0}
-          aria-valuemax={Math.round(duration * 100)}
-          aria-valuenow={Math.round((time - clipStart) * 100)}
+          aria-valuemax={100}
+          aria-valuenow={Math.round((scroll.left / Math.max(1, scroll.total - scroll.visible)) * 100) || 0}
           onPointerDown={ready ? onBarDown : undefined}
           onPointerMove={ready ? onBarMove : undefined}
-          className={cn('absolute z-[4] select-none rounded-full bg-[rgba(139,111,230,0.30)]', ready ? 'cursor-pointer' : 'opacity-40')}
+          onPointerUp={onBarUp}
+          onPointerCancel={onBarUp}
+          className={cn('absolute z-[4] select-none rounded-full bg-[#4b3892]', ready ? 'cursor-pointer' : 'opacity-40')}
           style={{ top: BAR_TOP, height: BAR_H, left: X0, right: X0 }}
         >
-          <span aria-hidden className="absolute left-0 top-0 h-full rounded-full bg-[rgba(139,111,230,0.5)]" style={{ width: `calc(30px + ${progress} * (100% - 60px))` }} />
-          <span aria-hidden className="absolute top-0 h-full w-[60px] -translate-x-1/2 rounded-full bg-text" style={{ left: `calc(30px + ${progress} * (100% - 60px))` }} />
+          <span
+            aria-hidden
+            className="absolute top-0 h-full rounded-full bg-text"
+            style={{
+              width: `max(60px, ${thumbFrac * 100}%)`,
+              left: `calc(${scroll.left / Math.max(1, scroll.total - scroll.visible)} * (100% - max(60px, ${thumbFrac * 100}%)))`
+            }}
+          />
         </div>
       </div>
       <p className="mt-[12px] text-[13px] leading-[1.35] text-text-40">{t('wizard.subs.timeline.hint')}</p>
