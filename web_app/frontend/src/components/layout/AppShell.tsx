@@ -229,7 +229,8 @@ export function AppShell() {
       <AppAnalytics />
       <div className="app-scale-viewport">
         <div className="app-frame" style={frameStyle}>
-          <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl ?? undefined} isAdmin={meQuery.data?.isAdmin} />
+          {/* Тот же выбор аватара, что в ЛК: свой, иначе из TikTok — сайдбар отставал и показывал букву */}
+          <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} isAdmin={meQuery.data?.isAdmin} />
         <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} isAdmin={meQuery.data?.isAdmin} />
         {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
