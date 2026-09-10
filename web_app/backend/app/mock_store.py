@@ -54,6 +54,8 @@ class Workspace:
     user_sources: list[dict[str, Any]] = field(default_factory=list)
     active_project_id: str | None = None
     wizard_session: dict[str, Any] | None = None
+    # Примерка субтитров (ASR отрывка до шага «Текст»), см. app/asr_preview.py
+    asr_preview: dict[str, Any] | None = None
 
 
 def _new_subscription(user_id: str) -> dict[str, Any]:
@@ -317,6 +319,9 @@ def _seed_demo_workspace() -> Workspace:
             "s3Key": f"{BASE_S3}/tracks/user_1/previous/source.mp3",
             "filename": "last-night-demo.mp3",
             "durationS": 204.0,
+            # Синтетический звук (см. main.ensure_demo_track_audio): без него плеер
+            # примерки субтитров в mock-режиме был мёртвой кнопкой.
+            "localUrl": "/static/uploads/tracks/demo-last-night.wav",
             "createdAt": iso(utcnow() - timedelta(days=1)),
             "expiresAt": iso(utcnow() + timedelta(days=6)),
         }
@@ -1079,6 +1084,13 @@ def save_source(
     return deepcopy(item)
 
 
+def find_track(track_id: str) -> dict[str, Any] | None:
+    for item in ws().saved_tracks:
+        if item.get("id") == track_id:
+            return deepcopy(item)
+    return None
+
+
 def previous_track() -> dict[str, Any] | None:
     tracks = ws().saved_tracks
     return deepcopy(tracks[0]) if tracks else None
@@ -1099,6 +1111,15 @@ def set_wizard_session(payload: dict[str, Any]) -> dict[str, Any]:
 
 def get_wizard_session() -> dict[str, Any] | None:
     return deepcopy(ws().wizard_session)
+
+
+def get_asr_preview() -> dict[str, Any] | None:
+    return deepcopy(ws().asr_preview)
+
+
+def set_asr_preview(state: dict[str, Any] | None) -> dict[str, Any] | None:
+    ws().asr_preview = deepcopy(state) if state else None
+    return deepcopy(ws().asr_preview)
 
 
 def register_user(payload: dict[str, Any]) -> dict[str, Any]:

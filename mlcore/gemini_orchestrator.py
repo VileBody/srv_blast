@@ -678,6 +678,55 @@ def _reference_words_from_user_text(text: str) -> List[str]:
     return out
 
 
+def expected_local_alignment_identity() -> Dict[str, str]:
+    """Идентичность alignment-сервиса, которую ждёт этот воркер (из env).
+
+    Вынесено из stage1a: ту же проверку делает asr_preview-джоба (веб-визард
+    гонит ASR заранее), и её resume_state обязан пройти cache-compat сверку
+    здесь же — иначе правки таймингов молча выбросятся и ASR посчитается заново.
+    """
+    return {
+        "algorithm_version": str(os.environ.get("ALIGNMENT_ALGORITHM_VERSION") or "").strip(),
+        "model_revision": str(os.environ.get("ALIGNMENT_MODEL_REVISION") or "").strip(),
+        "audio_preprocessor": "demucs",
+        "separator_model": str(os.environ.get("ALIGNMENT_DEMUCS_MODEL_NAME") or "").strip(),
+        "separator_revision": str(os.environ.get("ALIGNMENT_DEMUCS_MODEL_REVISION") or "").strip(),
+        "separator_package_version": str(
+            os.environ.get("ALIGNMENT_DEMUCS_PACKAGE_VERSION") or ""
+        ).strip(),
+    }
+
+
+def build_local_alignment_metadata(
+    *,
+    backend_info: Dict[str, Any],
+    diagnostics: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Сверить ответ alignment-сервиса с ожидаемой идентичностью и собрать
+    `stage1_alignment_metadata` для resume_state. Расхождение — явная ошибка,
+    не фолбэк (см. No Fallback Policy)."""
+    expected_backend_identity = expected_local_alignment_identity()
+    for field, expected_value in expected_backend_identity.items():
+        actual_value = str(backend_info.get(field) or "")
+        if not expected_value:
+            raise AlignmentServiceError(
+                "ALIGNMENT_INTERNAL_ERROR",
+                f"worker alignment identity is empty for {field}",
+            )
+        if actual_value != expected_value:
+            raise AlignmentServiceError(
+                "ALIGNMENT_INTERNAL_ERROR",
+                "alignment service identity mismatch "
+                f"field={field} expected={expected_value!r} "
+                f"actual={actual_value!r}",
+            )
+    return {
+        "backend": "local_ctc",
+        **expected_backend_identity,
+        "diagnostics": dict(diagnostics),
+    }
+
+
 def _stage1a_pause_min_gap_sec() -> float:
     try:
         v = float(os.environ.get("STAGE1A_PAUSE_MIN_GAP_S", "1.0"))
@@ -717,6 +766,109 @@ def _derive_pause_spans_from_aligned_words(
                 }
             )
     return out
+
+
+_FOCUS_WORD_STRIP = ".,!?;:…«»\"'()[]—–-"
+
+
+def _focus_norm(text: str) -> str:
+    return str(text or "").strip().strip(_FOCUS_WORD_STRIP).lower()
+
+
+def _user_focus_words_matched(
+    *,
+    words_in_clip: List[Any],
+    logger: logging.Logger,
+) -> List[Tuple[str, float]]:
+    """Фокус-слова автора (env `USER_FOCUS_WORDS`, JSON `{text, t_start}` — из
+    `SendAudioS3Request.user_focus_words`), сматченные на слова stage1 по тексту и
+    старту (±0.35с: правки таймингов с таймлайна уже в stage1). Несовпавшие
+    отбрасываются с логом — подсказывать модели слово, которого в клипе нет,
+    прямой путь к галлюцинации."""
+    raw = (os.environ.get("USER_FOCUS_WORDS") or "").strip()
+    if not raw:
+        return []
+    try:
+        items = json.loads(raw)
+    except Exception as e:
+        raise RuntimeError(f"USER_FOCUS_WORDS is not valid JSON: {e}") from e
+    if not isinstance(items, list):
+        raise RuntimeError("USER_FOCUS_WORDS must be a JSON list")
+    matched: List[Tuple[str, float]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        text = _focus_norm(item.get("text"))
+        try:
+            t_start = float(item.get("t_start"))
+        except Exception:
+            continue
+        hit = None
+        for w in words_in_clip:
+            if _focus_norm(w.text) == text and abs(float(w.t_start) - t_start) <= 0.35:
+                hit = w
+                break
+        if hit is None:
+            logger.warning("user_focus_word_unmatched text=%r t_start=%.3f", text, t_start)
+            continue
+        matched.append((str(hit.text).strip(), float(hit.t_start)))
+    if matched:
+        logger.info("user_focus_words_applied count=%d", len(matched))
+    return matched
+
+
+def _user_focus_words_hint(matched: List[Tuple[str, float]]) -> str:
+    """Подсказка Stage2-subtitles по фокус-словам автора (см. `_user_focus_words_matched`)."""
+    if not matched:
+        return ""
+    return (
+        "USER_FOCUS_WORDS (author-marked, mandatory):\n"
+        + "\n".join(f'- "{text}" @ {t_start:.2f}s' for text, t_start in matched)
+        + "\nEach listed word MUST be the focus/accent of the scene or segment it "
+        "belongs to: for scene templates set it as `focus_word` (TYPE_2 italic or "
+        "TYPE_4 red, choose by the rules above); for impulse mode make it a `short` "
+        "accent layer. Do not move these words to another scene to avoid the rule."
+    )
+
+
+class _UserFocusWordsUnmetError(ValueError):
+    """Stage2 вернул план, где фокус-слово автора не стало акцентом своей сцены.
+
+    Считается model-validation ошибкой → немедленный повтор вызова с усиленной
+    подсказкой (см. `_run_subtitles_once`). После исчерпания повторов план
+    принимается как есть с warning — фокус-слово не должно ронять ролик."""
+
+
+def _user_focus_words_unmet(
+    plan: Any,
+    matched: List[Tuple[str, float]],
+) -> List[str]:
+    """Проверка после нормализации: у каждого фокус-слова его сегмент либо несёт
+    его в `focus_word` (сцены TYPE_2/TYPE_4), либо это `short`-слой (impulse).
+    Сегмент ищется по времени старта слова; не нашли — судить не о чем."""
+    segments = list(getattr(plan, "segments", None) or [])
+    if not segments or not matched:
+        return []
+    unmet: List[str] = []
+    for text, t_start in matched:
+        norm = _focus_norm(text)
+        seg = None
+        for cand in segments:
+            if float(cand.in_point) - 1e-6 <= t_start <= float(cand.out_point) + 1e-6:
+                seg = cand
+                break
+        if seg is None:
+            continue
+        focus_words = {_focus_norm(w) for w in str(seg.focus_word or "").split()}
+        is_short = str(seg.style_tag or "").strip().lower() == "short"
+        seg_words = {_focus_norm(w) for w in str(seg.text or "").split()}
+        if norm in focus_words or (is_short and norm in seg_words):
+            continue
+        unmet.append(
+            f'"{text}" @ {t_start:.2f}s -> segment {seg.segment_id} '
+            f"(style={seg.style_tag}, focus_word={seg.focus_word!r})"
+        )
+    return unmet
 
 
 def _pause_spans_in_window(
@@ -1773,7 +1925,7 @@ def _looks_like_model_validation_error_text(text: str) -> bool:
 
 
 def _is_model_validation_error(exc: BaseException) -> bool:
-    if isinstance(exc, _Stage1AUserClipEmptyError):
+    if isinstance(exc, (_Stage1AUserClipEmptyError, _UserFocusWordsUnmetError)):
         return True
     if isinstance(exc, (ValidationError, JSONDecodeError)):
         return True
@@ -2836,21 +2988,12 @@ def build_all_via_gemini_one_call(
         or _STAGE1_ALIGNMENT_BACKEND_GEMINI
     ).strip().lower()
     stage1_alignment_metadata_cached = resume_state.get("stage1_alignment_metadata")
-    expected_alignment_revision = str(
-        os.environ.get("ALIGNMENT_MODEL_REVISION") or ""
-    ).strip()
-    expected_alignment_algorithm = str(
-        os.environ.get("ALIGNMENT_ALGORITHM_VERSION") or ""
-    ).strip()
-    expected_separator_model = str(
-        os.environ.get("ALIGNMENT_DEMUCS_MODEL_NAME") or ""
-    ).strip()
-    expected_separator_revision = str(
-        os.environ.get("ALIGNMENT_DEMUCS_MODEL_REVISION") or ""
-    ).strip()
-    expected_separator_package_version = str(
-        os.environ.get("ALIGNMENT_DEMUCS_PACKAGE_VERSION") or ""
-    ).strip()
+    _expected_identity = expected_local_alignment_identity()
+    expected_alignment_revision = _expected_identity["model_revision"]
+    expected_alignment_algorithm = _expected_identity["algorithm_version"]
+    expected_separator_model = _expected_identity["separator_model"]
+    expected_separator_revision = _expected_identity["separator_revision"]
+    expected_separator_package_version = _expected_identity["separator_package_version"]
     if isinstance(stage1_asr_cached, dict):
         cache_compatible = True
         if stage1_alignment_backend_cached != stage1_alignment_backend:
@@ -2967,34 +3110,10 @@ def build_all_via_gemini_one_call(
                 user_clip_window=user_clip_window,
                 logger=logger,
             )
-            backend_info = dict(local_response.backend)
-            expected_backend_identity = {
-                "algorithm_version": expected_alignment_algorithm,
-                "model_revision": expected_alignment_revision,
-                "audio_preprocessor": "demucs",
-                "separator_model": expected_separator_model,
-                "separator_revision": expected_separator_revision,
-                "separator_package_version": expected_separator_package_version,
-            }
-            for field, expected_value in expected_backend_identity.items():
-                actual_value = str(backend_info.get(field) or "")
-                if not expected_value:
-                    raise AlignmentServiceError(
-                        "ALIGNMENT_INTERNAL_ERROR",
-                        f"worker alignment identity is empty for {field}",
-                    )
-                if actual_value != expected_value:
-                    raise AlignmentServiceError(
-                        "ALIGNMENT_INTERNAL_ERROR",
-                        "alignment service identity mismatch "
-                        f"field={field} expected={expected_value!r} "
-                        f"actual={actual_value!r}",
-                    )
-            alignment_metadata = {
-                "backend": "local_ctc",
-                **expected_backend_identity,
-                "diagnostics": dict(local_response.diagnostics),
-            }
+            alignment_metadata = build_local_alignment_metadata(
+                backend_info=dict(local_response.backend),
+                diagnostics=dict(local_response.diagnostics),
+            )
             resume_state["stage1_alignment_metadata"] = alignment_metadata
             stage1a_raw.write_text(
                 json.dumps(alignment_metadata, ensure_ascii=False, indent=2),
@@ -3615,6 +3734,15 @@ def build_all_via_gemini_one_call(
             + "\n"
         )
         logger.info("stage2_subtitles_retry_hint_applied chars=%d", len(subtitles_retry_hint))
+    user_focus_matched = _user_focus_words_matched(
+        words_in_clip=stage1_words_in_clip, logger=logger
+    )
+    user_focus_hint = _user_focus_words_hint(user_focus_matched)
+    if user_focus_hint and subtitles_planner is not None:
+        sub_prompt = str(sub_prompt) + "\n\n" + user_focus_hint + "\n"
+    # Пост-проверка фокус-слов: при нарушении вызов повторяется с этой добавкой к промпту
+    user_focus_retry_note = ""
+    user_focus_retries_left = int(MODEL_VALIDATION_IMMEDIATE_RETRIES)
     sub_raw = logs_dir / f"gemini_raw_stage2_subtitles_{stamp}.json"
     sub_sys = logs_dir / f"gemini_system_stage2_subtitles_{stamp}.txt"
     sub_user = logs_dir / f"gemini_prompt_stage2_subtitles_{stamp}.txt"
@@ -3647,6 +3775,7 @@ def build_all_via_gemini_one_call(
     timing_cuts_user = logs_dir / f"gemini_prompt_stage2_timing_cuts_{stamp}.txt"
 
     def _run_subtitles_once() -> BlocksTokensPayload | SubtitleFlowPlan:
+        nonlocal user_focus_retry_note, user_focus_retries_left
         # 5th-template JSX subtitles (trendy/brat): the AE generator builds the
         # subtitle layers from raw ASR word-timings — there is NO LLM subtitle
         # stage. Synthesize a minimal valid SubtitleFlowPlan carrying just the
@@ -3693,7 +3822,7 @@ def build_all_via_gemini_one_call(
                 hedge_delay_s=hedge_delay_s,
                 logger=logger,
                 system_instruction=sub_system,
-                user_prompt=str(sub_prompt),
+                user_prompt=str(sub_prompt) + user_focus_retry_note,
                 audio_paths=subtitles_audio_paths,
                 raw_response_path=sub_raw,
                 cache_path=cache_path,
@@ -3709,7 +3838,7 @@ def build_all_via_gemini_one_call(
                 hedge_delay_s=hedge_delay_s,
                 logger=logger,
                 system_instruction=sub_system,
-                user_prompt=str(sub_prompt),
+                user_prompt=str(sub_prompt) + user_focus_retry_note,
                 audio_paths=subtitles_audio_paths,
                 raw_response_path=sub_raw,
                 cache_path=cache_path,
@@ -3723,6 +3852,23 @@ def build_all_via_gemini_one_call(
             stage1=stage1,
             logger=logger,
         )
+
+        unmet = _user_focus_words_unmet(payload, user_focus_matched)
+        if unmet:
+            if user_focus_retries_left > 0:
+                user_focus_retries_left -= 1
+                user_focus_retry_note = (
+                    "\n\nPREVIOUS ATTEMPT VIOLATED USER_FOCUS_WORDS — fix and regenerate:\n"
+                    + "\n".join(f"- {item}" for item in unmet)
+                    + "\nEach listed word must be `focus_word` of its scene (or a `short` "
+                    "impulse layer). Keep everything else as valid as before.\n"
+                )
+                raise _UserFocusWordsUnmetError("user_focus_words_unmet: " + "; ".join(unmet))
+            logger.warning(
+                "user_focus_words_unmet_after_retries count=%d items=%r", len(unmet), unmet
+            )
+        elif user_focus_matched:
+            logger.info("user_focus_words_verified count=%d", len(user_focus_matched))
 
         if isinstance(payload, BlocksTokensPayload):
             _log_subtitles_token_metrics(payload)

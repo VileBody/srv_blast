@@ -12,13 +12,20 @@ from uuid import uuid4
 
 import boto3
 import httpx
+import logging
 from botocore.config import Config
 
+from . import asr_preview
 from .runtime import SETTINGS
 
 
 class ProductionBackendError(RuntimeError):
     pass
+
+
+class AsrPreviewPending(ProductionBackendError):
+    """Примерка субтитров ещё считается — генерацию надо подождать, а не запускать
+    со свежим ASR (правки и фокус-слова человека уехали бы в никуда)."""
 
 
 def _required(name: str) -> str:
@@ -321,6 +328,90 @@ class ProductionBackend:
             )
         return dict(response.json())
 
+    def start_asr_preview(
+        self,
+        *,
+        audio_s3_url: str,
+        target_fragment: str,
+        clip_start_sec: float,
+        clip_end_sec: float,
+        idempotency_key: str,
+    ) -> str:
+        """Stage 1a только (local_ctc) — `POST /asr/preview` оркестратора.
+
+        Возвращает job_id: слова забираются `asr_preview_state`, а рендер потом
+        уходит с `reuse_text_job_id=<job_id>` (см. `_request_payload`).
+        """
+        if self.config.stage1_backend != "local_ctc":
+            raise ProductionBackendError(
+                "asr preview requires WEB_STAGE1_ALIGNMENT_BACKEND=local_ctc"
+            )
+        response = self._http.post(
+            f"{self.config.orchestrator_url}/asr/preview",
+            json={
+                "audio_s3_url": str(audio_s3_url),
+                "target_fragment": str(target_fragment),
+                "clip_start_abs": float(clip_start_sec),
+                "clip_end_abs": float(clip_end_sec),
+                "idempotency_key": str(idempotency_key),
+                "request_id": str(idempotency_key)[:200],
+            },
+        )
+        if response.status_code >= 300:
+            raise ProductionBackendError(
+                f"orchestrator /asr/preview failed status={response.status_code} "
+                f"body={response.text[:500]}"
+            )
+        job_id = str(response.json().get("job_id") or "").strip()
+        if not job_id:
+            raise ProductionBackendError("orchestrator /asr/preview returned empty job_id")
+        return job_id
+
+    def asr_preview_state(self, job_id: str) -> dict[str, Any]:
+        """Статус asr_preview-джобы → словарь в терминах сайта (COMPLETED/FAILED/…)."""
+        response = self._http.get(f"{self.config.orchestrator_url}/jobs/{job_id}")
+        if response.status_code >= 300:
+            raise ProductionBackendError(
+                f"orchestrator /jobs/{job_id} failed status={response.status_code}"
+            )
+        state = response.json()
+        status = str(state.get("status") or "").upper()
+        result = state.get("result") or {}
+        if status == "SUCCEEDED":
+            return {
+                "status": "COMPLETED",
+                "words": asr_preview.words_from_orchestrator(list(result.get("words") or [])),
+                "clipStart": result.get("clip_start_abs"),
+                "clipEnd": result.get("clip_end_abs"),
+                "error": None,
+            }
+        if status == "FAILED":
+            return {
+                "status": "FAILED",
+                "words": [],
+                "clipStart": None,
+                "clipEnd": None,
+                "error": str(state.get("error") or "asr failed")[:500],
+            }
+        return {
+            "status": "QUEUED" if status in {"NEW", "QUEUED"} else "RUNNING",
+            "words": [],
+            "clipStart": None,
+            "clipEnd": None,
+            "error": None,
+        }
+
+    def update_asr_words(self, job_id: str, words: list[dict[str, Any]]) -> None:
+        response = self._http.put(
+            f"{self.config.orchestrator_url}/jobs/{job_id}/asr-words",
+            json={"words": asr_preview.words_to_orchestrator(words)},
+        )
+        if response.status_code >= 300:
+            raise ProductionBackendError(
+                f"orchestrator /jobs/{job_id}/asr-words failed status={response.status_code} "
+                f"body={response.text[:500]}"
+            )
+
     def preview_catalog(self, kind: str) -> list[dict[str, Any]]:
         source = {
             "footage": self.config.footage_catalog,
@@ -486,10 +577,69 @@ class ProductionBackend:
                 "custom source uploads are not supported by the production orchestrator contract"
             )
 
+        # Готовность примерки проверяется раньше — в submit до резерва кредитов
+        # (`prepare_asr_reuse`). Здесь — только если сабмит её пропустил (старый путь).
+        if "asrReuseJobId" not in job:
+            self.prepare_asr_reuse(job)
         self._enqueue_next(job)
         job["status"] = "PROCESSING"
         job["mock"] = False
         return job
+
+    def _asr_preview_block(self, job: dict[str, Any]) -> dict[str, Any] | None:
+        """Блок примерки субтитров из stageData, если он про ЭТОТ трек/окно/текст."""
+        stage_data = job.get("stageData") or {}
+        track = (job.get("renderJob") or {}).get("track") or {}
+        segment = track.get("segment") or {}
+        start, end = segment.get("from"), segment.get("to")
+        if start is None or end is None:
+            return None
+        key = asr_preview.preview_key(
+            str(track.get("s3Key") or ""),
+            float(start),
+            float(end),
+            asr_preview.target_fragment(stage_data),
+        )
+        return asr_preview.stage_data_asr(stage_data, expected_key=key)
+
+    def prepare_asr_reuse(self, job: dict[str, Any]) -> None:
+        """Правки таймингов уезжают в оркестратор ДО постановки первой вариации:
+        она подхватит stage1_asr из asr_preview-джобы через reuse_text_job_id.
+
+        Зовётся из submit ДО резерва кредитов и списания трека: если примерка ещё
+        считается, наружу уходит `AsrPreviewPending` (409 «подожди»), и откатывать
+        нечего — ни резерва, ни постановки в очередь ещё не было.
+
+        Перед этим примерка сверяется с оркестратором: джоба могла протухнуть
+        (TTL стора) или упасть — reuse с такой джобой роняет рендер целиком.
+        Тогда reuse отключается ЯВНО (`job["asrReuseDropped"]` + лог), Stage 1
+        посчитается заново, правки пропадут — но ролик выйдет.
+        """
+        block = self._asr_preview_block(job)
+        if not block:
+            return
+        job_id = str(block["jobId"])
+        try:
+            state = self.asr_preview_state(job_id)
+            if state["status"] in {"QUEUED", "RUNNING"}:
+                # Решение продукта: ждём, а не генерим без правок.
+                raise AsrPreviewPending(f"asr preview {job_id} is still {state['status']}")
+            reason = "" if state["status"] == "COMPLETED" else f"status={state['status']}"
+        except AsrPreviewPending:
+            raise
+        except ProductionBackendError as exc:
+            reason = f"unavailable: {exc}"
+        if reason:
+            job["asrReuseDropped"] = reason[:300]
+            job["asrReuseJobId"] = None
+            logging.getLogger(__name__).warning(
+                "asr_preview_reuse_dropped web_job=%s asr_job=%s reason=%s",
+                job.get("id"), job_id, reason,
+            )
+            return
+        job["asrReuseJobId"] = job_id
+        if block.get("edited"):
+            self.update_asr_words(job_id, list(block.get("words") or []))
 
     def _enqueue_next(self, job: dict[str, Any]) -> None:
         orchestrator_ids = [
@@ -811,6 +961,11 @@ class ProductionBackend:
 
         target_fragment = str(render_job.get("lyrics", {}).get("fragment") or "").strip()
         lyrics = str(render_job.get("lyrics", {}).get("full") or "").strip()
+        asr_block = self._asr_preview_block(job)
+        # reuse только после сверки в prepare_asr_reuse (job["asrReuseJobId"]);
+        # фокус-слова — без reuse тоже работают: Stage2 матчит их по тексту+старту.
+        asr_job_id = str(job.get("asrReuseJobId") or "") or None
+        focus = asr_preview.focus_words(list(asr_block.get("words") or [])) if asr_block else []
         if self.config.stage1_backend == "local_ctc" and not target_fragment:
             raise ProductionBackendError("local_ctc requires an exact target fragment")
         if not target_fragment:
@@ -852,9 +1007,12 @@ class ProductionBackend:
             "photo_style": background.get("photoStyle"),
             "variant_index": index,
             "variants_total": total,
-            "reuse_text_job_id": master_id,
+            # Первая вариация берёт Stage 1 из примерки субтитров (если она была
+            # и про этот же трек/окно/текст), остальные — из первой.
+            "reuse_text_job_id": master_id or asr_job_id,
+            "user_focus_words": focus or None,
         }
-        return {key: value for key, value in payload.items() if value not in {None, ""}}
+        return {key: value for key, value in payload.items() if value is not None and value != ""}
 
 
 _BACKEND: ProductionBackend | None = None

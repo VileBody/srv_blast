@@ -19,7 +19,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import mock_store as store
-from . import analytics, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
+from . import analytics, asr_preview, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
 from . import render_job as render_job_builder
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
@@ -72,6 +72,40 @@ ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
 UPLOAD_DIR = STATIC_DIR / "uploads" / "tracks"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_demo_track_audio() -> None:
+    """Сгенерировать звук демо-трека для mock-режима (метроном + тон, 30 с).
+
+    Демо-трек воркспейса указывает на этот файл `localUrl`; настоящего mp3 в
+    репозитории нет, а плеер примерки субтитров без звука не проверить.
+    Файл — рантайм-артефакт, в git не идёт.
+    """
+    import math
+    import struct
+    import wave
+
+    target = UPLOAD_DIR / "demo-last-night.wav"
+    if target.exists():
+        return
+    rate, seconds, bpm = 22050, 30, 120
+    beat = 60.0 / bpm
+    frames = bytearray()
+    for i in range(rate * seconds):
+        t = i / rate
+        phase = (t % beat) / beat
+        click = math.exp(-phase * 40) * (0.8 if (t // beat) % 4 == 0 else 0.4)
+        tone = 0.12 * math.sin(2 * math.pi * 110 * t) + 0.06 * math.sin(2 * math.pi * 220 * t)
+        frames += struct.pack("<h", int(max(-1.0, min(1.0, click + tone)) * 32767))
+    with wave.open(str(target), "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(rate)
+        out.writeframes(bytes(frames))
+
+
+if RUNTIME.backend == "mock":
+    ensure_demo_track_audio()
 SOURCE_DIR = STATIC_DIR / "uploads" / "sources"
 SOURCE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -246,6 +280,16 @@ class SubmitPayload(BaseModel):
     stageData: dict[str, Any] = Field(default_factory=dict)
     videosToGenerate: int = 1
     idempotencyKey: str | None = None
+
+
+class AsrStartPayload(BaseModel):
+    clipFrom: str = ""
+    clipTo: str = ""
+    fragment: str = ""
+    lyrics: str = ""
+    # Трек визарда, а не «последний загруженный»: человек мог залить новый файл и
+    # вернуться к предыдущему — примерка обязана считаться по тому, что уйдёт в рендер.
+    trackId: str = ""
 
 
 class RatePayload(BaseModel):
@@ -933,6 +977,114 @@ async def api_drops(clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
     return {"status": "COMPLETED", "bpm": float(result.get("bpm") or 0.0), "drops": drops, "mock": False}
 
 
+def _asr_inputs(clip_from: str, clip_to: str, fragment: str, lyrics: str, track_id: str = "") -> tuple[dict[str, Any], float, float, str] | None:
+    """Вводные примерки: трек + окно + текст. Нет чего-то → примерять нечего."""
+    start = render_job_builder.mmss_seconds(clip_from)
+    end = render_job_builder.mmss_seconds(clip_to)
+    if start is None or end is None or end <= start:
+        return None
+    track = store.find_track(track_id) if track_id else None
+    if track is None:
+        track = store.previous_track() or {}
+    if not str(track.get("s3Key") or "").strip():
+        return None
+    text = asr_preview.target_fragment({"fragment": fragment, "lyrics": lyrics})
+    if not text:
+        return None
+    return track, start, end, text
+
+
+def _asr_state_for(key: str) -> dict[str, Any]:
+    saved = store.get_asr_preview()
+    if saved and saved.get("key") == key:
+        return saved
+    return asr_preview.empty_state(key)
+
+
+def _asr_sync(state: dict[str, Any]) -> dict[str, Any]:
+    """Дотянуть статус незавершённой примерки из оркестратора (production)."""
+    if RUNTIME.backend != "production" or state.get("status") in asr_preview.TERMINAL or not state.get("jobId"):
+        return state
+    fresh = _production_backend().asr_preview_state(str(state["jobId"]))
+    state = {**state, **fresh}
+    store.set_asr_preview(state)
+    # Поллинг — GET, а сброс в БД в middleware висит на мутирующих методах: без явного
+    # вызова готовые слова жили бы только до рестарта.
+    persistence.flush_user(store.current_user_id())
+    return state
+
+
+@app.post("/api/wizard/asr/start", tags=["wizard"])
+async def api_asr_start(payload: AsrStartPayload) -> dict[str, Any]:
+    """Запустить примерку субтитров (Stage 1a) для текущего трека/окна/текста.
+
+    Идемпотентно по ключу трек+окно+текст: повторный вызов с теми же вводными
+    возвращает уже идущую/готовую примерку, с другими — заводит новую (старая
+    становится недействительной: рендер сверяет окно и текст, см. asr_preview.py).
+    В mock-режиме слова раскладываются по окну сразу, без оркестратора.
+    """
+    inputs = _asr_inputs(payload.clipFrom, payload.clipTo, payload.fragment, payload.lyrics, payload.trackId)
+    if inputs is None:
+        return {"asr": asr_preview.empty_state(""), "mock": RUNTIME.backend == "mock"}
+    track, start, end, text = inputs
+    key = asr_preview.preview_key(str(track["s3Key"]), start, end, text)
+    state = _asr_state_for(key)
+    if state["status"] not in {"IDLE", "FAILED"}:
+        try:
+            state = await run_in_threadpool(_asr_sync, state)
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        return {"asr": state, "mock": RUNTIME.backend == "mock"}
+
+    if RUNTIME.backend != "production":
+        state = {
+            **asr_preview.empty_state(key),
+            "status": "COMPLETED",
+            "jobId": f"mock_asr_{key}",
+            "words": asr_preview.mock_words(text, start, end),
+            "clipStart": start,
+            "clipEnd": end,
+        }
+        store.set_asr_preview(state)
+        return {"asr": state, "mock": True}
+
+    try:
+        job_id = await run_in_threadpool(
+            _production_backend().start_asr_preview,
+            audio_s3_url=str(track["s3Key"]),
+            target_fragment=text,
+            clip_start_sec=start,
+            clip_end_sec=end,
+            idempotency_key=f"web-asr:{store.current_user_id()}:{key}",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    state = {**asr_preview.empty_state(key), "status": "QUEUED", "jobId": job_id}
+    store.set_asr_preview(state)
+    analytics.track("asr_preview_started", store.current_user_id(), {"key": key})
+    return {"asr": state, "mock": False}
+
+
+@app.get("/api/wizard/asr", tags=["wizard"])
+async def api_asr_state(key: str = "") -> dict[str, Any]:
+    """Статус/слова примерки по ключу из `start` (фронт поллит, пока не COMPLETED/FAILED).
+
+    Поллинг идёт по ключу, а не по вводным: текст трека в query-строке на каждый
+    запрос упирался бы в лимиты URL у nginx (кириллица ×3 после кодирования).
+    """
+    key = key.strip()
+    if not key:
+        return {"asr": asr_preview.empty_state(""), "mock": RUNTIME.backend == "mock"}
+    state = _asr_state_for(key)
+    try:
+        state = await run_in_threadpool(_asr_sync, state)
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    return {"asr": state, "mock": RUNTIME.backend == "mock"}
+
+
 @app.get("/api/wizard/vibes", tags=["wizard"])
 def api_vibes(plane: str = "vibes") -> dict[str, Any]:
     """Примеры футажа выбранного ПЛАНА подбора.
@@ -1031,6 +1183,22 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         if not track_hash:
             store.rollback_job_creation(live_job["id"])
             raise HTTPException(status_code=422, detail="Uploaded track has no content hash")
+        # Примерка субтитров: ещё считается → «подожди» ДО резерва кредитов и списания
+        # трека, чтобы откатывать было нечего. Упала/протухла → reuse снимается явно
+        # внутри prepare_asr_reuse, генерация идёт со свежим ASR.
+        from .production_backend import AsrPreviewPending
+
+        try:
+            await run_in_threadpool(_production_backend().prepare_asr_reuse, live_job)
+        except AsrPreviewPending as exc:
+            store.rollback_job_creation(live_job["id"])
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "asr_preview_pending", "message": str(exc)},
+            ) from exc
+        except Exception as exc:
+            store.rollback_job_creation(live_job["id"])
+            raise _production_error(exc) from exc
         try:
             await _billing_backend().reserve(tg_id, live_job["id"], len(live_job.get("videos") or []))
             await _billing_backend().consume_track(tg_id, track_hash)

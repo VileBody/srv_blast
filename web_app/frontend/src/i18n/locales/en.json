@@ -421,7 +421,28 @@
       "lyricsPlaceholder": "The segment text will appear after the first step",
       "empty": "Subtitles will appear here",
       "add": "Add subtitles",
-      "footerEmpty": "Add subtitles"
+      "footerEmpty": "Add subtitles",
+      "timeline": {
+        "zoom": "Timeline zoom",
+        "help": "How it works",
+        "wordsCount": "{{count}} words",
+        "title": "Subtitle fitting",
+        "ready": "ready",
+        "failed": "failed",
+        "idle": "no input",
+        "running": "working…",
+        "edited": "edited",
+        "zoomOut": "Zoom out",
+        "zoomIn": "Zoom in",
+        "reset": "Reset edits",
+        "play": "Play clip",
+        "pause": "Pause",
+        "focus": "Make focus word",
+        "unfocus": "Remove focus",
+        "idleHint": "Pick the clip window and lyrics on the “Track” step — words will show up here",
+        "runningHint": "Aligning words to the track…",
+        "hint": "Drag a word to shift its timing, drag its edges to change duration. Click selects a word; double-click or the Focus button makes it the accent in subtitles. While dragging, the word start snaps to the beat."
+      }
     },
     "pool": {
       "total": "Total videos:",
@@ -452,6 +473,8 @@
     "page": {
       "genStarted": "Generation started",
       "limitReached": "Generation limit reached",
+      "asrPendingTitle": "Subtitles are still being aligned",
+      "asrPendingText": "Wait a few seconds and press Generate again — your timing edits will make it into the video.",
       "genFail": "Failed to start generation",
       "genFailText": "Check your balance and project.",
       "carriedTitle": "Use the same inputs?",

@@ -389,3 +389,14 @@ export interface AnalyticsResponse {
   recent: { id: string; name: string; userId: string; ts: string; props: Record<string, unknown> }[];
   isAdmin: boolean;
 }
+
+/** Ответ /api/wizard/asr — слова примерки субтитров (см. backend/app/asr_preview.py) */
+export interface AsrPreviewResponse {
+  status: 'IDLE' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  key: string;
+  jobId: string | null;
+  words: { text: string; tStart: number; tEnd: number }[];
+  clipStart: number | null;
+  clipEnd: number | null;
+  error: string | null;
+}

@@ -153,6 +153,15 @@ services:
       OUTPUT_DIR: /app/output
       ALIGNMENT_SERVICE_URL: ${ALIGNMENT_SERVICE_URL:-http://alignment-api:8000}
       ALIGNMENT_TIMEOUT_S: ${ALIGNMENT_TIMEOUT_S:-600}
+      # Идентичность alignment-сервиса — та же, что у worker-build: asr_preview
+      # пишет её в resume_state, и рендер при reuse сверяет с этими же значениями.
+      # Без них asr_preview падает на build_local_alignment_metadata.
+      ALIGNMENT_MODEL_REVISION: ${ALIGNMENT_MODEL_REVISION:-2329100508896c6d9b157019803ab5601e6f3406}
+      ALIGNMENT_ALGORITHM_VERSION: local-ctc-viterbi-v19-bounded-boundary-overflow-demucs-4.1.0
+      ALIGNMENT_AUDIO_PREPROCESSOR: demucs
+      ALIGNMENT_DEMUCS_MODEL_NAME: htdemucs
+      ALIGNMENT_DEMUCS_MODEL_REVISION: 8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4
+      ALIGNMENT_DEMUCS_PACKAGE_VERSION: 4.1.0
       NUMBA_DISABLE_JIT: "1"
       OPENBLAS_NUM_THREADS: "1"
       OMP_NUM_THREADS: "1"

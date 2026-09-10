@@ -78,6 +78,9 @@
      Фейд обязан совпадать с фоном; grad-soft-10 почти плоский, поэтому одного цвета достаточно. */
   --fx-container-bg: #1e1535;
   --grad-soft-20: linear-gradient(175deg, rgba(139, 111, 230, 0.20) 3.6%, rgba(95, 66, 185, 0.20) 132.9%);
+  /* Пилюля слова на таймлайне примерки: НЕПРОЗРАЧНАЯ, на тон светлее контейнера
+     (card-2 → soft-10 → soft-20 даёт ≈#35295a; пилюля должна читаться поверх него). */
+  --tl-pill: #3f3170;
   --sidebar-w: clamp(112px, 13vw, 188px);
   --rail-pad-y: 60px; /* Figma W37: лого top 60 / аватар bottom 60 (симметрично) */
 
@@ -410,6 +413,14 @@ a { color: inherit; text-decoration: none; }
     color: var(--text-80); font-size: 20px; font-weight: 350; white-space: nowrap;
   }
 
+  /* Бегунок зума таймлайна примерки: полоска в тон ползунка дорожки, круглая белая ручка */
+  .zoom-range { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px; background: rgba(139,111,230,.30); outline: none; cursor: pointer; }
+  .zoom-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 999px; background: var(--text); border: 0; box-shadow: 0 2px 8px rgba(0,0,0,.4); transition: transform var(--t-fast); }
+  .zoom-range::-webkit-slider-thumb:hover { transform: scale(1.1); }
+  .zoom-range::-moz-range-thumb { width: 18px; height: 18px; border-radius: 999px; background: var(--text); border: 0; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+  .zoom-range::-moz-range-track { height: 6px; border-radius: 999px; background: rgba(139,111,230,.30); }
+  .zoom-range:disabled { opacity: .4; cursor: not-allowed; }
+  .zoom-range:focus-visible { box-shadow: 0 0 0 2px var(--accent-light); }
   .color-slider { position: relative; height: 60px; width: 100%; border-radius: var(--r15); cursor: pointer; }
   .color-slider-thumb {
     position: absolute; top: 50%; width: 30px; height: 30px; border-radius: 999px;

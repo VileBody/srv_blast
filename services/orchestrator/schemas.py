@@ -149,6 +149,10 @@ class SendAudioS3Request(BaseModel):
     accent_color_hex: Optional[str] = Field(default=None, pattern=r"^#?[0-9a-fA-F]{6}$")
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
+    # Слова, помеченные автором как фокусные в веб-визарде (см. FocusWord).
+    # Уезжают в Stage2-subtitles подсказкой (env USER_FOCUS_WORDS): модель
+    # обязана сделать их focus_word / акцентным слоем своей сцены.
+    user_focus_words: List[FocusWord] = Field(default_factory=list)
     # When True (bigtest only): seed stage2_style + stage2_style_rotation from
     # reuse_text_job_id so the footage genre/style is identical across all cases.
     reuse_stage2_footage: bool = False
@@ -306,6 +310,70 @@ class AlignmentSmokeRequest(BaseModel):
 
 
 AlignmentSmokeEnqueueResponse = EnqueueJobResponse
+
+
+class AsrPreviewRequest(BaseModel):
+    """Stage 1a only (local_ctc alignment) — «примерка» субтитров в веб-визарде.
+
+    Сайт гонит ASR ДО выбора настроек субтитров, показывает слова на таймлайне и
+    даёт подвинуть тайминги. Итог живёт в resume_state этой джобы, а рендер-джоба
+    потом приходит с `reuse_text_job_id=<эта джоба>` — и оркестратор берёт
+    stage1_asr из неё вместо повторного выравнивания. Поэтому `target_fragment`
+    и окно ОБЯЗАНЫ совпадать с тем, что уйдёт в рендер: reuse сверяет
+    `stage1_asr_reference_text` и clip-окно, при расхождении сид отбрасывается и
+    ASR считается заново — правки пользователя молча пропадут.
+    """
+    audio_s3_url: str = Field(min_length=1)
+    target_fragment: str = Field(min_length=1)
+    clip_start_abs: float = Field(ge=0.0)
+    clip_end_abs: float = Field(gt=0.0)
+    request_id: str = Field(default="", max_length=200)
+    idempotency_key: Optional[str] = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_window(self) -> "AsrPreviewRequest":
+        if float(self.clip_end_abs) <= float(self.clip_start_abs):
+            raise ValueError("clip_end_abs must be > clip_start_abs")
+        return self
+
+
+AsrPreviewEnqueueResponse = EnqueueJobResponse
+
+
+class AsrWordEdit(BaseModel):
+    text: str = Field(min_length=1)
+    t_start: float = Field(ge=0.0)
+    t_end: float = Field(gt=0.0)
+
+    @model_validator(mode="after")
+    def _validate_span(self) -> "AsrWordEdit":
+        if float(self.t_end) <= float(self.t_start):
+            raise ValueError("t_end must be > t_start")
+        return self
+
+
+class AsrWordsUpdateRequest(BaseModel):
+    """Правки таймингов слов поверх готовой asr_preview-джобы.
+
+    Слова идут ПОЛНЫМ списком в порядке звучания: правка — это замена
+    transcript_words целиком, а не патч по индексам (иначе клиент и сервер
+    легко разъезжаются по нумерации после любого сдвига).
+    """
+    words: List[AsrWordEdit] = Field(min_length=1)
+
+
+class AsrWordsUpdateResponse(BaseModel):
+    job_id: str
+    words_count: int
+    clip_start_abs: float
+    clip_end_abs: float
+
+
+class FocusWord(BaseModel):
+    """Слово, которое автор пометил «фокусным» на таймлайне. `t_start` нужен,
+    чтобы отличить повторы одного слова в тексте."""
+    text: str = Field(min_length=1)
+    t_start: float = Field(ge=0.0)
 
 
 class JobState(BaseModel):

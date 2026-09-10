@@ -13,6 +13,29 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["-m", "http.server", "4173", "--directory", "landing"],
       "port": 4173
+    },
+    {
+      "name": "blast-backend",
+      "runtimeExecutable": "web_app/backend/.venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--app-dir", "web_app/backend", "--host", "127.0.0.1", "--port", "8001"],
+      "env": {
+        "MODE": "dev",
+        "BLAST_BACKEND_MODE": "mock",
+        "APP_URL": "http://localhost:5173",
+        "BLAST_CORS_ORIGINS": "http://localhost:5173",
+        "BLAST_SESSION_SECRET": "local-development-only",
+        "BLAST_DEV_TOOLS": "1",
+        "BLAST_CSRF": "0",
+        "BLAST_RATE_LIMIT": "0"
+      },
+      "port": 8001
+    },
+    {
+      "name": "blast-frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "web_app/frontend"],
+      "port": 5173,
+      "url": "http://localhost:5173"
     }
   ]
 }
