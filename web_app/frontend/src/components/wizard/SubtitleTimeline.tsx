@@ -139,11 +139,13 @@ export function SubtitleTimeline() {
   };
 
   // --- волна отрывка: декодируем файл один раз, пики считаем под текущий масштаб
+  /** плеер уже может играть — только тогда качаем файл второй раз ради волны */
+  const [audioReady, setAudioReady] = useState(false);
   const waveRef = useRef<HTMLCanvasElement>(null);
   const [wave, setWave] = useState<{ url: string; data: Float32Array; rate: number } | null>(null);
   const waveUrl = playbackUrl;
   useEffect(() => {
-    if (!waveUrl || asr.status !== 'COMPLETED') return;
+    if (!waveUrl || asr.status !== 'COMPLETED' || !audioReady) return;
     if (wave && wave.url === waveUrl) return;
     let cancelled = false;
     (async () => {
@@ -167,7 +169,7 @@ export function SubtitleTimeline() {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waveUrl, asr.status, clipStart, clipEnd]);
+  }, [waveUrl, asr.status, audioReady, clipStart, clipEnd]);
   useEffect(() => {
     const canvas = waveRef.current;
     if (!canvas || !wave) return;
@@ -223,36 +225,43 @@ export function SubtitleTimeline() {
   }, [asr.status]);
   const url = playbackUrl;
 
+  // Плеер создаётся заранее и сразу подгружает файл (preload=auto), а не в момент клика:
+  // иначе «плей» ждал метаданных и первого сика по сети — на проде это выливалось в 10–15 с.
   useEffect(() => {
-    audioRef.current?.pause();
-    audioRef.current = null;
     setPlaying(false);
     setTime(clipStart);
+    setAudioReady(false);
+    if (!url) { audioRef.current = null; return; }
+    const el = new Audio();
+    el.preload = 'auto';
+    el.src = url;
+    el.onended = () => setPlaying(false);
+    el.oncanplay = () => setAudioReady(true);
+    audioRef.current = el;
+    return () => { el.pause(); if (audioRef.current === el) audioRef.current = null; };
   }, [url, clipStart]);
-  useEffect(() => () => { audioRef.current?.pause(); audioRef.current = null; }, []);
 
-  const audio = () => {
-    if (!url) return null;
-    if (!audioRef.current) {
-      audioRef.current = new Audio(url);
-      audioRef.current.onended = () => setPlaying(false);
-    }
-    return audioRef.current;
+  /** сик с учётом того, что до метаданных браузер его молча игнорирует */
+  const seekEl = (el: HTMLAudioElement, sec: number, then?: () => void) => {
+    const run = () => { el.currentTime = sec; then?.(); };
+    if (el.readyState >= 1) run();
+    else el.addEventListener('loadedmetadata', run, { once: true });
   };
 
   const seek = (sec: number) => {
     const clamped = Math.min(clipEnd, Math.max(clipStart, sec));
-    const el = audio();
-    if (el) el.currentTime = clamped;
+    const el = audioRef.current;
+    if (el) seekEl(el, clamped);
     setTime(clamped);
   };
 
   const toggle = () => {
-    const el = audio();
+    const el = audioRef.current;
     if (!el) return;
     if (playing) { el.pause(); setPlaying(false); return; }
-    if (el.currentTime < clipStart || el.currentTime >= clipEnd - 0.05) el.currentTime = clipStart;
-    void el.play();
+    const restart = el.readyState < 1 || el.currentTime < clipStart || el.currentTime >= clipEnd - 0.05;
+    if (restart) seekEl(el, Math.max(clipStart, time), () => { void el.play(); });
+    else void el.play();
     setPlaying(true);
   };
 
@@ -411,7 +420,6 @@ export function SubtitleTimeline() {
         <div className="flex items-center gap-space-3">
           <span className="wizard-body">{t('wizard.subs.timeline.title')}</span>
           {asr.status === 'FAILED' && <span className="text-[14px] text-[var(--error)]">{t('wizard.subs.timeline.failed')}</span>}
-          {(asr.status === 'RUNNING' || asr.status === 'QUEUED') && <span className="text-[14px] text-text-60">{t('wizard.subs.timeline.running')}</span>}
         </div>
         {/* Две круглые кнопки в правом верхнем углу: «?» — как работать (по ховеру), «✕» — сбросить правки */}
         <div className="flex items-center gap-space-2">
@@ -598,6 +606,7 @@ export function SubtitleTimeline() {
           )}
         </div>
         {/* ползунок: крутилка дорожки влево-вправо (кастомный скроллбар), непрозрачный */}
+        {ready && (
         <div
           ref={barRef}
           role="scrollbar"
@@ -622,6 +631,7 @@ export function SubtitleTimeline() {
             }}
           />
         </div>
+        )}
       </div>
     </section>
   );

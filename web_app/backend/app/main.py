@@ -1141,6 +1141,10 @@ def api_track_playback(trackId: str = "") -> dict[str, Any]:
     url = str(track.get("localUrl") or "")
     if RUNTIME.backend == "production":
         url = _production_backend()._preview_url(str(track["s3Key"]), filename=str(track.get("filename") or "track"))
+    elif not url:
+        # mock: демо-воркспейс, сохранённый до появления localUrl у демо-трека — играем
+        # синтезированный wav (см. ensure_demo_track_audio), чтобы плеер было чем проверить
+        url = "/static/uploads/tracks/demo-last-night.wav"
     if not url:
         raise HTTPException(status_code=404, detail="track has no playable source")
     return {"url": url, "mock": RUNTIME.backend == "mock"}

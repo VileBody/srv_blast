@@ -230,12 +230,11 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
                   <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M4.5 2.5v11l9-5.5-9-5.5Z" fill="currentColor" /></svg>
                 )}
               </button>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-[18px] leading-[22px] text-text">{track.filename}</span>
-                <span className="mt-[4px] block text-[14px] leading-[18px] text-text-60">
-                  {durationLabel(track.durationS)} · {t('projectModal.trackReady')}
-                </span>
-              </span>
+              {/* Только имя файла (обрезается, если не влезает) и длительность — без пояснений */}
+              <div className="min-w-0 flex-1 overflow-hidden">
+                <div className="truncate text-[18px] leading-[22px] text-text">{track.filename}</div>
+                <div className="mt-[4px] text-[14px] leading-[18px] text-text-60">{durationLabel(track.durationS)}</div>
+              </div>
               <button
                 type="button"
                 disabled={busy || trackMutation.isPending}

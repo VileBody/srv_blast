@@ -250,7 +250,11 @@ export function BatchTrack({
   const { t } = useTranslation();
   const scroll = useHorizontalScroll();
   const mask = edgeMask(scroll.fade.left, scroll.fade.right, 28);
-  const lastBatchSelected = Boolean(batches.length && batches[batches.length - 1]?.id === selectedId);
+  // «+» прилипает к главному пилу, когда выбран ПОСЛЕДНИЙ батч (или выбора ещё нет — тогда
+  // подсвечен единственный/последний). Сравниваем строками: id батча и выбранный id приходят
+  // из разных источников и могли разъехаться по типу — «+» тогда молча отклеивался.
+  const lastId = batches[batches.length - 1]?.id;
+  const lastBatchSelected = batches.length === 0 || selectedId == null || String(lastId) === String(selectedId);
   useEffect(() => {
     const rail = scroll.ref.current;
     if (!rail || !selectedId) return;
