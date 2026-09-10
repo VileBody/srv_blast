@@ -1,3 +1,4 @@
+import type React from 'react';
 import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../lib/cn';
@@ -179,6 +180,8 @@ export function SubtitleTimeline() {
     setAsrWord(index, { tStart, tEnd: Math.round((tStart + len) * 1000) / 1000 });
   };
   const onKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key === ' ') { e.preventDefault(); toggle(); return; }
+    if (e.key === 'Escape') { setSelected(null); return; }
     if (selected === null) return;
     const step = e.shiftKey ? 0.2 : 0.05;
     if (e.key === 'ArrowLeft') { e.preventDefault(); nudge(selected, -step); }
@@ -244,6 +247,12 @@ export function SubtitleTimeline() {
   const onHeadDown = (e: ReactPointerEvent<HTMLElement>) => { e.stopPropagation(); capture(e); seekFromLane(e.clientX); };
   const onHeadMove = (e: ReactPointerEvent<HTMLElement>) => { if (e.buttons) seekFromLane(e.clientX); };
 
+  const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    const box = scrollRef.current;
+    if (!box || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    box.scrollLeft += e.deltaY;
+  };
+
   const activeIndex = asr.words.findIndex((w) => time >= w.tStart && time < w.tEnd);
   const width = Math.ceil(duration * pxPerSec) + X0 * 2;
   const ready = asr.status === 'COMPLETED' && asr.words.length > 0;
@@ -254,16 +263,22 @@ export function SubtitleTimeline() {
   return (
     <section className="mt-[24px] rounded-r15 bg-grad-soft-10 px-[28px] py-[24px]" aria-label={t('wizard.subs.timeline.title')}>
       <div className="flex flex-wrap items-center justify-between gap-space-3">
-        <span className="wizard-body">{t('wizard.subs.timeline.title')}</span>
-        <div className="flex items-center gap-space-3 text-[14px] text-text-60">
-          {asr.status === 'FAILED' && <span className="text-[var(--error)]">{t('wizard.subs.timeline.failed')}</span>}
-          {(asr.status === 'RUNNING' || asr.status === 'QUEUED') && <span>{t('wizard.subs.timeline.running')}</span>}
-          {asr.edited && (
-            <button type="button" onClick={resetAsrEdits} className="h-[32px] rounded-r9 bg-grad-soft-20 px-[12px] text-text-80 transition hover:text-text">
-              {t('wizard.subs.timeline.reset')}
-            </button>
+        <div className="flex items-center gap-space-3">
+          <span className="wizard-body">{t('wizard.subs.timeline.title')}</span>
+          {/* eyebrow-статус: мелкий, разреженный, одного акцента */}
+          {ready && (
+            <span className="rounded-full px-[10px] py-[4px] text-[11px] uppercase leading-none tracking-[0.18em] text-accent-light ring-1 ring-[rgba(139,111,230,0.45)]">
+              {asr.edited ? t('wizard.subs.timeline.edited') : t('wizard.subs.timeline.wordsCount', { count: asr.words.length })}
+            </span>
           )}
+          {asr.status === 'FAILED' && <span className="text-[14px] text-[var(--error)]">{t('wizard.subs.timeline.failed')}</span>}
+          {(asr.status === 'RUNNING' || asr.status === 'QUEUED') && <span className="text-[14px] text-text-60">{t('wizard.subs.timeline.running')}</span>}
         </div>
+        {asr.edited && (
+          <button type="button" onClick={resetAsrEdits} className="h-[32px] rounded-r9 bg-grad-soft-20 px-[12px] text-[14px] text-text-80 transition hover:text-text active:scale-[0.98]">
+            {t('wizard.subs.timeline.reset')}
+          </button>
+        )}
       </div>
 
       {/* Плеер (макет): квадратный play, табло времени, «Фокус» — одна высота 80 */}
@@ -273,7 +288,7 @@ export function SubtitleTimeline() {
           onClick={toggle}
           disabled={!url || !ready}
           aria-label={playing ? t('wizard.subs.timeline.pause') : t('wizard.subs.timeline.play')}
-          className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 text-text transition hover:brightness-125 disabled:opacity-40"
+          className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40"
         >
           {playing ? (
             <span className="flex gap-[6px]" aria-hidden><span className="h-[20px] w-[6px] rounded-[2px] bg-text" /><span className="h-[20px] w-[6px] rounded-[2px] bg-text" /></span>
@@ -281,7 +296,7 @@ export function SubtitleTimeline() {
             <span aria-hidden className="ml-[5px] h-0 w-0 border-y-[11px] border-l-[18px] border-y-transparent border-l-[var(--text)]" />
           )}
         </button>
-        <span className="flex h-[64px] items-center rounded-r15 bg-grad-soft-20 px-[18px] text-[16px] tabular-nums leading-none text-text">
+        <span className="flex h-[64px] items-center rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] tabular-nums leading-none text-text-80">
           {fmt(time - clipStart)}
         </span>
         <button
@@ -289,16 +304,16 @@ export function SubtitleTimeline() {
           disabled={selected === null}
           onClick={() => { if (selected !== null) toggleAsrFocus(selected); }}
           aria-pressed={focusOn}
-          className="flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] leading-none text-text transition hover:brightness-125 disabled:opacity-40"
+          className="group flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] font-[350] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40"
         >
-          <span aria-hidden className={cn('flex h-[42px] w-[42px] items-center justify-center rounded-full text-[18px] transition', focusOn ? 'bg-text text-accent' : 'bg-accent text-text')}>★</span>
+          <span aria-hidden className={cn('flex h-[42px] w-[42px] items-center justify-center rounded-full text-[18px] transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105', focusOn ? 'bg-text text-accent' : 'bg-accent text-text')}>★</span>
           {focusOn ? t('wizard.subs.timeline.unfocus') : t('wizard.subs.timeline.focus')}
         </button>
       </div>
 
       {/* Таймлайн (Figma 540×180): один контейнер дефолтного цвета, внутри — дорожка слов,
           ползунок на всю ширину и подписи секунд. Секунды-пунктир и плейхед — от верха до ползунка. */}
-      <div className="relative mt-[20px] overflow-hidden rounded-r15 bg-grad-soft-20" style={{ height: BOX_H }}>
+      <div className="relative mt-[20px] overflow-hidden rounded-r15 bg-grad-soft-20 ring-1 ring-[rgba(246,245,253,0.06)]" style={{ height: BOX_H }}>
         <div
           ref={scrollRef}
           id="subtitle-timeline-lane"
@@ -306,6 +321,7 @@ export function SubtitleTimeline() {
           onKeyDown={onKey}
           className="no-scrollbar relative h-full overflow-x-auto overflow-y-hidden outline-none focus-visible:ring-1 focus-visible:ring-accent-light"
           onScroll={onLaneScroll}
+          onWheel={onWheel}
           onPointerDown={(e) => {
             // клик по пустому месту дорожки — перемотка
             seekFromLane(e.clientX);
@@ -348,10 +364,15 @@ export function SubtitleTimeline() {
                     onPointerCancel={onPillUp}
                     onDoubleClick={(e) => { e.stopPropagation(); toggleAsrFocus(index); }}
                     className={cn(
-                      'absolute flex cursor-grab select-none items-center justify-center overflow-hidden rounded-r15 px-[16px] text-[24px] leading-none transition-[box-shadow,background-color,color] active:cursor-grabbing',
-                      word.focus ? 'bg-text text-accent' : isSel ? 'bg-transparent text-text shadow-[inset_0_0_0_2px_var(--accent-light)]' : 'bg-[rgba(139,111,230,0.28)] text-text',
+                      'absolute flex cursor-grab select-none items-center justify-center overflow-hidden rounded-r12 px-[16px] text-[24px] font-[350] leading-none transition-[box-shadow,background-color,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] active:cursor-grabbing',
+                      // три состояния (макет): обычное / выделенное / фокусное — все НЕПРОЗРАЧНЫЕ
+                      word.focus
+                        ? 'bg-text text-accent'
+                        : isActive
+                          ? 'bg-accent text-text'
+                          : 'bg-[var(--tl-pill)] text-text-80 shadow-[inset_0_1px_1px_rgba(255,255,255,0.10)]',
+                      isSel && !word.focus && '!text-text shadow-[inset_0_0_0_2px_var(--accent-light)]',
                       isSel && word.focus && 'shadow-[0_0_0_2px_var(--accent-light)]',
-                      isActive && !word.focus && !isSel && 'brightness-150',
                       isSel && 'z-[2]'
                     )}
                     style={{ left, width: w, top: WORD_TOP, height: WORD_H }}
@@ -374,8 +395,8 @@ export function SubtitleTimeline() {
                 role="presentation"
                 onPointerDown={onHeadDown}
                 onPointerMove={onHeadMove}
-                className="absolute top-0 z-[3] w-[14px] -translate-x-1/2 cursor-ew-resize"
-                style={{ left: X0 + progress * duration * pxPerSec, height: BAR_TOP }}
+                className="absolute left-0 top-0 z-[3] w-[14px] cursor-ew-resize will-change-transform"
+                style={{ transform: `translateX(${X0 + progress * duration * pxPerSec - 7}px)`, height: BAR_TOP }}
               >
                 <span aria-hidden className="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-text" />
                 <span aria-hidden className="absolute left-1/2 top-0 h-[12px] w-[12px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] bg-text" />

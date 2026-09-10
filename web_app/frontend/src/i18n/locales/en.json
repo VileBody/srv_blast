@@ -423,6 +423,7 @@
       "add": "Add subtitles",
       "footerEmpty": "Add subtitles",
       "timeline": {
+        "wordsCount": "{{count}} words",
         "title": "Subtitle fitting",
         "ready": "ready",
         "failed": "failed",
