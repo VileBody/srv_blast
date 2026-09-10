@@ -23,6 +23,11 @@ class ProductionBackendError(RuntimeError):
     pass
 
 
+class AsrPreviewPending(ProductionBackendError):
+    """Примерка субтитров ещё считается — генерацию надо подождать, а не запускать
+    со свежим ASR (правки и фокус-слова человека уехали бы в никуда)."""
+
+
 def _required(name: str) -> str:
     value = str(os.getenv(name) or "").strip()
     if not value:
@@ -609,7 +614,12 @@ class ProductionBackend:
         job_id = str(block["jobId"])
         try:
             state = self.asr_preview_state(job_id)
+            if state["status"] in {"QUEUED", "RUNNING"}:
+                # Решение продукта: ждём, а не генерим без правок.
+                raise AsrPreviewPending(f"asr preview {job_id} is still {state['status']}")
             reason = "" if state["status"] == "COMPLETED" else f"status={state['status']}"
+        except AsrPreviewPending:
+            raise
         except ProductionBackendError as exc:
             reason = f"unavailable: {exc}"
         if reason:

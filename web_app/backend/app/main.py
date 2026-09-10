@@ -1189,7 +1189,18 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
             await run_in_threadpool(_production_backend().enqueue_job, live_job)
         except Exception as exc:
             from .billing_backend import InsufficientCredits, TrackQuotaExhausted
+            from .production_backend import AsrPreviewPending
 
+            if isinstance(exc, AsrPreviewPending):
+                # Примерка ещё считается: резерв снимаем, джобу откатываем, фронт покажет «подожди»
+                await _billing_backend().refund(
+                    tg_id, live_job["id"], len(live_job.get("videos") or [])
+                )
+                store.rollback_job_creation(live_job["id"])
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": "asr_preview_pending", "message": str(exc)},
+                ) from exc
             if isinstance(exc, InsufficientCredits):
                 store.rollback_job_creation(live_job["id"])
                 raise HTTPException(status_code=402, detail=f"Доступно {exc.available} генераций") from exc

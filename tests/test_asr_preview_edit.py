@@ -110,22 +110,56 @@ class _W:
 
 
 def test_focus_hint_matches_by_text_and_time(monkeypatch: pytest.MonkeyPatch) -> None:
-    from mlcore.gemini_orchestrator import _user_focus_words_hint
+    from mlcore.gemini_orchestrator import _user_focus_words_hint, _user_focus_words_matched
 
-    words = [_W("раз", 10.0), _W("три", 12.5), _W("три", 20.0)]
+    words = [_W("раз", 10.0), _W("три,", 12.5), _W("Три", 20.0)]
     monkeypatch.setenv(
         "USER_FOCUS_WORDS",
         json.dumps([{"text": "три", "t_start": 20.1}, {"text": "нет", "t_start": 1.0}]),
     )
-    hint = _user_focus_words_hint(words_in_clip=words, logger=logging.getLogger("t"))
+    matched = _user_focus_words_matched(words_in_clip=words, logger=logging.getLogger("t"))
+    assert matched == [("Три", 20.0)]  # регистр/пунктуация не мешают матчу, время ±0.35
+    hint = _user_focus_words_hint(matched)
     assert "USER_FOCUS_WORDS" in hint
-    assert '"три" @ 20.00s' in hint
+    assert '"Три" @ 20.00s' in hint
     assert "12.50s" not in hint
     assert "нет" not in hint
 
 
 def test_focus_hint_empty_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    from mlcore.gemini_orchestrator import _user_focus_words_hint
+    from mlcore.gemini_orchestrator import _user_focus_words_hint, _user_focus_words_matched
 
     monkeypatch.delenv("USER_FOCUS_WORDS", raising=False)
-    assert _user_focus_words_hint(words_in_clip=[_W("a", 1.0)], logger=logging.getLogger("t")) == ""
+    matched = _user_focus_words_matched(words_in_clip=[_W("a", 1.0)], logger=logging.getLogger("t"))
+    assert matched == [] and _user_focus_words_hint(matched) == ""
+
+
+class _Seg:
+    def __init__(self, sid: str, text: str, a: float, b: float, style: str, focus: str | None = None) -> None:
+        self.segment_id, self.text, self.in_point, self.out_point, self.style_tag, self.focus_word = sid, text, a, b, style, focus
+
+
+class _Plan:
+    def __init__(self, *segs: _Seg) -> None:
+        self.segments = list(segs)
+
+
+def test_focus_post_check_scenes_and_impulse() -> None:
+    """Пост-проверка: сцена должна нести слово в focus_word, impulse — в short-слое."""
+    from mlcore.gemini_orchestrator import _user_focus_words_unmet
+
+    matched = [("три", 12.5), ("пять", 30.0), ("семь", 40.0), ("вне", 99.0)]
+    plan = _Plan(
+        _Seg("s1", "раз два три", 10.0, 14.0, "TYPE_2", focus="Три"),   # ок: focus_word (регистр)
+        _Seg("s2", "четыре пять", 28.0, 32.0, "TYPE_1"),                # нарушение: без фокуса
+        _Seg("s3", "семь!", 39.0, 41.0, "short"),                       # ок: short-слой impulse
+    )
+    unmet = _user_focus_words_unmet(plan, matched)
+    assert len(unmet) == 1 and unmet[0].startswith('"пять" @ 30.00s -> segment s2')
+    assert _user_focus_words_unmet(plan, []) == []
+
+
+def test_focus_unmet_error_is_model_validation_retry() -> None:
+    from mlcore.gemini_orchestrator import _UserFocusWordsUnmetError, _is_model_validation_error
+
+    assert _is_model_validation_error(_UserFocusWordsUnmetError("x"))

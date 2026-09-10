@@ -768,59 +768,107 @@ def _derive_pause_spans_from_aligned_words(
     return out
 
 
-def _user_focus_words_hint(
+_FOCUS_WORD_STRIP = ".,!?;:…«»\"'()[]—–-"
+
+
+def _focus_norm(text: str) -> str:
+    return str(text or "").strip().strip(_FOCUS_WORD_STRIP).lower()
+
+
+def _user_focus_words_matched(
     *,
     words_in_clip: List[Any],
     logger: logging.Logger,
-) -> str:
-    """Подсказка Stage2-subtitles по словам, которые автор пометил фокусными.
-
-    Источник — env `USER_FOCUS_WORDS` (JSON-список `{text, t_start}`), который
-    веб-визард шлёт через `SendAudioS3Request.user_focus_words`. Слово матчится
-    по тексту и старту (±0.35с — правки таймингов на таймлайне уже в stage1),
-    несовпавшие отбрасываются с логом: подсказывать модели слово, которого
-    в клипе нет, — прямой путь к галлюцинации.
-    """
+) -> List[Tuple[str, float]]:
+    """Фокус-слова автора (env `USER_FOCUS_WORDS`, JSON `{text, t_start}` — из
+    `SendAudioS3Request.user_focus_words`), сматченные на слова stage1 по тексту и
+    старту (±0.35с: правки таймингов с таймлайна уже в stage1). Несовпавшие
+    отбрасываются с логом — подсказывать модели слово, которого в клипе нет,
+    прямой путь к галлюцинации."""
     raw = (os.environ.get("USER_FOCUS_WORDS") or "").strip()
     if not raw:
-        return ""
+        return []
     try:
         items = json.loads(raw)
     except Exception as e:
         raise RuntimeError(f"USER_FOCUS_WORDS is not valid JSON: {e}") from e
     if not isinstance(items, list):
         raise RuntimeError("USER_FOCUS_WORDS must be a JSON list")
-    matched: List[str] = []
+    matched: List[Tuple[str, float]] = []
     for item in items:
         if not isinstance(item, dict):
             continue
-        text = str(item.get("text") or "").strip()
+        text = _focus_norm(item.get("text"))
         try:
             t_start = float(item.get("t_start"))
         except Exception:
             continue
         hit = None
         for w in words_in_clip:
-            if str(w.text).strip().lower() == text.lower() and abs(float(w.t_start) - t_start) <= 0.35:
+            if _focus_norm(w.text) == text and abs(float(w.t_start) - t_start) <= 0.35:
                 hit = w
                 break
         if hit is None:
-            logger.warning(
-                "user_focus_word_unmatched text=%r t_start=%.3f", text, t_start
-            )
+            logger.warning("user_focus_word_unmatched text=%r t_start=%.3f", text, t_start)
             continue
-        matched.append(f'- "{hit.text}" @ {float(hit.t_start):.2f}s')
+        matched.append((str(hit.text).strip(), float(hit.t_start)))
+    if matched:
+        logger.info("user_focus_words_applied count=%d", len(matched))
+    return matched
+
+
+def _user_focus_words_hint(matched: List[Tuple[str, float]]) -> str:
+    """Подсказка Stage2-subtitles по фокус-словам автора (см. `_user_focus_words_matched`)."""
     if not matched:
         return ""
-    logger.info("user_focus_words_applied count=%d", len(matched))
     return (
         "USER_FOCUS_WORDS (author-marked, mandatory):\n"
-        + "\n".join(matched)
+        + "\n".join(f'- "{text}" @ {t_start:.2f}s' for text, t_start in matched)
         + "\nEach listed word MUST be the focus/accent of the scene or segment it "
         "belongs to: for scene templates set it as `focus_word` (TYPE_2 italic or "
         "TYPE_4 red, choose by the rules above); for impulse mode make it a `short` "
         "accent layer. Do not move these words to another scene to avoid the rule."
     )
+
+
+class _UserFocusWordsUnmetError(ValueError):
+    """Stage2 вернул план, где фокус-слово автора не стало акцентом своей сцены.
+
+    Считается model-validation ошибкой → немедленный повтор вызова с усиленной
+    подсказкой (см. `_run_subtitles_once`). После исчерпания повторов план
+    принимается как есть с warning — фокус-слово не должно ронять ролик."""
+
+
+def _user_focus_words_unmet(
+    plan: Any,
+    matched: List[Tuple[str, float]],
+) -> List[str]:
+    """Проверка после нормализации: у каждого фокус-слова его сегмент либо несёт
+    его в `focus_word` (сцены TYPE_2/TYPE_4), либо это `short`-слой (impulse).
+    Сегмент ищется по времени старта слова; не нашли — судить не о чем."""
+    segments = list(getattr(plan, "segments", None) or [])
+    if not segments or not matched:
+        return []
+    unmet: List[str] = []
+    for text, t_start in matched:
+        norm = _focus_norm(text)
+        seg = None
+        for cand in segments:
+            if float(cand.in_point) - 1e-6 <= t_start <= float(cand.out_point) + 1e-6:
+                seg = cand
+                break
+        if seg is None:
+            continue
+        focus_words = {_focus_norm(w) for w in str(seg.focus_word or "").split()}
+        is_short = str(seg.style_tag or "").strip().lower() == "short"
+        seg_words = {_focus_norm(w) for w in str(seg.text or "").split()}
+        if norm in focus_words or (is_short and norm in seg_words):
+            continue
+        unmet.append(
+            f'"{text}" @ {t_start:.2f}s -> segment {seg.segment_id} '
+            f"(style={seg.style_tag}, focus_word={seg.focus_word!r})"
+        )
+    return unmet
 
 
 def _pause_spans_in_window(
@@ -1877,7 +1925,7 @@ def _looks_like_model_validation_error_text(text: str) -> bool:
 
 
 def _is_model_validation_error(exc: BaseException) -> bool:
-    if isinstance(exc, _Stage1AUserClipEmptyError):
+    if isinstance(exc, (_Stage1AUserClipEmptyError, _UserFocusWordsUnmetError)):
         return True
     if isinstance(exc, (ValidationError, JSONDecodeError)):
         return True
@@ -3686,11 +3734,15 @@ def build_all_via_gemini_one_call(
             + "\n"
         )
         logger.info("stage2_subtitles_retry_hint_applied chars=%d", len(subtitles_retry_hint))
-    user_focus_hint = _user_focus_words_hint(
+    user_focus_matched = _user_focus_words_matched(
         words_in_clip=stage1_words_in_clip, logger=logger
     )
+    user_focus_hint = _user_focus_words_hint(user_focus_matched)
     if user_focus_hint and subtitles_planner is not None:
         sub_prompt = str(sub_prompt) + "\n\n" + user_focus_hint + "\n"
+    # Пост-проверка фокус-слов: при нарушении вызов повторяется с этой добавкой к промпту
+    user_focus_retry_note = ""
+    user_focus_retries_left = int(MODEL_VALIDATION_IMMEDIATE_RETRIES)
     sub_raw = logs_dir / f"gemini_raw_stage2_subtitles_{stamp}.json"
     sub_sys = logs_dir / f"gemini_system_stage2_subtitles_{stamp}.txt"
     sub_user = logs_dir / f"gemini_prompt_stage2_subtitles_{stamp}.txt"
@@ -3723,6 +3775,7 @@ def build_all_via_gemini_one_call(
     timing_cuts_user = logs_dir / f"gemini_prompt_stage2_timing_cuts_{stamp}.txt"
 
     def _run_subtitles_once() -> BlocksTokensPayload | SubtitleFlowPlan:
+        nonlocal user_focus_retry_note, user_focus_retries_left
         # 5th-template JSX subtitles (trendy/brat): the AE generator builds the
         # subtitle layers from raw ASR word-timings — there is NO LLM subtitle
         # stage. Synthesize a minimal valid SubtitleFlowPlan carrying just the
@@ -3769,7 +3822,7 @@ def build_all_via_gemini_one_call(
                 hedge_delay_s=hedge_delay_s,
                 logger=logger,
                 system_instruction=sub_system,
-                user_prompt=str(sub_prompt),
+                user_prompt=str(sub_prompt) + user_focus_retry_note,
                 audio_paths=subtitles_audio_paths,
                 raw_response_path=sub_raw,
                 cache_path=cache_path,
@@ -3785,7 +3838,7 @@ def build_all_via_gemini_one_call(
                 hedge_delay_s=hedge_delay_s,
                 logger=logger,
                 system_instruction=sub_system,
-                user_prompt=str(sub_prompt),
+                user_prompt=str(sub_prompt) + user_focus_retry_note,
                 audio_paths=subtitles_audio_paths,
                 raw_response_path=sub_raw,
                 cache_path=cache_path,
@@ -3799,6 +3852,23 @@ def build_all_via_gemini_one_call(
             stage1=stage1,
             logger=logger,
         )
+
+        unmet = _user_focus_words_unmet(payload, user_focus_matched)
+        if unmet:
+            if user_focus_retries_left > 0:
+                user_focus_retries_left -= 1
+                user_focus_retry_note = (
+                    "\n\nPREVIOUS ATTEMPT VIOLATED USER_FOCUS_WORDS — fix and regenerate:\n"
+                    + "\n".join(f"- {item}" for item in unmet)
+                    + "\nEach listed word must be `focus_word` of its scene (or a `short` "
+                    "impulse layer). Keep everything else as valid as before.\n"
+                )
+                raise _UserFocusWordsUnmetError("user_focus_words_unmet: " + "; ".join(unmet))
+            logger.warning(
+                "user_focus_words_unmet_after_retries count=%d items=%r", len(unmet), unmet
+            )
+        elif user_focus_matched:
+            logger.info("user_focus_words_verified count=%d", len(user_focus_matched))
 
         if isinstance(payload, BlocksTokensPayload):
             _log_subtitles_token_metrics(payload)

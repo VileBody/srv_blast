@@ -473,6 +473,8 @@
     "page": {
       "genStarted": "Generation started",
       "limitReached": "Generation limit reached",
+      "asrPendingTitle": "Subtitles are still being aligned",
+      "asrPendingText": "Wait a few seconds and press Generate again — your timing edits will make it into the video.",
       "genFail": "Failed to start generation",
       "genFailText": "Check your balance and project.",
       "carriedTitle": "Use the same inputs?",

@@ -153,13 +153,25 @@ def test_enqueue_skips_edit_push_when_not_edited(monkeypatch: pytest.MonkeyPatch
     assert backend._http.posts[0]["reuse_text_job_id"] == "asr-1"
 
 
-def test_enqueue_drops_reuse_when_preview_not_finished(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Примерка ещё идёт / упала / протухла → reuse отключается явно, рендер идёт со свежим ASR."""
+def test_enqueue_waits_while_preview_is_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Примерка ещё считается → 409-путь: генерацию не запускаем (правки бы пропали)."""
     from tests.test_web_production_backend import _module
 
     module = _module(monkeypatch)
     backend = _backend(module, _config(module, stage1_backend="local_ctc"))
     backend._http = _AsrHttp(asr_status="RUNNING")
+    with pytest.raises(module.AsrPreviewPending):
+        backend.enqueue_job(_asr_job(module, edited=True))
+    assert backend._http.posts == [] and backend._http.puts == []
+
+
+def test_enqueue_drops_reuse_when_preview_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Примерка упала / протухла → reuse отключается явно, рендер идёт со свежим ASR."""
+    from tests.test_web_production_backend import _module
+
+    module = _module(monkeypatch)
+    backend = _backend(module, _config(module, stage1_backend="local_ctc"))
+    backend._http = _AsrHttp(asr_status="FAILED")
     job = _asr_job(module, edited=True)
     backend.enqueue_job(job)
     assert backend._http.puts == []  # правки в незавершённую джобу не шлём

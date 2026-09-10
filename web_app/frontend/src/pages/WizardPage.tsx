@@ -419,6 +419,13 @@ export function WizardPage() {
     // 402 — упёрлись в лимит роликов: причина + путь к решению, а не общий «не удалось»
     onError: (error) => {
       const limitReached = error instanceof ApiError && error.status === 402;
+      // 409 asr_preview_pending — субтитры ещё раскладываются: это не сбой, просто рано
+      const asrPending = error instanceof ApiError && error.status === 409
+        && (error.detail as { detail?: { code?: string } })?.detail?.code === 'asr_preview_pending';
+      if (asrPending) {
+        push({ variant: 'info', title: t('wizard.page.asrPendingTitle'), text: t('wizard.page.asrPendingText') });
+        return;
+      }
       push({
         variant: 'error',
         title: limitReached ? t('wizard.page.limitReached') : t('wizard.page.genFail'),
