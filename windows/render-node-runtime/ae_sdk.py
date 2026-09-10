@@ -444,6 +444,15 @@ class AeRenderer:
     def _maybe_reset_ae_project(self, tag: str) -> None:
         if not self._env_bool("AE_PROJECT_CLEANUP_ENABLED", False):
             return
+        if not self._afterfx_is_running():
+            # Nothing to reset, and starting AE just to empty an already empty
+            # project is what kept breaking this: the cleanup budget is
+            # AE_PROJECT_CLEANUP_TIMEOUT_S (30s on the node) while a cold start
+            # measures ~83s, so it timed out every time, killed the AE it had
+            # just launched, and the builder came up on the wreckage. Since
+            # jobs recycle AE, a cold start is now the normal case.
+            log.info("AE project reset skipped tag=%s reason=no_session", tag)
+            return
         self._best_effort_reset_ae_project(tag=tag)
 
     @staticmethod
