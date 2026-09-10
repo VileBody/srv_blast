@@ -253,3 +253,21 @@ def test_job_folders_are_cleaned_by_age_not_inline() -> None:
     assert 'st.status in ("accepted", "running")' in sweep
     assert 'entry.name.startswith("_")' in sweep
     assert "entry.name in active" in sweep
+
+
+def test_pre_reset_does_not_cold_start_ae_just_to_empty_it() -> None:
+    """The cleanup budget is AE_PROJECT_CLEANUP_TIMEOUT_S (30s on the node) but
+    a cold AE start measures ~83s, so the pre-reset launched AE, timed out,
+    killed the process it had just started, and the builder then came up on the
+    wreckage — every idle-timeout failure began that way. A freshly started AE
+    opens an empty project, so there is nothing to reset anyway."""
+    runtime = (RUNTIME_DIR / "ae_sdk.py").read_text(encoding="utf-8")
+    reset = runtime[
+        runtime.index("def _maybe_reset_ae_project")
+        : runtime.index("def ", runtime.index("def _maybe_reset_ae_project") + 10)
+    ]
+
+    assert "_afterfx_is_running()" in reset
+    assert "reason=no_session" in reset
+    # the running check must gate the actual reset, not follow it
+    assert reset.index("_afterfx_is_running()") < reset.index("_best_effort_reset_ae_project")
