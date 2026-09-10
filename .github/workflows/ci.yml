@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   validate:
-    name: Validate Python + Web + Landing
+    name: Validate Python + Landing
     # Public PRs must never execute untrusted code on the deployment runner.
     # Keep self-hosted runners for trusted deploy/manual ops workflows only.
     runs-on: ubuntu-latest
