@@ -139,6 +139,8 @@ interface WizardStore extends WizardStateData {
   setBackground: (patch: Partial<WizardStateData['background']>) => void;
   toggleVibe: (vibe: string) => void;
   setHooks: (patch: Partial<Omit<WizardStateData['hooks'], 'configs'>> & { config?: Partial<HookConfig> }) => void;
+  /** Снять хук: стереть его конфиг и, если он был открыт, закрыть рабочую зону. */
+  clearHook: (kind: HookKind) => void;
   setSubtitles: (patch: Partial<WizardStateData['subtitles']>) => void;
   toggleSubtitleStyle: (style: string) => void;
   setAllocation: (patch: Partial<WizardStateData['allocation']>) => void;
@@ -203,6 +205,10 @@ export const useWizardStore = create<WizardStore>()(
           ? { ...state.hooks.configs, [kind]: { ...state.hooks.configs[kind], ...config } }
           : state.hooks.configs;
         return { hooks: { ...state.hooks, ...rest, configs } };
+      }),
+      clearHook: (kind) => set((state) => {
+        const { [kind]: _dropped, ...configs } = state.hooks.configs;
+        return { hooks: { ...state.hooks, kind: state.hooks.kind === kind ? undefined : state.hooks.kind, configs } };
       }),
       setSubtitles: (patch) => set((state) => ({ subtitles: { ...state.subtitles, ...patch } })),
       toggleSubtitleStyle: (style) => set((state) => {

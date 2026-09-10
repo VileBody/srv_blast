@@ -165,6 +165,7 @@ export function StageHooks() {
   const chip = useChip();
   const hooks = useWizardStore((state) => state.hooks);
   const setHooks = useWizardStore((state) => state.setHooks);
+  const clearHook = useWizardStore((state) => state.clearHook);
   const track = useWizardStore((state) => state.track);
   const timingMode = useWizardStore((state) => state.timingMode);
   const timingFrom = useWizardStore((state) => state.timingFrom);
@@ -274,7 +275,10 @@ export function StageHooks() {
                   // Типы неактивны, пока не выбран тайминг дропа (правка ревью)
                   locked && 'cursor-not-allowed opacity-45'
                 )}
-                onClick={() => setHooks({ kind: item.kind })}
+                // Повторный клик по выбранному/настроенному типу снимает его: раньше хук,
+                // раз попав в подсветку, отцепиться уже не мог и уезжал в генерацию.
+                onClick={() => { if (active || configured) clearHook(item.kind); else setHooks({ kind: item.kind }); }}
+                aria-pressed={active || configured}
               >
                 <SvgMaskIcon src={item.icon} style={{ width: item.iconW, height: item.iconH, color: active || configured ? 'var(--accent-light)' : 'var(--text-80)' }} />
                 <span className="wizard-body ml-space-4 !text-text">
