@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
+import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { AsrWord, useWizardStore } from '../../stores/wizardStore';
 
 /*
@@ -465,12 +466,18 @@ export function SubtitleTimeline() {
           aria-pressed={focusOn}
           className="group flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] font-[350] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40"
         >
-          <span aria-hidden className={cn('flex h-[42px] w-[42px] items-center justify-center rounded-full text-[18px] transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105', focusOn ? 'bg-text text-accent' : 'bg-accent text-text')}>★</span>
+          {focusOn ? (
+            <span aria-hidden className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-text transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105">
+              <SvgMaskIcon src="/assets/figma/pd-star.svg" style={{ width: 19, height: 18, color: 'var(--accent)' }} />
+            </span>
+          ) : (
+            <img src="/assets/figma/obj-zvezda5.svg" width="40" height="40" alt="" aria-hidden="true" className="h-[40px] w-[40px] shrink-0 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105" />
+          )}
           {focusOn ? t('wizard.subs.timeline.unfocus') : t('wizard.subs.timeline.focus')}
         </button>
         {/* зум дорожки: та же пилюля-контейнер, внутри бегунок; крайние значения — обзор / точная правка */}
         <label className="flex h-[64px] min-w-[180px] flex-1 items-center gap-[12px] rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] leading-none text-text-80 max-lg:min-w-0">
-          <span aria-hidden className="select-none">−</span>
+          <span aria-hidden className="select-none pt-[3px]">−</span>
           <input
             type="range"
             min={0.5}
@@ -482,7 +489,7 @@ export function SubtitleTimeline() {
             className="zoom-range min-w-0 flex-1"
             disabled={!ready}
           />
-          <span aria-hidden className="select-none">+</span>
+          <span aria-hidden className="select-none pt-[3px]">+</span>
         </label>
       </div>
 
@@ -551,7 +558,8 @@ export function SubtitleTimeline() {
                           : 'bg-[var(--tl-pill)] text-text-80 shadow-[inset_0_1px_1px_rgba(255,255,255,0.10)]',
                       isSel && !word.focus && '!text-text shadow-[inset_0_0_0_2px_var(--accent-light)]',
                       isSel && word.focus && 'shadow-[0_0_0_2px_var(--accent-light)]',
-                      isSel && 'z-[2]'
+                      isSel && 'z-[2]',
+                      hovered === index && 'z-[7]'
                     )}
                     style={{ left, width: w, top: WORD_TOP, height: WORD_H }}
                   >
@@ -569,7 +577,7 @@ export function SubtitleTimeline() {
               })}
               {/* подписи секунд */}
               {ticks.map((s) => (
-                <span key={`l${s}`} aria-hidden className={cn('pointer-events-none absolute text-[16px] leading-none tabular-nums text-text-60', s !== ticks[0] && '-translate-x-1/2')} style={{ left: X0 + (s - clipStart) * pxPerSec, top: LABEL_TOP }}>
+                <span key={`l${s}`} aria-hidden className={cn('pointer-events-none absolute text-[16px] leading-none tabular-nums text-text-60', X0 + (s - clipStart) * pxPerSec >= 40 && '-translate-x-1/2')} style={{ left: X0 + (s - clipStart) * pxPerSec, top: LABEL_TOP }}>
                   {gridStep < 1 || beats.length ? fmt(s - clipStart) : fmt(s - clipStart).slice(0, 5)}
                 </span>
               ))}
@@ -579,7 +587,7 @@ export function SubtitleTimeline() {
                 onPointerDown={onHeadDown}
                 onPointerMove={onHeadMove}
                 className="absolute left-0 top-0 z-[3] w-[14px] cursor-ew-resize will-change-transform"
-                style={{ transform: `translateX(${X0 + progress * duration * pxPerSec - 7}px)`, height: BAR_TOP + BAR_H / 2 }}
+                style={{ transform: `translateX(${X0 + progress * duration * pxPerSec - 5}px)`, height: BAR_TOP + BAR_H / 2 }}
               >
                 <span aria-hidden className="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-text" />
                 <span aria-hidden className="absolute left-1/2 top-0 h-[12px] w-[12px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] bg-text" />

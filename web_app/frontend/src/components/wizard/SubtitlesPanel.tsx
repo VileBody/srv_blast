@@ -82,7 +82,8 @@ export function StageSubtitles() {
       <SubtitleTimeline />
 
       {/* Белый свотч — дефолт; обводка на нём = включён белый. Клик возвращает белый. */}
-      <div className="mt-[20px] flex items-center gap-[28px]">
+      {/* Цвет: одинаковый отступ от проверки субтитров сверху и до типов снизу */}
+      <div className="mt-[40px] flex items-center gap-[28px]">
         <button
           type="button"
           aria-label={t('wizard.subs.whiteColor')}
