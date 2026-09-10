@@ -18,7 +18,9 @@ import { AsrWord, useWizardStore } from '../../stores/wizardStore';
 
 const MIN_WORD_S = 0.08;
 const GAP_S = 0.01;
-const PX_PER_SEC = 130;
+/** в окне дорожки — не больше трёх секунд-зон между пунктиром; ниже этого не сжимаем */
+const ZONES_VISIBLE = 3;
+const MIN_PX_PER_SEC = 130;
 /* Геометрия по Figma: контейнер 540×180; сверху 20 → слова 60 → 20 → ползунок 20 → 20 → тайминги.
    Пунктир секунд и плейхед идут от верха контейнера до ползунка. */
 const BOX_H = 180;
@@ -26,9 +28,11 @@ const WORD_TOP = 20;
 const WORD_H = 60;
 const BAR_TOP = 100;
 const BAR_H = 20;
-const LABEL_TOP = 140;
+const LABEL_TOP = 144; // 16px текста → низ на 160, до края контейнера ровно 20
 /** пунктир секунд и полосы-подложки — от верха до НИЗА ползунка */
 const GRID_H = BAR_TOP + BAR_H;
+/** пунктир не упирается в края: чуть короче сверху и снизу */
+const DASH_INSET = 8;
 /** боковые поля контейнера (Figma: минимум 20 слева и справа) — и у дорожки, и у ползунка */
 const X0 = 20;
 const PLAYHEAD_TICK_MS = 50;
@@ -72,7 +76,9 @@ export function SubtitleTimeline() {
   const clipEnd = asr.clipEnd ?? clipStart + 1;
   const duration = Math.max(0.5, clipEnd - clipStart);
 
-  const pxPerSec = PX_PER_SEC;
+  // ширина дорожки меряется по факту: три зоны на любую ширину колонки
+  const [laneW, setLaneW] = useState(0);
+  const pxPerSec = Math.max(MIN_PX_PER_SEC, (laneW - X0 * 2) / ZONES_VISIBLE);
   const [selected, setSelected] = useState<number | null>(null);
   const [drag, setDrag] = useState<Drag | null>(null);
   /** слово во время перетаскивания — локально, в стор коммитим на pointerup */
@@ -83,6 +89,12 @@ export function SubtitleTimeline() {
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(clipStart);
   const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const measure = () => { const box = scrollRef.current; if (box) setLaneW(box.clientWidth); };
+    measure();
+    window.addEventListener('resize', measure);
+    return () => window.removeEventListener('resize', measure);
+  }, [asr.status]);
   const url = track?.localUrl ?? null;
 
   useEffect(() => {
@@ -262,23 +274,40 @@ export function SubtitleTimeline() {
 
   return (
     <section className="mt-[24px] rounded-r15 bg-grad-soft-10 px-[28px] py-[24px]" aria-label={t('wizard.subs.timeline.title')}>
-      <div className="flex flex-wrap items-center justify-between gap-space-3">
+      <div className="flex items-center justify-between gap-space-3">
         <div className="flex items-center gap-space-3">
           <span className="wizard-body">{t('wizard.subs.timeline.title')}</span>
-          {/* eyebrow-статус: мелкий, разреженный, одного акцента */}
-          {ready && (
-            <span className="rounded-full px-[10px] py-[4px] text-[11px] uppercase leading-none tracking-[0.18em] text-accent-light ring-1 ring-[rgba(139,111,230,0.45)]">
-              {asr.edited ? t('wizard.subs.timeline.edited') : t('wizard.subs.timeline.wordsCount', { count: asr.words.length })}
-            </span>
-          )}
           {asr.status === 'FAILED' && <span className="text-[14px] text-[var(--error)]">{t('wizard.subs.timeline.failed')}</span>}
           {(asr.status === 'RUNNING' || asr.status === 'QUEUED') && <span className="text-[14px] text-text-60">{t('wizard.subs.timeline.running')}</span>}
         </div>
-        {asr.edited && (
-          <button type="button" onClick={resetAsrEdits} className="h-[32px] rounded-r9 bg-grad-soft-20 px-[12px] text-[14px] text-text-80 transition hover:text-text active:scale-[0.98]">
-            {t('wizard.subs.timeline.reset')}
+        {/* Две круглые кнопки в правом верхнем углу: «?» — как работать (по ховеру), «✕» — сбросить правки */}
+        <div className="flex items-center gap-space-2">
+          <span className="group relative">
+            <button
+              type="button"
+              aria-label={t('wizard.subs.timeline.help')}
+              className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 text-[18px] text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98]"
+            >
+              ?
+            </button>
+            <span
+              role="tooltip"
+              className="pointer-events-none absolute right-0 top-[calc(100%+8px)] z-[5] w-[320px] rounded-r12 bg-[#2b2145] px-space-4 py-space-3 text-[14px] leading-[1.35] text-text opacity-0 shadow-[0_8px_28px_rgba(0,0,0,.45)] ring-1 ring-[var(--accent-light)] transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100"
+            >
+              {t('wizard.subs.timeline.hint')}
+            </span>
+          </span>
+          <button
+            type="button"
+            onClick={resetAsrEdits}
+            disabled={!asr.edited}
+            aria-label={t('wizard.subs.timeline.reset')}
+            title={t('wizard.subs.timeline.reset')}
+            className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 text-[18px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-35"
+          >
+            ✕
           </button>
-        )}
+        </div>
       </div>
 
       {/* Плеер (макет): квадратный play, табло времени, «Фокус» — одна высота 80 */}
@@ -343,7 +372,7 @@ export function SubtitleTimeline() {
               ))}
               {/* пунктир секунд: от верха до низа ползунка */}
               {ticks.map((s) => (
-                <span key={s} aria-hidden className="pointer-events-none absolute top-0 border-l-2 border-dashed border-[rgba(246,245,253,0.28)]" style={{ left: X0 + (s - clipStart) * pxPerSec - 1, height: GRID_H }} />
+                <span key={s} aria-hidden className="pointer-events-none absolute border-l-2 border-dashed border-[rgba(246,245,253,0.28)]" style={{ left: X0 + (s - clipStart) * pxPerSec - 1, top: DASH_INSET, height: GRID_H - DASH_INSET * 2 }} />
               ))}
               {/* слова: не выделено / выделено (обводка) / фокусное (белое) */}
               {asr.words.map((word, index) => {
@@ -431,7 +460,6 @@ export function SubtitleTimeline() {
           />
         </div>
       </div>
-      <p className="mt-[12px] text-[13px] leading-[1.35] text-text-40">{t('wizard.subs.timeline.hint')}</p>
     </section>
   );
 }
