@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from ae_sdk import AeJobResult, AeRenderer, make_job_spec_from_payload
+from ae_sdk import AeJobResult, AeRenderer, make_job_spec_from_payload, modal_watcher_health
 
 logging.basicConfig(
     level=logging.INFO,
@@ -535,13 +535,42 @@ def _start_job_dir_janitor() -> None:
     log.info("job dir janitor started base=%s", AE_JOBS_BASE_DIR)
 
 
+def _render_dependency_health() -> Dict[str, Any]:
+    backend = str(os.getenv("AE_RENDER_BACKEND") or "").strip().lower()
+    if backend not in ("afterfx_queue", "aerender"):
+        return {
+            "ready": False,
+            "backend": backend or "unset",
+            "reason": "AE_RENDER_BACKEND must be explicitly set to afterfx_queue or aerender",
+        }
+    watcher = modal_watcher_health(backend=backend)
+    return {
+        "ready": bool(watcher["ready"]),
+        "backend": backend,
+        "modal_watcher": watcher,
+    }
+
+
+def _require_render_dependencies() -> Dict[str, Any]:
+    dependencies = _render_dependency_health()
+    if not bool(dependencies["ready"]):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "render_node_not_ready", "dependencies": dependencies},
+            headers={"Retry-After": "15"},
+        )
+    return dependencies
+
+
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "render": manager.stats()}
+    dependencies = _require_render_dependencies()
+    return {"status": "ok", "render": manager.stats(), "dependencies": dependencies}
 
 
 @app.get("/ready")
 def ready() -> dict:
+    dependencies = _require_render_dependencies()
     stats = manager.stats()
     if not bool(stats["ready"]):
         raise HTTPException(
@@ -549,11 +578,12 @@ def ready() -> dict:
             detail={"code": "render_queue_full", "render": stats},
             headers={"Retry-After": "15"},
         )
-    return {"status": "ready", "render": stats}
+    return {"status": "ready", "render": stats, "dependencies": dependencies}
 
 
 @app.post("/jobs", response_model=JobResponse)
 def create_job_sync(req: CreateJobRequest) -> JobResponse:
+    _require_render_dependencies()
     payload = req.model_dump()
     job_spec = make_job_spec_from_payload(payload)
 
@@ -574,6 +604,9 @@ def create_job_sync(req: CreateJobRequest) -> JobResponse:
 
 @app.post("/render", response_model=RenderAcceptedResponse)
 def create_render(req: CreateJobRequest) -> RenderAcceptedResponse:
+    # Reject before allocating a render_id. Otherwise an unavailable modal
+    # watcher becomes an accepted job followed by a terminal failure/refund.
+    _require_render_dependencies()
     payload = req.model_dump()
     try:
         st = manager.submit(payload)

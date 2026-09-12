@@ -10,7 +10,8 @@ param(
   [string[]]$MainWindowTitlePatterns = @(
     "^Adobe After Effects \d"
   ),
-  [string]$LogPath = "C:\ae_dev\logs\ae_modal_watcher.log"
+  [string]$LogPath = "C:\ae_dev\logs\ae_modal_watcher.log",
+  [string]$HeartbeatPath = "C:\ae_dev\logs\ae_modal_watcher.heartbeat"
 )
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -52,6 +53,20 @@ if ($logDir) {
 function Write-Log([string]$msg) {
   $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
   "$ts $msg" | Out-File -FilePath $LogPath -Append -Encoding utf8
+}
+
+function Write-Heartbeat {
+  # The render API uses this as a readiness dependency.  Write through a
+  # per-process temporary file so readers never observe a partially written
+  # heartbeat, even if this watcher is terminated between the two operations.
+  $heartbeatDir = Split-Path -Parent $HeartbeatPath
+  if ($heartbeatDir) {
+    New-Item -ItemType Directory -Force -Path $heartbeatDir | Out-Null
+  }
+  $tmp = "$HeartbeatPath.$PID.tmp"
+  $payload = "pid=$PID`nsession=$([System.Diagnostics.Process]::GetCurrentProcess().SessionId)`nutc=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())`n"
+  [System.IO.File]::WriteAllText($tmp, $payload, [System.Text.UTF8Encoding]::new($false))
+  Move-Item -LiteralPath $tmp -Destination $HeartbeatPath -Force
 }
 
 function Get-TopWindows {
@@ -212,9 +227,18 @@ $targetRegexes = $TargetProcesses | ForEach-Object {
   "^$([regex]::Escape($base))(\.exe|\.com)?$"
 }
 $seen = @{}
-Write-Log "watcher_start poll=$PollSeconds target_processes=$($TargetProcesses -join '|') dismiss_titles=$($AutoDismissTitles -join '|') mode=uia_invoke"
+Write-Heartbeat
+Write-Log "watcher_start pid=$PID poll=$PollSeconds heartbeat=$HeartbeatPath target_processes=$($TargetProcesses -join '|') dismiss_titles=$($AutoDismissTitles -join '|') mode=uia_invoke"
 
 while ($true) {
+  try {
+    Write-Heartbeat
+  } catch {
+    # A watcher whose heartbeat cannot be published is unsafe: the render API
+    # would otherwise reject work while this process silently keeps running.
+    Write-Log "watcher_heartbeat_failed path=$HeartbeatPath err=$($_.Exception.Message)"
+    exit 2
+  }
   $windows = Get-TopWindows
   $present = @{}
 
