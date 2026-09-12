@@ -36,7 +36,8 @@ python -m uvicorn main:app --host 0.0.0.0 --port 8000
 2. Перед стартом убеждаемся, что на `:8000` нет старого listener.
 3. Запускаем `C:\ae_dev\repo\run_server.ps1` от `Administrator`.
 4. Проверяем:
-   - `GET /health` -> `200`,
+   - `GET /health` -> `200` только когда обязательные render-зависимости готовы,
+   - `dependencies.modal_watcher.ready=true` для обоих поддерживаемых backend,
    - на `:8000` ровно один `python -m uvicorn main:app`.
 
 Практика:
@@ -77,6 +78,31 @@ AE работает в обычной GUI-сессии пользователя.
 - `AE_OUTPUT_MIN_BYTES` задаёт минимальный размер готового ролика (по умолчанию
   65536 байт), а `AFTERFX_STATUS_TIMEOUT_S` — ожидание финального статуса wrapper
   (по умолчанию не меньше `AFTERFX_RUN_TIMEOUT_S`).
+
+### 3) Modal watcher как обязательная зависимость
+
+`afterfx_queue` работает в интерактивной GUI-сессии. После вынужденного завершения
+AE следующий cold start может остановиться на безымянном `Crash Repair Options`
+до первой строки JSX. Поэтому `ae_modal_watcher.ps1` является частью readiness,
+а не необязательным debug-helper.
+
+Watcher атомарно обновляет heartbeat, а `/health`, `/ready`, `POST /jobs` и
+`POST /render` fail closed, если heartbeat отсутствует или устарел. Это относится
+к обоим backend: даже `aerender` сначала строит AEP через GUI `AfterFX -r`.
+
+Рекомендуемые явные настройки ноды:
+
+```dotenv
+AE_MODAL_WATCHER_HEARTBEAT_PATH=C:\ae_dev\logs\ae_modal_watcher.heartbeat
+AE_MODAL_WATCHER_MAX_AGE_S=30
+AFTERFX_STARTUP_TIMEOUT_S=300
+AFTERFX_STARTUP_RECOVERY_RETRIES=1
+```
+
+`AFTERFX_STARTUP_RECOVERY_RETRIES` применяется только когда wrapper не создал
+ни одного признака запуска. Ошибки после начала builder/render не повторяются,
+чтобы исключить двойной рендер. Повышение `AFTERFX_IDLE_TIMEOUT_S` эту проблему
+не лечит.
 
 ## Git sparse-checkout на ноде (рекомендуется)
 
@@ -123,7 +149,7 @@ powershell -ExecutionPolicy Bypass -File C:\ae_dev\repo\sync_runtime_from_git.ps
 Добавлены operational scripts для restart без ручных шагов:
 
 - `restart_node_workflow.ps1` — единый restart workflow с логом шагов;
-- `ae_modal_watcher.ps1` — фоновый watcher для modal/crach-repair окон;
+- `ae_modal_watcher.ps1` — supervised watcher для modal/crash-repair окон;
 - `ae_click_continue_once.ps1` — one-shot `Enter` helper;
 - `ae_dont_send_once.ps1` — one-shot UIAutomation click по `Don't send`.
 
@@ -131,6 +157,11 @@ powershell -ExecutionPolicy Bypass -File C:\ae_dev\repo\sync_runtime_from_git.ps
 
 - `C:\ae_dev\logs\node_restart_workflow.log`
 - формат шага: `WF_STEP=<...> STATUS=<ok|failed|...> MSG=<...>`
+
+`restart_node_workflow.ps1` регистрирует `BlastModalWatcher` под текущим
+интерактивным пользователем, запускает его при logon и задаёт restart policy без
+лимита времени и battery/idle stop. Не регистрируйте параллельно старые задачи
+вроде `BlastModalWatcherNow`: две копии будут конкурировать за фокус AE-диалогов.
 
 Полный e2e rollout (restart + canary + pool update) описан в:
 

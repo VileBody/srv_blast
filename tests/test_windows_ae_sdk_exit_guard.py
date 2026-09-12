@@ -3,10 +3,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 RUNTIME_DIR = Path(__file__).resolve().parents[1] / "windows" / "render-node-runtime"
 sys.path.insert(0, str(RUNTIME_DIR))
 
-from ae_sdk import AeRenderer  # noqa: E402
+from ae_sdk import (  # noqa: E402
+    AeRenderer,
+    AfterFxWrapperNotStartedError,
+    modal_watcher_health,
+)
 
 
 def test_every_written_script_disables_exit_after_launch_and_eval(tmp_path: Path) -> None:
@@ -289,3 +295,106 @@ def test_job_finishes_on_its_status_not_on_ae_exiting() -> None:
 
     helper = runtime[runtime.index("def _status_is_terminal") : runtime.index("def _wait_for_status")]
     assert '"OK", "ERROR"' in helper  # RUNNING is not terminal
+
+
+def test_modal_watcher_heartbeat_controls_afterfx_readiness(tmp_path: Path) -> None:
+    heartbeat = tmp_path / "watcher.heartbeat"
+
+    missing = modal_watcher_health(
+        backend="afterfx_queue", heartbeat_path=heartbeat, max_age_s=30, now=100
+    )
+    assert missing["ready"] is False
+    assert missing["reason"] == "heartbeat_missing"
+
+    heartbeat.write_text("pid=123\n", encoding="utf-8")
+    heartbeat.touch()
+    mtime = heartbeat.stat().st_mtime
+    fresh = modal_watcher_health(
+        backend="afterfx_queue", heartbeat_path=heartbeat, max_age_s=30, now=mtime + 10
+    )
+    stale = modal_watcher_health(
+        backend="afterfx_queue", heartbeat_path=heartbeat, max_age_s=30, now=mtime + 31
+    )
+    assert fresh["ready"] is True
+    assert fresh["reason"] == "ok"
+    assert stale["ready"] is False
+    assert stale["reason"] == "heartbeat_stale"
+
+    # aerender still builds its AEP through GUI AfterFX -r before rendering.
+    assert modal_watcher_health(
+        backend="aerender", heartbeat_path=heartbeat, max_age_s=30, now=mtime + 31
+    )["ready"] is False
+
+
+def test_afterfx_retries_only_when_wrapper_never_started(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    heartbeat = tmp_path / "watcher.heartbeat"
+    heartbeat.write_text("alive\n", encoding="utf-8")
+    monkeypatch.setenv("AE_MODAL_WATCHER_HEARTBEAT_PATH", str(heartbeat))
+    monkeypatch.setenv("AFTERFX_STARTUP_RECOVERY_RETRIES", "1")
+
+    renderer = AeRenderer(base_dir=tmp_path)
+    attempts: list[int] = []
+
+    def fake_once(**kwargs) -> None:
+        attempts.append(int(kwargs["startup_attempt"]))
+        if len(attempts) == 1:
+            raise AfterFxWrapperNotStartedError("not started")
+
+    monkeypatch.setattr(renderer, "_run_afterfx_once", fake_once)
+    renderer._run_afterfx(
+        job_dir=tmp_path,
+        jsx_path=tmp_path / "wrapper.jsx",
+        job_id="retry-safe",
+        entry_comp="Main Render",
+        output_relpath="work/output.mp4",
+    )
+    assert attempts == [1, 2]
+
+    attempts.clear()
+
+    def fail_after_start(**kwargs) -> None:
+        attempts.append(int(kwargs["startup_attempt"]))
+        raise RuntimeError("builder or render failed after startup")
+
+    monkeypatch.setattr(renderer, "_run_afterfx_once", fail_after_start)
+    with pytest.raises(RuntimeError, match="failed after startup"):
+        renderer._run_afterfx(
+            job_dir=tmp_path,
+            jsx_path=tmp_path / "wrapper.jsx",
+            job_id="must-not-retry",
+            entry_comp="Main Render",
+            output_relpath="work/output.mp4",
+        )
+    assert attempts == [1]
+
+
+def test_startup_failure_is_classified_before_general_idle() -> None:
+    runtime = (RUNTIME_DIR / "ae_sdk.py").read_text(encoding="utf-8")
+    run_once = runtime[
+        runtime.index("def _run_afterfx_once") : runtime.index("def _status_is_terminal")
+    ]
+    assert "afterfx_wrapper_not_started" in run_once
+    assert run_once.index("not startup_seen") < run_once.index("idle_timeout_s > 0")
+
+
+def test_modal_watcher_is_supervised_and_gates_new_work() -> None:
+    watcher = (RUNTIME_DIR / "ae_modal_watcher.ps1").read_text(encoding="utf-8-sig")
+    workflow = (RUNTIME_DIR / "restart_node_workflow.ps1").read_text(encoding="utf-8-sig")
+    node_main = (RUNTIME_DIR / "main.py").read_text(encoding="utf-8")
+
+    assert "Write-Heartbeat" in watcher
+    assert "Move-Item -LiteralPath $tmp -Destination $HeartbeatPath -Force" in watcher
+    assert "Register-SupervisedInteractiveTask" in workflow
+    assert "-RestartCount 999" in workflow
+    assert "-ExecutionTimeLimit ([TimeSpan]::Zero)" in workflow
+    assert "Get-CimInstance Win32_ComputerSystem" in workflow
+    assert "No interactive Windows user is logged on" in workflow
+    assert '-UserId "Administrator"' not in workflow
+
+    assert "_require_render_dependencies()" in node_main
+    health = node_main[node_main.index('def health()') : node_main.index('def ready()')]
+    create = node_main[node_main.index('def create_render(') : node_main.index('def get_render(')]
+    assert "_require_render_dependencies()" in health
+    assert create.index("_require_render_dependencies()") < create.index("manager.submit(payload)")

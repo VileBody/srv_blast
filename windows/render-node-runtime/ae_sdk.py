@@ -61,6 +61,86 @@ class AeJobResult:
     artifacts_s3_uri: Optional[str] = None
 
 
+class RenderNodeNotReadyError(RuntimeError):
+    """A required local render-node dependency is unavailable."""
+
+
+class AfterFxWrapperNotStartedError(RuntimeError):
+    """AfterFX launched, but did not evaluate even the wrapper preamble."""
+
+
+def modal_watcher_health(
+    *,
+    backend: Optional[str] = None,
+    heartbeat_path: Optional[Path] = None,
+    max_age_s: Optional[float] = None,
+    now: Optional[float] = None,
+) -> Dict[str, Any]:
+    """Return the readiness state of the interactive AE modal watcher.
+
+    The watcher is required by both supported backends because ``aerender``
+    still builds its AEP through an interactive ``AfterFX -r`` step.
+    File mtime is deliberately used instead of parsing the payload: an atomic
+    rewrite proves that the watcher loop, its filesystem access and its
+    interactive process are all still making progress.
+    """
+    selected_backend = str(
+        backend if backend is not None else (os.getenv("AE_RENDER_BACKEND") or "")
+    ).strip().lower()
+    if selected_backend not in ("afterfx_queue", "aerender"):
+        return {
+            "ready": True,
+            "required": False,
+            "backend": selected_backend or "unset",
+            "reason": "not_required",
+        }
+
+    path = heartbeat_path or Path(
+        os.getenv("AE_MODAL_WATCHER_HEARTBEAT_PATH")
+        or r"C:\ae_dev\logs\ae_modal_watcher.heartbeat"
+    )
+    allowed_age = float(
+        max_age_s
+        if max_age_s is not None
+        else (os.getenv("AE_MODAL_WATCHER_MAX_AGE_S") or 30.0)
+    )
+    allowed_age = max(1.0, allowed_age)
+    checked_at = time.time() if now is None else float(now)
+
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return {
+            "ready": False,
+            "required": True,
+            "backend": selected_backend,
+            "reason": "heartbeat_missing",
+            "heartbeat_path": str(path),
+            "max_age_s": allowed_age,
+        }
+    except Exception as exc:
+        return {
+            "ready": False,
+            "required": True,
+            "backend": selected_backend,
+            "reason": "heartbeat_unreadable",
+            "heartbeat_path": str(path),
+            "max_age_s": allowed_age,
+            "error": repr(exc),
+        }
+
+    age_s = max(0.0, checked_at - float(stat.st_mtime))
+    return {
+        "ready": age_s <= allowed_age,
+        "required": True,
+        "backend": selected_backend,
+        "reason": "ok" if age_s <= allowed_age else "heartbeat_stale",
+        "heartbeat_path": str(path),
+        "heartbeat_age_s": round(age_s, 3),
+        "max_age_s": allowed_age,
+    }
+
+
 def _is_remote(u: str) -> bool:
     s = (u or "").strip().lower()
     return s.startswith("http://") or s.startswith("https://") or s.startswith("s3://")
@@ -1396,6 +1476,53 @@ class AeRenderer:
         output_relpath: str,
         status_path: Optional[Path] = None,
     ) -> None:
+        recovery_retries = max(
+            0,
+            int(self._env_float("AFTERFX_STARTUP_RECOVERY_RETRIES", 1.0)),
+        )
+        attempts_total = recovery_retries + 1
+        for attempt in range(1, attempts_total + 1):
+            health = modal_watcher_health(backend="afterfx_queue")
+            if not bool(health["ready"]):
+                raise RenderNodeNotReadyError(
+                    "render_node_not_ready: modal_watcher_unhealthy "
+                    + json.dumps(health, ensure_ascii=False, sort_keys=True)
+                )
+
+            try:
+                self._run_afterfx_once(
+                    job_dir=job_dir,
+                    jsx_path=jsx_path,
+                    job_id=job_id,
+                    entry_comp=entry_comp,
+                    output_relpath=output_relpath,
+                    status_path=status_path,
+                    startup_attempt=attempt,
+                )
+                return
+            except AfterFxWrapperNotStartedError:
+                if attempt >= attempts_total:
+                    raise
+                log.warning(
+                    "AfterFX wrapper did not start; retrying a clean cold start "
+                    "job_id=%s attempt=%s/%s",
+                    job_id,
+                    attempt + 1,
+                    attempts_total,
+                )
+
+        raise RuntimeError("unreachable AfterFX startup retry state")
+
+    def _run_afterfx_once(
+        self,
+        job_dir: Path,
+        jsx_path: Path,
+        job_id: str,
+        entry_comp: str,
+        output_relpath: str,
+        status_path: Optional[Path] = None,
+        startup_attempt: int = 1,
+    ) -> None:
         self._ensure_ae_scripting_writes_allowed()
         self._ensure_ae_render_only_flag()
         env = os.environ.copy()
@@ -1409,7 +1536,7 @@ class AeRenderer:
         stdout_log_path = logs_dir / "afterfx.stdout.log"
         stderr_log_path = logs_dir / "afterfx.stderr.log"
         timeout_s = self._env_float("AFTERFX_RUN_TIMEOUT_S", 600.0)
-        startup_timeout_s = self._env_float("AFTERFX_STARTUP_TIMEOUT_S", 0.0)
+        startup_timeout_s = self._env_float("AFTERFX_STARTUP_TIMEOUT_S", 300.0)
         watchdog_poll_s = max(0.1, self._env_float("AFTERFX_WATCHDOG_POLL_S", 2.0))
         # A wedged AE (modal dialog, hung script) otherwise sits here until
         # AFTERFX_RUN_TIMEOUT_S -- two hours on this node -- while holding
@@ -1426,12 +1553,15 @@ class AeRenderer:
         project_path = job_dir / "work" / "project.aep"
         started_at = time.time()
         rc: int | None = None
-        with open(stdout_log_path, "w", encoding="utf-8", errors="replace") as f_out, open(
-            stderr_log_path, "w", encoding="utf-8", errors="replace"
+        # Append so a controlled startup retry does not erase the first
+        # attempt's command and timing evidence.
+        with open(stdout_log_path, "a", encoding="utf-8", errors="replace") as f_out, open(
+            stderr_log_path, "a", encoding="utf-8", errors="replace"
         ) as f_err:
             f_out.write(
                 f"[afterfx] job_id={job_id} started_at={started_at:.3f} "
-                f"timeout_s={timeout_s} startup_timeout_s={startup_timeout_s} poll_s={watchdog_poll_s}\n"
+                f"startup_attempt={startup_attempt} timeout_s={timeout_s} "
+                f"startup_timeout_s={startup_timeout_s} poll_s={watchdog_poll_s}\n"
             )
             f_out.write(f"[afterfx] cmd={' '.join(cmd)}\n")
             f_out.flush()
@@ -1475,6 +1605,28 @@ class AeRenderer:
                     status_terminal = True
                     break
 
+                # A cold launch that never evaluates the wrapper is a distinct,
+                # recoverable failure. Check it before the general idle guard so
+                # a blocked Crash Repair/save dialog is never mislabeled as a
+                # slow build or render. No marker means the builder had no side
+                # effects, which is the condition that makes one retry safe.
+                if startup_timeout_s > 0 and (not startup_seen) and (now - started_at) > startup_timeout_s:
+                    self._terminate_process(proc, reason=f"wrapper_not_started>{startup_timeout_s}s")
+                    self._terminate_afterfx_session(
+                        reason=f"wrapper_not_started:{job_id}:attempt_{startup_attempt}"
+                    )
+                    # _terminate_afterfx_session returns early if the process-tree
+                    # kill above already removed AE, so clear flags explicitly and
+                    # only after process termination on this recovery path.
+                    self._clear_ae_crash_flags()
+                    watcher = modal_watcher_health(backend="afterfx_queue")
+                    raise AfterFxWrapperNotStartedError(
+                        f"afterfx_wrapper_not_started timeout>{startup_timeout_s}s "
+                        f"attempt={startup_attempt}; watcher="
+                        f"{json.dumps(watcher, ensure_ascii=False, sort_keys=True)}; "
+                        f"logs={stdout_log_path};{stderr_log_path}; status={status_path}"
+                    )
+
                 # hb.txt and run_live.log are the builder's own heartbeat and
                 # phase log, and they are the ONLY things that move while it is
                 # assembling the project. The other four only appear near the
@@ -1498,13 +1650,6 @@ class AeRenderer:
                     self._terminate_process(proc, reason=f"idle_timeout>{idle_timeout_s}s")
                     raise RuntimeError(
                         f"AfterFX idle timeout>{idle_timeout_s}s without progress; "
-                        f"logs={stdout_log_path};{stderr_log_path}; status={status_path}"
-                    )
-
-                if startup_timeout_s > 0 and (not startup_seen) and (now - started_at) > startup_timeout_s:
-                    self._terminate_process(proc, reason=f"startup_timeout>{startup_timeout_s}s")
-                    raise RuntimeError(
-                        f"AfterFX startup timeout>{startup_timeout_s}s without JSX progress; "
                         f"logs={stdout_log_path};{stderr_log_path}; status={status_path}"
                     )
 

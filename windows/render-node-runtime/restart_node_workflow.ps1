@@ -3,6 +3,7 @@ param(
     [string]$NodeUrl = "http://127.0.0.1:8000",
     [string]$StartAfterFX = "true",
     [string]$KillAfterFXFirst = "true",
+    [string]$InteractiveUser = "",
     [int]$HealthTimeoutSec = 180,
     [int]$HealthPollSec = 2,
     [string]$LogPath = "C:\ae_dev\logs\node_restart_workflow.log"
@@ -70,14 +71,15 @@ function Parse-Bool(
 function Register-InteractiveTask(
     [string]$TaskName,
     [string]$Execute,
-    [string]$Arguments
+    [string]$Arguments,
+    [string]$UserId
 ) {
     try {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
     } catch {
     }
     $trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(2))
-    $principal = New-ScheduledTaskPrincipal -UserId "Administrator" -LogonType Interactive -RunLevel Highest
+    $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Highest
     $argsTrimmed = ""
     if ($null -ne $Arguments) {
         $argsTrimmed = $Arguments.Trim()
@@ -91,6 +93,38 @@ function Register-InteractiveTask(
     Start-ScheduledTask -TaskName $TaskName
 }
 
+function Register-SupervisedInteractiveTask(
+    [string]$TaskName,
+    [string]$Execute,
+    [string]$Arguments,
+    [string]$UserId
+) {
+    try {
+        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue | Out-Null
+    } catch {
+    }
+
+    $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Highest
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
+    $action = New-ScheduledTaskAction -Execute $Execute -Argument $Arguments.Trim()
+    $settings = New-ScheduledTaskSettingsSet `
+        -RestartCount 999 `
+        -RestartInterval (New-TimeSpan -Minutes 1) `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) `
+        -MultipleInstances IgnoreNew `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries
+
+    Register-ScheduledTask `
+        -TaskName $TaskName `
+        -Action $action `
+        -Trigger $trigger `
+        -Principal $principal `
+        -Settings $settings `
+        -Force | Out-Null
+    Start-ScheduledTask -TaskName $TaskName
+}
+
 $DevRoot = [System.IO.Path]::GetFullPath($DevRoot)
 $RepoDir = Join-Path $DevRoot "repo"
 $LogsDir = Join-Path $DevRoot "logs"
@@ -99,6 +133,14 @@ $ModalWatcherPath = Join-Path $RepoDir "ae_modal_watcher.ps1"
 $ClickOncePath = Join-Path $RepoDir "ae_click_continue_once.ps1"
 $DontSendPath = Join-Path $RepoDir "ae_dont_send_once.ps1"
 $RunServerConsoleLog = Join-Path $LogsDir "run_server.console.log"
+
+$ResolvedInteractiveUser = $InteractiveUser.Trim()
+if (-not $ResolvedInteractiveUser) {
+    $ResolvedInteractiveUser = [string](Get-CimInstance Win32_ComputerSystem).UserName
+}
+if (-not $ResolvedInteractiveUser) {
+    throw "No interactive Windows user is logged on; refusing to register GUI render tasks"
+}
 
 New-Item -ItemType Directory -Path $LogsDir -Force | Out-Null
 New-Item -ItemType File -Path $LogPath -Force | Out-Null
@@ -153,15 +195,16 @@ if ($killAfterFxFirstFlag) {
     Emit-Step -Step "afterfx_cleanup" -Status "skipped" -Message "kill_afterfx_first=false"
 }
 
-$watcherArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$ModalWatcherPath`" -PollSeconds 2 -LogPath `"$LogsDir\ae_modal_watcher.log`""
+$watcherHeartbeatPath = Join-Path $LogsDir "ae_modal_watcher.heartbeat"
+$watcherArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$ModalWatcherPath`" -PollSeconds 2 -LogPath `"$LogsDir\ae_modal_watcher.log`" -HeartbeatPath `"$watcherHeartbeatPath`""
 $clickArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$ClickOncePath`" -TimeoutSeconds 240 -LogPath `"$LogsDir\ae_modal_click_once.log`""
 $dontSendArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$DontSendPath`" -TimeoutSeconds 240 -LogPath `"$LogsDir\ae_dont_send_once.log`""
 $runServerArgs = "-NoProfile -ExecutionPolicy Bypass -Command `"& '$RunServerPath' *>> '$RunServerConsoleLog'`""
 
-Register-InteractiveTask -TaskName "BlastModalWatcher" -Execute "powershell.exe" -Arguments $watcherArgs
-Register-InteractiveTask -TaskName "BlastClickContinueOnce" -Execute "powershell.exe" -Arguments $clickArgs
-Register-InteractiveTask -TaskName "BlastDontSendOnce" -Execute "powershell.exe" -Arguments $dontSendArgs
-Register-InteractiveTask -TaskName "BlastRunServer" -Execute "powershell.exe" -Arguments $runServerArgs
+Register-SupervisedInteractiveTask -TaskName "BlastModalWatcher" -Execute "powershell.exe" -Arguments $watcherArgs -UserId $ResolvedInteractiveUser
+Register-InteractiveTask -TaskName "BlastClickContinueOnce" -Execute "powershell.exe" -Arguments $clickArgs -UserId $ResolvedInteractiveUser
+Register-InteractiveTask -TaskName "BlastDontSendOnce" -Execute "powershell.exe" -Arguments $dontSendArgs -UserId $ResolvedInteractiveUser
+Register-InteractiveTask -TaskName "BlastRunServer" -Execute "powershell.exe" -Arguments $runServerArgs -UserId $ResolvedInteractiveUser
 Emit-Step -Step "tasks_start" -Status "ok" -Message "started=BlastModalWatcher,BlastClickContinueOnce,BlastDontSendOnce,BlastRunServer"
 
 if ($startAfterFxFlag) {
@@ -170,7 +213,7 @@ if ($startAfterFxFlag) {
         Emit-Step -Step "afterfx_start" -Status "failed" -Message "afterfx_exe_not_found"
         throw "AfterFX.exe not found in known install paths"
     }
-    Register-InteractiveTask -TaskName "BlastStartAfterFX" -Execute $afterfxExe -Arguments ""
+    Register-InteractiveTask -TaskName "BlastStartAfterFX" -Execute $afterfxExe -Arguments "" -UserId $ResolvedInteractiveUser
     Emit-Step -Step "afterfx_start" -Status "ok" -Message "exe=$afterfxExe"
 } else {
     Emit-Step -Step "afterfx_start" -Status "skipped" -Message "start_afterfx=false"
