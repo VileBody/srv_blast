@@ -163,3 +163,31 @@ def test_focus_unmet_error_is_model_validation_retry() -> None:
     from mlcore.gemini_orchestrator import _UserFocusWordsUnmetError, _is_model_validation_error
 
     assert _is_model_validation_error(_UserFocusWordsUnmetError("x"))
+
+
+def test_preview_result_marks_weak_words_and_clamped_window():
+    """Диагностика примерки: low_confidence → weak, укороченное окно → window_clamped."""
+    from services.orchestrator.tasks import _asr_preview_result, _asr_preview_weak_indexes
+
+    stage1 = {
+        "transcript_words": [
+            {"text": "раз", "t_start": 10.0, "t_end": 10.5},
+            {"text": "два", "t_start": 10.6, "t_end": 11.0},
+        ],
+        "selected_fragment": {
+            "audio": {"clip_start_abs": 10.0, "clip_end_abs": 11.2},
+            "transcript_words": [
+                {"text": "раз", "t_start": 10.0, "t_end": 10.5},
+                {"text": "два", "t_start": 10.6, "t_end": 11.0},
+            ],
+            "fragment_analytics": {"working_start_abs": 10.0, "working_end_abs": 11.2},
+        },
+    }
+    weak = _asr_preview_weak_indexes({"warnings": [{"code": "low_confidence", "word_index": 1, "score": 0.1}]})
+    result = _asr_preview_result(stage1_asr=stage1, clip_start_abs=10.0, clip_end_abs=12.0, weak_indexes=weak)
+    assert [w["weak"] for w in result["words"]] == [False, True]
+    assert result["notes"] == ["window_clamped"]
+    assert result["working_end_abs"] == 11.2
+    # окно совпало → без заметок
+    clean = _asr_preview_result(stage1_asr=stage1, clip_start_abs=10.0, clip_end_abs=11.2)
+    assert clean["notes"] == [] and "working_end_abs" not in clean

@@ -2855,27 +2855,60 @@ def alignment_smoke_job(job_id: str) -> Dict[str, Any]:
                 log.warning("alignment_smoke_cleanup_failed job_id=%s path=%s", job_id, path)
 
 
-def _asr_preview_words_payload(stage1_asr: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _asr_preview_words_payload(
+    stage1_asr: Dict[str, Any], *, weak_indexes: set[int] | None = None
+) -> List[Dict[str, Any]]:
     selected = stage1_asr.get("selected_fragment") or {}
     words = selected.get("transcript_words") or stage1_asr.get("transcript_words") or []
+    weak = weak_indexes or set()
     return [
         {
             "text": str(w.get("text") or ""),
             "t_start": float(w.get("t_start")),
             "t_end": float(w.get("t_end")),
+            # «слабо легло»: выравниватель не уверен в этом слове (low_confidence) —
+            # сайт подсвечивает такие пилюли и просит перепроверить текст/окно
+            "weak": idx in weak,
         }
-        for w in words
+        for idx, w in enumerate(words)
     ]
 
 
+def _asr_preview_weak_indexes(diagnostics: Dict[str, Any]) -> set[int]:
+    out: set[int] = set()
+    for item in diagnostics.get("warnings") or []:
+        if isinstance(item, dict) and item.get("code") == "low_confidence":
+            try:
+                out.add(int(item.get("word_index")))
+            except Exception:
+                continue
+    return out
+
+
 def _asr_preview_result(
-    *, stage1_asr: Dict[str, Any], clip_start_abs: float, clip_end_abs: float
+    *,
+    stage1_asr: Dict[str, Any],
+    clip_start_abs: float,
+    clip_end_abs: float,
+    weak_indexes: set[int] | None = None,
 ) -> Dict[str, Any]:
-    return {
-        "words": _asr_preview_words_payload(stage1_asr),
+    result: Dict[str, Any] = {
+        "words": _asr_preview_words_payload(stage1_asr, weak_indexes=weak_indexes),
         "clip_start_abs": float(clip_start_abs),
         "clip_end_abs": float(clip_end_abs),
+        "notes": [],
     }
+    # Выравниватель мог укоротить окно по реально декодированному аудио — сайт об
+    # этом говорит вслух, а не узнаёт на рендере (см. clamp_clip_end_to_decoded_audio).
+    analytics = (stage1_asr.get("selected_fragment") or {}).get("fragment_analytics") or {}
+    try:
+        working_end = float(analytics.get("working_end_abs"))
+    except Exception:
+        working_end = float(clip_end_abs)
+    if working_end < float(clip_end_abs) - 0.05:
+        result["working_end_abs"] = working_end
+        result["notes"].append("window_clamped")
+    return result
 
 
 @celery_app.task(name="orchestrator.asr_preview_job")
@@ -2949,8 +2982,14 @@ def asr_preview_job(job_id: str) -> Dict[str, Any]:
             stage1_asr=stage1_asr,
             clip_start_abs=clip_start_abs,
             clip_end_abs=clip_end_abs,
+            weak_indexes=_asr_preview_weak_indexes(dict(aligned.diagnostics)),
         )
         result["backend"] = dict(aligned.backend)
+        result["diagnostics"] = {
+            "mean_word_confidence": aligned.diagnostics.get("mean_word_confidence"),
+            "min_word_confidence": aligned.diagnostics.get("min_word_confidence"),
+            "warnings": list(aligned.diagnostics.get("warnings") or []),
+        }
         store.set_status(job_id, "SUCCEEDED", stage="asr_preview", result=result)
         log.info(
             "asr_preview_succeeded job_id=%s words=%d clip=%.3f..%.3f",
@@ -3086,10 +3125,16 @@ def apply_asr_words_edit(
         source="asr_preview_edit",
     )
     audio = (updated.get("selected_fragment") or {}).get("audio") or {}
+    # Правки — полная замена списка в том же порядке: флаги «слабо легло» переносим по индексу
+    prev_weak = {
+        i for i, w in enumerate((state.result or {}).get("words") or [])
+        if isinstance(w, dict) and w.get("weak")
+    }
     result = _asr_preview_result(
         stage1_asr=updated,
         clip_start_abs=float(audio.get("clip_start_abs")),
         clip_end_abs=float(audio.get("clip_end_abs")),
+        weak_indexes=prev_weak,
     )
     result["edited"] = True
     store.set_status(job_id, "SUCCEEDED", stage="asr_preview", result=result)

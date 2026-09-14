@@ -72,7 +72,12 @@ def mock_words(fragment: str, clip_start: float, clip_end: float) -> list[dict[s
 
 def words_from_orchestrator(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
-        {"text": str(w.get("text") or ""), "tStart": float(w.get("t_start")), "tEnd": float(w.get("t_end"))}
+        {
+            "text": str(w.get("text") or ""),
+            "tStart": float(w.get("t_start")),
+            "tEnd": float(w.get("t_end")),
+            "weak": bool(w.get("weak")),
+        }
         for w in words
     ]
 
@@ -102,6 +107,8 @@ def empty_state(key: str) -> dict[str, Any]:
         "clipStart": None,
         "clipEnd": None,
         "error": None,
+        "notes": [],
+        "workingEnd": None,
     }
 
 

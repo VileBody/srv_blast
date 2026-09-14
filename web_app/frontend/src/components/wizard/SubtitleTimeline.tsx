@@ -412,6 +412,7 @@ export function SubtitleTimeline() {
   const ready = asr.status === 'COMPLETED' && asr.words.length > 0;
 
   const focusOn = selected !== null && Boolean(asr.words[selected]?.focus);
+  const weakWords = asr.words.filter((w) => w.weak).map((w) => w.text);
   const progress = Math.min(1, Math.max(0, (time - clipStart) / duration));
 
   return (
@@ -450,6 +451,18 @@ export function SubtitleTimeline() {
           </button>
         </div>
       </div>
+
+      {/* Диагностика примерки — то, что раньше всплывало только ошибкой рендера */}
+      {ready && (weakWords.length > 0 || asr.notes.includes('window_clamped')) && (
+        <div className="mt-[16px] flex flex-col gap-[6px] rounded-r12 bg-[var(--warning-bg)] px-space-4 py-space-3 text-[15px] leading-[1.35] text-text-80">
+          {asr.notes.includes('window_clamped') && asr.workingEnd !== null && (
+            <span>{t('wizard.subs.timeline.windowClamped', { at: fmt(asr.workingEnd - clipStart) })}</span>
+          )}
+          {weakWords.length > 0 && (
+            <span>{t('wizard.subs.timeline.weakWords', { words: weakWords.map((w) => `«${w}»`).join(', ') })}</span>
+          )}
+        </div>
+      )}
 
       {/* Плеер (макет): квадратный play, табло времени, «Фокус» — одна высота 80 */}
       <div className="mt-[20px] flex flex-wrap items-center gap-space-4">
@@ -566,6 +579,8 @@ export function SubtitleTimeline() {
                         : isActive
                           ? 'bg-accent text-text'
                           : 'bg-[var(--tl-pill)] text-text-80 shadow-[inset_0_1px_1px_rgba(255,255,255,0.10)]',
+                      // «слабо легло»: выравниватель не уверен в слове — предупреждающая обводка
+                      word.weak && !isSel && !word.focus && 'shadow-[inset_0_0_0_2px_var(--warning)]',
                       isSel && !word.focus && '!text-text shadow-[inset_0_0_0_2px_var(--accent-light)]',
                       isSel && word.focus && 'shadow-[0_0_0_2px_var(--accent-light)]',
                       isSel && 'z-[2]',

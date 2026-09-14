@@ -417,6 +417,8 @@ class ProductionBackend:
                 "clipStart": result.get("clip_start_abs"),
                 "clipEnd": result.get("clip_end_abs"),
                 "error": None,
+                "notes": [str(n) for n in (result.get("notes") or [])],
+                "workingEnd": result.get("working_end_abs"),
             }
         if status == "FAILED":
             return {
