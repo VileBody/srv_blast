@@ -452,14 +452,21 @@ export function SubtitleTimeline() {
         </div>
       </div>
 
-      {/* Диагностика примерки — то, что раньше всплывало только ошибкой рендера */}
+      {/* Диагностика примерки — то, что раньше всплывало только ошибкой рендера.
+          Каждое предупреждение — свой мини-контейнер в общей гамме (никаких «жёлтых» плашек). */}
       {ready && (weakWords.length > 0 || asr.notes.includes('window_clamped')) && (
-        <div className="mt-[16px] flex flex-col gap-[6px] rounded-r12 bg-[var(--warning-bg)] px-space-4 py-space-3 text-[15px] leading-[1.35] text-text-80">
+        <div className="mt-[16px] flex flex-col gap-[10px]">
           {asr.notes.includes('window_clamped') && asr.workingEnd !== null && (
-            <span>{t('wizard.subs.timeline.windowClamped', { at: fmt(asr.workingEnd - clipStart) })}</span>
+            <div className="flex items-start gap-[12px] rounded-r12 bg-grad-soft-20 px-space-4 py-space-3 text-[15px] leading-[1.35] text-text-80 shadow-[inset_0_0_0_1px_rgba(139,111,230,0.45)]">
+              <span aria-hidden className="mt-[5px] h-[8px] w-[8px] shrink-0 rounded-full bg-accent-light" />
+              <span>{t('wizard.subs.timeline.windowClamped', { at: fmt(asr.workingEnd - clipStart) })}</span>
+            </div>
           )}
           {weakWords.length > 0 && (
-            <span>{t('wizard.subs.timeline.weakWords', { words: weakWords.map((w) => `«${w}»`).join(', ') })}</span>
+            <div className="flex items-start gap-[12px] rounded-r12 bg-grad-soft-20 px-space-4 py-space-3 text-[15px] leading-[1.35] text-text-80 shadow-[inset_0_0_0_1px_rgba(139,111,230,0.45)]">
+              <span aria-hidden className="mt-[5px] h-[8px] w-[8px] shrink-0 rounded-full bg-accent-light" />
+              <span>{t('wizard.subs.timeline.weakWords', { words: weakWords.map((w) => `«${w}»`).join(', ') })}</span>
+            </div>
           )}
         </div>
       )}
@@ -580,7 +587,7 @@ export function SubtitleTimeline() {
                           ? 'bg-accent text-text'
                           : 'bg-[var(--tl-pill)] text-text-80 shadow-[inset_0_1px_1px_rgba(255,255,255,0.10)]',
                       // «слабо легло»: выравниватель не уверен в слове — предупреждающая обводка
-                      word.weak && !isSel && !word.focus && 'shadow-[inset_0_0_0_2px_var(--warning)]',
+                      word.weak && !isSel && !word.focus && 'shadow-[inset_0_0_0_2px_rgba(246,245,253,0.45)]',
                       isSel && !word.focus && '!text-text shadow-[inset_0_0_0_2px_var(--accent-light)]',
                       isSel && word.focus && 'shadow-[0_0_0_2px_var(--accent-light)]',
                       isSel && 'z-[2]',

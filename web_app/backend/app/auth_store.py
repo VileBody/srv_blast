@@ -192,6 +192,17 @@ def chat_id_for_user(user_id: str) -> Any | None:
     return (user or {}).get("tgChatId")
 
 
+def telegram_contact_for_user(user_id: str) -> str:
+    """Как назвать человека в менеджерском уведомлении: «@username (id)», иначе «id»
+    и ссылка tg://user?id= — чтобы с ним можно было связаться, а не только опознать."""
+    user = next((u for u in USERS.values() if u.get("id") == user_id), None) or {}
+    chat_id = user.get("tgChatId")
+    username = str(user.get("tgUsername") or "").strip().lstrip("@")
+    if username:
+        return f"@{username} (id {chat_id})"
+    return f"{chat_id} (tg://user?id={chat_id})" if chat_id else "неизвестен"
+
+
 def get_user_by_chat(chat_id: Any) -> dict[str, Any] | None:
     if chat_id is None:
         return None
@@ -211,6 +222,8 @@ def create_user_from_telegram(chat_id: Any, profile: dict[str, Any]) -> dict[str
         "name": profile.get("name") or "",
         "surname": profile.get("surname") or "",
         "artistNick": username or None,
+        # @username для менеджерских уведомлений: chat_id один не даёт написать человеку
+        "tgUsername": username or None,
         "authProvider": "telegram",
         "tgVerified": True,
         "tgChatId": chat_id,
@@ -360,13 +373,23 @@ def confirm_token(token: str, chat_id: Any = None, profile: dict[str, Any] | Non
                 if key in ("name", "surname") and value}
         if not user:
             user = create_user_from_telegram(chat_id, {**(profile or {}), **form})
-        elif form:
-            # Аккаунт уже был, но человек только что представился на форме регистрации —
-            # значит имя нужно обновить. Раньше форма молча игнорировалась, и в профиле
-            # навсегда оставалось имя из Telegram.
-            user.update(form)
-            with _lock:
-                _save()
+        else:
+            changed = False
+            if form:
+                # Аккаунт уже был, но человек только что представился на форме регистрации —
+                # значит имя нужно обновить. Раньше форма молча игнорировалась, и в профиле
+                # навсегда оставалось имя из Telegram.
+                user.update(form)
+                changed = True
+            # @username мог смениться (или аккаунт заведён до того, как мы его хранили) —
+            # обновляем на каждом входе, чтобы менеджер мог написать человеку
+            tg_username = str((profile or {}).get("username") or "").strip() or None
+            if tg_username and user.get("tgUsername") != tg_username:
+                user["tgUsername"] = tg_username
+                changed = True
+            if changed:
+                with _lock:
+                    _save()
         rec["email"] = user["email"] or f"tg:{chat_id}"
         _save_token(rec)
         return "ok"
