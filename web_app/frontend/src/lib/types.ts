@@ -439,8 +439,11 @@ export interface AsrPreviewResponse {
   status: 'IDLE' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
   key: string;
   jobId: string | null;
-  words: { text: string; tStart: number; tEnd: number }[];
+  words: { text: string; tStart: number; tEnd: number; weak?: boolean }[];
   clipStart: number | null;
   clipEnd: number | null;
   error: string | null;
+  /** предупреждения примерки: window_clamped — трек кончился раньше конца окна */
+  notes?: string[];
+  workingEnd?: number | null;
 }

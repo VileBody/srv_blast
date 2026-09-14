@@ -54,6 +54,8 @@ export interface AsrWord {
   tEnd: number;
   /** помечено автором как фокусное — Stage2 обязан сделать его акцентом сцены */
   focus?: boolean;
+  /** выравниватель не уверен в слове — подсветить и попросить проверить текст/окно */
+  weak?: boolean;
 }
 
 export type AsrStatus = 'IDLE' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
@@ -75,6 +77,9 @@ export interface AsrPreviewState {
   clipEnd: number | null;
   edited: boolean;
   error: string | null;
+  /** предупреждения примерки (window_clamped: трек кончился раньше конца окна) */
+  notes: string[];
+  workingEnd: number | null;
 }
 
 export interface WizardStateData {
@@ -234,7 +239,7 @@ interface WizardStore extends WizardStateData {
   toggleSubtitleStyle: (style: string) => void;
   setAllocation: (patch: Partial<WizardStateData['allocation']>) => void;
   /** результат/статус примерки с бэка; правки для того же key сохраняются */
-  setAsrResult: (asr: { key: string; jobId: string | null; status: AsrStatus; words: AsrWord[]; clipStart: number | null; clipEnd: number | null; error: string | null }) => void;
+  setAsrResult: (asr: { key: string; jobId: string | null; status: AsrStatus; words: AsrWord[]; clipStart: number | null; clipEnd: number | null; error: string | null; notes?: string[]; workingEnd?: number | null }) => void;
   /** сдвинуть слово: новые тайминги (уже провалидированные таймлайном) */
   setAsrWord: (index: number, patch: Partial<Pick<AsrWord, 'tStart' | 'tEnd'>>) => void;
   toggleAsrFocus: (index: number) => void;
@@ -266,7 +271,7 @@ export function hasTrackInput(state: Pick<WizardStateData, 'track' | 'lyrics'>):
 }
 
 export const emptyAsr = (): AsrPreviewState => ({
-  key: '', jobId: null, status: 'IDLE', words: [], source: [], clipStart: null, clipEnd: null, edited: false, error: null
+  key: '', jobId: null, status: 'IDLE', words: [], source: [], clipStart: null, clipEnd: null, edited: false, error: null, notes: [], workingEnd: null
 });
 
 const initialData = (projectId?: string | null): WizardStateData => ({
@@ -355,7 +360,9 @@ export const useWizardStore = create<WizardStore>()(
             clipStart: asr.clipStart,
             clipEnd: asr.clipEnd,
             edited: keepEdits ? state.asr.edited : false,
-            error: asr.error
+            error: asr.error,
+            notes: asr.notes ?? [],
+            workingEnd: asr.workingEnd ?? null
           }
         };
       }),

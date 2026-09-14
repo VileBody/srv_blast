@@ -533,6 +533,10 @@
       "add": "Add subtitles",
       "footerEmpty": "Add subtitles",
       "timeline": {
+        "noteWindow": "Clip window",
+        "noteWords": "Weak words",
+        "windowClamped": "The track ends at {{at}} — the clip window was shortened to that point.",
+        "weakWords": "Poorly aligned: {{words}}. Check the fragment text and the clip window — subtitles may drift here otherwise.",
         "zoom": "Timeline zoom",
         "help": "How it works",
         "wordsCount": "{{count}} words",

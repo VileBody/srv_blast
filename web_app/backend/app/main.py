@@ -1270,13 +1270,28 @@ async def api_asr_start(payload: AsrStartPayload) -> dict[str, Any]:
         return {"asr": state, "mock": RUNTIME.backend == "mock"}
 
     if RUNTIME.backend != "production":
+        words = asr_preview.mock_words(text, start, end)
+        # Диагностика в mock — чтобы плашки было чем проверить глазами: каждое 5-е
+        # слово «слабое» (в проде это low_confidence выравнивателя), а окно длиннее
+        # трека — «укорочено» (в проде — клэмп по декодированному аудио).
+        if RUNTIME.dev_tools:
+            for idx, w in enumerate(words):
+                w["weak"] = idx % 5 == 4
+        notes: list[str] = []
+        working_end: float | None = None
+        duration = float(track.get("durationS") or 0.0)
+        if duration and end > duration + 0.05:
+            notes.append("window_clamped")
+            working_end = duration
         state = {
             **asr_preview.empty_state(key),
             "status": "COMPLETED",
             "jobId": f"mock_asr_{key}",
-            "words": asr_preview.mock_words(text, start, end),
+            "words": words,
             "clipStart": start,
             "clipEnd": end,
+            "notes": notes,
+            "workingEnd": working_end,
         }
         store.set_asr_preview(state)
         return {"asr": state, "mock": True}

@@ -74,7 +74,7 @@ def test_focus_words_and_conversions(monkeypatch: pytest.MonkeyPatch) -> None:
     assert asr.focus_words(words) == [{"text": "раз", "t_start": 1.0}]
     orch = asr.words_to_orchestrator(words)
     assert orch[1] == {"text": "два", "t_start": 1.5, "t_end": 1.9}
-    assert asr.words_from_orchestrator(orch)[0] == {"text": "раз", "tStart": 1.0, "tEnd": 1.4}
+    assert asr.words_from_orchestrator(orch)[0] == {"text": "раз", "tStart": 1.0, "tEnd": 1.4, "weak": False}
 
 
 class _AsrHttp(_FakeHttp):

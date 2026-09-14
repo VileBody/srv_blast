@@ -3346,14 +3346,34 @@ def build_all_via_gemini_one_call(
                     "ALIGNMENT_INTERNAL_ERROR",
                     "local_ctc response is missing selected_fragment.fragment_analytics",
                 )
-            if (
-                abs(float(analytics.working_start_abs) - float(user_start)) > 1e-6
-                or abs(float(analytics.working_end_abs) - float(user_end)) > 1e-6
-            ):
-                raise AlignmentServiceError(
-                    "ALIGNMENT_WINDOW_MISMATCH",
-                    "local_ctc fragment analytics do not match the user clip window",
+            w_start = float(analytics.working_start_abs)
+            w_end = float(analytics.working_end_abs)
+            if abs(w_start - float(user_start)) > 1e-6 or abs(w_end - float(user_end)) > 1e-6:
+                # Выравниватель имеет право СУЗИТЬ окно: конец клипа он режет по
+                # реально декодированному аудио (clamp_clip_end_to_decoded_audio),
+                # а «Trek 00:48–01:00 над 59.3 с» — обычная история для lossy-файлов.
+                # Раньше это роняло рендер ALIGNMENT_WINDOW_MISMATCH — причём уже
+                # ПОСЛЕ того, как примерка субтитров на сайте спокойно прошла с тем
+                # же (укороченным) окном. Окно внутри пользовательского — принимаем
+                # его как есть; окно ВНЕ пользовательского — по-прежнему ошибка
+                # сервиса, а не данных.
+                inside = (
+                    w_start >= float(user_start) - 1e-6
+                    and w_end <= float(user_end) + 1e-6
+                    and w_end > w_start
                 )
+                if not inside:
+                    raise AlignmentServiceError(
+                        "ALIGNMENT_WINDOW_MISMATCH",
+                        "local_ctc fragment analytics do not match the user clip window "
+                        f"(working={w_start:.3f}..{w_end:.3f} user={float(user_start):.3f}..{float(user_end):.3f})",
+                    )
+                logger.warning(
+                    "user_clip_window_shrunk_to_alignment user=%.3f..%.3f working=%.3f..%.3f",
+                    float(user_start), float(user_end), w_start, w_end,
+                )
+                user_start, user_end = w_start, w_end
+                user_clip_window = (w_start, w_end)
             local_fragment_analytics = analytics.model_dump(mode="json")
         frag_words = _words_in_window(
             words=list(stage1_asr.transcript_words),

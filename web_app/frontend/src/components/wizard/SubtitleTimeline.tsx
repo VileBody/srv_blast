@@ -75,6 +75,23 @@ type Drag = {
   moved: boolean;
 };
 
+function TimelineNote({ eyebrow, text }: { eyebrow: string; text: string }) {
+  return (
+    <div className="rounded-r15 bg-grad-soft-10 p-[6px] ring-1 ring-[rgba(246,245,253,0.08)]">
+      {/* ядро без фиолетовой заливки: нейтральный тон + inset-блик; ярлык — тот же кегль, жирнее */}
+      <div className="flex items-start gap-[12px] rounded-[9px] bg-[rgba(246,245,253,0.04)] px-[16px] py-[12px] shadow-[inset_0_1px_1px_rgba(255,255,255,0.08)]">
+        <span aria-hidden className="mt-[1px] flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-full bg-[rgba(246,245,253,0.08)]">
+          <span className="h-[6px] w-[6px] rounded-full bg-accent-light" />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-[15px] font-semibold leading-[1.35] text-text">{eyebrow}</span>
+          <span className="mt-[4px] block text-[15px] leading-[1.35] text-text-80">{text}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function SubtitleTimeline() {
   const { t } = useTranslation();
   const track = useWizardStore((state) => state.track);
@@ -412,6 +429,7 @@ export function SubtitleTimeline() {
   const ready = asr.status === 'COMPLETED' && asr.words.length > 0;
 
   const focusOn = selected !== null && Boolean(asr.words[selected]?.focus);
+  const weakWords = asr.words.filter((w) => w.weak).map((w) => w.text);
   const progress = Math.min(1, Math.max(0, (time - clipStart) / duration));
 
   return (
@@ -450,6 +468,21 @@ export function SubtitleTimeline() {
           </button>
         </div>
       </div>
+
+      {/* Диагностика примерки — то, что раньше всплывало только ошибкой рендера.
+          Каждое предупреждение — свой мини-контейнер (taste: double-bezel — внешняя оболочка
+          с тонким ring + внутреннее ядро с inset-бликом, концентричные радиусы; eyebrow-ярлык
+          для иерархии; индикатор в круглой подложке; без анимаций — как остальной визард). */}
+      {ready && (weakWords.length > 0 || asr.notes.includes('window_clamped')) && (
+        <div className="mt-[16px] flex flex-col gap-[10px]">
+          {asr.notes.includes('window_clamped') && asr.workingEnd !== null && (
+            <TimelineNote eyebrow={t('wizard.subs.timeline.noteWindow')} text={t('wizard.subs.timeline.windowClamped', { at: fmt(asr.workingEnd - clipStart) })} />
+          )}
+          {weakWords.length > 0 && (
+            <TimelineNote eyebrow={t('wizard.subs.timeline.noteWords')} text={t('wizard.subs.timeline.weakWords', { words: weakWords.map((w) => `«${w}»`).join(', ') })} />
+          )}
+        </div>
+      )}
 
       {/* Плеер (макет): квадратный play, табло времени, «Фокус» — одна высота 80 */}
       <div className="mt-[20px] flex flex-wrap items-center gap-space-4">
@@ -566,6 +599,8 @@ export function SubtitleTimeline() {
                         : isActive
                           ? 'bg-accent text-text'
                           : 'bg-[var(--tl-pill)] text-text-80 shadow-[inset_0_1px_1px_rgba(255,255,255,0.10)]',
+                      // «слабо легло»: выравниватель не уверен в слове — предупреждающая обводка
+                      word.weak && !isSel && !word.focus && 'shadow-[inset_0_0_0_2px_rgba(246,245,253,0.45)]',
                       isSel && !word.focus && '!text-text shadow-[inset_0_0_0_2px_var(--accent-light)]',
                       isSel && word.focus && 'shadow-[0_0_0_2px_var(--accent-light)]',
                       isSel && 'z-[2]',

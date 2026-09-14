@@ -76,5 +76,6 @@ def queue_job(job: dict[str, Any]) -> None:
         enqueue(f"job:{job['id']}:terminal", chat_id=chat_id, text=text, markup=markup)
         if job["status"] == "FAILED":
             error = next((str(v.get("error")) for v in videos if v.get("error")), "unknown")
-            manager_event(f"job:{job['id']}:failed", f"Ошибка генерации на сайте\nПользователь: {chat_id}\n"
+            contact = auth_store.telegram_contact_for_user(job.get("userId") or "")
+            manager_event(f"job:{job['id']}:failed", f"Ошибка генерации на сайте\nПользователь: {contact}\n"
                           f"Job: {job['id']}\nГотово: {completed}/{len(videos)}\n{error[:1500]}")
