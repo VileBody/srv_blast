@@ -221,6 +221,47 @@ def _fmt_ts(value: Any) -> str:
     return str(value)
 
 
+def source_economics_row(r: Dict[str, Any]) -> Dict[str, Any]:
+    """Derive CAC / cost-per-signup / ROAS from one raw per-source row (pure, unit-testable)."""
+    spend = int(r.get("spend_rub") or 0)
+    users_new = int(r.get("users_new") or 0)
+    payers_new = int(r.get("payers_new") or 0)
+    revenue_period = int(r.get("revenue_period") or 0)
+    src = str(r.get("src") or r.get("source") or "")
+    return {
+        "source": src or "(без источника)",
+        "users_total": int(r.get("users_total") or 0),
+        "users_new": users_new,
+        "payers_total": int(r.get("payers_total") or 0),
+        "payers_new": payers_new,
+        "revenue_period": revenue_period,
+        "revenue_total": int(r.get("revenue_total") or 0),
+        "spend_rub": spend,
+        "cac": (spend / payers_new) if (spend and payers_new) else None,
+        "cost_per_user": (spend / users_new) if (spend and users_new) else None,
+        "roas": (revenue_period / spend) if spend else None,
+    }
+
+
+def _web_event_ts(value: Any) -> datetime:
+    """Web analytics events carry `ts` as an ISO string (`analytics_events.ts` is TEXT).
+
+    asyncpg does not coerce text into TIMESTAMP parameters — it raises
+    DataError for the whole batch — so the string is parsed here and
+    normalised to naive UTC, the convention of every `created_at` in this DB.
+    """
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("web activity event requires ts")
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 def completed_subscription_months(started_at: datetime, now: datetime | None = None) -> int:
     """Return completed calendar months, capped at the three loyalty rewards."""
     current = now or datetime.now(timezone.utc)
@@ -726,6 +767,21 @@ class CreditsDB:
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_link_code TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_attributed_at TIMESTAMP")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_partner_id ON users(partner_id)")
+
+        # Marketing spend per calendar month — the only input the dashboard
+        # cannot derive from product data. Feeds CAC / cost-per-signup on the
+        # first admin screen; without rows those tiles show a dash, never 0.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS marketing_spend ("
+            "month       DATE NOT NULL,"
+            "source      TEXT NOT NULL DEFAULT '',"
+            "spend_rub   INTEGER NOT NULL DEFAULT 0,"
+            "note        TEXT NOT NULL DEFAULT '',"
+            "updated_by  TEXT NOT NULL DEFAULT '',"
+            "updated_at  TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "PRIMARY KEY (month, source)"
+            ")"
+        )
 
         # One-time migration ledger — guards backfills that must run exactly
         # once (unlike the idempotent CREATE/ALTER statements above).
@@ -1864,13 +1920,13 @@ class CreditsDB:
                 int(tg_id) if tg_id is not None else None,
                 name,
                 json.dumps(event.get("props") or {}, ensure_ascii=False),
-                created_at,
+                _web_event_ts(created_at),
             ))
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             await conn.executemany(
                 "INSERT INTO web_activity_log(id, user_id, tg_id, event, props, created_at) "
-                "VALUES($1,$2,$3,$4,$5::JSONB,$6::TIMESTAMP) ON CONFLICT(id) DO NOTHING",
+                "VALUES($1,$2,$3,$4,$5::JSONB,$6) ON CONFLICT(id) DO NOTHING",
                 values,
             )
         return len(values)
@@ -1942,6 +1998,160 @@ class CreditsDB:
                 for row in recent
             ],
         }
+
+    async def product_metrics_source(
+        self,
+        channel: str,
+        date_from: datetime,
+        date_to: datetime,
+    ) -> "product_metrics.MetricsSource":
+        """Raw rows for the first-screen product metrics (see product_metrics.py).
+
+        Everything is fetched all-time on purpose: retention, LTV and the
+        30-day activity window all look outside the selected period. The
+        period only scopes `marketing_spend`.
+        """
+        from . import product_metrics as pm
+
+        selected = str(channel or "").strip().lower()
+        if selected not in {"site", "bot", "all"}:
+            raise ValueError("channel must be site, bot or all")
+        df = date_from.replace(tzinfo=None) if date_from.tzinfo else date_from
+        dt = date_to.replace(tzinfo=None) if date_to.tzinfo else date_to
+        bot_sql = (
+            "SELECT 'tg:' || tg_id::TEXT AS identity, event, created_at, 'bot' AS channel FROM activity_log"
+        )
+        site_sql = (
+            "SELECT CASE WHEN tg_id IS NULL THEN 'web:' || user_id ELSE 'tg:' || tg_id::TEXT END AS identity, "
+            "event, created_at, 'site' AS channel FROM web_activity_log"
+        )
+        source_sql = bot_sql if selected == "bot" else site_sql if selected == "site" else f"{bot_sql} UNION ALL {site_sql}"
+        # Payments live in one table regardless of where the purchase started;
+        # the channel split goes by whether the payer ever touched the site.
+        if selected == "site":
+            pay_filter = "AND p.tg_id IN (SELECT tg_id FROM web_activity_log WHERE tg_id IS NOT NULL)"
+        elif selected == "bot":
+            pay_filter = "AND p.tg_id NOT IN (SELECT tg_id FROM web_activity_log WHERE tg_id IS NOT NULL)"
+        else:
+            pay_filter = ""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            events = await conn.fetch(source_sql + " ORDER BY created_at")
+            payments = await conn.fetch(
+                "SELECT 'tg:' || p.tg_id::TEXT AS identity, p.amount_rub, p.created_at "
+                "FROM payments p WHERE p.status = 'CONFIRMED' " + pay_filter + " ORDER BY p.created_at"
+            )
+            if selected == "site":
+                users = []
+            else:
+                users = await conn.fetch("SELECT 'tg:' || tg_id::TEXT AS identity, created_at FROM users")
+            spend = await conn.fetchval(
+                "SELECT COALESCE(SUM(spend_rub), 0) FROM marketing_spend "
+                "WHERE month >= date_trunc('month', $1::TIMESTAMP)::DATE AND month < $2::TIMESTAMP",
+                df,
+                dt,
+            )
+        return pm.MetricsSource(
+            events=[
+                pm.Event(str(r["identity"]), str(r["event"] or ""), r["created_at"], str(r["channel"]))
+                for r in events
+            ],
+            payments=[pm.Payment(str(r["identity"]), int(r["amount_rub"] or 0), r["created_at"]) for r in payments],
+            users=[(str(r["identity"]), r["created_at"]) for r in users],
+            spend_rub=int(spend or 0),
+        )
+
+    async def list_marketing_spend(self, limit: int = 24) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT month, source, spend_rub, note, updated_by, updated_at FROM marketing_spend "
+                "ORDER BY month DESC, source LIMIT $1",
+                max(1, int(limit)),
+            )
+        return [
+            {
+                "month": r["month"].strftime("%Y-%m"),
+                "source": str(r["source"] or ""),
+                "spend_rub": int(r["spend_rub"] or 0),
+                "note": str(r["note"] or ""),
+                "updated_by": str(r["updated_by"] or ""),
+                "updated_at": _fmt_ts(r["updated_at"]),
+            }
+            for r in rows
+        ]
+
+    async def set_marketing_spend(
+        self, month: str, spend_rub: int, *, source: str = "", note: str = "", actor: str = "",
+    ) -> None:
+        """Upsert marketing spend for one calendar month and one source ('' = not attributed)."""
+        first_day = datetime.strptime(str(month).strip(), "%Y-%m").date()
+        if int(spend_rub) < 0:
+            raise ValueError("spend_rub must be >= 0")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO marketing_spend(month, source, spend_rub, note, updated_by, updated_at) "
+                "VALUES($1, $2, $3, $4, $5, NOW()) "
+                "ON CONFLICT(month, source) DO UPDATE SET spend_rub = EXCLUDED.spend_rub, note = EXCLUDED.note, "
+                "updated_by = EXCLUDED.updated_by, updated_at = NOW()",
+                first_day,
+                _norm_text(source, max_len=64),
+                int(spend_rub),
+                _norm_text(note, max_len=200),
+                _norm_text(actor, max_len=64),
+            )
+
+    async def source_economics(self, date_from: datetime, date_to: datetime) -> List[Dict[str, Any]]:
+        """Per-source unit economics for a period: signups, payers, revenue, spend -> CAC.
+
+        Source = `users.source` or first UTM source (same key as source_distribution).
+        Spend is matched by source name and by calendar months overlapping the period.
+        """
+        df = date_from.replace(tzinfo=None) if date_from.tzinfo else date_from
+        dt = date_to.replace(tzinfo=None) if date_to.tzinfo else date_to
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                WITH su AS (
+                    SELECT tg_id, created_at,
+                           COALESCE(NULLIF(source, ''), NULLIF(first_utm_source, ''), '(direct)') AS src
+                    FROM users
+                ),
+                pay AS (
+                    SELECT p.tg_id, p.amount_rub, p.created_at,
+                           MIN(p.created_at) OVER (PARTITION BY p.tg_id) AS first_at
+                    FROM payments p WHERE p.status = 'CONFIRMED'
+                ),
+                per_src AS (
+                    SELECT su.src,
+                           COUNT(DISTINCT su.tg_id)::BIGINT AS users_total,
+                           COUNT(DISTINCT su.tg_id) FILTER (WHERE su.created_at >= $1 AND su.created_at < $2)::BIGINT AS users_new,
+                           COUNT(DISTINCT pay.tg_id)::BIGINT AS payers_total,
+                           COUNT(DISTINCT pay.tg_id) FILTER (WHERE pay.first_at >= $1 AND pay.first_at < $2)::BIGINT AS payers_new,
+                           COALESCE(SUM(pay.amount_rub) FILTER (WHERE pay.created_at >= $1 AND pay.created_at < $2), 0)::BIGINT AS revenue_period,
+                           COALESCE(SUM(pay.amount_rub), 0)::BIGINT AS revenue_total
+                    FROM su LEFT JOIN pay ON pay.tg_id = su.tg_id
+                    GROUP BY su.src
+                ),
+                spend AS (
+                    SELECT source AS src, SUM(spend_rub)::BIGINT AS spend_rub FROM marketing_spend
+                    WHERE month >= date_trunc('month', $1::TIMESTAMP)::DATE AND month < $2::TIMESTAMP
+                    GROUP BY source
+                )
+                SELECT COALESCE(ps.src, sp.src) AS src,
+                       COALESCE(ps.users_total, 0) AS users_total, COALESCE(ps.users_new, 0) AS users_new,
+                       COALESCE(ps.payers_total, 0) AS payers_total, COALESCE(ps.payers_new, 0) AS payers_new,
+                       COALESCE(ps.revenue_period, 0) AS revenue_period, COALESCE(ps.revenue_total, 0) AS revenue_total,
+                       COALESCE(sp.spend_rub, 0) AS spend_rub
+                FROM per_src ps FULL OUTER JOIN spend sp ON sp.src = ps.src
+                ORDER BY users_new DESC, users_total DESC, src
+                """,
+                df,
+                dt,
+            )
+        return [source_economics_row(dict(r)) for r in rows]
 
     # Payments
 

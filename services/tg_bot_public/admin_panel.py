@@ -17,6 +17,8 @@ from urllib.parse import quote as url_quote, quote_plus
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from .broadcast_sender import send_bot_message
+from . import admin_product_card
+from . import product_metrics
 
 import httpx
 import uvicorn
@@ -147,9 +149,9 @@ _RATING_LABELS = {
 }
 
 _RATING_COLORS = {
-    "low": "#e74c3c",
-    "mid_low": "#f39c12",
-    "high": "#27ae60",
+    "low": "#ef6a6a",
+    "mid_low": "#f0b04a",
+    "high": "#4ecf8a",
 }
 
 # 4-bucket rating breakdown for the dashboard (low / 5-6 / 7-8 / 9-10).
@@ -160,22 +162,22 @@ _RATING_LABELS_V2 = {
     "high": "9-10",
 }
 _RATING_COLORS_V2 = {
-    "low": "#e74c3c",
-    "mid_low": "#f39c12",
-    "mid_high": "#3498db",
-    "high": "#27ae60",
+    "low": "#ef6a6a",
+    "mid_low": "#f0b04a",
+    "mid_high": "#5aa9ea",
+    "high": "#4ecf8a",
 }
 
 # Funnel grouping for the dashboard mini-cards (split by lifecycle stage).
 _FUNNEL_GROUPS = (
-    ("Генерация", "#3498db", [
+    ("Генерация", "#5aa9ea", [
         "start", "subscription_ok", "audio_uploaded",
         "generation_started", "generation_done",
     ]),
-    ("Питч", "#9b59b6", [
+    ("Питч", "#9b84ee", [
         "rate_video", "sales_pitch",
     ]),
-    ("Продажа", "#27ae60", [
+    ("Продажа", "#4ecf8a", [
         "view_packages", "purchase_intent", "purchase_intent_recurrent",
         "payment_confirmed", "subscription_charged",
     ]),
@@ -209,10 +211,10 @@ _FUNNEL_ORDER = [
 
 # Funnel bar colors (green → red gradient).
 _FUNNEL_COLORS = [
-    "#27ae60", "#2ecc71", "#3498db", "#2980b9",  # acquisition
-    "#8e44ad", "#9b59b6", "#16a085", "#1abc9c", "#f39c12",  # engagement / loyalty
-    "#e67e22", "#d35400", "#e74c3c",  # interest in packages
-    "#c0392b", "#c0392b", "#756d97", "#34495e",  # monetization + manager
+    "#4ecf8a", "#4ecf8a", "#5aa9ea", "#5aa9ea",  # acquisition
+    "#9b84ee", "#9b84ee", "#4ecf8a", "#4ecf8a", "#f0b04a",  # engagement / loyalty
+    "#f0b04a", "#f0b04a", "#ef6a6a",  # interest in packages
+    "#ef6a6a", "#ef6a6a", "#8d86ad", "#8d86ad",  # monetization + manager
 ]
 
 # Package definitions
@@ -247,7 +249,7 @@ _PACKAGE_TRACKS = {
 _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     "S1": {
         "title": "Чемпионы",
-        "group": "S", "color": "#c0392b",
+        "group": "S", "color": "#ef6a6a",
         "rule": "gens ≥ 2 AND last_rating='high' AND feedback_form_clicked AND нет оплаты",
         "task": "Познакомиться, получить ролик и фидбек. Продажа — следующим шагом",
         "channel": "Менеджер DM (голос/текст), 1-1",
@@ -266,7 +268,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "S2": {
         "title": "Изучили пакет",
-        "group": "S", "color": "#c0392b",
+        "group": "S", "color": "#ef6a6a",
         "rule": "last_rating='high' AND select_package есть AND feedback_form_clicked НЕТ AND нет оплаты",
         "task": "Довести до клика по форме (далее переходит в S1)",
         "channel": "Автомат + менеджерская эскалация",
@@ -295,7 +297,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "S3": {
         "title": "Пригласил друга, не дошёл до формы",
-        "group": "S", "color": "#c0392b",
+        "group": "S", "color": "#ef6a6a",
         "rule": "gens=2 AND last_rating='high' AND feedback_form_clicked НЕТ AND select_package НЕТ AND нет оплаты",
         "task": "Шаг 1 — толкнуть к /packets (миграция в S2). Шаг 2 — толкнуть к форме (миграция в S1)",
         "channel": "Автомат, 2 шага",
@@ -324,7 +326,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "P1": {
         "title": "Trial-юзеры, баланс на исходе",
-        "group": "P", "color": "#16a085",
+        "group": "P", "color": "#4ecf8a",
         "rule": "купили Trial AND нет старшего пакета AND баланс ≤ 1 ролик",
         "task": "Апсейл в Бласт-подписку через спецоффер",
         "channel": "Автомат",
@@ -350,7 +352,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "P2": {
         "title": "Реферреры",
-        "group": "P", "color": "#16a085",
+        "group": "P", "color": "#4ecf8a",
         "rule": "referral_sent есть",
         "task": "Удержание лояльности, без жёсткого селла",
         "channel": "Ручная массовая, разовая по событию",
@@ -369,7 +371,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "P3": {
         "title": "Тыкуны с генерациями + high",
-        "group": "P", "color": "#16a085",
+        "group": "P", "color": "#4ecf8a",
         "rule": "purchase_intent AND нет оплаты за 24ч AND gens ≥ 1 AND last_rating='high'",
         "task": "Закрыть оплату через личный контакт",
         "channel": "Менеджер 1-1",
@@ -387,7 +389,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "P4": {
         "title": "Тыкуны базовые",
-        "group": "P", "color": "#16a085",
+        "group": "P", "color": "#4ecf8a",
         "rule": "purchase_intent AND нет оплаты за 24ч AND NOT IN P3",
         "task": "Вернуть в существующий флоу через /sendtrack или /packets",
         "channel": "Автомат",
@@ -412,7 +414,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "A1": {
         "title": "Залипли на 1-м ролике",
-        "group": "A", "color": "#e67e22",
+        "group": "A", "color": "#f0b04a",
         "rule": "gens=1 AND last_rating='high' AND referral_sent НЕТ AND survey_opened НЕТ AND нет оплаты",
         "task": "Дотянуть до отправки реферала → миграция к 2-му ролику и далее в S3",
         "channel": "Автомат",
@@ -439,7 +441,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "A2": {
         "title": "Не запустили генерацию",
-        "group": "A", "color": "#e67e22",
+        "group": "A", "color": "#f0b04a",
         "rule": "audio_uploaded есть AND gens_done=0 AND нет оплаты",
         "task": "Довести до generation_started",
         "channel": "Автомат, 2 шага",
@@ -464,7 +466,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "A3": {
         "title": "Не оценили ролик",
-        "group": "A", "color": "#e67e22",
+        "group": "A", "color": "#f0b04a",
         "rule": "gens=1 AND rate_video НЕТ AND нет оплаты",
         "task": "Получить оценку → юзер автоматически распределится дальше",
         "channel": "Автомат с персонализацией, 2 шага",
@@ -491,7 +493,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "B1": {
         "title": "Средняя оценка, не пошли дальше",
-        "group": "B", "color": "#d35400",
+        "group": "B", "color": "#f0b04a",
         "rule": "gens=1 AND last_rating='mid_low' AND survey_opened НЕТ AND нет оплаты",
         "task": "Довести до 2-й генерации",
         "channel": "Автомат",
@@ -519,7 +521,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "B2": {
         "title": "Низкая оценка, не дошли до формы",
-        "group": "B", "color": "#d35400",
+        "group": "B", "color": "#f0b04a",
         "rule": "last_rating='low' AND feedback_form_clicked НЕТ AND нет оплаты",
         "task": "Довести до клика по форме (далее ручной разбор менеджером)",
         "channel": "Автомат",
@@ -546,7 +548,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "B3": {
         "title": "Стартовали, не подписались",
-        "group": "B", "color": "#d35400",
+        "group": "B", "color": "#f0b04a",
         "rule": "start есть AND subscription_ok НЕТ AND gens_done=0 AND bot_blocked=false",
         "task": "Довести до subscription_ok",
         "channel": "Автомат",
@@ -574,7 +576,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "D1": {
         "title": "Старая база по источникам",
-        "group": "D", "color": "#9b59b6",
+        "group": "D", "color": "#9b84ee",
         "rule": "last_active < NOW() − 30д AND нет оплаты",
         "task": "Заинтересовать апдейтом и вернуть в флоу через /sendtrack",
         "channel": "Ручная массовая, по источнику",
@@ -595,7 +597,7 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
     },
     "D2": {
         "title": "Старая база, смотрели пакет, оценили high",
-        "group": "D", "color": "#9b59b6",
+        "group": "D", "color": "#9b84ee",
         "rule": "select_package есть AND last_rating='high' AND last_active < NOW() − 30д AND нет оплаты",
         "task": "Вернуть к разговору о пакетах с упоминанием обновлений",
         "channel": "Ручная массовая, малый горячий сегмент",
@@ -616,11 +618,11 @@ _TIER_SPEC: Dict[str, Dict[str, Any]] = {
 }
 
 _TIER_GROUPS = [
-    ("S", "Горячие", "Менеджер вручную, голосовые, 1-1", "#c0392b"),
-    ("P", "Спец-сегменты", "Платящие, реферреры, тыкуны", "#16a085"),
-    ("A", "Тёплые", "Автомат + персонализация", "#e67e22"),
-    ("B", "Средние", "Автомат-триггеры по оценкам", "#d35400"),
-    ("D", "Старая база", "Ручная массовая реактивация", "#9b59b6"),
+    ("S", "Горячие", "Менеджер вручную, голосовые, 1-1", "#ef6a6a"),
+    ("P", "Спец-сегменты", "Платящие, реферреры, тыкуны", "#4ecf8a"),
+    ("A", "Тёплые", "Автомат + персонализация", "#f0b04a"),
+    ("B", "Средние", "Автомат-триггеры по оценкам", "#f0b04a"),
+    ("D", "Старая база", "Ручная массовая реактивация", "#9b84ee"),
 ]
 
 # Default lifecycle rules seeded on first deploy. Each rule is created in
@@ -843,112 +845,141 @@ _BASE_HEAD = """
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Blast Admin</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script>if (window.Chart) { Chart.defaults.color = "#8d86ad"; Chart.defaults.borderColor = "rgba(255,255,255,.06)"; Chart.defaults.font.family = "Point, Segoe UI, system-ui, sans-serif"; }</script>
 <style>
   @font-face { font-family:'Point'; src:url('/admin/static/fonts/Point-Regular.ttf') format('truetype'); font-weight:400; font-style:normal; font-display:swap; }
   @font-face { font-family:'Point'; src:url('/admin/static/fonts/Point-Book.ttf') format('truetype'); font-weight:350; font-style:normal; font-display:swap; }
   @font-face { font-family:'Point'; src:url('/admin/static/fonts/PointBold.ttf') format('truetype'); font-weight:700; font-style:normal; font-display:swap; }
   @font-face { font-family:'Point'; src:url('/admin/static/fonts/Point-SemiBold.ttf') format('truetype'); font-weight:600; font-style:normal; font-display:swap; }
 
+  /* Direction «Студия» (taste-skill high-end / soft structuralism, dials 6/4/4):
+     silver-grey ground, white floating panels with one diffuse tinted shadow,
+     brand violet kept as the single accent — desaturated, no gradients, no glow. */
   :root {
-    --bg: #05010f;
-    --surface: #120b26;
-    --surface-2: #150f25;
-    --border: rgba(139,111,230,.16);
-    --border-strong: rgba(139,111,230,.34);
-    --text: #f6f5fd;
-    --text-70: rgba(246,245,253,.72);
-    --text-50: rgba(246,245,253,.52);
-    --text-35: rgba(246,245,253,.35);
-    --g-start: #8b6fe6;
-    --g-end: #5f42b9;
-    --accent: #8b6fe6;
-    --accent-soft: rgba(139,111,230,.14);
-    --ok: #34d399; --ok-bg: rgba(52,211,153,.14);
-    --warn: #fbbf24; --warn-bg: rgba(251,191,36,.14);
-    --danger: #fb7185; --danger-bg: rgba(251,113,133,.14);
-    --info: #38bdf8; --info-bg: rgba(56,189,248,.14);
-    --r-card: 16px;
-    --r-btn: 10px;
-    --r-input: 8px;
-    --r-badge: 6px;
-    --shadow: 0 12px 32px rgba(5,1,15,.45);
+    --bg: #07030f;
+    --surface: #110b20;
+    --surface-2: #1a1331;
+    --surface-3: #241b42;
+    --border: #221a3c;
+    --border-strong: #322858;
+    --text: #f2effc;
+    --text-70: #c6bfe4;
+    --text-50: #8d86ad;
+    --text-35: #6a6390;
+    --g-start: #9b84ee;
+    --g-end: #9b84ee;
+    --accent: #9b84ee;
+    --accent-strong: #7c64e0;
+    --accent-soft: rgba(155,132,238,.14);
+    --ok: #4ecf8a; --ok-bg: rgba(78,207,138,.12);
+    --warn: #f0b04a; --warn-bg: rgba(240,176,74,.14);
+    --danger: #ef6a6a; --danger-bg: rgba(239,106,106,.14);
+    --info: #5aa9ea; --info-bg: rgba(90,169,234,.14);
+    --r-card: 18px;
+    --r-btn: 999px;
+    --r-input: 10px;
+    --r-badge: 999px;
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 18px 44px -22px rgba(0,0,0,.7);
   }
 
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html { color-scheme: dark; }
-  body { font-family: 'Point', system-ui, sans-serif; max-width: 1200px; margin: 0 auto; padding: 0 1.25rem 2.5rem; background: var(--bg); color: var(--text); font-weight: 400; -webkit-font-smoothing: antialiased; }
-  h1 { margin: 1.75rem 0 1.1rem; font-weight: 700; letter-spacing: -0.01em; }
-  h2 { margin: 1.6rem 0 0.6rem; color: var(--text); font-weight: 600; font-size: 1.15em; }
-  h3 { margin: 1.2rem 0 0.5rem; color: var(--text-70); font-weight: 600; font-size: 1em; }
-  p { color: var(--text-70); }
-  code { font-family: ui-monospace, monospace; }
+  body { font-family: 'Point', 'Segoe UI', system-ui, sans-serif; max-width: 1360px; margin: 0 auto; padding: 0 2rem 3rem; background: var(--bg); color: var(--text); font-weight: 400; font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; font-variant-numeric: tabular-nums; }
+  h1 { margin: 1.6rem 0 1.1rem; font-weight: 700; font-size: 2rem; letter-spacing: -0.035em; line-height: 1; }
+  h2 { margin: 1.4rem 0 0.6rem; color: var(--text); font-weight: 600; font-size: 1.07em; letter-spacing: -0.01em; }
+  h3 { margin: 1.1rem 0 0.5rem; color: var(--text-70); font-weight: 600; font-size: 0.95em; }
+  p { color: var(--text-50); }
+  code { font-family: ui-monospace, Menlo, monospace; font-size: .92em; }
 
   @keyframes fadeUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
   @media (prefers-reduced-motion: no-preference) {
-    .card { animation: fadeUp .45s ease both; }
-    .header a, button, .btn, tr, .pagination a, input, select { transition: background .16s ease, color .16s ease, transform .12s ease, opacity .16s ease, border-color .16s ease; }
+    .card { animation: fadeUp .4s cubic-bezier(.16,1,.3,1) both; }
+    .nav a, button, .btn, tr, .pagination a, input, select { transition: background .16s ease, color .16s ease, transform .12s ease, opacity .16s ease, border-color .16s ease, box-shadow .16s ease; }
   }
 
-  /* Navigation */
-  .header { background: var(--surface-2); padding: 0.85rem 1.4rem; margin: 0 -1.25rem; display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem; border-radius: 0 0 var(--r-card) var(--r-card); border-bottom: 1px solid var(--border); }
-  .header .brand { font-weight: 700; font-size: 1.15em; margin-right: 1.25rem; text-decoration: none; background: linear-gradient(90deg, var(--g-start), var(--g-end)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
-  .header a { color: var(--text-70); text-decoration: none; padding: 6px 11px; border-radius: 999px; font-size: 0.85em; }
-  .header a:hover { background: var(--accent-soft); color: var(--text); }
-  .header a.active { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-strong); }
-  .header .search-form { margin-left: auto; display: flex; gap: 6px; }
-  .header .search-form input { padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--r-input); font-size: 0.85em; width: 180px; background: var(--surface); color: var(--text); }
+  /* Navigation: logo · pill segment · search */
+  .header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 18px 0 4px; flex-wrap: wrap; }
+  .header .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--text); font-weight: 700; font-size: 1.15em; letter-spacing: -0.02em; }
+  .header .brand svg { width: 28px; height: 28px; display: block; }
+  .header .brand small { font-weight: 400; color: var(--text-50); font-size: .78em; margin-left: 2px; }
+  .nav { display: flex; align-items: center; background: var(--surface); border-radius: 999px; padding: 3px; box-shadow: var(--shadow); gap: 2px; flex-wrap: wrap; }
+  .nav a { color: var(--text-70); text-decoration: none; padding: 7px 13px 5px; border-radius: 999px; font-size: 0.9em; white-space: nowrap; }
+  .nav a:hover { background: var(--surface-2); color: var(--text); text-decoration: none; }
+  .nav a.active { background: var(--text); color: var(--bg); font-weight: 600; }
+  .nav details { position: relative; }
+  .nav details summary { list-style: none; cursor: pointer; color: var(--text-70); padding: 7px 13px 5px; border-radius: 999px; font-size: 0.9em; }
+  .nav details summary::-webkit-details-marker { display: none; }
+  .nav details summary:hover, .nav details[open] summary { background: var(--surface-2); color: var(--text); }
+  .nav details .menu { position: absolute; right: 0; top: calc(100% + 8px); background: var(--surface); border-radius: 14px; box-shadow: var(--shadow); padding: 6px; display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 2px; z-index: 30; }
+  .nav details .menu a { border-radius: 10px; }
+  .header .search-form { display: flex; gap: 6px; }
+  .header .search-form input { padding: 8px 14px 6px; border: 1px solid transparent; border-radius: 999px; font-size: 0.9em; width: 200px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
   .header .search-form input::placeholder { color: var(--text-35); }
-  .header .search-form button { padding: 6px 12px; border: none; border-radius: var(--r-input); background: linear-gradient(90deg, var(--g-start), var(--g-end)); color: #fff; cursor: pointer; font-size: 0.85em; }
+  .header .search-form button { padding: 8px 14px 6px; }
 
-  /* Cards */
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 1.3rem 1.5rem; margin: 1rem 0; box-shadow: var(--shadow); }
+  /* Panels */
+  .card { background: var(--surface); border: 0; border-radius: var(--r-card); padding: 1.35rem 1.5rem; margin: 1.1rem 0; box-shadow: var(--shadow); }
+  .card.hero { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 12px; padding: 2.6rem 1.5rem 2.4rem; }
+  .card.hero p { margin: 0; max-width: 56ch; }
+  .card > h2 + .stage-grid, .card > h2 + .table-wrap { margin-top: .4rem; }
+  .filters { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; }
+  .filters .f { display: flex; flex-direction: column; gap: 5px; font-size: .82em; color: var(--text-50); }
+  .filters .f input, .filters .f select { min-width: 150px; }
+  .filters .spacer { flex: 1; }
+  .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .card > h2:first-child { margin-top: 0; }
 
   /* Tables */
   .table-wrap { overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; margin: 0.5rem 0; }
-  th, td { border-bottom: 1px solid var(--border); padding: 9px 12px; text-align: left; font-size: 0.9em; }
-  th { background: transparent; color: var(--text-50); font-weight: 600; text-transform: uppercase; font-size: 0.72em; letter-spacing: .04em; border-bottom: 1px solid var(--border-strong); }
-  tr:hover td { background: rgba(139,111,230,.06); }
+  th, td { border-bottom: 1px solid var(--border); padding: 9px 12px; text-align: left; font-size: 0.92em; }
+  th { background: transparent; color: var(--text-50); font-weight: 600; font-size: 0.82em; letter-spacing: .01em; border-bottom: 1px solid var(--border-strong); }
+  tr:hover td { background: rgba(255,255,255,.025); }
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
   /* Forms */
   form { display: inline; }
-  input[type=number], input[type=text], input[type=password], input[type=date], input[type=datetime-local], textarea {
-    padding: 7px 11px; border: 1px solid var(--border); border-radius: var(--r-input); font-size: 0.9em; background: var(--surface); color: var(--text); font-family: inherit;
+  input[type=number], input[type=text], input[type=password], input[type=date], input[type=datetime-local], input[type=month], textarea {
+    padding: 7px 12px; border: 1px solid var(--border-strong); border-radius: var(--r-input); font-size: 0.92em; background: var(--surface); color: var(--text); font-family: inherit;
   }
   input::placeholder, textarea::placeholder { color: var(--text-35); }
-  select { padding: 7px 11px; border: 1px solid var(--border); border-radius: var(--r-input); font-size: 0.9em; background: var(--surface); color: var(--text); font-family: inherit; }
-  input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  button, .btn { padding: 7px 15px; cursor: pointer; border: none; border-radius: var(--r-btn); font-size: 0.88em; font-family: inherit; font-weight: 500; background: linear-gradient(90deg, var(--g-start), var(--g-end)); color: #fff; }
-  button:hover, .btn:hover { opacity: .88; }
+  select { padding: 7px 12px; border: 1px solid var(--border-strong); border-radius: var(--r-input); font-size: 0.92em; background: var(--surface); color: var(--text); font-family: inherit; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button, .btn { display: inline-block; padding: 8px 16px 6px; cursor: pointer; border: none; border-radius: var(--r-btn); font-size: 0.9em; font-family: inherit; font-weight: 600; background: var(--accent-strong); color: #fff; text-decoration: none; line-height: 1.3; }
+  button:hover, .btn:hover { background: var(--accent); color: #fff; text-decoration: none; }
+  .btn-secondary, button.btn-secondary { background: var(--surface-2); color: var(--text-70); }
+  .btn-secondary:hover, button.btn-secondary:hover { background: var(--surface-3); color: var(--text); }
+  .btn-lg { padding: 16px 34px 14px; font-size: 1.12em; }
+  .btn-sm, button.btn-sm { padding: 5px 12px 3px; font-size: .82em; }
   button:active, .btn:active { transform: scale(.98); }
-  .btn-danger { background: var(--danger); color: #2a0a0a; }
-  .btn-danger:hover { background: #fca5b1; }
-  .btn-success { background: var(--ok); color: #06281c; }
-  .btn-success:hover { background: #5fe0b3; }
+  .btn-danger { background: var(--danger-bg); color: var(--danger); }
+  .btn-danger:hover { background: var(--danger); color: #fff; }
+  .btn-success { background: var(--ok-bg); color: var(--ok); }
+  .btn-success:hover { background: var(--ok); color: #07030f; }
 
   /* Badges */
-  .badge { display: inline-block; padding: 3px 9px; border-radius: var(--r-badge); font-size: 0.82em; font-weight: 600; }
+  .badge { display: inline-block; padding: 4px 10px 2px; border-radius: var(--r-badge); font-size: 0.82em; font-weight: 600; line-height: 1.3; }
   .badge-ok { background: var(--ok-bg); color: var(--ok); }
   .badge-warn { background: var(--warn-bg); color: var(--warn); }
   .badge-zero { background: var(--danger-bg); color: var(--danger); }
-  .badge-stage { background: var(--accent-soft); color: #c9b8f5; }
+  .badge-stage { background: var(--accent-soft); color: var(--accent); }
   .badge-source { background: var(--info-bg); color: var(--info); }
 
-  /* Funnel */
+  /* Funnel (legacy pages) */
   .funnel-bar-wrap { text-align: center; margin: 4px 0; }
   .funnel-bar { display: inline-flex; justify-content: space-between; align-items: center;
-                padding: 7px 18px; border-radius: var(--r-btn); color: #fff; font-size: 0.88em;
-                min-width: 140px; font-weight: 500; box-shadow: 0 4px 14px rgba(5,1,15,.35); }
+                padding: 7px 18px; border-radius: 999px; color: #fff; font-size: 0.88em;
+                min-width: 140px; font-weight: 500; }
   .funnel-bar .flabel { text-align: left; }
   .funnel-bar .fcount { font-weight: 700; margin-left: 12px; white-space: nowrap; }
 
   /* Stage mini-grid */
   .stage-grid { display: flex; flex-wrap: wrap; gap: 8px; margin: 0.6rem 0; }
-  .stage-chip { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-input); padding: 5px 12px; text-align: center; font-size: 0.85em; }
-  .stage-chip .count { font-weight: 700; color: var(--text); }
-  .stage-chip .label { color: var(--text-50); font-size: 0.8em; }
+  .stage-chip { background: var(--surface-2); border: 0; border-radius: 14px; padding: 12px 16px; text-align: left; font-size: 0.85em; min-width: 140px; display: flex; flex-direction: column-reverse; gap: 6px; }
+  .stage-chip .count { font-weight: 700; color: var(--text); font-size: 1.75em; letter-spacing: -0.02em; line-height: 1; }
+  .stage-chip .label { color: var(--text-50); font-size: 0.95em; }
 
   /* Chart container */
   .chart-row { display: flex; flex-wrap: wrap; gap: 1.5rem; align-items: flex-start; }
@@ -958,73 +989,162 @@ _BASE_HEAD = """
 
   /* Pagination */
   .pagination { display: flex; gap: 4px; align-items: center; margin: 1rem 0; flex-wrap: wrap; }
-  .pagination a, .pagination span { padding: 5px 11px; border-radius: var(--r-input); font-size: 0.9em; }
-  .pagination a { background: var(--surface); color: var(--text-70); border: 1px solid var(--border); }
-  .pagination a:hover { background: var(--accent-soft); text-decoration: none; }
-  .pagination .current { background: linear-gradient(90deg, var(--g-start), var(--g-end)); color: #fff; font-weight: 600; }
+  .pagination a, .pagination span { padding: 6px 12px 4px; border-radius: 999px; font-size: 0.9em; }
+  .pagination a { background: var(--surface-2); color: var(--text-70); }
+  .pagination a:hover { background: var(--border); text-decoration: none; }
+  .pagination .current { background: var(--text); color: var(--bg); font-weight: 600; }
 
-  /* Stat tiles (dashboard KPI cards) */
+  /* Segmented pills (period / channel / bucket toggles) */
+  .seg { display: inline-flex; background: var(--surface-2); border-radius: 999px; padding: 3px; gap: 2px; }
+  .seg a, .seg span { padding: 6px 14px 4px; border-radius: 999px; color: var(--text-50); font-size: .9em; text-decoration: none; line-height: 1.3; }
+  .seg a:hover { color: var(--text); text-decoration: none; }
+  .seg .on { background: var(--text); color: var(--bg); font-weight: 600; }
+
+  /* Stat tiles (legacy KPI cards) */
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 0.5rem 0 1rem; }
-  .stat-tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 1rem 1.2rem; }
-  .stat-tile .stat-label { color: var(--text-50); font-size: 0.78em; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
-  .stat-tile .stat-value { font-size: 1.7em; font-weight: 700; }
-  .stat-tile.accent .stat-value { background: linear-gradient(90deg, var(--g-start), var(--g-end)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+  .stat-tile { background: var(--surface-2); border: 0; border-radius: 14px; padding: 1rem 1.2rem; }
+  .stat-tile .stat-label { color: var(--text-50); font-size: 0.82em; margin-bottom: 6px; }
+  .stat-tile .stat-value { font-size: 1.7em; font-weight: 700; letter-spacing: -0.02em; }
+  .stat-tile.accent .stat-value { color: var(--accent); }
 
+  /* Breadcrumbs: the one way out of a sub-section */
+  .crumbs { display: flex; align-items: center; gap: 8px; margin: 1.4rem 0 -0.6rem; font-size: .9em; color: var(--text-35); }
+  .crumbs a { color: var(--text-50); text-decoration: none; display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px 3px 8px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow); }
+  .crumbs a::before { content: "←"; color: var(--text-35); }
+  .crumbs a + .sep + a::before { content: ""; }
+  .crumbs a:hover { color: var(--text); text-decoration: none; }
+  .crumbs .sep { color: var(--text-35); }
+  .crumbs + h1, .crumbs + .pm-head { margin-top: 1.4rem; }
+  .crumbs + .card { margin-top: 1.4rem; }
+  .donut { position: relative; flex: 1 1 0; min-width: 120px; max-width: 280px; aspect-ratio: 1; align-self: center; }
+  .donut canvas { position: absolute; inset: 0; }
+  /* Forms as fields */
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field > span { font-size: .84em; color: var(--text-50); }
+  .field input[type=text], .field input[type=number], .field input[type=date], .field input[type=datetime-local], .field textarea, .field select { width: 100%; }
+  .field textarea { min-height: 120px; resize: vertical; line-height: 1.5; }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  /* Radio cards */
+  .choice-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+  .choice { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 14px 16px 12px; border-radius: 14px; background: var(--surface-2); cursor: pointer; border: 1px solid transparent; }
+  .choice input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+  .choice b { font-weight: 600; }
+  .choice small { color: var(--text-50); font-size: .84em; }
+  .choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
+  .choice:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .choice-body { display: none; grid-column: 1 / -1; padding: 6px 2px 2px; }
+  .choice-body.open { display: block; }
+  /* Telegram-like preview */
+  .tg-preview { background: #0e1621; border-radius: 16px; padding: 18px; min-height: 200px; display: flex; flex-direction: column; gap: 10px; }
+  .tg-bubble { align-self: flex-start; max-width: 100%; background: #182533; color: #e9edf1; border-radius: 14px 14px 14px 4px; padding: 10px 12px; font-size: .95em; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+  .tg-bubble .media { background: #223344; color: #8aa0b5; border-radius: 10px; height: 120px; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; font-size: .85em; }
+  .tg-buttons { display: flex; flex-direction: column; gap: 4px; max-width: 100%; }
+  .tg-buttons span { background: rgba(255,255,255,.08); color: #6fb2ff; text-align: center; padding: 8px 10px 6px; border-radius: 8px; font-size: .9em; }
+  .tg-preview .who { color: #8aa0b5; font-size: .8em; }
+  .sticky { position: sticky; top: 16px; }
+  /* User card */
+  .u-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+  .u-head .avatar { width: 52px; height: 52px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 1.3em; flex: none; }
+  .u-head h1 { margin: 0 0 4px; font-size: 1.6rem; }
+  .u-head .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: .92em; }
+  .kv dt { color: var(--text-50); } .kv dd { margin: 0; }
+  .note { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; }
+  .note small { color: var(--text-35); display: block; margin-top: 4px; }
+  .linkish { background: none; color: var(--danger); padding: 0; border: 0; font-size: .85em; cursor: pointer; font-weight: 500; }
+  .linkish:hover { background: none; color: var(--danger); text-decoration: underline; }
+  /* Product analytics card: styles spliced in from admin_product_card.CARD_CSS below */
+  __PRODUCT_CARD_CSS__
   /* Info box */
-  .info-box { background: var(--accent-soft); border-left: 3px solid var(--accent); padding: 1rem 1.2rem; border-radius: 0 var(--r-input) var(--r-input) 0; margin: 1rem 0; font-size: 0.9em; line-height: 1.65; color: var(--text-70); }
-  .info-box code { background: rgba(139,111,230,.18); color: var(--text); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+  .info-box { background: var(--surface-2); padding: 1rem 1.2rem; border-radius: 14px; margin: 1rem 0; font-size: 0.92em; line-height: 1.65; color: var(--text-70); }
+  .status-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 2px; border-radius: 999px; font-size: .82em; font-weight: 600; background: var(--surface-2); color: var(--text-70); line-height: 1.3; }
+  .status-pill i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; display: inline-block; }
+  .status-pill.ok { color: var(--ok); } .status-pill.warn { color: var(--warn); } .status-pill.bad { color: var(--danger); } .status-pill.info { color: var(--info); }
+  .info-box code { background: var(--accent-soft); color: var(--text); padding: 2px 6px; border-radius: 6px; font-size: 0.9em; }
 
   /* Flash / misc */
-  .flash { padding: .7rem 1rem; border-radius: var(--r-input); margin: .75rem 0; font-size: .9em; }
+  .flash { padding: .7rem 1rem; border-radius: 12px; margin: .75rem 0; font-size: .9em; }
   .flash-ok { background: var(--ok-bg); color: var(--ok); }
   .flash-err { background: var(--danger-bg); color: var(--danger); }
   .meta { color: var(--text-50); font-size: .85em; }
 
   /* Responsive */
-  @media (max-width: 768px) {
-    body { padding: 0 0.75rem 1.5rem; }
-    .header { padding: 0.6rem; margin: 0 -0.75rem; border-radius: 0; }
-    .header .search-form input { width: 120px; }
+  @media (max-width: 900px) {
+    body { padding: 0 1rem 1.5rem; }
+    .header { padding-top: 12px; }
+    .nav { order: 3; width: 100%; }
+    .header .search-form input { width: 140px; }
     .chart-row { flex-direction: column; }
     .chart-box { flex: auto; width: 100%; }
     th, td { padding: 6px 8px; font-size: 0.8em; }
   }
 </style></head><body>
 <div class="header">
-  <a href="/admin/" class="brand">Blast Admin</a>
-  <a href="/admin/">Dashboard</a>
-  <a href="/admin/clients">Clients</a>
-  <a href="/admin/subscriptions">Subscriptions</a>
-  <a href="/admin/tiers">Tiers</a>
-  <a href="/admin/broadcasts">Broadcasts</a>
-  <a href="/admin/lifecycle">Triggers</a>
-  <a href="/admin/users">Users</a>
-  <a href="/admin/activity">Activity</a>
-  <a href="/admin/transactions">Transactions</a>
-  <a href="/admin/payments">Payments</a>
-  <a href="/admin/sources">Sources</a>
-  <a href="/admin/jobs">Jobs</a>
-  <a href="/admin/runs">Runs</a>
-  <a href="/admin/ops">Ops</a>
-  <a href="/admin/season">Season</a>
-  <a href="/admin/render-nodes">Render Nodes</a>
-  <a href="/admin/partners">Partners</a>
-  <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Assets</a>
-  <a href="/admin/llm-workers">LLM Workers</a>
-  <a href="/admin/runtime-config">Runtime Config</a>
-  <a href="/admin/audit">Audit</a>
-  <a href="/admin/obs/grafana/" target="_blank" rel="noopener noreferrer">Grafana</a>
+  <a href="/admin/" class="brand"><svg viewBox="0 0 59.9939 59.9939" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M40.0775 0.143134C41.8887 -1.66229 38.9564 14.0991 42.0393 19.9667C43.4025 22.5615 60.1717 29.2646 59.9925 30.0771C59.771 31.0819 21.8522 41.1943 22.1242 41.6683C22.4869 42.3002 28.6817 44.3039 28.8939 45.6943C29.106 47.0846 19.404 60.0837 19.132 59.9935C18.86 59.9032 20.7311 43.4375 17.6504 39.646C14.5697 35.8546 0.9496 30.6496 0.0598437 29.8967C-1.75358 28.362 38.2546 18.8044 37.5056 18.2516C34.6925 16.1753 30.7019 15.6699 30.8288 13.7742C30.9195 12.4201 39.6462 0.572985 40.0775 0.143134Z" fill="url(#blast_star_g)"/><defs><linearGradient id="blast_star_g" x1="41.1656" y1="-18.1821" x2="11.1191" y2="67.9303" gradientUnits="userSpaceOnUse"><stop stop-color="#F6F5FD"/><stop offset="0.495192" stop-color="#8B6FE6"/><stop offset="1" stop-color="#5F42B9"/></linearGradient></defs></svg>Бласт<small>админ</small></a>
+  <nav class="nav">
+    <a href="/admin/" data-nav="/admin/">Обзор</a>
+    <a href="/admin/clients" data-nav="/admin/clients /admin/users">Клиенты</a>
+    <a href="/admin/subscriptions" data-nav="/admin/subscriptions">Подписки</a>
+    <a href="/admin/sources" data-nav="/admin/sources">Источники</a>
+    <a href="/admin/broadcasts" data-nav="/admin/broadcasts">Рассылки</a>
+    <a href="/admin/jobs" data-nav="/admin/jobs">Джобы</a>
+    <a href="/admin/render-nodes" data-nav="/admin/render-nodes">Рендер</a>
+    <a href="/admin/partners" data-nav="/admin/partners">Партнёры</a>
+    <details>
+      <summary>Ещё ▾</summary>
+      <div class="menu">
+        <a href="/admin/tiers">Тарифы</a>
+        <a href="/admin/lifecycle">Триггеры</a>
+        <a href="/admin/users">Пользователи</a>
+        <a href="/admin/activity">Активность</a>
+        <a href="/admin/transactions">Транзакции</a>
+        <a href="/admin/payments">Платежи</a>
+        <a href="/admin/runs">Прогоны</a>
+        <a href="/admin/ops">Ops</a>
+        <a href="/admin/season">Сезон</a>
+        <a href="/admin/assets/" target="_blank" rel="noopener noreferrer">Ассеты ↗</a>
+        <a href="/admin/llm-workers">LLM-воркеры</a>
+        <a href="/admin/runtime-config">Runtime config</a>
+        <a href="/admin/audit">Аудит</a>
+        <a href="/admin/obs/grafana/" target="_blank" rel="noopener noreferrer">Grafana ↗</a>
+      </div>
+    </details>
+  </nav>
   <form class="search-form" action="/admin/users" method="get">
-    <input type="text" name="q" placeholder="Username / tg_id...">
-    <button type="submit">Search</button>
+    <input type="text" name="q" placeholder="Найти клиента…">
+    <button type="submit">Найти</button>
   </form>
 </div>
+<script>
+(function(){
+  var path = location.pathname.replace(/\\/+$/, '/') || '/admin/';
+  var links = document.querySelectorAll('.nav a[data-nav]');
+  var best = null;
+  var bestLen = 0;
+  links.forEach(function(a){ a.getAttribute('data-nav').split(' ').forEach(function(p){ if (path === p || (p !== '/admin/' && path.indexOf(p) === 0)) { if (p.length > bestLen) { best = a; bestLen = p.length; } } }); });
+  if (best) best.classList.add('active');
+  document.addEventListener('click', function(e){ document.querySelectorAll('.nav details[open]').forEach(function(d){ if (!d.contains(e.target)) d.removeAttribute('open'); }); });
+})();
+</script>
 """
+_BASE_HEAD = _BASE_HEAD.replace("  __PRODUCT_CARD_CSS__", admin_product_card.CARD_CSS)
+
 _BASE_FOOT = "</body></html>"
 
 
-def _page(title: str, body: str) -> str:
-    return f"{_BASE_HEAD}<h1>{title}</h1>{body}{_BASE_FOOT}"
+def _page(title: str, body: str, back: "tuple[str, str] | list[tuple[str, str]] | None" = None) -> str:
+    """Wrap a page. `back` = (label, href) or a list of them — rendered as one
+    breadcrumb trail above the heading, so leaving a sub-section always looks
+    and sits the same: crumbs → title → content."""
+    crumbs = ""
+    if back:
+        items = [back] if isinstance(back, tuple) else list(back)
+        crumbs = '<nav class="crumbs">' + '<span class="sep">/</span>'.join(
+            f'<a href="{html_mod.escape(href, quote=True)}">{html_mod.escape(label)}</a>' for label, href in items
+        ) + "</nav>"
+    heading = f"<h1>{title}</h1>" if title else ""
+    return f"{_BASE_HEAD}{crumbs}{heading}{body}{_BASE_FOOT}"
 
 
 def _stage_label(stage: str) -> str:
@@ -1089,15 +1209,15 @@ def _pagination_html(page: int, total_pages: int, base_url: str = "?") -> str:
 def _seconds_to_age(seconds: int) -> str:
     sec = max(0, int(seconds))
     if sec < 60:
-        return f"{sec}s"
-    mins, rem = divmod(sec, 60)
+        return f"{sec} с"
+    mins, _rem = divmod(sec, 60)
     if mins < 60:
-        return f"{mins}m {rem}s"
+        return f"{mins} мин"
     hours, mins = divmod(mins, 60)
     if hours < 24:
-        return f"{hours}h {mins}m"
+        return f"{hours} ч {mins} мин" if mins else f"{hours} ч"
     days, hours = divmod(hours, 24)
-    return f"{days}d {hours}h"
+    return f"{days} д {hours} ч" if hours else f"{days} д"
 
 
 def _runtime_dt_text(value: object) -> str:
@@ -1758,7 +1878,7 @@ def build_app(
         if users_bucket not in {"week", "month"}:
             users_bucket = "month"
 
-        ratings_raw, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info, revenue_series, subs_summary, users_data, product_activity = await asyncio.gather(
+        ratings_raw, funnel_raw, stage_counts, users, recent, payments_summary, period_stats_row, metrics_data, windows_nodes_data, llm_workers_data, webhook_info, revenue_series, subs_summary, users_data, product_source, spend_rows = await asyncio.gather(
             credits_db.rating_distribution(),
             credits_db.funnel_reach_counts(),
             state_store.list_stage_counts(),
@@ -1773,104 +1893,36 @@ def build_app(
             credits_db.revenue_timeseries(bucket=revenue_bucket, periods=revenue_periods),
             credits_db.subscriptions_summary(),
             credits_db.users_timeseries(bucket=users_bucket),
-            credits_db.product_activity(channel, period_from, period_to),
+            credits_db.product_metrics_source(channel, period_from, period_to),
+            credits_db.list_marketing_spend(),
         )
 
-        product_events = {row["event"]: row for row in product_activity["byEvent"]}
-
-        def _product_ids(*names: str) -> set[str]:
-            result: set[str] = set()
-            for name in names:
-                result.update((product_events.get(name) or {}).get("identities") or set())
-            return result
-
-        def _product_count(*names: str) -> int:
-            return sum(int((product_events.get(name) or {}).get("events") or 0) for name in names)
-
-        if channel == "site":
-            product_steps = [
-                ("Вошли в приложение", _product_ids("app_entry", "signup_started", "signup_completed")),
-                ("Завершили регистрацию", _product_ids("signup_completed")),
-                ("Загрузили трек", _product_ids("track_uploaded")),
-                ("Запустили генерацию", _product_ids("generation_started")),
-                ("Получили ролики", _product_ids("generation_completed")),
-                ("Оплатили", _product_ids("plan_purchased")),
-            ]
-            generated_count = _product_count("generation_completed")
-        elif channel == "bot":
-            product_steps = [
-                ("Запустили бота", _product_ids("start")),
-                ("Прошли подписку", _product_ids("subscription_ok")),
-                ("Загрузили трек", _product_ids("audio_uploaded")),
-                ("Запустили генерацию", _product_ids("generation_started")),
-                ("Получили ролики", _product_ids("generation_done")),
-                ("Оплатили", _product_ids("payment_confirmed", "subscription_charged", "admin_activate")),
-            ]
-            generated_count = _product_count("generation_done")
+        product_source.subscriptions = subs_summary if isinstance(subs_summary, dict) else {}
+        try:
+            active_days = int(request.query_params.get("active", product_metrics.ACTIVE_WINDOW_DAYS))
+        except ValueError:
+            active_days = product_metrics.ACTIVE_WINDOW_DAYS
+        product_metrics_data = product_metrics.compute(
+            product_source, channel=channel, date_from=period_from, date_to=period_to, now=now_utc,
+            active_days=active_days,
+        )
+        if active_period == "custom":
+            period_label = f"{period_from:%d.%m.%Y} — {(period_to - _td(days=1)):%d.%m.%Y}"
         else:
-            product_steps = [
-                ("Вошли в продукт", _product_ids("app_entry", "signup_started", "signup_completed", "start")),
-                ("Активировались", _product_ids("signup_completed", "subscription_ok")),
-                ("Загрузили трек", _product_ids("track_uploaded", "audio_uploaded")),
-                ("Запустили генерацию", _product_ids("generation_started")),
-                ("Получили ролики", _product_ids("generation_completed", "generation_done")),
-                ("Оплатили", _product_ids("plan_purchased", "payment_confirmed", "subscription_charged", "admin_activate")),
-            ]
-            generated_count = _product_count("generation_completed", "generation_done")
-
-        product_first = len(product_steps[0][1]) if product_steps else 0
-        product_funnel_html = ""
-        previous = product_first
-        for label, identities in product_steps:
-            count = len(identities)
-            from_start = count / product_first * 100 if product_first else 0
-            from_prev = count / previous * 100 if previous else 0
-            product_funnel_html += (
-                '<div class="funnel-bar-wrap">'
-                f'<div class="funnel-bar" style="width:{max(15, from_start):.0f}%;background:#5f42b9">'
-                f'<span class="flabel">{label}</span>'
-                f'<span class="fcount">{count} <small>({from_prev:.0f}% от пред.)</small></span>'
-                '</div></div>'
-            )
-            previous = count or previous
-
-        channel_labels = {"site": "Сайт", "bot": "Бот", "all": "Вместе"}
-        channel_buttons = " ".join(
-            f'<a href="/admin/?channel={key}&period={active_period}" class="btn" style="'
-            + ("background:linear-gradient(90deg,#8b6fe6,#5f42b9);font-weight:700" if channel == key else "background:#1c1436;color:#c3bce0")
-            + f'">{label}</a>'
-            for key, label in channel_labels.items()
+            period_label = _PERIOD_PRESETS[active_period][0].lower()
+        spend_flash_param = str(request.query_params.get("spend", "")).strip()
+        spend_flash = (
+            '<div class="flash flash-ok">Расходы сохранены</div>' if spend_flash_param == "ok"
+            else f'<div class="flash flash-err">{html_mod.escape(spend_flash_param)}</div>' if spend_flash_param else ""
         )
-        product_recent_rows = "".join(
-            f'<tr><td>{html_mod.escape(row["channel"])}</td>'
-            f'<td>{html_mod.escape(row["identity"])}</td>'
-            f'<td>{html_mod.escape(_event_label(row["event"]))}</td>'
-            f'<td>{html_mod.escape(row["created_at"])}</td></tr>'
-            for row in product_activity["recent"]
+        product_card = admin_product_card.render_product_card(
+            product_metrics_data,
+            channel=channel,
+            active_period=active_period,
+            period_label=period_label,
+            spend_rows=spend_rows if isinstance(spend_rows, list) else [],
+            spend_flash=spend_flash,
         )
-        product_card = f"""
-        <div class="card" style="border-color:rgba(139,111,230,.55)">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-            <div><h2 style="margin:0">Аналитика продукта · {channel_labels[channel]}</h2>
-              <p style="margin:5px 0 0">Действия сайта и Telegram-бота разделены по источнику; «Вместе» дедуплицирует пользователя по Telegram ID.</p>
-            </div>
-            <div style="display:flex;gap:6px">{channel_buttons}</div>
-          </div>
-          <div class="stat-grid" style="margin-top:18px">
-            <div class="stat-tile accent"><div class="stat-label">Активные пользователи</div><div class="stat-value">{int(product_activity['activeUsers'])}</div></div>
-            <div class="stat-tile"><div class="stat-label">Все действия</div><div class="stat-value">{int(product_activity['events'])}</div></div>
-            <div class="stat-tile"><div class="stat-label">Запуски генерации</div><div class="stat-value">{_product_count('generation_started')}</div></div>
-            <div class="stat-tile"><div class="stat-label">Готовые ролики</div><div class="stat-value">{generated_count}</div></div>
-          </div>
-          <div class="chart-row">
-            <div class="funnel-box"><h3>Воронка выбранного источника</h3>{product_funnel_html or '<p>Нет данных</p>'}</div>
-            <div class="funnel-box"><h3>Последние действия</h3><div class="table-wrap"><table>
-              <tr><th>Источник</th><th>Пользователь</th><th>Действие</th><th>Дата</th></tr>
-              {product_recent_rows or '<tr><td colspan="4">Нет данных</td></tr>'}
-            </table></div></div>
-          </div>
-        </div>
-        """
 
         # ── Rating distribution (3 buckets matching data we log: low/5-6/7-10) ──
         rating_map = {r["rating"]: r["count"] for r in ratings_raw}
@@ -1898,19 +1950,17 @@ def build_app(
                     prev = counts[idx - 1][1] or 1
                     step_lbl = f"{cnt / prev * 100:.0f}% от пред."
                 out += (
-                    f'<div class="funnel-bar-wrap" title="{step_lbl}">'
-                    f'<div class="funnel-bar" style="width:{bar_pct:.0f}%;background:{color}">'
-                    f'<span class="flabel">{_event_label(ev)}</span>'
-                    f'<span class="fcount">{cnt} <small>({conv_from_start:.0f}%)</small></span>'
-                    f'</div></div>\n'
+                    f'<div class="pm-funnel-row" title="{step_lbl}"><div>{_event_label(ev)}</div>'
+                    f'<div class="bar"><i style="width:{max(1.0, conv_from_start):.0f}%;background:{color}"></i></div>'
+                    f'<div class="n">{cnt}<span>{conv_from_start:.0f}%</span></div></div>'
                 )
-            return out or '<p style="color:#9a90bf">Нет данных</p>'
+            return out or '<p style="color:#8d86ad">Нет данных</p>'
 
         funnel_cards_html = ""
         for group_title, group_color, group_events in _FUNNEL_GROUPS:
             funnel_cards_html += (
-                f'<div class="card" style="flex:1;min-width:280px">'
-                f'<h3 style="margin-top:0">Воронка · {group_title}</h3>'
+                f'<div class="pm-panel" style="flex:1;min-width:280px;gap:10px">'
+                f'<div class="ph"><b>{group_title}</b></div>'
                 f'{_funnel_group_html(list(group_events), group_color)}'
                 f'</div>'
             )
@@ -1954,8 +2004,7 @@ def build_app(
         # ── Period pills HTML ──
         period_pills_html = ""
         for _pk, (_plbl, _, _) in _PERIOD_PRESETS.items():
-            _pill_style = "background:linear-gradient(90deg,#8b6fe6,#5f42b9);font-weight:700" if active_period == _pk else "background:#1c1436;color:#c3bce0"
-            period_pills_html += f'<a href="/admin/?period={_pk}&channel={channel}" class="btn" style="{_pill_style}">{_plbl}</a> '
+            period_pills_html += f'<a href="/admin/?period={_pk}&channel={channel}" class="{"on" if active_period == _pk else ""}">{_plbl}</a>'
         period_custom_badge = f'<span class="badge badge-stage">{html_mod.escape(date_from_param)} — {html_mod.escape(date_to_param)}</span>' if active_period == "custom" else ""
         period_date_from_val = date_from_param or period_from.strftime("%Y-%m-%d")
         period_date_to_val = date_to_param or (period_to - _td(days=1)).strftime("%Y-%m-%d")
@@ -1982,17 +2031,16 @@ def build_app(
 
             metrics_card = f"""
             <div class="card">
-            <h2>Очередь и джобы</h2>
-            <div class="stage-grid">
-              <div class="stage-chip"><div class="count">{q_new}</div><div class="label">NEW</div></div>
-              <div class="stage-chip"><div class="count" style="color:#f39c12">{q_queued}</div><div class="label">QUEUED</div></div>
-              <div class="stage-chip"><div class="count" style="color:#3498db">{q_running}</div><div class="label">RUNNING</div></div>
-              <div class="stage-chip"><div class="count" style="color:#27ae60">{q_succeeded}</div><div class="label">SUCCEEDED</div></div>
-              <div class="stage-chip"><div class="count" style="color:#e74c3c">{q_failed}</div><div class="label">FAILED</div></div>
+            <div class="toolbar"><h2 style="margin:0">Очередь генераций</h2><a href="/admin/jobs?min_age_seconds=0">все задачи →</a></div>
+            <div class="stage-grid" style="margin-top:12px">
+              <div class="stage-chip"><div class="count">{q_new}</div><div class="label">новых</div></div>
+              <div class="stage-chip"><div class="count" style="color:#f0b04a">{q_queued}</div><div class="label">в очереди</div></div>
+              <div class="stage-chip"><div class="count" style="color:#5aa9ea">{q_running}</div><div class="label">выполняются</div></div>
+              <div class="stage-chip"><div class="count" style="color:#4ecf8a">{q_succeeded}</div><div class="label">готово</div></div>
+              <div class="stage-chip"><div class="count" style="color:#ef6a6a">{q_failed}</div><div class="label">с ошибкой</div></div>
             </div>
-            {f'<h3 style="margin-top:1rem">LLM inflight</h3><div class="stage-grid">{llm_chips}</div>' if llm_chips else ''}
-            {f'<h3 style="margin-top:1rem">Celery workers</h3><div class="table-wrap"><table><tr><th>Worker</th><th>Active</th><th>Reserved</th></tr>{worker_rows}</table></div>' if worker_rows else ''}
-            <p style="margin-top:8px"><a href="/admin/jobs?min_age_seconds=0">Все active jobs &rarr;</a></p>
+            {f'<div class="pm-section"><b>Запросы к нейросетям сейчас</b></div><div class="stage-grid" style="margin:0">{llm_chips}</div>' if llm_chips else ''}
+            {f'<div class="pm-section"><b>Воркеры</b></div><div class="table-wrap"><table><tr><th>Воркер</th><th>Активных</th><th>Зарезервировано</th></tr>{worker_rows}</table></div>' if worker_rows else ''}
             </div>
             """
         else:
@@ -2010,7 +2058,7 @@ def build_app(
             llm_worker_html += (
                 f"<div class='stage-chip'>"
                 f"<div class='count'>{inflight}/{max_inflight}</div>"
-                f"<div class='label'>{html_mod.escape(str(worker_name))} ({enabled})</div>"
+                f"<div class='label'>{html_mod.escape(str(worker_name))}{'' if enabled == 'on' else ' · выключен'}</div>"
                 f"</div>"
             )
 
@@ -2021,19 +2069,18 @@ def build_app(
         alert_configured = bool(str(getattr(settings, "alert_telegram_bot_token", "") or "").strip()) and bool(
             str(getattr(settings, "alert_telegram_chat_id", "") or "").strip()
         )
+        webhook_ok = not webhook_last_error
         health_card = f"""
         <div class="card">
-        <h2>Runtime Health</h2>
-        <div class="stage-grid">
-          <div class="stage-chip"><div class="count">{maintenance_state}</div><div class="label">Maintenance</div></div>
-          <div class="stage-chip"><div class="count">{'ON' if alert_configured else 'OFF'}</div><div class="label">Alert bot</div></div>
-          <div class="stage-chip"><div class="count">{len(effective_nodes)}</div><div class="label">Windows nodes</div></div>
-          <div class="stage-chip"><div class="count">{webhook_pending}</div><div class="label">Webhook pending</div></div>
+        <div class="toolbar"><h2 style="margin:0">Состояние системы</h2><a href="/admin/ops">операции →</a></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+          <span class="status-pill {'warn' if maintenance_state == 'ON' else 'ok'}"><i></i>режим обслуживания {'включён' if maintenance_state == 'ON' else 'выключен'}</span>
+          <span class="status-pill {'ok' if alert_configured else 'warn'}"><i></i>алерты в Telegram {'настроены' if alert_configured else 'не настроены'}</span>
+          <span class="status-pill {'ok' if effective_nodes else 'bad'}"><i></i>рендер-нод: {len(effective_nodes)}</span>
+          <span class="status-pill {'ok' if webhook_ok else 'bad'}"><i></i>доставка: {html_mod.escape(str(settings.tg_delivery_mode or 'polling'))}{f' · очередь {webhook_pending}' if webhook_pending else ''}</span>
         </div>
-        <p style="margin-top:8px">Webhook mode: <strong>{html_mod.escape(str(settings.tg_delivery_mode or 'polling'))}</strong>{f' · URL: <code>{webhook_url}</code>' if webhook_url else ''}</p>
-        {f"<p style='color:#c0392b'><strong>Webhook error:</strong> {webhook_last_error}</p>" if webhook_last_error else "<p style='color:#1e8449'>Webhook error: none</p>"}
-        <p>Windows pool: {', '.join(html_mod.escape(str(x)) for x in effective_nodes) if effective_nodes else 'нет данных'}</p>
-        {f"<div class='stage-grid'>{llm_worker_html}</div>" if llm_worker_html else "<p>LLM workers: нет данных</p>"}
+        {f"<p style='color:var(--danger);margin-top:10px'>Ошибка вебхука: {webhook_last_error}</p>" if webhook_last_error else ""}
+        {f"<div class='pm-section'><b>Нейросети</b><span>занято / лимит</span></div><div class='stage-grid' style='margin:0'>{llm_worker_html}</div>" if llm_worker_html else ""}
         </div>
         """
 
@@ -2047,11 +2094,11 @@ def build_app(
         )
         rev_week_btn = (
             f'<a href="/admin/?rev_bucket=week" class="btn" '
-            f'style="{"background:linear-gradient(90deg,#8b6fe6,#5f42b9);font-weight:700" if revenue_bucket == "week" else "background:#1c1436;color:#c3bce0"}">Неделя</a>'
+            f'style="{"background:#f2effc;color:#07030f;font-weight:600" if revenue_bucket == "week" else "background:#1a1331;color:#8d86ad"}">Неделя</a>'
         )
         rev_month_btn = (
             f'<a href="/admin/?rev_bucket=month" class="btn" '
-            f'style="{"background:linear-gradient(90deg,#8b6fe6,#5f42b9);font-weight:700" if revenue_bucket == "month" else "background:#1c1436;color:#c3bce0"}">Месяц</a>'
+            f'style="{"background:#f2effc;color:#07030f;font-weight:600" if revenue_bucket == "month" else "background:#1a1331;color:#8d86ad"}">Месяц</a>'
         )
 
         visible_rub = int(payments_summary.get('visible_revenue_rub', 0))
@@ -2061,12 +2108,12 @@ def build_app(
         <div class="card">
           <h2>Подписки <a href="/admin/subscriptions" style="font-size:0.6em">подробнее →</a></h2>
           <div class="stage-grid">
-            <div class="stage-chip"><div class="count" style="color:#27ae60">{subs_summary.get('active_cnt', 0)}</div><div class="label">активны</div></div>
-            <div class="stage-chip"><div class="count" style="color:#e74c3c">{subs_summary.get('paused_cnt', 0)}</div><div class="label">на паузе</div></div>
+            <div class="stage-chip"><div class="count" style="color:#4ecf8a">{subs_summary.get('active_cnt', 0)}</div><div class="label">активны</div></div>
+            <div class="stage-chip"><div class="count" style="color:#ef6a6a">{subs_summary.get('paused_cnt', 0)}</div><div class="label">на паузе</div></div>
             <div class="stage-chip"><div class="count">{subs_summary.get('due_today_cnt', 0)}</div><div class="label">сегодня к списанию ({int(subs_summary.get('due_today_rub', 0)):,}&nbsp;&#8381;)</div></div>
             <div class="stage-chip"><div class="count">{subs_summary.get('due_7d_cnt', 0)}</div><div class="label">7 дней ({int(subs_summary.get('due_7d_rub', 0)):,}&nbsp;&#8381;)</div></div>
-            <div class="stage-chip"><div class="count" style="color:#27ae60">{subs_summary.get('recurrent_ok_30d', 0)}</div><div class="label">списано за 30д ({int(subs_summary.get('recurrent_revenue_30d', 0)):,}&nbsp;&#8381;)</div></div>
-            <div class="stage-chip"><div class="count" style="color:#e74c3c">{subs_summary.get('recurrent_fail_30d', 0)}</div><div class="label">фейлов за 30д</div></div>
+            <div class="stage-chip"><div class="count" style="color:#4ecf8a">{subs_summary.get('recurrent_ok_30d', 0)}</div><div class="label">списано за 30д ({int(subs_summary.get('recurrent_revenue_30d', 0)):,}&nbsp;&#8381;)</div></div>
+            <div class="stage-chip"><div class="count" style="color:#ef6a6a">{subs_summary.get('recurrent_fail_30d', 0)}</div><div class="label">фейлов за 30д</div></div>
           </div>
         </div>
         """
@@ -2085,83 +2132,93 @@ def build_app(
         )
         users_week_btn = (
             f'<a href="/admin/?users_bucket=week" class="btn" '
-            f'style="{"background:linear-gradient(90deg,#8b6fe6,#5f42b9);font-weight:700" if users_bucket == "week" else "background:#1c1436;color:#c3bce0"}">Неделя</a>'
+            f'style="{"background:#f2effc;color:#07030f;font-weight:600" if users_bucket == "week" else "background:#1a1331;color:#8d86ad"}">Неделя</a>'
         )
         users_month_btn = (
             f'<a href="/admin/?users_bucket=month" class="btn" '
-            f'style="{"background:linear-gradient(90deg,#8b6fe6,#5f42b9);font-weight:700" if users_bucket == "month" else "background:#1c1436;color:#c3bce0"}">Месяц</a>'
+            f'style="{"background:#f2effc;color:#07030f;font-weight:600" if users_bucket == "month" else "background:#1a1331;color:#8d86ad"}">Месяц</a>'
         )
 
+        users_seg = (
+            '<div class="seg">'
+            f'<a href="/admin/?users_bucket=week&channel={channel}&period={active_period}" class="{"on" if users_bucket == "week" else ""}">Недели</a>'
+            f'<a href="/admin/?users_bucket=month&channel={channel}&period={active_period}" class="{"on" if users_bucket == "month" else ""}">Месяц</a>'
+            '</div>'
+        )
+        rev_seg = (
+            '<div class="seg">'
+            f'<a href="/admin/?rev_bucket=week&channel={channel}&period={active_period}" class="{"on" if revenue_bucket == "week" else ""}">Недели</a>'
+            f'<a href="/admin/?rev_bucket=month&channel={channel}&period={active_period}" class="{"on" if revenue_bucket == "month" else ""}">Месяц</a>'
+            '</div>'
+        )
         body = f"""
         {product_card}
-        <div class="card">
-          <h2>Пользователи: {users_active:,} активных
-            <span style="font-size:0.6em;color:#8a80b3;font-weight:400">
-              ({users_total:,} зарегистрировались всего, {users_blocked:,} отписались)
-            </span>
-          </h2>
-          <div style="display:flex;gap:6px;margin-bottom:8px">{users_week_btn} {users_month_btn}
-            <span style="color:#8a80b3;align-self:center;margin-left:8px">{users_bucket_lbl}</span>
+
+        <div class="pm-grid" style="margin-top:18px">
+          <div class="pm-panel" style="grid-column: span 8; gap: 12px">
+            <div class="ph"><b>Выручка по времени <span>{rev_bucket_lbl.lower()}</span></b>{rev_seg}</div>
+            <div style="height:230px"><canvas id="revenueChart"></canvas></div>
           </div>
-          <canvas id="usersChart" height="80"></canvas>
-        </div>
-
-        <div class="card">
-          <h2>Выручка: {visible_rub:,}&nbsp;&#8381;</h2>
-          <div style="display:flex;gap:6px;margin-bottom:8px">{rev_week_btn} {rev_month_btn}
-            <span style="color:#8a80b3;align-self:center;margin-left:8px">{rev_bucket_lbl}</span>
+          <div class="pm-panel" style="grid-column: span 4; gap: 12px">
+            <div class="ph"><b>Оценки видео <span>{total_ratings} всего</span></b></div>
+            {"<p class='meta'>Оценок пока нет</p>" if total_ratings == 0 else f"""<div style="display:flex;align-items:center;gap:22px;flex:1;min-height:0">
+              <div class="donut"><canvas id="ratingsChart"></canvas></div>
+              <div class="stack" style="gap:10px;flex:0 0 auto;min-width:90px">
+                <div class="pm-kpi"><div class="l"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{_RATING_COLORS['high']};margin-right:6px"></span>7–10</div><div class="v" style="font-size:1.6em">{int(rating_map.get('high', 0)) / total_ratings * 100:.0f}%</div><div class="s">{int(rating_map.get('high', 0))} оценок</div></div>
+                <div class="pm-kpi"><div class="l"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{_RATING_COLORS['mid_low']};margin-right:6px"></span>5–6</div><div class="v" style="font-size:1.6em">{int(rating_map.get('mid_low', 0)) / total_ratings * 100:.0f}%</div><div class="s">{int(rating_map.get('mid_low', 0))}</div></div>
+                <div class="pm-kpi"><div class="l"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{_RATING_COLORS['low']};margin-right:6px"></span>до 5</div><div class="v" style="font-size:1.6em">{int(rating_map.get('low', 0)) / total_ratings * 100:.0f}%</div><div class="s">{int(rating_map.get('low', 0))}</div></div>
+              </div>
+            </div>"""}
           </div>
-          <canvas id="revenueChart" height="80"></canvas>
+          <div class="pm-panel" style="grid-column: span 8; gap: 12px">
+            <div class="ph"><b>Приток и отток <span>{users_bucket_lbl.lower()} · {users_total:,} всего, {users_blocked:,} отписались</span></b>{users_seg}</div>
+            <div style="height:230px"><canvas id="usersChart"></canvas></div>
+          </div>
+          <div class="pm-panel" style="grid-column: span 4; gap: 12px">
+            <div class="ph"><b>Подписки</b><a href="/admin/subscriptions">все →</a></div>
+            <div class="pm-kpis" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
+              <div class="pm-kpi"><div class="l">Активных</div><div class="v acc">{subs_summary.get('active_cnt', 0)}</div><div class="s">на паузе {subs_summary.get('paused_cnt', 0)}</div></div>
+              <div class="pm-kpi"><div class="l">Списаний за 30 дней</div><div class="v">{subs_summary.get('recurrent_ok_30d', 0)}</div><div class="s">{int(subs_summary.get('recurrent_revenue_30d', 0)):,} ₽ · не прошло {subs_summary.get('recurrent_fail_30d', 0)}</div></div>
+              <div class="pm-kpi"><div class="l">Сегодня к списанию</div><div class="v">{subs_summary.get('due_today_cnt', 0)}</div><div class="s">{int(subs_summary.get('due_today_rub', 0)):,} ₽</div></div>
+              <div class="pm-kpi"><div class="l">За 7 дней</div><div class="v">{subs_summary.get('due_7d_cnt', 0)}</div><div class="s">{int(subs_summary.get('due_7d_rub', 0)):,} ₽</div></div>
+            </div>
+          </div>
         </div>
 
-        <div class="card">
-          <h2>Оценки видео</h2>
-          {"<p>Нет данных</p>" if total_ratings == 0 else f'<div style="max-width:280px;margin:0 auto"><canvas id="ratingsChart"></canvas></div><p style="text-align:center;color:#8a80b3;font-size:0.85em">Всего оценок: {total_ratings}</p>'}
-        </div>
-
-        <div style="display:flex;gap:12px;flex-wrap:wrap">
+        <div class="pm-section" style="margin-top:26px"><b>Путь клиента</b><span>по всем событиям за всё время</span></div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap">
           {funnel_cards_html}
         </div>
 
-        <div class="card">
-          <h2>Прочие события</h2>
-          <div class="stage-grid">{other_rows or '<p>Нет данных</p>'}</div>
-          <p style="color:#8a80b3;font-size:0.85em;margin-top:8px">«Сообщение от менеджера» (admin_dm) — это исходящее сообщение, отправленное оператором через карточку клиента (/admin/users/&lt;tg_id&gt; → форма «Сообщение»).</p>
-        </div>
-
-        {subs_card}
-
-        <div class="card">
-          <h2>Текущий этап (live)</h2>
-          <div class="stage-grid">{stage_html if stage_html else '<p>Нет данных</p>'}</div>
-        </div>
-
-        {health_card}
-
-        <div class="card">
-          <h2>Статистика по периодам</h2>
-          <div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-            {period_pills_html}
+        <div class="pm-grid" style="margin-top:18px">
+          <div class="pm-panel" style="grid-column: span 7; gap: 12px">
+            <div class="ph"><b>Где сейчас клиенты <span>стадия диалога в боте, live</span></b></div>
+            <div class="stage-grid" style="margin:0">{stage_html if stage_html else '<p class="meta">Нет данных</p>'}</div>
           </div>
-          <form method="get" action="/admin/" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-            <input type="hidden" name="channel" value="{channel}">
-            <label>С: <input type="date" name="date_from" value="{period_date_from_val}"></label>
-            <label>По: <input type="date" name="date_to" value="{period_date_to_val}"></label>
-            <button type="submit">Показать</button>
-            {period_custom_badge}
-          </form>
-          <div class="table-wrap">
+          <div class="pm-panel" style="grid-column: span 5; gap: 12px">
+            <div class="ph"><b>Прочие события</b></div>
+            <div class="stage-grid" style="margin:0">{other_rows or '<p class="meta">Нет данных</p>'}</div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:18px">
+          <div class="toolbar">
+            <h2 id="periods" style="margin:0">Сводка за период</h2>
+            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+              <div class="seg">{period_pills_html}</div>
+              <form method="get" action="/admin/" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+                <input type="hidden" name="channel" value="{channel}">
+                <input type="date" name="date_from" value="{period_date_from_val}">
+                <span class="meta">—</span>
+                <input type="date" name="date_to" value="{period_date_to_val}">
+                <button type="submit" class="btn-secondary">Показать</button>
+              </form>
+            </div>
+          </div>
+          <div class="table-wrap" style="margin-top:10px">
           <table>
             <tr>
-              <th>Новые пользователи</th>
-              <th>Отписки</th>
-              <th>Стартовали</th>
-              <th>Генерация старт</th>
-              <th>Генерация done</th>
-              <th>Генерация fail</th>
-              <th>Интент покупки</th>
-              <th>Оплат подтвержд.</th>
-              <th>Выручка</th>
+              <th>Новые</th><th>Отписки</th><th>Запустили бота</th><th>Начали генерацию</th><th>Получили ролик</th><th>Ошибки генерации</th><th>Смотрели тарифы</th><th>Оплат</th><th>Выручка</th>
             </tr>
             <tr>
               <td>{int(period_stats_row.get('users_new', 0))}</td>
@@ -2179,22 +2236,7 @@ def build_app(
         </div>
 
         {metrics_card}
-
-        <div class="card">
-          <h2>Последние пользователи</h2>
-          <div class="table-wrap">
-          <table><tr><th>Username</th><th>tg_id</th><th>Credits</th><th>Updated</th></tr>
-          {user_rows}</table>
-          </div>
-        </div>
-
-        <div class="card">
-          <h2>Последние действия</h2>
-          <div class="table-wrap">
-          <table><tr><th>tg_id</th><th>Событие</th><th>Детали</th><th>Дата</th></tr>
-          {act_rows}</table>
-          </div>
-        </div>
+        {health_card}
 
         <script>
         (function() {{
@@ -2208,14 +2250,14 @@ def build_app(
                 datasets: [{{
                   label: "Выручка (₽)",
                   data: revData,
-                  backgroundColor: "#3498db",
-                  borderRadius: 4,
+                  backgroundColor: "#9b84ee",
+                  borderRadius: 6,
                 }}]
               }},
               options: {{
-                responsive: true,
+                responsive: true, maintainAspectRatio: false,
                 plugins: {{ legend: {{ display: false }} }},
-                scales: {{ y: {{ beginAtZero: true }} }}
+                scales: {{ y: {{ beginAtZero: true, grid: {{ color: "rgba(255,255,255,.06)" }} }}, x: {{ grid: {{ display: false }} }} }}
               }}
             }});
           }}
@@ -2231,21 +2273,21 @@ def build_app(
                   {{
                     label: "Приток",
                     data: usersInflow,
-                    backgroundColor: "#27ae60",
-                    borderRadius: 4,
+                    backgroundColor: "#4ecf8a",
+                    borderRadius: 6,
                   }},
                   {{
                     label: "Отток",
                     data: usersOutflow,
-                    backgroundColor: "#e74c3c",
-                    borderRadius: 4,
+                    backgroundColor: "#ef6a6a",
+                    borderRadius: 6,
                   }}
                 ]
               }},
               options: {{
-                responsive: true,
-                plugins: {{ legend: {{ position: "top" }} }},
-                scales: {{ y: {{ beginAtZero: true }} }}
+                responsive: true, maintainAspectRatio: false,
+                plugins: {{ legend: {{ position: "top", align: "end", labels: {{ boxWidth: 10, boxHeight: 10, usePointStyle: true }} }} }},
+                scales: {{ y: {{ beginAtZero: true, grid: {{ color: "rgba(255,255,255,.06)" }} }}, x: {{ grid: {{ display: false }} }} }}
               }}
             }});
           }}
@@ -2257,26 +2299,47 @@ def build_app(
               datasets: [{
                 data: ''' + rating_chart_data + ''',
                 backgroundColor: ''' + rating_chart_colors + ''',
-                borderWidth: 2,
-                borderColor: "#fff",
+                borderWidth: 3,
+                borderColor: "#110b20",
               }]
             },
             options: {
               responsive: true,
-              maintainAspectRatio: true,
-              aspectRatio: 1.4,
-              plugins: {
-                legend: { position: "bottom", labels: { padding: 12, font: { size: 12 } } },
-              }
+              maintainAspectRatio: false,
+              cutout: "68%",
+              plugins: { legend: { display: false } }
             }
           });
           '''}
         }})();
         </script>
         """
-        return _page("Blast Admin", body)
+        return _page("", body)
 
     # ── Operator toolkit ───────────────────────────────────────────────
+
+    @app.post("/admin/marketing-spend")
+    async def marketing_spend_save(
+        request: Request,
+        month: str = Form(...),
+        spend_rub: int = Form(...),
+        source: str = Form(""),
+        note: str = Form(""),
+        channel: str = Form("bot"),
+        period: str = Form("30d"),
+        back_to: str = Form("dashboard"),
+        _user: str = Depends(_check_auth),
+    ) -> RedirectResponse:
+        if back_to == "sources":
+            back = f"/admin/sources?period={url_quote(period)}"
+        else:
+            back = f"/admin/?channel={url_quote(channel)}&period={url_quote(period)}"
+        try:
+            await credits_db.set_marketing_spend(month, int(spend_rub), source=source, note=note, actor=_user)
+        except Exception as e:
+            log.warning("marketing_spend_save_failed month=%s err=%r", month, e)
+            return RedirectResponse(url=back + "&spend=" + url_quote(f"Не сохранено: {e}"), status_code=303)
+        return RedirectResponse(url=back + "&spend=ok", status_code=303)
 
     @app.get("/admin/ops", response_class=HTMLResponse)
     async def ops_page(request: Request, _user: str = Depends(_check_auth)) -> str:
@@ -2381,8 +2444,8 @@ def build_app(
         )
 
         body = f"""
-        {f'<div class="card"><p style="color:#1e8449"><strong>OK:</strong> {ok_msg}</p></div>' if ok_msg else ''}
-        {f'<div class="card"><p style="color:#c0392b"><strong>Error:</strong> {err_msg}</p></div>' if err_msg else ''}
+        {f'<div class="card"><p style="color:#4ecf8a"><strong>OK:</strong> {ok_msg}</p></div>' if ok_msg else ''}
+        {f'<div class="card"><p style="color:#ef6a6a"><strong>Error:</strong> {err_msg}</p></div>' if err_msg else ''}
 
         <div class="card">
           <h2>Admin-only Smoke Checks</h2>
@@ -2404,7 +2467,7 @@ def build_app(
             <div class="stage-chip"><div class="count">{webhook_pending}</div><div class="label">pending</div></div>
           </div>
           {f'<p>URL: <code>{webhook_url}</code></p>' if webhook_url else '<p>URL: нет данных</p>'}
-          {f"<p style='color:#c0392b'><strong>Last error:</strong> {webhook_error}</p>" if webhook_error else "<p style='color:#1e8449'>Last error: none</p>"}
+          {f"<p style='color:#ef6a6a'><strong>Last error:</strong> {webhook_error}</p>" if webhook_error else "<p style='color:#4ecf8a'>Last error: none</p>"}
         </div>
 
         <div class="card">
@@ -2445,7 +2508,7 @@ def build_app(
 
         <div class="card">
           <h2>Runtime / Outbox</h2>
-          {f"<p style='color:#c0392b'><strong>Runtime error:</strong> {runtime_error}</p>" if runtime_error else ""}
+          {f"<p style='color:#ef6a6a'><strong>Runtime error:</strong> {runtime_error}</p>" if runtime_error else ""}
           <h3>Run statuses</h3>
           {_count_grid(run_status_counts)}
           <h3>Outbox statuses</h3>
@@ -2527,20 +2590,20 @@ def build_app(
 <style>
  @font-face {{ font-family:'Point'; src:url('/admin/static/fonts/Point-Regular.ttf') format('truetype'); font-weight:400; font-display:swap; }}
  @font-face {{ font-family:'Point'; src:url('/admin/static/fonts/PointBold.ttf') format('truetype'); font-weight:700; font-display:swap; }}
- body{{font-family:'Point',system-ui,sans-serif;max-width:720px;margin:32px auto;padding:0 16px;background:#05010f;color:#f6f5fd}}
+ body{{font-family:'Point',system-ui,sans-serif;max-width:720px;margin:32px auto;padding:0 16px;background:#07030f;color:#f2effc}}
  h1{{margin-bottom:8px}}
- a{{color:#8b6fe6}}
- form{{display:flex;flex-direction:column;gap:14px;background:#120b26;padding:18px;border-radius:12px;border:1px solid rgba(139,111,230,.16)}}
+ a{{color:#9b84ee}}
+ form{{display:flex;flex-direction:column;gap:14px;background:#110b20;padding:18px;border-radius:12px;border:1px solid #221a3c}}
  label{{font-weight:600;font-size:14px}}
- input,select{{padding:8px 10px;font-size:15px;border:1px solid rgba(139,111,230,.24);border-radius:8px;background:#0d0620;color:#f6f5fd;font-family:inherit}}
- button{{padding:10px 14px;background:linear-gradient(90deg,#8b6fe6,#5f42b9);color:#fff;border:0;border-radius:8px;font-size:15px;cursor:pointer;align-self:flex-start;font-family:inherit}}
+ input,select{{padding:8px 10px;font-size:15px;border:1px solid #322858;border-radius:8px;background:#1a1331;color:#f2effc;font-family:inherit}}
+ button{{padding:10px 14px;background:linear-gradient(90deg,#9b84ee,#9b84ee);color:#fff;border:0;border-radius:8px;font-size:15px;cursor:pointer;align-self:flex-start;font-family:inherit}}
  button:hover{{opacity:.88}}
  .meta{{display:grid;grid-template-columns:160px 1fr;gap:6px 12px;margin:16px 0;font-size:14px}}
  .meta b{{color:rgba(246,245,253,.55)}}
  .flash{{padding:10px 14px;border-radius:8px;margin:12px 0;font-size:14px}}
  .flash-ok{{background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.4);color:#34d399}}
  .flash-err{{background:rgba(251,113,133,.14);border:1px solid rgba(251,113,133,.4);color:#fb7185}}
- .nav a{{margin-right:14px;color:#8b6fe6;text-decoration:none}}
+ .nav a{{margin-right:14px;color:#9b84ee;text-decoration:none}}
 </style>
 </head><body>
 <div class="nav">
@@ -2548,7 +2611,7 @@ def build_app(
   <a href="/admin/ops">Ops</a>
 </div>
 <h1>Season — Hooks S1</h1>
-<p style="color:#c3bce0;margin-top:0">Тумблер фазы сезона. Запись идёт в Redis под <code>{html_mod.escape(settings.season_redis_prefix)}</code>; tg_bot_botapi читает значение при каждом рендере меню.</p>
+<p style="color:#c6bfe4;margin-top:0">Тумблер фазы сезона. Запись идёт в Redis под <code>{html_mod.escape(settings.season_redis_prefix)}</code>; tg_bot_botapi читает значение при каждом рендере меню.</p>
 
 {f'<div class="flash flash-ok">{ok_msg}</div>' if ok_msg else ''}
 {f'<div class="flash flash-err">{err_msg}</div>' if err_msg else ''}
@@ -2724,8 +2787,8 @@ def build_app(
         body = f"""
         <div class="card">
         <h2>Donor restart control</h2>
-        {f"<p style='color:#1e8449'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
-        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err_msg}</p>" if err_msg else ""}
+        {f"<p style='color:#4ecf8a'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
+        {f"<p style='color:#ef6a6a'><strong>Ошибка:</strong> {err_msg}</p>" if err_msg else ""}
         <p><strong>Enabled:</strong> {'yes' if restart_enabled else 'no'}<br>
            <strong>Donor host:</strong> <code>{html_mod.escape(donor_host or '—')}</code><br>
            <strong>Donor URL:</strong> <code>{html_mod.escape(donor_url or '—')}</code><br>
@@ -2735,7 +2798,7 @@ def build_app(
               onsubmit="return confirm('Restart donor and run canary?');">
           <button type="submit" class="btn-danger"{restart_btn_disabled}>{restart_btn_label}</button>
         </form>
-        <p style="margin-top:8px;color:#c3bce0;font-size:0.88em">
+        <p style="margin-top:8px;color:#c6bfe4;font-size:0.88em">
           Запуск идет в фоне через <code>scripts/windows_node_rollout.py</code>.
           Повторный старт блокируется, пока текущий run не завершится.
         </p>
@@ -2749,14 +2812,14 @@ def build_app(
         <p><strong>started_at:</strong> {restart_started or '—'} &nbsp;|&nbsp;
            <strong>finished_at:</strong> {restart_finished or '—'}</p>
         <p><strong>summary:</strong> {restart_summary or '—'}</p>
-        {f"<p style='color:#c0392b'><strong>error:</strong> {restart_error}</p>" if restart_error else ""}
+        {f"<p style='color:#ef6a6a'><strong>error:</strong> {restart_error}</p>" if restart_error else ""}
         <p><strong>command:</strong> <code>{restart_cmd or '—'}</code></p>
-        <pre style="white-space:pre-wrap;max-height:360px;overflow:auto;background:#0d0620;padding:12px;border-radius:6px;font-size:0.82em">{restart_log_html}</pre>
+        <pre style="white-space:pre-wrap;max-height:360px;overflow:auto;background:#1a1331;padding:12px;border-radius:6px;font-size:0.82em">{restart_log_html}</pre>
         </div>
 
         <div class="card">
         <h3>Runtime pool</h3>
-        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {pool_err}</p>" if pool_err else ""}
+        {f"<p style='color:#ef6a6a'><strong>Ошибка:</strong> {pool_err}</p>" if pool_err else ""}
         <p><strong>runtime key:</strong> <code>{html_mod.escape(runtime_key)}</code><br>
            <strong>runtime urls:</strong> {runtime_urls_html}<br>
            <strong>effective urls:</strong> {effective_urls_html}</p>
@@ -2768,7 +2831,7 @@ def build_app(
 
         <div class="card">
         <h3>Donor probe</h3>
-        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {donor_probe_err}</p>" if donor_probe_err else ""}
+        {f"<p style='color:#ef6a6a'><strong>Ошибка:</strong> {donor_probe_err}</p>" if donor_probe_err else ""}
         <p><strong>root:</strong> {int(donor_probe.get('root', 0) or 0)} &nbsp;|&nbsp;
            <strong>render:</strong> {int(donor_probe.get('render', 0) or 0)} &nbsp;|&nbsp;
            <strong>jobs:</strong> {int(donor_probe.get('jobs', 0) or 0)}</p>
@@ -2776,7 +2839,7 @@ def build_app(
 
         <div class="card">
         <h3>Timeweb Windows servers</h3>
-        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {twc_err}</p>" if twc_err else ""}
+        {f"<p style='color:#ef6a6a'><strong>Ошибка:</strong> {twc_err}</p>" if twc_err else ""}
         <div class="table-wrap">
         <table><tr><th>ID</th><th>Name</th><th>Status</th><th>IPv4</th><th>Updated</th></tr>
         {twc_rows if twc_rows else '<tr><td colspan="5">Нет данных (или TWC_TOKEN не задан)</td></tr>'}</table>
@@ -2845,7 +2908,7 @@ def build_app(
             stage = stages_map.get(u["tg_id"], "—")
             stage_lbl = _stage_label(stage) if stage != "—" else "—"
             src = u.get("source", "")
-            src_cell = f'<a href="/admin/sources/{url_quote(src, safe="")}" class="badge badge-source">{html_mod.escape(src)}</a>' if src else '<span style="color:#4a4270">—</span>'
+            src_cell = f'<a href="/admin/sources/{url_quote(src, safe="")}" class="badge badge-source">{html_mod.escape(src)}</a>' if src else '<span style="color:#4a4470">—</span>'
             rows += (
                 f"<tr><td><a href='/admin/users/{u['tg_id']}'>{uname}</a></td>"
                 f"<td>{u['tg_id']}</td>"
@@ -2888,7 +2951,7 @@ def build_app(
 
         # Source
         source = await credits_db.get_user_source(tg_id)
-        source_badge = f'<span class="badge badge-source">{html_mod.escape(source)}</span>' if source else '<span style="color:#9a90bf">direct</span>'
+        source_badge = f'<span class="badge badge-source">{html_mod.escape(source)}</span>' if source else '<span style="color:#8d86ad">direct</span>'
 
         # Package options
         pkg_options = "".join(f'<option value="{v}">{lbl}</option>' for v, lbl in _PACKAGES.items())
@@ -2904,7 +2967,7 @@ def build_app(
         tier_spec = _TIER_SPEC.get(user_tier) if user_tier else None
         tier_badge = (
             f'<a href="/admin/tiers?tier={user_tier}" class="badge" '
-            f'style="background:{tier_spec["color"]};color:white;text-decoration:none">'
+            f'style="background:color-mix(in srgb, {tier_spec["color"]} 18%, transparent);color:{tier_spec["color"]};text-decoration:none">'
             f'{user_tier} — {html_mod.escape(tier_spec["title"])}</a>'
             if tier_spec else
             ('<span class="badge badge-stage">' + html_mod.escape(user_tier) + '</span>' if user_tier
@@ -2913,19 +2976,19 @@ def build_app(
         tag_badges = " ".join(
             f'<span class="badge badge-source">{html_mod.escape(t)}'
             f' <a href="#" onclick="document.getElementById(\'rmtag-{html_mod.escape(t, quote=True)}\').submit();return false" '
-            f'style="color:#c0392b;margin-left:4px;text-decoration:none">&times;</a></span>'
+            f'style="color:#ef6a6a;margin-left:4px;text-decoration:none">&times;</a></span>'
             f'<form id="rmtag-{html_mod.escape(t, quote=True)}" method="post" '
             f'action="/admin/users/{tg_id}/tags/remove" style="display:none">'
             f'<input type="hidden" name="tag" value="{html_mod.escape(t, quote=True)}"></form>'
             for t in tags
         )
         notes_html = "".join(
-            f'<div style="border-left:3px solid #3498db;padding:6px 10px;margin:0.5rem 0;background:#0d0620">'
+            f'<div style="border-left:3px solid #5aa9ea;padding:6px 10px;margin:0.5rem 0;background:#1a1331">'
             f'<div>{html_mod.escape(n["note"])}</div>'
-            f'<small style="color:#c3bce0">{n["created_at"]} · {html_mod.escape(n["created_by"] or "—")} '
+            f'<small style="color:#c6bfe4">{n["created_at"]} · {html_mod.escape(n["created_by"] or "—")} '
             f'· <form method="post" action="/admin/users/{tg_id}/notes/{n["id"]}/delete" style="display:inline" '
             f'onsubmit="return confirm(\'Удалить заметку?\')">'
-            f'<button style="background:none;color:#c0392b;padding:0;font-size:0.8em;cursor:pointer;border:none">удалить</button>'
+            f'<button style="background:none;color:#ef6a6a;padding:0;font-size:0.8em;cursor:pointer;border:none">удалить</button>'
             f'</form></small></div>'
             for n in notes
         )
@@ -2947,10 +3010,10 @@ def build_app(
         for p in payments_hist:
             st = str(p["status"] or "").upper()
             color = {
-                "CONFIRMED": "#27ae60", "AUTHORIZED": "#3498db",
-                "CHARGE_FAILED": "#c0392b", "REJECTED": "#c0392b",
-                "REFUNDED": "#756d97", "CANCELED": "#756d97",
-            }.get(st, "#746b96")
+                "CONFIRMED": "#4ecf8a", "AUTHORIZED": "#5aa9ea",
+                "CHARGE_FAILED": "#ef6a6a", "REJECTED": "#ef6a6a",
+                "REFUNDED": "#8d86ad", "CANCELED": "#8d86ad",
+            }.get(st, "#8d86ad")
             kind = "↻ авто" if p["is_recurrent"] else "разовый"
             pay_rows += (
                 f"<tr><td>{p['created_at']}</td>"
@@ -2974,14 +3037,14 @@ def build_app(
               <h3>Активная подписка</h3>
               <p>Пакет: <b>{html_mod.escape(active_sub['package'])}</b> ·
                  Сумма: <b>{active_sub['amount_rub']}₽</b> ·
-                 След. списание: <b style="color:#16a085">{nc_str}</b> ·
+                 След. списание: <b style="color:#4ecf8a">{nc_str}</b> ·
                  Retries: {active_sub.get('charge_retries', 0)} ·
                  RebillId: <code>{html_mod.escape(rb_masked)}</code></p>
               <form method="post" action="/admin/subscriptions/{active_sub['id']}/charge" style="display:inline"
                     onsubmit="return confirm('Запустить ручное списание ПРЯМО СЕЙЧАС? Карта будет реально списана.')">
                 <button type="submit" class="btn-success">Списать сейчас (тест)</button>
               </form>
-              <a href="/admin/subscriptions" class="btn" style="background:#1c1436;color:#c3bce0">Все подписки →</a>
+              <a href="/admin/subscriptions" class="btn" style="background:#1a1331;color:#8d86ad">Все подписки →</a>
             </div>
             """
 
@@ -3001,10 +3064,10 @@ def build_app(
             tier_html = ""
             if f.get("rule_tier"):
                 tspec = _TIER_SPEC.get(f["rule_tier"])
-                bg = (tspec or {}).get("color", "#8a80b3")
+                bg = (tspec or {}).get("color", "#8d86ad")
                 tier_html = f'<span class="badge" style="background:{bg};color:white">{f["rule_tier"]}</span>'
             else:
-                tier_html = '<span style="color:#9a90bf">—</span>'
+                tier_html = '<span style="color:#8d86ad">—</span>'
             status_badge = {
                 "sent": '<span class="badge badge-ok">отпр</span>',
                 "blocked": '<span class="badge badge-zero">блок</span>',
@@ -3021,134 +3084,144 @@ def build_app(
                 f"</tr>"
             )
 
+        initials = (user["username"] or str(tg_id))[:2].upper()
+        pay_status_ru = {"CONFIRMED": "оплачен", "AUTHORIZED": "авторизован", "CHARGE_FAILED": "не прошёл", "REJECTED": "отклонён", "REFUNDED": "возврат", "CANCELED": "отменён", "NEW": "создан"}
+        pay_rows = ""
+        for pmt in payments_hist:
+            st_key = str(pmt["status"] or "").upper()
+            cls = {"CONFIRMED": "badge-ok", "AUTHORIZED": "badge-source", "CHARGE_FAILED": "badge-zero", "REJECTED": "badge-zero"}.get(st_key, "badge-stage")
+            pay_rows += (
+                f"<tr><td>{pmt['created_at']}</td><td><b>{pmt['amount_rub']} ₽</b></td><td>{html_mod.escape(_PACKAGES.get(str(pmt['package']), str(pmt['package'])))}</td>"
+                f"<td>{'автосписание' if pmt['is_recurrent'] else 'разовый'}</td>"
+                f"<td><span class='badge {cls}'>{pay_status_ru.get(st_key, st_key.lower())}</span></td>"
+                f"<td><code style='font-size:0.8em'>{html_mod.escape(pmt['order_id'])}</code></td></tr>"
+            )
+        notes_html = "".join(
+            f'<div class="note"><div>{html_mod.escape(n["note"])}</div>'
+            f'<small>{n["created_at"]} · {html_mod.escape(n["created_by"] or "—")} · '
+            f'<form method="post" action="/admin/users/{tg_id}/notes/{n["id"]}/delete" style="display:inline" onsubmit="return confirm(\'Удалить заметку?\')">'
+            f'<button class="linkish">удалить</button></form></small></div>'
+            for n in notes
+        )
+        sub_line = ""
+        if active_sub:
+            nc = active_sub.get("next_charge_at")
+            nc_str = nc.strftime("%d.%m.%Y") if hasattr(nc, "strftime") else "—"
+            sub_line = f"""
+              <div class="row" style="justify-content:space-between;background:var(--ok-bg);border-radius:12px;padding:10px 14px">
+                <div><b style="color:var(--ok)">Подписка активна</b> · {html_mod.escape(_PACKAGES.get(str(active_sub['package']), str(active_sub['package'])))} · {active_sub['amount_rub']} ₽/мес · следующее списание {nc_str}</div>
+                <form method="post" action="/admin/subscriptions/{active_sub['id']}/charge" style="display:inline" onsubmit="return confirm('Списать прямо сейчас? Карта будет реально списана.')"><button type="submit" class="btn-secondary btn-sm">Списать сейчас</button></form>
+              </div>"""
         body = f"""
-        <p><a href="/admin/users">&laquo; Все пользователи</a> |
-           <a href="/admin/clients">Clients</a></p>
         <div class="card">
-        <h2>{html_mod.escape(uname)} (id: {tg_id})</h2>
-        <p>Credits: <strong>{user['credits']}</strong> |
-           Health: <span class="badge {health_class}">{health_label}</span> |
-           Tier: {tier_badge} |
-           Этап: <span class="badge badge-stage">{stage_lbl}</span> |
-           Источник: {source_badge} |
-           Created: {user['created_at']} | Updated: {user['updated_at']}</p>
-        <p>Генераций всего: <b>{metrics['gens_done']}</b> · за 30д: {metrics['gens_done_30d']} ·
-           Последняя: {metrics['last_gen_at'] or '—'}</p>
-        <p>Выручка: <b>{metrics['revenue_rub']}₽</b>
-           (бот: {metrics.get('revenue_bot', 0)}₽, ручная: {metrics.get('revenue_manual', 0)}₽) ·
-           Оплат через бота: <b>{metrics['paid_orders']}</b></p>
-        </div>
-
-        <div class="card">
-          <h3>Покупки</h3>
-          {_purchases_html(purchases)}
-        </div>
-
-        {sub_card_html}
-
-        <div class="card">
-          <h3>История платежей (бот)</h3>
-          <div class="table-wrap">
-          <table><tr><th>Дата</th><th>Сумма</th><th>Пакет</th><th>Тип</th><th>Статус</th><th>Order</th></tr>
-          {pay_rows if pay_rows else '<tr><td colspan="6">Платежей через бота пока нет</td></tr>'}</table>
+          <div class="u-head">
+            <div class="row" style="gap:16px;align-items:flex-start">
+              <div class="avatar">{html_mod.escape(initials)}</div>
+              <div>
+                <h1>{html_mod.escape(uname)}</h1>
+                <div class="meta">id {tg_id} · с нами с {user['created_at']} · последняя активность {user['updated_at']}</div>
+                <div class="badges">
+                  <span class="badge {health_class}">{health_label}</span>
+                  {tier_badge}
+                  <span class="badge badge-stage">{stage_lbl}</span>
+                  {source_badge}
+                </div>
+              </div>
+            </div>
+            <div class="pm-kpis" style="grid-template-columns: repeat(4, minmax(120px, auto)); gap: 12px 26px">
+              <div class="pm-kpi"><div class="l">Баланс</div><div class="v acc" style="font-size:1.7em">{user['credits']}</div><div class="s">кредитов</div></div>
+              <div class="pm-kpi"><div class="l">Роликов</div><div class="v" style="font-size:1.7em">{metrics['gens_done']}</div><div class="s">за 30 дн — {metrics['gens_done_30d']}</div></div>
+              <div class="pm-kpi"><div class="l">Выручка</div><div class="v" style="font-size:1.7em">{f"{metrics['revenue_rub']:,}".replace(",", " ")} ₽</div><div class="s">бот {f"{metrics.get('revenue_bot', 0):,}".replace(",", " ")} · вручную {f"{metrics.get('revenue_manual', 0):,}".replace(",", " ")}</div></div>
+              <div class="pm-kpi"><div class="l">Оплат</div><div class="v" style="font-size:1.7em">{metrics['paid_orders']}</div><div class="s">последний ролик {metrics['last_gen_at'] or '—'}</div></div>
+            </div>
           </div>
         </div>
 
-        <div class="card">
-          <h3>Теги</h3>
-          <div style="margin-bottom:0.5rem">{tag_badges or '<span style="color:#9a90bf">нет</span>'}</div>
-          <form method="post" action="/admin/users/{tg_id}/tags/add" style="display:inline">
-            <input type="text" name="tag" placeholder="vip, artist, agency..." style="width:200px" required>
-            <button type="submit">+ тег</button>
-          </form>
-        </div>
-
-        <div class="card">
-          <h3>Написать пользователю от бота</h3>
-          <form method="post" action="/admin/users/{tg_id}/message">
-            <textarea name="text" rows="3" style="width:100%;font-family:inherit"
-              placeholder="HTML-текст сообщения..." required></textarea>
-            <div style="margin-top:0.5rem">
-              <label>Parse:
-                <select name="parse_mode">
-                  <option value="HTML" selected>HTML</option>
-                  <option value="MARKDOWN">Markdown</option>
-                  <option value="">plain</option>
-                </select>
-              </label>
-              <button type="submit" class="btn-success"
-                onclick="return confirm('Отправить сообщение пользователю от имени бота?')">Отправить</button>
+        <div class="pm-grid">
+          <div style="grid-column: span 8" class="stack" >
+            <div class="pm-panel">
+              <div class="ph"><b>Покупки</b></div>
+              {sub_line}
+              {_purchases_html({**purchases, 'active_subscription': None} if active_sub else purchases)}
             </div>
-          </form>
-        </div>
+            <div class="pm-panel">
+              <div class="ph"><b>Платежи через бота</b></div>
+              <div class="table-wrap"><table><tr><th>Дата</th><th>Сумма</th><th>Пакет</th><th>Тип</th><th>Статус</th><th>Заказ</th></tr>
+              {pay_rows if pay_rows else '<tr><td colspan="6">Платежей через бота пока нет</td></tr>'}</table></div>
+            </div>
+            <div class="pm-panel">
+              <div class="ph"><b>Ручная выручка</b><span>наличные, инвойсы — учитываются в выручке клиента</span></div>
+              {_manual_payments_html(tg_id, manual_payments)}
+              <form method="post" action="/admin/users/{tg_id}/manual-payment/add" class="row">
+                <input type="number" name="amount_rub" placeholder="сумма, ₽" required style="width:130px" min="-1000000" max="10000000">
+                <input type="text" name="note" placeholder="комментарий" style="flex:1;min-width:200px">
+                <button type="submit" class="btn-secondary">Добавить</button>
+              </form>
+            </div>
+            <div class="pm-panel">
+              <div class="ph"><b>Действия</b><span>последние 50</span></div>
+              <div class="table-wrap"><table><tr><th>Событие</th><th>Детали</th><th>Когда</th></tr>
+              {''.join(f"<tr><td>{_event_label(a_['event'])}</td><td class='meta'>{html_mod.escape(str(a_['detail'] or ''))[:120]}</td><td>{a_['created_at']}</td></tr>" for a_ in acts) if acts else '<tr><td colspan="3">Нет данных</td></tr>'}</table></div>
+            </div>
+            <div class="pm-panel">
+              <div class="ph"><b>Автосообщения за 7 дней</b><span>что из триггеров дошло до клиента</span></div>
+              <div class="table-wrap"><table><tr><th>Когда</th><th>Тир</th><th>Правило</th><th>Статус</th><th>Ошибка</th></tr>
+              {lifecycle_rows if lifecycle_rows else '<tr><td colspan="5">За неделю ничего не отправлялось</td></tr>'}</table></div>
+            </div>
+            <div class="pm-panel">
+              <div class="ph"><b>Движение кредитов</b></div>
+              <div class="table-wrap"><table><tr><th>#</th><th>Сколько</th><th>Причина</th><th>Кто</th><th>Заказ</th><th>Заметка</th><th>Когда</th></tr>
+              {tx_rows if tx_rows else '<tr><td colspan="7">Нет данных</td></tr>'}</table></div>
+            </div>
+          </div>
 
-        <div class="card">
-          <h3>Заметки</h3>
-          {notes_html or '<p style="color:#9a90bf">Пока нет заметок</p>'}
-          <form method="post" action="/admin/users/{tg_id}/notes/add">
-            <textarea name="note" rows="2" style="width:100%" placeholder="Контекст, договорённости, наблюдения..." required></textarea>
-            <button type="submit">+ заметка</button>
-          </form>
-        </div>
-
-        <div class="card">
-          <h3>Ручная выручка</h3>
-          <p style="color:#c3bce0;font-size:0.85em">Платежи мимо бота (наличка, инвойс, иной канал) — учитываются в выручке клиента и в когортах.</p>
-          {_manual_payments_html(tg_id, manual_payments)}
-          <form method="post" action="/admin/users/{tg_id}/manual-payment/add" style="margin-top:0.5rem">
-            <input type="number" name="amount_rub" placeholder="сумма ₽" required style="width:120px" min="-1000000" max="10000000">
-            <input type="text" name="note" placeholder="комментарий (e.g. инвойс №42)" style="width:380px">
-            <button type="submit" class="btn-success">+ добавить платёж</button>
-          </form>
-        </div>
-
-        <div class="card">
-        <h3>Выдать кредиты</h3>
-        <form method="post" action="/admin/users/{tg_id}/credits">
-          <input type="number" name="amount" value="0" min="-1000" max="10000">
-          <input type="text" name="reason" placeholder="reason" style="width:140px">
-          <input type="text" name="order_id" placeholder="order_id (optional)" style="width:210px">
-          <input type="text" name="note" placeholder="note (optional)" style="width:220px">
-          <button type="submit">Add credits</button>
-        </form>
-        </div>
-
-        <div class="card">
-        <h3>Активировать пакет (внешняя оплата)</h3>
-        <p style="color:#c3bce0;font-size:0.85em">Начислит кредиты и переведёт пользователя на этап генерации (WAIT_AUDIO).
-        Юзер получит уведомление в Telegram.</p>
-        <form method="post" action="/admin/users/{tg_id}/activate" onsubmit="return confirm('Активировать пакет для {html_mod.escape(uname, quote=True).replace(chr(39), "&#39;")}'?)">
-          <select name="package">{pkg_options}</select>
-          <button type="submit" class="btn-success">Активировать</button>
-        </form>
-        </div>
-
-        <div class="card">
-        <h3>Действия</h3>
-        <div class="table-wrap">
-        <table><tr><th>#</th><th>Событие</th><th>Детали</th><th>Дата</th></tr>
-        {act_rows if act_rows else '<tr><td colspan="4">Нет данных</td></tr>'}</table>
-        </div>
-        </div>
-
-        <div class="card">
-        <h3>Триггеры за 7 дней</h3>
-        <p style="color:#c3bce0;font-size:0.85em">Lifecycle-сообщения, которые до этого юзера дошли (или не дошли) за последнюю неделю — для проверки, что мы не долбим его лишнего.</p>
-        <div class="table-wrap">
-        <table><tr><th>Когда</th><th>Тир</th><th>Правило</th><th>Статус</th><th>Ошибка</th></tr>
-        {lifecycle_rows if lifecycle_rows else '<tr><td colspan="5">За 7 дней — пусто.</td></tr>'}</table>
-        </div>
-        </div>
-
-        <div class="card">
-        <h3>Транзакции</h3>
-        <div class="table-wrap">
-        <table><tr><th>#</th><th>Amount</th><th>Reason</th><th>Actor</th><th>Order</th><th>Note</th><th>Date</th></tr>
-        {tx_rows if tx_rows else '<tr><td colspan="7">Нет данных</td></tr>'}</table>
-        </div>
+          <div style="grid-column: span 4" class="stack">
+            <div class="pm-panel" style="gap:12px">
+              <div class="ph"><b>Написать от бота</b></div>
+              <form method="post" action="/admin/users/{tg_id}/message" class="stack" style="gap:10px">
+                <textarea name="text" required placeholder="Текст сообщения (HTML)…" style="min-height:90px;width:100%"></textarea>
+                <div class="row" style="justify-content:space-between">
+                  <select name="parse_mode" style="width:150px"><option value="HTML" selected>HTML</option><option value="MARKDOWN">Markdown</option><option value="">без разметки</option></select>
+                  <button type="submit" onclick="return confirm('Отправить сообщение от имени бота?')">Отправить</button>
+                </div>
+              </form>
+            </div>
+            <div class="pm-panel" style="gap:10px">
+              <div class="ph"><b>Заметки</b></div>
+              <div class="stack" style="gap:8px">{notes_html or '<p class="meta" style="margin:0">Пока нет заметок</p>'}</div>
+              <form method="post" action="/admin/users/{tg_id}/notes/add" class="stack" style="gap:8px">
+                <textarea name="note" required placeholder="Контекст, договорённости…" style="min-height:60px;width:100%"></textarea>
+                <button type="submit" class="btn-secondary" style="align-self:flex-start">Добавить заметку</button>
+              </form>
+            </div>
+            <div class="pm-panel" style="gap:10px">
+              <div class="ph"><b>Теги</b></div>
+              <div class="row" style="gap:6px">{tag_badges or '<span class="meta">нет</span>'}</div>
+              <form method="post" action="/admin/users/{tg_id}/tags/add" class="row">
+                <input type="text" name="tag" placeholder="vip, artist, agency…" style="flex:1;min-width:120px" required>
+                <button type="submit" class="btn-secondary btn-sm">Добавить</button>
+              </form>
+            </div>
+            <div class="pm-panel" style="gap:10px">
+              <div class="ph"><b>Начислить кредиты</b></div>
+              <form method="post" action="/admin/users/{tg_id}/credits" class="stack" style="gap:8px">
+                <div class="row"><input type="number" name="amount" value="0" min="-1000" max="10000" style="width:110px"><input type="text" name="reason" placeholder="причина" style="flex:1;min-width:120px"></div>
+                <div class="row"><input type="text" name="order_id" placeholder="заказ (необязательно)" style="flex:1;min-width:120px"><input type="text" name="note" placeholder="заметка" style="flex:1;min-width:120px"></div>
+                <button type="submit" class="btn-secondary" style="align-self:flex-start">Начислить</button>
+              </form>
+            </div>
+            <div class="pm-panel" style="gap:10px">
+              <div class="ph"><b>Активировать пакет</b><span>оплата вне бота</span></div>
+              <p class="meta" style="margin:0">Начислит кредиты, переведёт клиента к загрузке аудио и пришлёт ему уведомление.</p>
+              <form method="post" action="/admin/users/{tg_id}/activate" class="row" onsubmit="return confirm('Активировать пакет для {html_mod.escape(uname, quote=True).replace(chr(39), "&#39;")}?')">
+                <select name="package" style="flex:1">{pkg_options}</select>
+                <button type="submit">Активировать</button>
+              </form>
+            </div>
+          </div>
         </div>
         """
-        return _page(f"User {uname}", body)
+        return _page("", body, back=("Клиенты", "/admin/clients"))
 
     @app.post("/admin/users/{tg_id}/credits")
     async def user_add_credits(
@@ -3319,44 +3392,104 @@ def build_app(
     # ── Sources (start-param tracking) ────────────────────────────────
 
     @app.get("/admin/sources", response_class=HTMLResponse)
-    async def sources_page(_user: str = Depends(_check_auth)) -> str:
-        dist = await credits_db.source_distribution()
-        rows = ""
-        for d in dist:
-            src_escaped = html_mod.escape(d["source"])
-            src_url = url_quote(d["source"], safe="")
-            rows += f"<tr><td><a href='/admin/sources/{src_url}'>{src_escaped}</a></td><td><strong>{d['count']}</strong></td></tr>"
+    async def sources_page(request: Request, _user: str = Depends(_check_auth)) -> str:
+        from datetime import datetime as _dt, timezone as _tz, timedelta as _td
 
+        now_utc = _dt.now(_tz.utc)
+        presets = {"7d": ("7 дней", 7), "30d": ("30 дней", 30), "90d": ("90 дней", 90), "365d": ("Год", 365)}
+        period = str(request.query_params.get("period", "30d")).strip()
+        if period not in presets:
+            period = "30d"
+        period_from = now_utc - _td(days=presets[period][1])
+        econ, spend_rows = await asyncio.gather(
+            credits_db.source_economics(period_from, now_utc),
+            credits_db.list_marketing_spend(limit=60),
+        )
+        spend_param = str(request.query_params.get("spend", "")).strip()
+        flash = (
+            '<div class="flash flash-ok">Расходы сохранены</div>' if spend_param == "ok"
+            else f'<div class="flash flash-err">{html_mod.escape(spend_param)}</div>' if spend_param else ""
+        )
+        pills = '<div class="seg">' + "".join(
+            f'<a href="/admin/sources?period={key}" class="{"on" if period == key else ""}">{label}</a>'
+            for key, (label, _) in presets.items()
+        ) + "</div>"
+
+        def _r(v):
+            return "—" if v is None else f"{int(round(v)):,}".replace(",", " ") + " ₽"
+
+        totals = {k: sum(int(r[k]) for r in econ) for k in ("users_total", "users_new", "payers_total", "payers_new", "revenue_period", "spend_rub")}
+        rows = ""
+        for r in econ:
+            src_url = url_quote(r["source"], safe="")
+            roas_txt = "—" if r["roas"] is None else "%.1f×" % r["roas"]
+            rows += (
+                f"<tr><td><a href='/admin/sources/{src_url}'>{html_mod.escape(r['source'])}</a></td>"
+                f"<td>{r['users_new']} <span class='meta'>/ {r['users_total']}</span></td>"
+                f"<td>{r['payers_new']} <span class='meta'>/ {r['payers_total']}</span></td>"
+                f"<td>{_r(r['revenue_period'])}</td><td>{_r(r['spend_rub']) if r['spend_rub'] else '—'}</td>"
+                f"<td>{_r(r['cost_per_user'])}</td><td><strong>{_r(r['cac'])}</strong></td>"
+                f"<td>{roas_txt}</td></tr>"
+            )
+        total_cac = (totals["spend_rub"] / totals["payers_new"]) if (totals["spend_rub"] and totals["payers_new"]) else None
+        total_cpu = (totals["spend_rub"] / totals["users_new"]) if (totals["spend_rub"] and totals["users_new"]) else None
+        total_roas_txt = "—" if not totals["spend_rub"] else "%.1f×" % (totals["revenue_period"] / totals["spend_rub"])
+        rows += (
+            f"<tr style='font-weight:700'><td>Итого</td><td>{totals['users_new']} <span class='meta'>/ {totals['users_total']}</span></td>"
+            f"<td>{totals['payers_new']} <span class='meta'>/ {totals['payers_total']}</span></td>"
+            f"<td>{_r(totals['revenue_period'])}</td><td>{_r(totals['spend_rub']) if totals['spend_rub'] else '—'}</td>"
+            f"<td>{_r(total_cpu)}</td><td>{_r(total_cac)}</td>"
+            f"<td>{total_roas_txt}</td></tr>"
+        )
+        source_options = "".join(
+            f'<option value="{html_mod.escape(r["source"])}">{html_mod.escape(r["source"])}</option>'
+            for r in econ if r["source"] not in ("(direct)", "(без источника)")
+        )
+        spend_table = "".join(
+            f'<tr><td>{html_mod.escape(r["month"])}</td><td>{html_mod.escape(r["source"] or "— (общие)")}</td><td>{_r(r["spend_rub"])}</td>'
+            f'<td>{html_mod.escape(r["note"])}</td><td class="meta">{html_mod.escape(r["updated_by"])} · {html_mod.escape(r["updated_at"])}</td></tr>'
+            for r in spend_rows
+        )
         bot_username = settings.tg_bot_username or "YOUR_BOT"
 
         body = f"""
-        <div class="card">
-        <h2>Как создавать UTM-ссылки</h2>
-        <div class="info-box">
-            <p>Для отслеживания источников трафика используйте Telegram deep links с параметром <code>start</code>:</p>
-            <p>
-              <code>https://t.me/{bot_username}?start=instagram_bio</code><br>
-              <code>https://t.me/{bot_username}?start=youtube_desc</code><br>
-              <code>https://t.me/{bot_username}?start=vk_post_march</code><br>
-              <code>https://t.me/{bot_username}?start=tiktok_link</code>
-            </p>
-            <p>Параметр после <code>start=</code> автоматически записывается как источник пользователя при первом запуске бота.</p>
-            <p><strong>Правила:</strong></p>
-            <ul>
-              <li>Только латиница, цифры и подчёркивания (ограничение Telegram)</li>
-              <li>Максимум 64 символа</li>
-              <li>Не начинайте с <code>@</code> — это зарезервировано для рефералов</li>
-              <li>Источник сохраняется только при первом запуске бота</li>
-            </ul>
-        </div>
+        <div class="card hero">
+          <button type="button" class="btn btn-lg" onclick="var b=document.getElementById('utm-builder');b.hidden=!b.hidden;if(!b.hidden)document.getElementById('utm-param').focus()">Собрать ссылку на бота</button>
+          <p class="meta">Deep-link вида <code>t.me/{bot_username}?start=источник</code> — параметр запишется источником при первом запуске</p>
+          <div id="utm-builder" hidden style="width:100%;max-width:640px;margin-top:8px;display:flex;flex-direction:column;gap:10px;align-items:stretch;text-align:left">
+            <div class="filters">
+              <label class="f" style="flex:1">Источник (латиница, цифры, _)<input type="text" id="utm-param" placeholder="instagram_bio" maxlength="64" oninput="var v=this.value.replace(/[^A-Za-z0-9_]/g,'');this.value=v;document.getElementById('utm-out').textContent='https://t.me/{bot_username}?start='+(v||'…')"></label>
+              <button type="button" class="btn-secondary" onclick="navigator.clipboard.writeText(document.getElementById('utm-out').textContent);this.textContent='Скопировано'">Скопировать</button>
+            </div>
+            <code id="utm-out" style="font-size:1.05em;padding:10px 12px;background:var(--surface-2);border-radius:10px">https://t.me/{bot_username}?start=…</code>
+            <p class="meta" style="margin:0">Не начинайте с <code>@</code> — это рефералы. Источник фиксируется только при первом запуске бота.</p>
+          </div>
         </div>
 
         <div class="card">
-        <h2>Распределение по источникам</h2>
-        <div class="table-wrap">
-        <table><tr><th>Источник</th><th>Пользователей</th></tr>
-        {rows if rows else '<tr><td colspan="2">Нет данных</td></tr>'}</table>
+          <div class="toolbar">
+            <h2 style="margin:0">Экономика источников</h2>
+            {pills}
+          </div>
+          <div class="table-wrap" style="margin-top:12px">
+          <table><tr><th>Источник</th><th>Новые / всего</th><th>Платящих</th><th>Выручка</th><th>Расходы</th><th>Регистрация</th><th>CAC</th><th>ROAS</th></tr>
+          {rows}</table>
+          </div>
+          <p class="meta" style="margin-top:8px">CAC — расходы источника за месяцы периода на одного нового платящего; ROAS — выручка периода к расходам.</p>
         </div>
+
+        <div class="card">
+          <h2>Расходы на маркетинг</h2>
+          {flash}
+          <form method="post" action="/admin/marketing-spend" class="filters" style="display:flex">
+            <input type="hidden" name="back_to" value="sources"><input type="hidden" name="period" value="{period}">
+            <label class="f">Месяц<input type="month" name="month" required></label>
+            <label class="f">Источник<select name="source"><option value="">— общие</option>{source_options}</select></label>
+            <label class="f">Сумма, ₽<input type="number" name="spend_rub" min="0" step="1" required style="width:130px;min-width:0"></label>
+            <label class="f" style="flex:1">Комментарий<input type="text" name="note" maxlength="200"></label>
+            <button type="submit">Сохранить</button>
+          </form>
+          {f'<div class="table-wrap" style="margin-top:12px"><table><tr><th>Месяц</th><th>Источник</th><th>Сумма</th><th>Комментарий</th><th>Кто · когда</th></tr>{spend_table}</table></div>' if spend_table else ''}
         </div>
         """
         return _page("Источники трафика", body)
@@ -3382,7 +3515,7 @@ def build_app(
             cnt = funnel_map.get(event, 0)
             pct = max(15, cnt / max_funnel * 100) if max_funnel > 0 else 15
             conv = cnt / first_cnt * 100
-            color = _FUNNEL_COLORS[i] if i < len(_FUNNEL_COLORS) else "#9a90bf"
+            color = _FUNNEL_COLORS[i] if i < len(_FUNNEL_COLORS) else "#8d86ad"
             label = _event_label(event)
             funnel_html += (
                 f'<div class="funnel-bar-wrap">'
@@ -3396,7 +3529,7 @@ def build_app(
         rating_map = {r["rating"]: r["count"] for r in ratings_raw}
         src_chart_labels = json.dumps([_RATING_LABELS.get(k, k) for k in ["low", "mid_low", "high"]])
         src_chart_data = json.dumps([rating_map.get(k, 0) for k in ["low", "mid_low", "high"]])
-        src_chart_colors = json.dumps([_RATING_COLORS.get(k, "#9a90bf") for k in ["low", "mid_low", "high"]])
+        src_chart_colors = json.dumps([_RATING_COLORS.get(k, "#8d86ad") for k in ["low", "mid_low", "high"]])
         src_total_ratings = sum(rating_map.values())
 
         revenue = await credits_db.revenue_breakdown_for_users(tg_ids)
@@ -3412,58 +3545,61 @@ def build_app(
                 f"<td>{u['created_at']}</td></tr>"
             )
 
+        src_rows_html = ""
+        for i, event in enumerate(_FUNNEL_ORDER):
+            cnt = funnel_map.get(event, 0)
+            conv = cnt / first_cnt * 100
+            color = "var(--ok)" if event in ("payment_confirmed", "subscription_charged") else "var(--accent)"
+            src_rows_html += (
+                f'<div class="pm-funnel-row"><div>{_event_label(event)}</div>'
+                f'<div class="bar"><i style="width:{max(1.0, conv):.0f}%;background:{color}"></i></div>'
+                f'<div class="n">{cnt}<span>{conv:.0f}%</span></div></div>'
+            )
+        bot_username = settings.tg_bot_username or "YOUR_BOT"
+        deep_link = f"https://t.me/{bot_username}?start={source}" if source and source != "(direct)" else ""
+        src_chart_script = "" if src_total_ratings == 0 else (
+            '<script>new Chart(document.getElementById("srcRatingsChart"), {type: "doughnut", data: {labels: ' + src_chart_labels
+            + ', datasets: [{data: ' + src_chart_data + ', backgroundColor: ' + src_chart_colors
+            + ', borderWidth: 3, borderColor: "#110b20"}]}, options: {responsive: true, maintainAspectRatio: false, cutout: "68%", plugins: {legend: {display: false}}}});</script>'
+        )
+        rating_kpis = "".join(
+            f'<div class="pm-kpi"><div class="l"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{_RATING_COLORS[k]};margin-right:6px"></span>{_RATING_LABELS[k]}</div>'
+            f'<div class="v" style="font-size:1.5em">{(rating_map.get(k, 0) / src_total_ratings * 100 if src_total_ratings else 0):.0f}%</div><div class="s">{rating_map.get(k, 0)}</div></div>'
+            for k in ("high", "mid_low", "low")
+        )
         body = f"""
-        <p><a href="/admin/sources">&laquo; Все источники</a></p>
-        <div class="card">
-        <h2>Источник: <span class="badge badge-source">{src_escaped}</span></h2>
-        <p>Пользователей: <strong>{total_users}</strong> &nbsp;|&nbsp;
-           Выручка (CONFIRMED): <strong>{int(revenue.get('confirmed_revenue_rub', 0)):,}&nbsp;&#8381;</strong><br>
-           Ожидает списания (AUTHORIZED): <strong>{int(revenue.get('authorized_revenue_rub', 0)):,}&nbsp;&#8381;</strong><br>
-           Видимая сумма (CONFIRMED + AUTHORIZED): <strong>{int(revenue.get('visible_revenue_rub', 0)):,}&nbsp;&#8381;</strong></p>
+        <div class="pm-head">
+          <div><h1>{src_escaped}</h1><div class="sub">{total_users} пользователей пришли с этого источника{f' · <code>{html_mod.escape(deep_link)}</code>' if deep_link else ''}</div></div>
+          {f'<button type="button" class="btn btn-secondary" onclick="navigator.clipboard.writeText({json.dumps(deep_link)});this.textContent=\'Скопировано\'">Скопировать ссылку</button>' if deep_link else ''}
         </div>
-        <div class="card">
-        <div class="chart-row">
-          <div class="funnel-box">
-            <h2>Воронка</h2>
-            {funnel_html if funnel_html else '<p>Нет данных</p>'}
+        <div class="pm-grid">
+          <div class="pm-panel" style="grid-column: span 12">
+            <div class="pm-kpis" style="grid-template-columns: repeat(4, minmax(0, 1fr))">
+              <div class="pm-kpi"><div class="l">Пользователей</div><div class="v acc">{total_users}</div><div class="s">за всё время</div></div>
+              <div class="pm-kpi"><div class="l">Выручка</div><div class="v">{f"{int(revenue.get('confirmed_revenue_rub', 0)):,}".replace(',', ' ')} ₽</div><div class="s">подтверждённые оплаты</div></div>
+              <div class="pm-kpi"><div class="l">Ожидает списания</div><div class="v">{f"{int(revenue.get('authorized_revenue_rub', 0)):,}".replace(',', ' ')} ₽</div><div class="s">авторизовано, ещё не списано</div></div>
+              <div class="pm-kpi"><div class="l">На пользователя</div><div class="v">{f"{(int(revenue.get('confirmed_revenue_rub', 0)) / total_users if total_users else 0):,.0f}".replace(',', ' ')} ₽</div><div class="s">выручка ÷ пришедшие</div></div>
+            </div>
           </div>
-          <div class="chart-box">
-            <h3>Оценки видео</h3>
-            {"<p>Нет данных</p>" if src_total_ratings == 0 else f'<canvas id="srcRatingsChart"></canvas><p style="text-align:center;color:#8a80b3;font-size:0.85em">Всего оценок: {src_total_ratings}</p>'}
+          <div class="pm-panel" style="grid-column: span 7; gap: 14px">
+            <div class="ph"><b>Воронка <span>% от запустивших бота</span></b></div>
+            <div class="pm-funnel">{src_rows_html or '<p class="meta">Нет данных</p>'}</div>
+          </div>
+          <div class="pm-panel" style="grid-column: span 5; gap: 12px">
+            <div class="ph"><b>Оценки видео <span>{src_total_ratings} всего</span></b></div>
+            {"<p class='meta'>Оценок пока нет</p>" if src_total_ratings == 0 else f'<div style="display:flex;align-items:center;gap:22px;flex:1;min-height:0"><div class="donut"><canvas id="srcRatingsChart"></canvas></div><div class="stack" style="gap:8px;flex:0 0 auto;min-width:90px">{rating_kpis}</div></div>'}
+          </div>
+          <div class="pm-panel" style="grid-column: span 12">
+            <div class="ph"><b>Пользователи</b></div>
+            <div class="table-wrap">
+            <table><tr><th>Клиент</th><th>id</th><th>Баланс</th><th>Пришёл</th></tr>
+            {user_rows if user_rows else '<tr><td colspan="4">Нет данных</td></tr>'}</table>
+            </div>
           </div>
         </div>
-        </div>
-        {"" if src_total_ratings == 0 else '''
-        <script>
-        new Chart(document.getElementById("srcRatingsChart"), {
-          type: "doughnut",
-          data: {
-            labels: ''' + src_chart_labels + ''',
-            datasets: [{
-              data: ''' + src_chart_data + ''',
-              backgroundColor: ''' + src_chart_colors + ''',
-              borderWidth: 2,
-              borderColor: "#fff",
-            }]
-          },
-          options: {
-            responsive: true,
-            plugins: {
-              legend: { position: "bottom", labels: { padding: 16, font: { size: 13 } } },
-            }
-          }
-        });
-        </script>
-        '''}
-        <div class="card">
-        <h2>Пользователи</h2>
-        <div class="table-wrap">
-        <table><tr><th>Username</th><th>tg_id</th><th>Credits</th><th>Дата регистрации</th></tr>
-        {user_rows if user_rows else '<tr><td colspan="4">Нет данных</td></tr>'}</table>
-        </div>
-        </div>
+        {src_chart_script}
         """
-        return _page(f"Источник: {src_escaped}", body)
+        return _page("", body, back=("Источники", "/admin/sources"))
 
     # ── Partners (traffic partner accounts + payouts) ────────────────
 
@@ -3550,7 +3686,6 @@ def build_app(
 
         body = f"""
         {'<div class="flash flash-ok">' + ok_msg + '</div>' if ok_msg else ''}
-        <p><a href="/admin/partners">&laquo; Все партнёры</a></p>
         <div class="stat-grid">
           <div class="stat-tile accent"><div class="stat-label">Заработано</div><div class="stat-value">{commission['earned_rub']:,} &#8381;</div></div>
           <div class="stat-tile"><div class="stat-label">Выплачено</div><div class="stat-value">{commission['paid_rub']:,} &#8381;</div></div>
@@ -3588,7 +3723,7 @@ def build_app(
         </div>
         </div>
         """
-        return _page(f"Partner: {html_mod.escape(partner['name'] or partner['login'])}", body)
+        return _page(html_mod.escape(partner['name'] or partner['login']), body, back=("Партнёры", "/admin/partners"))
 
     @app.post("/admin/partners/{partner_id}/payout")
     async def partner_add_payout(
@@ -3646,84 +3781,98 @@ def build_app(
         total_active = int(data.get("total_active", 0) or 0) if isinstance(data, dict) else 0
 
         dozzle_base = str(settings.dozzle_base_url or "").strip().rstrip("/")
+        status_ru = {
+            "queued": ("в очереди", "info"), "pending": ("в очереди", "info"), "running": ("выполняется", "ok"),
+            "building": ("сборка", "ok"), "rendering": ("рендер", "ok"), "polling": ("ждём ноду", "warn"),
+            "failed": ("ошибка", "bad"), "done": ("готово", "ok"), "completed": ("готово", "ok"),
+        }
+        stage_ru = {
+            "asr": "распознавание речи", "stage1": "разбор трека", "stage1a": "распознавание речи", "stage1b": "сценарий",
+            "stage2": "субтитры и футаж", "stage2_subtitles": "субтитры", "stage2_footage": "подбор футажа",
+            "stage3": "сборка проекта", "build": "сборка проекта", "render": "рендер", "render_poll": "ждём рендер",
+            "dispatch": "отправка на ноду", "upload": "загрузка результата", "delivery": "доставка",
+        }
         rows = ""
         for row in jobs:
             if not isinstance(row, dict):
                 continue
             jid_raw = str(row.get("job_id") or "")
             jid = html_mod.escape(jid_raw)
-            status = html_mod.escape(str(row.get("status") or ""))
-            stage = html_mod.escape(str(row.get("stage") or ""))
+            status_key = str(row.get("status") or "").lower()
+            status_label, status_cls = status_ru.get(status_key, (status_key or "—", ""))
+            stage_key = str(row.get("stage") or "")
+            stage_label = stage_ru.get(stage_key.lower(), stage_key or "—")
             project_id = html_mod.escape(str(row.get("project_id") or ""))
             worker_type = html_mod.escape(str(row.get("llm_worker_type") or ""))
             age_seconds = int(row.get("age_seconds", 0) or 0)
-            updated_at = float(row.get("updated_at", 0.0) or 0.0)
             age_human = _seconds_to_age(age_seconds)
-            updated_s = f"{updated_at:.0f}"
+            stale = age_seconds >= max(min_age_seconds, 900)
 
-            # Dozzle log links
-            logs_cell = "—"
+            logs_cell = ""
             if dozzle_base:
                 jid_q = url_quote(jid_raw, safe="")
                 logs_cell = (
-                    f"<a href='{dozzle_base}/container/worker-build?search={jid_q}' target='_blank' title='Build logs'>B</a>"
-                    f" <a href='{dozzle_base}/container/worker-render?search={jid_q}' target='_blank' title='Render logs'>R</a>"
-                    f" <a href='{dozzle_base}/container/orchestrator-api?search={jid_q}' target='_blank' title='Orchestrator logs'>O</a>"
+                    f"<a class='btn btn-secondary btn-sm' href='{dozzle_base}/container/worker-build?search={jid_q}' target='_blank'>сборка</a> "
+                    f"<a class='btn btn-secondary btn-sm' href='{dozzle_base}/container/worker-render?search={jid_q}' target='_blank'>рендер</a> "
+                    f"<a class='btn btn-secondary btn-sm' href='{dozzle_base}/container/orchestrator-api?search={jid_q}' target='_blank'>оркестратор</a>"
                 )
 
             rows += (
                 f"<tr>"
-                f"<td><a href='/admin/jobs/{jid}'><code>{jid[:12]}…</code></a></td>"
-                f"<td>{status}</td>"
-                f"<td>{stage or '—'}</td>"
+                f"<td><a href='/admin/jobs/{jid}'><code>{jid[:8]}</code></a></td>"
+                f"<td><span class='status-pill {status_cls}'><i></i>{html_mod.escape(status_label)}</span></td>"
+                f"<td>{html_mod.escape(stage_label)}</td>"
                 f"<td>{project_id or '—'}</td>"
                 f"<td>{worker_type or '—'}</td>"
-                f"<td>{age_human}</td>"
-                f"<td>{updated_s}</td>"
-                f"<td>{logs_cell}</td>"
-                f"<td>"
-                f"  <form method='post' action='/admin/jobs/{jid}/requeue' "
-                f"        onsubmit=\"return confirm('Requeue job {jid}?');\" style='margin-bottom:8px'>"
-                f"    <input type='hidden' name='min_age_seconds' value='{min_age_seconds}'>"
-                f"    <input type='hidden' name='limit' value='{limit}'>"
-                f"    <input type='text' name='reason' value='admin_requeue' style='width:170px'>"
-                f"    <input type='text' name='llm_worker_type' value='' placeholder='worker(optional)' style='width:140px'>"
-                f"    <button type='submit'>Requeue</button>"
-                f"  </form>"
-                f"  <form method='post' action='/admin/jobs/{jid}/kill' "
-                f"        onsubmit=\"return confirm('Kill job {jid}?');\">"
-                f"    <input type='hidden' name='min_age_seconds' value='{min_age_seconds}'>"
-                f"    <input type='hidden' name='limit' value='{limit}'>"
-                f"    <input type='text' name='reason' value='stuck_job_manual_kill' style='width:170px'>"
-                f"    <button type='submit' class='btn-danger'>Kill</button>"
-                f"  </form>"
-                f"</td>"
-                f"</tr>"
+                f"<td style='{'color:var(--warn);font-weight:600' if stale else ''}'>{age_human}</td>"
+                + (f"<td style='white-space:nowrap'>{logs_cell}</td>" if dozzle_base else "")
+                + f"<td style='white-space:nowrap'>"
+                f"<form method='post' action='/admin/jobs/{jid}/requeue' style='display:inline' onsubmit=\"return confirm('Перезапустить задачу {jid[:8]}?');\">"
+                f"<input type='hidden' name='min_age_seconds' value='{min_age_seconds}'><input type='hidden' name='limit' value='{limit}'>"
+                f"<input type='hidden' name='reason' value='admin_requeue'><input type='hidden' name='llm_worker_type' value=''>"
+                f"<button type='submit' class='btn-sm btn-secondary'>Перезапустить</button></form> "
+                f"<form method='post' action='/admin/jobs/{jid}/kill' style='display:inline' onsubmit=\"return confirm('Остановить задачу {jid[:8]}? Она перейдёт в ошибку.');\">"
+                f"<input type='hidden' name='min_age_seconds' value='{min_age_seconds}'><input type='hidden' name='limit' value='{limit}'>"
+                f"<input type='hidden' name='reason' value='stuck_job_manual_kill'>"
+                f"<button type='submit' class='btn-sm btn-danger'>Остановить</button></form>"
+                f"</td></tr>"
             )
 
-        has_logs = bool(dozzle_base)
-        logs_th = "<th>Logs</th>" if has_logs else ""
-        colspan = "9" if has_logs else "8"
+        age_options = "".join(
+            f'<a href="/admin/jobs?min_age_seconds={sec}&limit={limit}" class="{"on" if min_age_seconds == sec else ""}">{lbl}</a>'
+            for sec, lbl in ((0, "все"), (300, "старше 5 мин"), (900, "старше 15 мин"), (3600, "старше часа"))
+        )
+        stale_count = sum(1 for row in jobs if isinstance(row, dict) and int(row.get("age_seconds", 0) or 0) >= 900)
+        flash = ""
+        if ok_msg:
+            flash = f'<div class="flash flash-ok">{ok_msg}</div>'
+        if err_msg:
+            flash = f'<div class="flash flash-err">Оркестратор недоступен: {err_msg}</div>'
+        colspan = 8 if dozzle_base else 7
 
         body = f"""
+        {flash}
         <div class="card">
-        <h2>In-flight / stuck jobs</h2>
-        {f"<p style='color:#1e8449'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
-        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err_msg}</p>" if err_msg else ""}
-        <form method="get" action="/admin/jobs" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <label>Min age (sec): <input type="number" name="min_age_seconds" value="{min_age_seconds}" min="0" max="604800"></label>
-          <label>Limit: <input type="number" name="limit" value="{limit}" min="1" max="500"></label>
-          <button type="submit">Refresh</button>
-        </form>
-        <p style="margin-top:8px">Active jobs (after filter): <strong>{total_active}</strong></p>
-        <div class="table-wrap">
-        <table><tr><th>Job</th><th>Status</th><th>Stage</th><th>Project</th><th>Worker</th><th>Age</th><th>Updated</th>{logs_th}<th>Action</th></tr>
-        {rows if rows else f'<tr><td colspan="{colspan}">Нет job по текущему фильтру</td></tr>'}</table>
+          <div class="toolbar">
+            <h2 style="margin:0">В работе сейчас</h2>
+            <div class="seg">{age_options}</div>
+          </div>
+          <div class="stage-grid" style="margin-top:14px">
+            <div class="stage-chip"><div class="count">{total_active}</div><div class="label">активных задач</div></div>
+            <div class="stage-chip"><div class="count" style="color:{'var(--warn)' if stale_count else 'var(--text)'}">{stale_count}</div><div class="label">висят дольше 15 минут</div></div>
+            <div class="stage-chip"><div class="count">{len(jobs)}</div><div class="label">показано</div></div>
+          </div>
         </div>
-        <p style="color:#c3bce0;font-size:0.88em">Kill ставит job в FAILED и пытается revoke Celery task. Для проектов вида <code>tg-{{chat_id}}-...</code> дополнительно делается reset пользователя в WAIT_AUDIO.</p>
+
+        <div class="card">
+          <div class="table-wrap">
+          <table><tr><th>Задача</th><th>Статус</th><th>Этап</th><th>Проект</th><th>Воркер</th><th>В работе</th>{"<th>Логи</th>" if dozzle_base else ""}<th></th></tr>
+          {rows if rows else f'<tr><td colspan="{colspan}">Задач по этому фильтру нет</td></tr>'}</table>
+          </div>
+          <p class="meta" style="margin-top:10px">«Остановить» переводит задачу в ошибку и снимает её с воркера; клиент в боте возвращается к загрузке аудио. «Перезапустить» ставит задачу в очередь заново.</p>
         </div>
         """
-        return _page("Jobs", body)
+        return _page("Джобы", body)
 
     @app.post("/admin/jobs/{job_id}/kill")
     async def jobs_kill(
@@ -3800,7 +3949,7 @@ def build_app(
         try:
             data = await _orchestrator_get_job(job_id=jid)
         except Exception as e:
-            return _page("Job Error", f'<div class="card"><p style="color:#c0392b">{html_mod.escape(str(e))}</p></div>')
+            return _page("Job Error", f'<div class="card"><p style="color:#ef6a6a">{html_mod.escape(str(e))}</p></div>')
 
         if not data:
             raise HTTPException(404, "Job not found")
@@ -3832,7 +3981,7 @@ def build_app(
             return datetime.fromtimestamp(float(ts), tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         # Status badge color
-        status_color = {"SUCCEEDED": "#27ae60", "FAILED": "#e74c3c", "RUNNING": "#3498db", "QUEUED": "#f39c12", "NEW": "#746b96"}.get(status, "#9a90bf")
+        status_color = {"SUCCEEDED": "#4ecf8a", "FAILED": "#ef6a6a", "RUNNING": "#5aa9ea", "QUEUED": "#f0b04a", "NEW": "#8d86ad"}.get(status, "#8d86ad")
 
         # Dozzle log links
         dozzle_base = str(settings.dozzle_base_url or "").strip().rstrip("/")
@@ -3862,12 +4011,12 @@ def build_app(
 
         error_html = (
             '<div class="card"><h3>Ошибка</h3>'
-            f'<pre style="white-space:pre-wrap;color:#c0392b">{html_mod.escape(error)}</pre></div>'
+            f'<pre style="white-space:pre-wrap;color:#ef6a6a">{html_mod.escape(error)}</pre></div>'
         ) if error else ""
 
         result_html = (
             '<div class="card"><h3>Result</h3>'
-            '<pre style="white-space:pre-wrap;max-height:400px;overflow:auto;background:#0d0620;padding:12px;border-radius:6px;font-size:0.85em">'
+            '<pre style="white-space:pre-wrap;max-height:400px;overflow:auto;background:#1a1331;padding:12px;border-radius:6px;font-size:0.85em">'
             f'{result_json}</pre></div>'
         ) if result_obj else ""
 
@@ -3901,7 +4050,6 @@ def build_app(
         ) if action_forms else ""
 
         body = f"""
-        <p><a href="/admin/jobs">&laquo; Jobs</a></p>
         <div class="card">
         <h2>Job <code>{jid_esc}</code></h2>
         <table>
@@ -3926,14 +4074,14 @@ def build_app(
 
         <div class="card">
         <h3>Request</h3>
-        <pre style="white-space:pre-wrap;max-height:400px;overflow:auto;background:#0d0620;padding:12px;border-radius:6px;font-size:0.85em">{req_json}</pre>
+        <pre style="white-space:pre-wrap;max-height:400px;overflow:auto;background:#1a1331;padding:12px;border-radius:6px;font-size:0.85em">{req_json}</pre>
         </div>
 
         {result_html}
 
         {actions_html}
         """
-        return _page(f"Job {jid[:12]}…", body)
+        return _page(f"Задача {jid[:8]}", body, back=("Джобы", "/admin/jobs"))
 
     @app.get("/admin/runs", response_class=HTMLResponse)
     async def runs_page(
@@ -3943,7 +4091,7 @@ def build_app(
         if runtime_store is None:
             return _page(
                 "Runs",
-                '<div class="card"><p style="color:#c0392b">Generation runtime store is unavailable.</p></div>',
+                '<div class="card"><p style="color:#ef6a6a">Generation runtime store is unavailable.</p></div>',
             )
 
         status = str(request.query_params.get("status") or "").strip()
@@ -3962,7 +4110,7 @@ def build_app(
         except Exception as e:
             return _page(
                 "Runs",
-                f'<div class="card"><p style="color:#c0392b">{html_mod.escape(str(e))}</p></div>',
+                f'<div class="card"><p style="color:#ef6a6a">{html_mod.escape(str(e))}</p></div>',
             )
 
         rows = ""
@@ -3975,12 +4123,12 @@ def build_app(
             versions_total = int(row.get("versions_total") or 0)
             next_ver = int(row.get("next_version_to_enqueue") or 0)
             status_color = {
-                "queued": "#f39c12",
-                "running": "#3498db",
-                "succeeded": "#27ae60",
-                "failed": "#e74c3c",
-                "cancelled": "#756d97",
-            }.get(run_status.lower(), "#9a90bf")
+                "queued": "#f0b04a",
+                "running": "#5aa9ea",
+                "succeeded": "#4ecf8a",
+                "failed": "#ef6a6a",
+                "cancelled": "#8d86ad",
+            }.get(run_status.lower(), "#8d86ad")
             rows += (
                 "<tr>"
                 f"<td><a href='/admin/runs/{html_mod.escape(run_id)}'><code>{html_mod.escape(run_id)}</code></a></td>"
@@ -4018,7 +4166,7 @@ def build_app(
             <label>Jobs: <input type="number" name="count" value="30" min="1" max="50"></label>
             <button type="submit">Start on orchestrator</button>
           </form>
-          <p style="color:#c3bce0;font-size:0.88em">Runs only local CTC alignment and uploads lightweight previews; no LLM, credits, footage, or render node.</p>
+          <p style="color:#c6bfe4;font-size:0.88em">Runs only local CTC alignment and uploads lightweight previews; no LLM, credits, footage, or render node.</p>
           <p style="margin-top:8px">Visible runs: <strong>{len(runs)}</strong></p>
           <div class="table-wrap">
             <table>
@@ -4026,7 +4174,7 @@ def build_app(
               {rows or '<tr><td colspan="9">Нет run по текущему фильтру</td></tr>'}
             </table>
           </div>
-          <p style="color:#c3bce0;font-size:0.88em">Карточка run показывает версии, outbox и event trail в одном месте.</p>
+          <p style="color:#c6bfe4;font-size:0.88em">Карточка run показывает версии, outbox и event trail в одном месте.</p>
         </div>
         """
         return _page("Runs", body)
@@ -4253,7 +4401,7 @@ def build_app(
         if runtime_store is None:
             return _page(
                 "Run Error",
-                '<div class="card"><p style="color:#c0392b">Generation runtime store is unavailable.</p></div>',
+                '<div class="card"><p style="color:#ef6a6a">Generation runtime store is unavailable.</p></div>',
             )
 
         run = await runtime_store.get_run(rid)
@@ -4300,7 +4448,6 @@ def build_app(
         )
 
         body = f"""
-        <p><a href="/admin/runs">&laquo; Runs</a></p>
         <div class="card">
           <h2>Run <code>{html_mod.escape(rid)}</code></h2>
           <table>
@@ -4348,7 +4495,7 @@ def build_app(
           </div>
         </div>
         """
-        return _page(f"Run {rid[:12]}…", body)
+        return _page(f"Прогон {rid[:8]}", body, back=("Прогоны", "/admin/runs"))
 
     # ── Runtime config ────────────────────────────────────────────────
 
@@ -4428,7 +4575,7 @@ def build_app(
             is_default = bool(item_raw.get("is_default", True))
             rows += (
                 "<tr>"
-                f"<td><strong>{title}</strong><br><code>{key}</code><br><span style='color:#c3bce0'>{desc}</span></td>"
+                f"<td><strong>{title}</strong><br><code>{key}</code><br><span style='color:#c6bfe4'>{desc}</span></td>"
                 f"<td>{category}</td>"
                 f"<td>{effect}</td>"
                 f"<td>{_input_html(item_raw)}</td>"
@@ -4451,8 +4598,8 @@ def build_app(
         body = f"""
         <div class="card">
         <h2>Backpressure policy</h2>
-        {f"<p style='color:#1e8449'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
-        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err_msg}</p>" if err_msg else ""}
+        {f"<p style='color:#4ecf8a'><strong>OK:</strong> {ok_msg}</p>" if ok_msg else ""}
+        {f"<p style='color:#ef6a6a'><strong>Ошибка:</strong> {err_msg}</p>" if err_msg else ""}
         <p>State: <strong>{state}</strong></p>
         <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
           <div class="table-wrap" style="flex:1 1 300px">
@@ -4471,7 +4618,7 @@ def build_app(
 
         <div class="card">
         <h2>Runtime knobs</h2>
-        <p style="color:#c3bce0">Hot параметры применяются сразу в orchestrator. Параметры с <code>requires_*</code> сейчас являются operator-visible target values и требуют recreate соответствующего сервиса.</p>
+        <p style="color:#c6bfe4">Hot параметры применяются сразу в orchestrator. Параметры с <code>requires_*</code> сейчас являются operator-visible target values и требуют recreate соответствующего сервиса.</p>
         <form method="post" action="/admin/runtime-config">
           <div class="table-wrap">
           <table><tr><th>Key</th><th>Category</th><th>Effect</th><th>Value</th><th>Default</th><th>Source</th></tr>
@@ -4578,8 +4725,8 @@ def build_app(
         body = f"""
         <div class="card">
         <h2>Текущий runtime статус</h2>
-        {f"<p style='color:#c0392b'><strong>Ошибка:</strong> {err}</p>" if err else ""}
-        {"".join(f"<p style='color:#c0392b'><strong>Warning:</strong> {html_mod.escape(w)}</p>" for w in runtime_warnings)}
+        {f"<p style='color:#ef6a6a'><strong>Ошибка:</strong> {err}</p>" if err else ""}
+        {"".join(f"<p style='color:#ef6a6a'><strong>Warning:</strong> {html_mod.escape(w)}</p>" for w in runtime_warnings)}
         <div class="table-wrap">
         <table><tr><th>Worker</th><th>Enabled</th><th>Weight</th><th>Max inflight</th><th>Inflight</th><th>Free slots</th></tr>
         {rows if rows else '<tr><td colspan="6">Нет данных</td></tr>'}</table>
@@ -5026,13 +5173,13 @@ def build_app(
         items = data.get("purchases") or []
         sub = data.get("active_subscription")
         if not items and not sub:
-            return '<p style="color:#9a90bf">Без покупок</p>'
+            return '<p style="color:#8d86ad">Без покупок</p>'
 
         sub_html = ""
         if sub:
             pkg_lbl = _PACKAGES.get(str(sub["package"]), f"package={sub['package']}")
             sub_html = (
-                f'<div style="border-left:3px solid #16a085;padding:6px 10px;margin:0.5rem 0;background:rgba(22,160,133,.12)">'
+                f'<div style="border-left:3px solid #4ecf8a;padding:6px 10px;margin:0.5rem 0;background:rgba(22,160,133,.12)">'
                 f'<b>Подписка активна:</b> {html_mod.escape(pkg_lbl)} '
                 f'на {sub["amount_rub"]}₽/мес · '
                 f'списаний: {sub["charges_count"]} · '
@@ -5042,7 +5189,7 @@ def build_app(
             )
 
         if not items:
-            return sub_html or '<p style="color:#9a90bf">Без покупок</p>'
+            return sub_html or '<p style="color:#8d86ad">Без покупок</p>'
 
         rows = ""
         for p in items:
@@ -5063,10 +5210,10 @@ def build_app(
 
     def _manual_payments_html(tg_id: int, payments: list) -> str:
         if not payments:
-            return '<p style="color:#9a90bf">Пока нет ручных платежей</p>'
+            return '<p style="color:#8d86ad">Пока нет ручных платежей</p>'
         rows = ""
         for p in payments:
-            note = html_mod.escape(p["note"]) if p["note"] else "<span style='color:#9a90bf'>—</span>"
+            note = html_mod.escape(p["note"]) if p["note"] else "<span style='color:#8d86ad'>—</span>"
             actor = html_mod.escape(p["created_by"] or "—")
             rows += (
                 f"<tr><td><b>{p['amount_rub']}₽</b></td>"
@@ -5075,7 +5222,7 @@ def build_app(
                 f"<td>{actor}</td>"
                 f"<td><form method='post' action='/admin/users/{tg_id}/manual-payment/{p['id']}/delete' "
                 f"style='display:inline' onsubmit=\"return confirm('Удалить платёж?')\">"
-                f"<button style='background:none;color:#c0392b;padding:0;font-size:0.85em;cursor:pointer;border:none'>удалить</button>"
+                f"<button style='background:none;color:#ef6a6a;padding:0;font-size:0.85em;cursor:pointer;border:none'>удалить</button>"
                 f"</form></td></tr>"
             )
         return (
@@ -5119,7 +5266,7 @@ def build_app(
             fail = r["failed_count"]
             size = r["audience_size"]
             progress = f"{sent}/{size}" if size else f"{sent}"
-            fail_str = f' <span style="color:#c0392b">(–{fail})</span>' if fail else ""
+            fail_str = f' <span style="color:#ef6a6a">(–{fail})</span>' if fail else ""
             tr.append(
                 f"<tr><td><a href='/admin/broadcasts/{r['id']}'>#{r['id']}</a></td>"
                 f"<td>{html_mod.escape(r['title'])}</td>"
@@ -5130,20 +5277,28 @@ def build_app(
                 f"<td>{r['created_at']}</td></tr>"
             )
 
+        done_total = sum(1 for r in rows if r["status"] == "done")
+        in_flight = sum(1 for r in rows if r["status"] in ("scheduled", "sending"))
         body = f"""
-        <div class="card">
-        <a class="btn btn-success" href="/admin/broadcasts/new">+ Новая рассылка</a>
-        <p style="color:#c3bce0;margin-top:0.8rem">
-          Создание сообщения от имени бота, выбор аудитории (вся база / UTM / фильтр / вручную),
-          планирование и бэклог. Медиа поддерживается через URL или file_id.
-        </p>
+        <div class="card hero">
+          <a class="btn btn-lg" href="/admin/broadcasts/new">Создать рассылку</a>
+          <p class="meta">Сообщение от имени бота · аудитория: вся база, по источнику, по тарифу или вручную · можно запланировать</p>
         </div>
+
         <div class="card">
-        <div class="table-wrap"><table>
-        <tr><th>#</th><th>Название</th><th>Статус</th><th>Доставлено</th><th>Запланирована</th><th>Автор</th><th>Создана</th></tr>
-        {''.join(tr) if tr else '<tr><td colspan=7>Пока нет рассылок</td></tr>'}
-        </table></div>
-        {_pagination_html(page, total_pages, base_url='?')}
+          <div class="toolbar">
+            <h2 style="margin:0">История</h2>
+            <div class="stage-grid" style="margin:0">
+              <div class="stage-chip" style="padding:8px 14px"><div class="count" style="font-size:1.3em">{total}</div><div class="label">всего</div></div>
+              <div class="stage-chip" style="padding:8px 14px"><div class="count" style="font-size:1.3em">{in_flight}</div><div class="label">в работе</div></div>
+              <div class="stage-chip" style="padding:8px 14px"><div class="count" style="font-size:1.3em">{done_total}</div><div class="label">отправлено</div></div>
+            </div>
+          </div>
+          <div class="table-wrap" style="margin-top:12px"><table>
+          <tr><th>#</th><th>Название</th><th>Статус</th><th>Доставлено</th><th>Запланирована</th><th>Автор</th><th>Создана</th></tr>
+          {''.join(tr) if tr else '<tr><td colspan=7>Пока нет рассылок — первая в одну кнопку выше</td></tr>'}
+          </table></div>
+          {_pagination_html(page, total_pages, base_url='?')}
         </div>
         """
         return _page("Рассылки", body)
@@ -5176,93 +5331,116 @@ def build_app(
         mode_default = "tier" if preset_tier else "all"
 
         body = f"""
-        <div class="card">
-        <form method="post" action="/admin/broadcasts/new">
-          <h3>1. Сообщение</h3>
-          <label>Название (для бэклога): <input type="text" name="title" required style="width:400px"></label><br><br>
-          <label>Текст (HTML разрешён):<br>
-            <textarea name="text" rows="6" style="width:100%;font-family:inherit" required></textarea>
-          </label><br>
-          <label>Parse mode:
-            <select name="parse_mode">
-              <option value="HTML" selected>HTML</option>
-              <option value="MARKDOWN">Markdown</option>
-              <option value="">plain</option>
-            </select>
-          </label><br><br>
+        <form method="post" action="/admin/broadcasts/new" id="bc-form" style="display:block">
+        <div class="pm-grid">
 
-          <h3>2. Медиа (опционально)</h3>
-          <p style="color:#c3bce0;font-size:0.85em">
-            Для фото/видео: паст URL публичной ссылки <b>или</b> Telegram file_id.
-            Чтобы получить file_id — отправь медиа боту с подписью <code>/fileid</code>
-            (или ответь на медиа командой <code>/fileid</code>) — бот пришлёт id в чат.
-          </p>
-          <label>Тип:
-            <select name="media_type">
-              <option value="">без медиа</option>
-              <option value="photo">photo</option>
-              <option value="video">video</option>
-              <option value="animation">animation (gif)</option>
-              <option value="document">document</option>
-            </select>
-          </label>
-          <label>URL: <input type="text" name="media_url" placeholder="https://..." style="width:380px"></label><br>
-          <label>или file_id: <input type="text" name="media_file_id" placeholder="AgACAg..." style="width:420px"></label><br><br>
+          <div class="pm-panel" style="grid-column: span 7">
+            <div class="ph"><b>Сообщение</b></div>
+            <div class="stack">
+              <label class="field"><span>Название — только для истории</span><input type="text" name="title" required placeholder="Скидка на Глоу до воскресенья"></label>
+              <label class="field"><span>Текст</span><textarea name="text" id="bc-text" required placeholder="Привет! …"></textarea></label>
+              <div class="row">
+                <label class="field" style="width:160px"><span>Разметка</span>
+                  <select name="parse_mode"><option value="HTML" selected>HTML</option><option value="MARKDOWN">Markdown</option><option value="">без разметки</option></select>
+                </label>
+                <label class="field" style="width:180px"><span>Медиа</span>
+                  <select name="media_type" id="bc-media-type"><option value="">без медиа</option><option value="photo">фото</option><option value="video">видео</option><option value="animation">gif</option><option value="document">файл</option></select>
+                </label>
+              </div>
+              <div class="row" id="bc-media-fields" hidden>
+                <label class="field" style="flex:1;min-width:220px"><span>Ссылка на файл</span><input type="text" name="media_url" placeholder="https://…"></label>
+                <span class="meta">или</span>
+                <label class="field" style="flex:1;min-width:220px"><span>Telegram file_id</span><input type="text" name="media_file_id" placeholder="AgACAg…"></label>
+                <p class="meta" style="width:100%;margin:0">file_id: отправь медиа боту с подписью <code>/fileid</code> — он пришлёт id.</p>
+              </div>
+              <label class="field"><span>Кнопки — по одной на строку: <code>Текст | https://ссылка</code></span>
+                <textarea name="buttons_raw" id="bc-buttons" style="min-height:64px;font-family:ui-monospace,monospace" placeholder="Открыть бота | https://t.me/{html_mod.escape(settings.tg_bot_username or 'bot')}"></textarea>
+              </label>
+            </div>
+          </div>
 
-          <h3>3. Кнопки (опционально)</h3>
-          <p style="color:#c3bce0;font-size:0.85em">По одной на строку, формат: <code>Текст | https://url</code></p>
-          <textarea name="buttons_raw" rows="3" style="width:100%;font-family:monospace"
-            placeholder="Открыть бот | https://t.me/your_bot&#10;Сайт | https://blast808.com"></textarea><br><br>
+          <div class="pm-panel" style="grid-column: span 5; gap: 10px">
+            <div class="ph"><b>Как увидит клиент</b></div>
+            <div class="tg-preview sticky">
+              <div class="who">@{html_mod.escape(settings.tg_bot_username or 'bot')}</div>
+              <div class="tg-bubble" id="bc-bubble"><div class="media" id="bc-media" hidden>медиа</div><span id="bc-preview-text" style="color:#8aa0b5">Текст появится здесь</span></div>
+              <div class="tg-buttons" id="bc-preview-buttons"></div>
+            </div>
+          </div>
 
-          <h3>4. Аудитория</h3>
-          <label><input type="radio" name="mode" value="all" {"checked" if mode_default == "all" else ""}> Вся база</label><br>
-          <label><input type="radio" name="mode" value="tier" {"checked" if mode_default == "tier" else ""}> По тиру</label>
-          <span style="margin-left:1em">
-            <select name="tier_value" style="width:380px">
-              <option value="">— выбрать тир —</option>
-              {tier_opts}
-            </select>
-            <small style="color:#c3bce0"><a href="/admin/tiers">/admin/tiers</a></small>
-          </span><br>
-          <label><input type="radio" name="mode" value="source"> По источнику</label>
-          <span style="margin-left:1em">
-            source: <select name="source_value" style="width:240px">
-              <option value="">— любой —</option>
-              {src_opts}
-            </select>
-            <small style="color:#c3bce0">источник от Telegram start-параметра (см. <a href="/admin/sources">/admin/sources</a>)</small>
-          </span><br>
-          <label><input type="radio" name="mode" value="filter"> Фильтр по базе</label>
-          <span style="margin-left:1em">
-            credits≥ <input type="number" name="credits_min" style="width:60px">
-            credits≤ <input type="number" name="credits_max" style="width:60px">
-            платил:
-            <select name="paid"><option value="any">—</option><option value="yes">да</option><option value="no">нет</option></select>
-            генерил:
-            <select name="generated"><option value="any">—</option><option value="yes">да</option><option value="no">нет</option></select>
-            tag: <select name="tag"><option value="">—</option>{tag_opts}</select>
-            с: <input type="date" name="created_from">
-            до: <input type="date" name="created_to">
-          </span><br>
-          <label><input type="radio" name="mode" value="manual"> Точечно</label>
-          <span style="margin-left:1em">
-            <input type="text" name="manual_raw" placeholder="@username, 123456789, ..." style="width:560px">
-          </span><br><br>
-          <label><input type="checkbox" name="exclude_blocked" checked> Исключить тех, кто блокнул бота</label><br><br>
+          <div class="pm-panel" style="grid-column: span 12">
+            <div class="ph"><b>Кому</b><label class="row" style="font-size:.9em;color:var(--text-70)"><input type="checkbox" name="exclude_blocked" checked> не слать тем, кто заблокировал бота</label></div>
+            <div class="choice-grid" id="bc-modes">
+              <label class="choice"><input type="radio" name="mode" value="all" {"checked" if mode_default == "all" else ""}><b>Вся база</b><small>все, кто запускал бота</small></label>
+              <label class="choice"><input type="radio" name="mode" value="tier" {"checked" if mode_default == "tier" else ""}><b>По тарифу</b><small>сегменты из раздела «Тарифы»</small></label>
+              <label class="choice"><input type="radio" name="mode" value="source"><b>По источнику</b><small>start-параметр deep-link</small></label>
+              <label class="choice"><input type="radio" name="mode" value="filter"><b>По условиям</b><small>баланс, оплаты, теги, дата</small></label>
+              <label class="choice"><input type="radio" name="mode" value="manual"><b>Точечно</b><small>список @username или id</small></label>
+              <div class="choice-body" data-mode="tier">
+                <label class="field" style="max-width:420px"><span>Тариф</span><select name="tier_value"><option value="">— выбрать —</option>{tier_opts}</select></label>
+              </div>
+              <div class="choice-body" data-mode="source">
+                <label class="field" style="max-width:320px"><span>Источник</span><select name="source_value"><option value="">— любой —</option>{src_opts}</select></label>
+              </div>
+              <div class="choice-body" data-mode="filter">
+                <div class="row">
+                  <label class="field" style="width:120px"><span>Баланс от</span><input type="number" name="credits_min"></label>
+                  <label class="field" style="width:120px"><span>до</span><input type="number" name="credits_max"></label>
+                  <label class="field" style="width:130px"><span>Платил</span><select name="paid"><option value="any">неважно</option><option value="yes">да</option><option value="no">нет</option></select></label>
+                  <label class="field" style="width:130px"><span>Генерил</span><select name="generated"><option value="any">неважно</option><option value="yes">да</option><option value="no">нет</option></select></label>
+                  <label class="field" style="width:180px"><span>Тег</span><select name="tag"><option value="">любой</option>{tag_opts}</select></label>
+                  <label class="field" style="width:160px"><span>Пришёл с</span><input type="date" name="created_from"></label>
+                  <label class="field" style="width:160px"><span>по</span><input type="date" name="created_to"></label>
+                </div>
+              </div>
+              <div class="choice-body" data-mode="manual">
+                <label class="field"><span>Через запятую</span><input type="text" name="manual_raw" placeholder="@username, 123456789, …"></label>
+              </div>
+            </div>
+          </div>
 
-          <h3>5. Запуск</h3>
-          <label><input type="radio" name="when" value="draft" checked> Сохранить черновик</label><br>
-          <label><input type="radio" name="when" value="now"> Отправить сейчас</label><br>
-          <label><input type="radio" name="when" value="schedule"> Запланировать на:
-            <input type="datetime-local" name="schedule_at"> <small>(UTC)</small>
-          </label><br><br>
-
-          <button type="submit" class="btn-success">Создать</button>
-          <a href="/admin/broadcasts" style="margin-left:1rem">Отмена</a>
-        </form>
+          <div class="pm-panel" style="grid-column: span 12">
+            <div class="ph"><b>Когда</b></div>
+            <div class="choice-grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr))">
+              <label class="choice"><input type="radio" name="when" value="draft" checked><b>Сохранить черновик</b><small>отправить позже из истории</small></label>
+              <label class="choice"><input type="radio" name="when" value="now"><b>Отправить сейчас</b><small>уйдёт сразу после создания</small></label>
+              <label class="choice"><input type="radio" name="when" value="schedule"><b>Запланировать</b><small>время по UTC</small><input type="datetime-local" name="schedule_at" style="margin-top:6px;position:static;opacity:1;width:auto" onclick="this.closest('.choice').querySelector('input[type=radio]').checked=true"></label>
+            </div>
+            <div class="row" style="justify-content:flex-end;margin-top:6px">
+              <a href="/admin/broadcasts" class="btn btn-secondary">Отмена</a>
+              <button type="submit" class="btn-lg">Создать рассылку</button>
+            </div>
+          </div>
         </div>
+        </form>
+        <script>
+        (function() {{
+          const text = document.getElementById('bc-text'), out = document.getElementById('bc-preview-text');
+          const btns = document.getElementById('bc-buttons'), outBtns = document.getElementById('bc-preview-buttons');
+          const mt = document.getElementById('bc-media-type'), mf = document.getElementById('bc-media-fields'), mp = document.getElementById('bc-media');
+          function esc(t) {{ return t.replace(/[&<>]/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;'}})[c]); }}
+          function render() {{
+            const v = text.value.trim();
+            out.style.color = v ? '' : '#8aa0b5';
+            let h = esc(v);
+            for (const tag of ['b', 'i', 'u', 's', 'code']) {{
+              h = h.split('&lt;' + tag + '&gt;').join('<' + tag + '>').split('&lt;/' + tag + '&gt;').join('</' + tag + '>');
+            }}
+            out.innerHTML = v ? h : 'Текст появится здесь';
+            outBtns.innerHTML = btns.value.split(String.fromCharCode(10)).map(l => l.split('|')[0].trim()).filter(Boolean).map(t => '<span>' + esc(t) + '</span>').join('');
+            const m = mt.value; mf.hidden = !m; mp.hidden = !m; if (m) mp.textContent = ({{photo:'фото', video:'видео', animation:'gif', document:'файл'}})[m] || m;
+          }}
+          [text, btns, mt].forEach(el => el.addEventListener('input', render)); render();
+          const modes = document.getElementById('bc-modes');
+          function syncModes() {{
+            const cur = (modes.querySelector('input[name=mode]:checked') || {{}}).value;
+            modes.querySelectorAll('.choice-body').forEach(b => b.classList.toggle('open', b.dataset.mode === cur));
+          }}
+          modes.addEventListener('change', syncModes); syncModes();
+        }})();
+        </script>
         """
-        return _page("Новая рассылка", body)
+        return _page("Новая рассылка", body, back=("Рассылки", "/admin/broadcasts"))
 
     @app.post("/admin/broadcasts/new")
     async def broadcasts_new_submit(
@@ -5403,7 +5581,6 @@ def build_app(
                 sched_val = ""
 
         body = f"""
-        <p><a href="/admin/broadcasts/{bid}">&laquo; Рассылка #{bid}</a></p>
         <div class="card">
         <form method="post" action="/admin/broadcasts/{bid}/edit">
           <h3>1. Сообщение</h3>
@@ -5433,7 +5610,7 @@ def build_app(
           <label>или file_id: <input type="text" name="media_file_id" value="{html_mod.escape(bc['media_file_id'], quote=True)}" style="width:420px"></label><br><br>
 
           <h3>3. Кнопки</h3>
-          <p style="color:#c3bce0;font-size:0.85em">По одной на строку: <code>Текст | https://url</code></p>
+          <p style="color:#c6bfe4;font-size:0.85em">По одной на строку: <code>Текст | https://url</code></p>
           <textarea name="buttons_raw" rows="3" style="width:100%;font-family:monospace">{html_mod.escape(buttons_raw)}</textarea><br><br>
 
           <h3>4. Аудитория</h3>
@@ -5484,7 +5661,7 @@ def build_app(
         </form>
         </div>
         """
-        return _page(f"Изменить рассылку #{bid}", body)
+        return _page(f"Изменить рассылку #{bid}", body, back=[("Рассылки", "/admin/broadcasts"), (f"Рассылка #{bid}", f"/admin/broadcasts/{bid}")])
 
     @app.post("/admin/broadcasts/{bid}/edit")
     async def broadcasts_edit_submit(
@@ -5639,7 +5816,6 @@ def build_app(
             )
 
         body = f"""
-        <p><a href="/admin/broadcasts">&laquo; Все рассылки</a></p>
         <div class="card">
           <h2>#{bc['id']} — {html_mod.escape(bc['title'])}</h2>
           <p>Статус: <b>{html_mod.escape(bc['status'])}</b> |
@@ -5653,17 +5829,17 @@ def build_app(
         <div class="card">
           <h3>Превью</h3>
           {media_html}
-          <pre style="white-space:pre-wrap;background:#0d0620;padding:1rem;border-radius:6px">{html_mod.escape(bc['text'])}</pre>
+          <pre style="white-space:pre-wrap;background:#1a1331;padding:1rem;border-radius:6px">{html_mod.escape(bc['text'])}</pre>
           <div>{buttons_html}</div>
         </div>
 
         <div class="card">
-          {_dtable('Доставлено', deliveries_sent, '#27ae60')}
-          {_dtable('Ошибки', deliveries_fail, '#e74c3c')}
-          {_dtable('Заблокировали', deliveries_blk, '#756d97')}
+          {_dtable('Доставлено', deliveries_sent, '#4ecf8a')}
+          {_dtable('Ошибки', deliveries_fail, '#ef6a6a')}
+          {_dtable('Заблокировали', deliveries_blk, '#8d86ad')}
         </div>
         """
-        return _page(f"Рассылка #{bc['id']}", body)
+        return _page(f"Рассылка #{bc['id']}", body, back=("Рассылки", "/admin/broadcasts"))
 
     @app.post("/admin/broadcasts/{bid}/send")
     async def broadcasts_send(bid: int, _user: str = Depends(_check_auth)) -> RedirectResponse:
@@ -5771,19 +5947,19 @@ def build_app(
         # underlying payments row with package='15'/'Бласт' would otherwise
         # also render as one-off "Бласт" — drop it to avoid the duplicate.
         if has_sub:
-            labels.append('<span class="badge" style="background:#16a085;color:white">Подписка</span>')
+            labels.append('<span class="badge badge-ok">Подписка</span>')
             codes_bought.discard("15")
         pkg_styles = {
-            "5":  ('Триал', '#3498db'),
-            "15": ('Бласт', '#27ae60'),
-            "30": ('Глоу', '#e67e22'),
-            "50": ('Импульс', '#c0392b'),
+            "5":  ('Триал', '#5aa9ea'),
+            "15": ('Бласт', '#4ecf8a'),
+            "30": ('Глоу', '#f0b04a'),
+            "50": ('Импульс', '#ef6a6a'),
         }
         for code in ("5", "15", "30", "50"):
             if code in codes_bought:
                 lbl, color = pkg_styles[code]
-                labels.append(f'<span class="badge" style="background:{color};color:white">{lbl}</span>')
-        return " ".join(labels) if labels else '<span style="color:#9a90bf">—</span>'
+                labels.append(f'<span class="badge" style="background:color-mix(in srgb, {color} 18%, transparent);color:{color}">{lbl}</span>')
+        return " ".join(labels) if labels else '<span style="color:#8d86ad">—</span>'
 
     @app.get("/admin/clients", response_class=HTMLResponse)
     async def clients_list(request: Request, _user: str = Depends(_check_auth)) -> str:
@@ -5850,8 +6026,8 @@ def build_app(
             products_cell = _bought_packages_html(r.get("bought_packages") or [], r.get("has_active_subscription"))
             next_charge = next_charge_map.get(int(r["tg_id"]), "")
             next_charge_cell = (
-                f'<span style="color:#16a085">{html_mod.escape(next_charge)}</span>'
-                if next_charge else '<span style="color:#9a90bf">—</span>'
+                f'<span style="color:#4ecf8a">{html_mod.escape(next_charge)}</span>'
+                if next_charge else '<span style="color:#8d86ad">—</span>'
             )
             tr.append(
                 f"<tr><td><a href='/admin/users/{r['tg_id']}'>{html_mod.escape(uname)}</a></td>"
@@ -5870,37 +6046,39 @@ def build_app(
         )
         body = f"""
         <div class="card">
-          <h3>Сводка</h3>
+          <h2>Сводка</h2>
           <div class="stage-grid">
             <div class="stage-chip"><div class="count">{summary['clients_count']}</div><div class="label">клиентов</div></div>
             <div class="stage-chip"><div class="count">{summary['credits_on_balance']}</div><div class="label">кредитов на балансе</div></div>
-            <div class="stage-chip"><div class="count">{summary['active_7d']}</div><div class="label">активны за 7 дней</div></div>
-            <div class="stage-chip"><div class="count">{summary['dormant_14d']}</div><div class="label">спят 14+ дней</div></div>
-            <div class="stage-chip"><div class="count">{summary['revenue_rub_total']}₽</div><div class="label">выручка с клиентов</div></div>
+            <div class="stage-chip"><div class="count" style="color:var(--ok)">{summary['active_7d']}</div><div class="label">активны за 7 дней</div></div>
+            <div class="stage-chip"><div class="count" style="color:{'var(--warn)' if summary['dormant_14d'] else 'var(--text)'}">{summary['dormant_14d']}</div><div class="label">спят 14+ дней</div></div>
+            <div class="stage-chip"><div class="count">{summary['revenue_rub_total']:,}&nbsp;&#8381;</div><div class="label">выручка с клиентов</div></div>
           </div>
         </div>
 
         <div class="card">
-          <form method="get" style="display:inline">
-            <label>Порог credits ≥ <input type="number" name="min_credits" value="{min_c}" style="width:70px" min="1"></label>
-            <label>Тег: <select name="tag">{tag_opts}</select></label>
-            <label>Продукт: <select name="product">{product_opts}</select></label>
-            <label>Сортировка: <select name="sort">{sort_opts}</select></label>
-            <button type="submit">Применить</button>
+          <form method="get" class="filters" style="display:flex">
+            <label class="f">Баланс от<input type="number" name="min_credits" value="{min_c}" min="0" style="width:110px;min-width:0"></label>
+            <label class="f">Тег<select name="tag">{tag_opts}</select></label>
+            <label class="f">Продукт<select name="product">{product_opts}</select></label>
+            <label class="f">Сортировка<select name="sort">{sort_opts}</select></label>
+            <button type="submit">Показать</button>
+            <span class="spacer"></span>
+            <a href="/admin/clients/export?{export_qs}" class="btn btn-secondary">Экспорт CSV</a>
           </form>
-          <a href="/admin/clients/export?{export_qs}" class="btn" style="float:right">Экспорт CSV</a>
         </div>
 
         <div class="card">
-          <div class="table-wrap"><table>
-            <tr><th>User</th><th>Баланс</th><th>Генераций</th><th>Выручка</th><th>Продукты</th>
-                <th>След. списание</th><th>Последняя активность</th><th>Источник</th></tr>
-            {''.join(tr) if tr else '<tr><td colspan=8>Клиентов пока нет — поднимите порог ниже или измените фильтры.</td></tr>'}
+          <div class="toolbar"><h2 style="margin:0">Клиенты</h2><span class="meta">{total} найдено</span></div>
+          <div class="table-wrap" style="margin-top:8px"><table>
+            <tr><th>Клиент</th><th>Баланс</th><th>Генераций</th><th>Выручка</th><th>Продукты</th>
+                <th>Списание</th><th>Активность</th><th>Источник</th></tr>
+            {''.join(tr) if tr else '<tr><td colspan=8>Никого не нашли — снизьте порог баланса или измените фильтры.</td></tr>'}
           </table></div>
           {_pagination_html(page, total_pages, base_url=f'?{export_qs}&sort={sort}&')}
         </div>
         """
-        return _page("Clients", body)
+        return _page("Клиенты", body)
 
     @app.get("/admin/clients/export", response_class=PlainTextResponse)
     async def clients_export(request: Request, _user: str = Depends(_check_auth)) -> PlainTextResponse:
@@ -5956,7 +6134,7 @@ def build_app(
         last_tick_str = ""
         last_tick_age_str = ""
         last_stats_str = ""
-        loop_health_color = "#756d97"
+        loop_health_color = "#8d86ad"
         try:
             redis = state_store.redis
             ht = await redis.get("tg_bot_public:sub_charge_loop:last_tick")
@@ -5968,13 +6146,13 @@ def build_app(
                     age_s = (_dt.now(_tz.utc) - ts).total_seconds()
                     if age_s < 3600:
                         last_tick_age_str = f"{int(age_s // 60)} мин назад"
-                        loop_health_color = "#27ae60"
+                        loop_health_color = "#4ecf8a"
                     elif age_s < 30 * 3600:
                         last_tick_age_str = f"{int(age_s // 3600)} ч назад"
-                        loop_health_color = "#27ae60"
+                        loop_health_color = "#4ecf8a"
                     else:
                         last_tick_age_str = f"{int(age_s // 3600)} ч назад — проверь воркер!"
-                        loop_health_color = "#c0392b"
+                        loop_health_color = "#ef6a6a"
                 except Exception:
                     pass
             if stats_raw:
@@ -5995,21 +6173,23 @@ def build_app(
                 nc_dt = nc_raw if nc_raw.tzinfo else nc_raw.replace(tzinfo=_tz.utc)
                 delta_days = (nc_dt - now_utc).total_seconds() / 86400.0
                 if delta_days < 0:
-                    when_lbl = f'<span style="color:#c0392b">overdue {abs(int(delta_days))}д</span>'
+                    when_lbl = f'<span style="color:#ef6a6a">просрочено на {abs(int(delta_days))} д</span>'
                 elif delta_days < 1:
-                    when_lbl = '<span style="color:#e67e22">сегодня</span>'
+                    when_lbl = '<span style="color:#f0b04a">сегодня</span>'
                 elif delta_days < 7:
-                    when_lbl = f'<span style="color:#f39c12">через {int(delta_days)}д</span>'
+                    when_lbl = f'<span style="color:#f0b04a">через {int(delta_days)}д</span>'
                 else:
                     when_lbl = f'через {int(delta_days)}д'
             else:
                 when_lbl = "—"
-            status_color = {"active": "#27ae60", "paused": "#c0392b"}.get(s["status"], "#756d97")
-            last_color = {"CONFIRMED": "#27ae60", "charge_failed": "#c0392b"}.get(s["last_charge_status"], "#746b96")
+            status_cls = {"active": "badge-ok", "paused": "badge-zero"}.get(s["status"], "badge-stage")
+            status_lbl = {"active": "активна", "paused": "на паузе"}.get(s["status"], s["status"])
+            last_color = {"CONFIRMED": "#4ecf8a", "charge_failed": "#ef6a6a", "REJECTED": "#ef6a6a"}.get(s["last_charge_status"], "#8d86ad")
+            last_lbl = {"CONFIRMED": "прошло", "charge_failed": "не прошло", "REJECTED": "отклонено"}.get(s["last_charge_status"], s["last_charge_status"])
             last_html = (
-                f'<span style="color:{last_color}">{html_mod.escape(s["last_charge_status"])}</span>'
-                f' <small style="color:#8a80b3">{html_mod.escape(s["last_charge_at"])}</small>'
-                if s["last_charge_status"] else '<span style="color:#9a90bf">—</span>'
+                f'<span style="color:{last_color}">{html_mod.escape(last_lbl)}</span>'
+                f' <small style="color:#8d86ad">{html_mod.escape(s["last_charge_at"])}</small>'
+                if s["last_charge_status"] else '<span style="color:#8d86ad">—</span>'
             )
             rb = s["rebill_id"]
             rb_masked = (rb[:4] + "…" + rb[-4:]) if len(rb) > 8 else rb
@@ -6018,7 +6198,7 @@ def build_app(
                 f"<td><a href='/admin/users/{s['tg_id']}'>{html_mod.escape(uname)}</a></td>"
                 f"<td>{html_mod.escape(s['package'])}</td>"
                 f"<td>{s['amount_rub']}₽</td>"
-                f"<td><span class='badge' style='background:{status_color};color:white'>{s['status']}</span></td>"
+                f"<td><span class='badge {status_cls}'>{status_lbl}</span></td>"
                 f"<td>{html_mod.escape(s['next_charge_at'])}<br><small>{when_lbl}</small></td>"
                 f"<td>{last_html}</td>"
                 f"<td>{s['charge_retries']}</td>"
@@ -6026,12 +6206,12 @@ def build_app(
                 f"<td>"
                 f"<form method='post' action='/admin/subscriptions/{s['id']}/charge' style='display:inline' "
                 f"onsubmit=\"return confirm('Списать сейчас? Карта будет реально списана.')\">"
-                f"<button type='submit' class='btn-success' style='font-size:0.8em;padding:4px 8px'>Списать</button>"
+                f"<button type='submit' class='btn-secondary btn-sm'>Списать</button>"
                 f"</form>"
                 + (
                     f" <form method='post' action='/admin/subscriptions/{s['id']}/cancel' style='display:inline' "
                     f"onsubmit=\"return confirm('Отменить подписку? Списаний больше не будет.')\">"
-                    f"<button type='submit' style='background:#c0392b;color:white;font-size:0.8em;padding:4px 8px'>Отменить</button>"
+                    f"<button type='submit' class='btn-danger btn-sm'>Отменить</button>"
                     f"</form>"
                     if s["status"] == "active" else ""
                 )
@@ -6073,8 +6253,8 @@ def build_app(
                     f"</form></td></tr>"
                 )
             orphan_cards += f"""
-            <div class="card" style="border:2px solid #27ae60">
-              <h2 style="color:#1e8449">Recoverable: есть RebillId, но нет подписки ({len(orphan_recoverable)})</h2>
+            <div class="card" style="border:2px solid #4ecf8a">
+              <h2 style="color:#4ecf8a">Recoverable: есть RebillId, но нет подписки ({len(orphan_recoverable)})</h2>
               <p>Оплата уже подтверждена, ключ карты сохранён в <code>payments.rebill_id</code>, но строки в
                  <code>subscriptions</code> нет. Эти кейсы можно восстановить прямо отсюда: кнопка создаст активную
                  подписку, следующее списание будет через стандартный месяц.</p>
@@ -6102,8 +6282,8 @@ def build_app(
                     f"Найти RebillId в T-Bank</button></form></td></tr>"
                 )
             orphan_cards += f"""
-            <div class="card" style="border:2px solid #e67e22">
-              <h2 style="color:#e67e22">Оплачено, но без автосписания ({len(paid_without_autopay)})</h2>
+            <div class="card" style="border:2px solid #f0b04a">
+              <h2 style="color:#f0b04a">Оплачено, но без автосписания ({len(paid_without_autopay)})</h2>
               <p><b>Это не неоплаченные платежи.</b> Статус платежа <code>CONFIRMED</code>; в этом блоке нет активной
                  подписки, потому что T-Bank не дал <code>RebillId</code>. Чаще всего это QR/SBP или notification без
                  ключа карты. Автосписание по таким строкам не стартует.</p>
@@ -6122,54 +6302,48 @@ def build_app(
         {flash}
         {orphan_cards}
         <div class="card">
-          <h2>Здоровье механизма</h2>
-          <div class="stage-grid">
-            <div class="stage-chip"><div class="count" style="color:{loop_health_color}">{html_mod.escape(last_tick_age_str or '—')}</div><div class="label">Последний тик</div></div>
-            <div class="stage-chip"><div class="count">{summary.get('recurrent_ok_30d', 0)}</div><div class="label">Успешных списаний за 30д</div></div>
-            <div class="stage-chip"><div class="count" style="color:#c0392b">{summary.get('recurrent_fail_30d', 0)}</div><div class="label">Фейлов за 30д</div></div>
-            <div class="stage-chip"><div class="count">{summary.get('recurrent_revenue_30d', 0):,}&nbsp;&#8381;</div><div class="label">Выручка с подписок за 30д</div></div>
+          <div class="toolbar">
+            <h2 style="margin:0">Автосписания</h2>
+            <span class="status-pill {'ok' if loop_health_color == '#4ecf8a' else 'warn' if loop_health_color == '#f0b04a' else 'bad' if loop_health_color == '#ef6a6a' else ''}"><i></i>последний проход {html_mod.escape(last_tick_age_str or '—')}</span>
           </div>
-          <p style="color:#8a80b3;font-size:0.85em;margin-top:8px">
-            Цикл крутится в процессе tg_bot_public, проход раз в 24ч. Heartbeat пишется в Redis в начале каждого прохода;
-            advisory-лок не даёт двум инстансам списывать карту дважды.
-            {f"<br>Последний проход: <code>{html_mod.escape(last_tick_str)}</code> · {html_mod.escape(last_stats_str)}" if last_tick_str else ""}
-          </p>
+          <div class="stage-grid" style="margin-top:14px">
+            <div class="stage-chip"><div class="count" style="color:var(--ok)">{summary.get('recurrent_ok_30d', 0)}</div><div class="label">списаний за 30 дней</div></div>
+            <div class="stage-chip"><div class="count" style="color:{'var(--danger)' if summary.get('recurrent_fail_30d', 0) else 'var(--text)'}">{summary.get('recurrent_fail_30d', 0)}</div><div class="label">не прошло</div></div>
+            <div class="stage-chip"><div class="count">{summary.get('recurrent_revenue_30d', 0):,}&nbsp;&#8381;</div><div class="label">выручка с подписок за 30 дней</div></div>
+          </div>
         </div>
 
         <div class="card">
-          <h2>Календарь будущих списаний</h2>
+          <h2>Ближайшие списания</h2>
           <div class="stage-grid">
-            <div class="stage-chip"><div class="count" style="color:#27ae60">{summary.get('active_cnt', 0)}</div><div class="label">активных</div></div>
-            <div class="stage-chip"><div class="count" style="color:#c0392b">{summary.get('paused_cnt', 0)}</div><div class="label">на паузе</div></div>
-            <div class="stage-chip"><div class="count" style="color:#e67e22">{summary.get('overdue_cnt', 0)}</div><div class="label">overdue (ждут тика)</div></div>
+            <div class="stage-chip"><div class="count" style="color:var(--ok)">{summary.get('active_cnt', 0)}</div><div class="label">активных подписок</div></div>
+            <div class="stage-chip"><div class="count" style="color:{'var(--danger)' if summary.get('paused_cnt', 0) else 'var(--text)'}">{summary.get('paused_cnt', 0)}</div><div class="label">на паузе</div></div>
+            <div class="stage-chip"><div class="count" style="color:{'var(--warn)' if summary.get('overdue_cnt', 0) else 'var(--text)'}">{summary.get('overdue_cnt', 0)}</div><div class="label">просрочены</div></div>
             <div class="stage-chip"><div class="count">{summary.get('due_today_cnt', 0)}</div><div class="label">сегодня · {summary.get('due_today_rub', 0):,}&nbsp;&#8381;</div></div>
-            <div class="stage-chip"><div class="count">{summary.get('due_7d_cnt', 0)}</div><div class="label">7 дней · {summary.get('due_7d_rub', 0):,}&nbsp;&#8381;</div></div>
+            <div class="stage-chip"><div class="count">{summary.get('due_7d_cnt', 0)}</div><div class="label">за 7 дней · {summary.get('due_7d_rub', 0):,}&nbsp;&#8381;</div></div>
             <div class="stage-chip"><div class="count">{summary.get('due_this_month_cnt', 0)}</div><div class="label">в этом месяце · {summary.get('due_this_month_rub', 0):,}&nbsp;&#8381;</div></div>
           </div>
         </div>
 
         <div class="card">
-          <h2>Все подписки
-            <form method="post" action="/admin/subscriptions/dedup" style="display:inline;margin-left:12px"
+          <div class="toolbar">
+            <h2 style="margin:0">Все подписки</h2>
+            <form method="post" action="/admin/subscriptions/dedup" style="display:inline"
                   onsubmit="return confirm('Оставить только самую новую активную подписку на каждого пользователя?')">
-              <button type="submit" style="background:#e67e22;color:white;border:none;padding:3px 10px;border-radius:4px;cursor:pointer;font-size:0.65em">
-                Дедуп дублей
-              </button>
+              <button type="submit" class="btn-secondary btn-sm">Убрать дубли</button>
             </form>
-          </h2>
+          </div>
           <div class="table-wrap">
           <table>
             <tr>
-              <th>User</th><th>Пакет</th><th>Сумма</th><th>Статус</th>
-              <th>След. списание</th><th>Последнее списание</th>
-              <th>Retries</th><th>RebillId</th><th></th>
-            </tr>
+              <th>Клиент</th><th>Пакет</th><th>Сумма</th><th>Статус</th>
+              <th>Следующее списание</th><th>Последнее списание</th><th>Попытки</th><th>Карта</th><th></th></tr>
             {rows_html if rows_html else '<tr><td colspan="9">Подписок ещё нет.</td></tr>'}
           </table>
           </div>
         </div>
         """
-        return _page("Subscriptions", body)
+        return _page("Подписки", body)
 
     @app.post("/admin/subscriptions/dedup")
     async def subscriptions_dedup(
@@ -6563,19 +6737,19 @@ def build_app(
                     f'<a href="/admin/tiers?tier={code}" '
                     f'style="display:flex;flex-direction:column;justify-content:space-between;'
                     f'min-width:170px;min-height:80px;padding:10px 12px;border-radius:8px;'
-                    f'border:{border};background:#120b26;text-decoration:none;color:#f6f5fd">'
+                    f'border:{border};background:#110b20;text-decoration:none;color:#f2effc">'
                     f'<div style="display:flex;justify-content:space-between;align-items:center">'
                     f'<span class="badge" style="background:{color};color:white">{code}</span>'
                     f'<span style="font-size:1.4em;font-weight:700">{cnt}</span>'
                     f'</div>'
-                    f'<div style="margin-top:6px;font-size:0.85em;color:#9d95bf">'
+                    f'<div style="margin-top:6px;font-size:0.85em;color:#6a6390">'
                     f'{kind_emoji} {html_mod.escape(spec["title"])}</div>'
                     f'</a>'
                 )
             groups_html += (
                 f'<div class="card" style="border-left:4px solid {color}">'
                 f'<h3 style="margin-top:0;color:{color}">{letter} — {html_mod.escape(label)}'
-                f'<small style="color:#c3bce0;font-weight:normal;margin-left:0.5rem">{html_mod.escape(group_caption)}</small></h3>'
+                f'<small style="color:#c6bfe4;font-weight:normal;margin-left:0.5rem">{html_mod.escape(group_caption)}</small></h3>'
                 f'<div style="display:flex;flex-wrap:wrap;gap:0.6rem">{tile_html}</div>'
                 f'</div>'
             )
@@ -6655,11 +6829,11 @@ def build_app(
                     status_badge = {
                         "todo": '<span class="badge badge-stage">todo</span>',
                         "contacted": '<span class="badge badge-ok">контакт</span>',
-                        "converted": '<span class="badge" style="background:#27ae60;color:white">конверсия</span>',
+                        "converted": '<span class="badge" style="background:#4ecf8a;color:white">конверсия</span>',
                         "dropped": '<span class="badge badge-zero">дроп</span>',
                     }.get(status, status)
                     actor = html_mod.escape(o["assigned_to"] or "—")
-                    outreach_cell = f"{status_badge}<br><small style='color:#c3bce0'>{actor}</small>"
+                    outreach_cell = f"{status_badge}<br><small style='color:#c6bfe4'>{actor}</small>"
                 else:
                     outreach_cell = '<span class="badge badge-stage">todo</span>'
                 if tier_code == "S1":
@@ -6712,7 +6886,7 @@ def build_app(
         users_colspan = (11 if tier_code == "S1" else 8) if is_manager_tier else 7
         users_section = (
             '<div class="card">'
-            f'<h3>Пользователи в тире <small style="color:#c3bce0">— {users_count} чел'
+            f'<h3>Пользователи в тире <small style="color:#c6bfe4">— {users_count} чел'
             f' (показано {min(users_count, 200)})</small></h3>'
             f'<div class="table-wrap"><table>{users_table_header}'
             + (tbody if tbody else f'<tr><td colspan={users_colspan}>Никого нет в этом тире — самое время порадоваться.</td></tr>')
@@ -6724,7 +6898,7 @@ def build_app(
         kind = spec.get("kind", "auto")
         if kind == "manager":
             manager_button = (
-                f'<a class="btn" href="#users-list" style="background:#c0392b">Написать менеджером →</a>'
+                f'<a class="btn" href="#users-list" style="background:#ef6a6a">Написать менеджером →</a>'
             )
         else:
             manager_button = ""
@@ -6750,7 +6924,7 @@ def build_app(
           <h3 style="margin:0">
             <span class="badge" style="background:{spec['color']};color:white">{tier_code}</span>
             {html_mod.escape(spec['title'])}
-            <small style="color:#c3bce0">— {users_count} чел · {html_mod.escape(spec.get('kind', 'auto'))}</small>
+            <small style="color:#c6bfe4">— {users_count} чел · {html_mod.escape(spec.get('kind', 'auto'))}</small>
           </h3>
           <p><b>Сегментация:</b> <code>{html_mod.escape(spec['rule'])}</code></p>
           <p><b>Задача:</b> {html_mod.escape(spec['task'])}</p>
@@ -6767,7 +6941,7 @@ def build_app(
         """
         recent_fires_card = (
             '<div class="card"><h3>Последние срабатывания триггеров этого тира</h3>'
-            + (fires_html or '<p style="color:#c3bce0">Пока ни одного срабатывания.</p>')
+            + (fires_html or '<p style="color:#c6bfe4">Пока ни одного срабатывания.</p>')
             + '</div>'
         )
         anchor = '<a id="users-list"></a>'
@@ -6778,7 +6952,7 @@ def build_app(
         if not rules:
             return (
                 '<div class="card"><h3>Активные триггеры этого тира</h3>'
-                '<p style="color:#c3bce0">Триггеров для этого тира пока нет. '
+                '<p style="color:#c6bfe4">Триггеров для этого тира пока нет. '
                 f'<a href="/admin/lifecycle?tier={tier_code}#new">Создать первый →</a></p></div>'
             )
         # Parallel per-rule 24h stats — was the slowest part of detail rendering.
@@ -6793,7 +6967,7 @@ def build_app(
             throttled = stats.get("throttled", 0)
             total_attempts = sent + blocked + failed
             err_pct = (100.0 * (blocked + failed) / total_attempts) if total_attempts else 0.0
-            err_color = "#27ae60" if err_pct <= 30 else "#e74c3c"
+            err_color = "#4ecf8a" if err_pct <= 30 else "#ef6a6a"
             enabled_badge = (
                 '<span class="badge badge-ok">ВКЛ</span>' if rule["enabled"]
                 else '<span class="badge badge-zero">выкл</span>'
@@ -6803,7 +6977,7 @@ def build_app(
                 '<div style="border:1px solid rgba(139,111,230,.2);border-radius:6px;padding:0.8rem 1rem;margin-bottom:0.6rem">'
                 f'<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:0.5rem">'
                 f'<div><strong>#{rule["id"]} {html_mod.escape(rule["name"])}</strong> {enabled_badge}'
-                f'<br><small style="color:#c3bce0">{html_mod.escape(trig_summary)}</small></div>'
+                f'<br><small style="color:#c6bfe4">{html_mod.escape(trig_summary)}</small></div>'
                 f'<div style="font-size:0.85em">'
                 f'<span title="отправлено за 24ч">отпр: <b>{sent}</b></span> · '
                 f'<span title="заблокированы">блок: <b>{blocked}</b></span> · '
@@ -7019,11 +7193,11 @@ def build_app(
             throttled = stats.get("throttled", 0)
             total = sent + blocked + failed
             err_pct = (100.0 * (blocked + failed) / total) if total else 0.0
-            err_color = "#27ae60" if err_pct <= 30 else "#e74c3c"
+            err_color = "#4ecf8a" if err_pct <= 30 else "#ef6a6a"
             tier_badge = ""
             if r.get("tier"):
                 tspec = _TIER_SPEC.get(r["tier"])
-                bg = (tspec or {}).get("color", "#8a80b3")
+                bg = (tspec or {}).get("color", "#8d86ad")
                 tier_badge = f'<span class="badge" style="background:{bg};color:white">{r["tier"]}</span> '
             enabled_badge = (
                 '<span class="badge badge-ok">ВКЛ</span>' if r["enabled"]
@@ -7032,7 +7206,7 @@ def build_app(
             tr.append(
                 f"<tr><td>#{r['id']}</td>"
                 f"<td>{tier_badge}<a href='/admin/lifecycle/{r['id']}'>{html_mod.escape(r['name'])}</a><br>"
-                f"<small style='color:#c3bce0'>{html_mod.escape(trig_summary)}</small></td>"
+                f"<small style='color:#c6bfe4'>{html_mod.escape(trig_summary)}</small></td>"
                 f"<td>{trig_lbl}</td>"
                 f"<td>{r['cooldown_days']} дн.</td>"
                 f"<td>отпр {sent} · блок {blocked} · ошиб {failed} · thr {throttled}<br>"
@@ -7053,7 +7227,7 @@ def build_app(
         recent_html = _render_fires_table(recent_global, with_rule=True)
         recent_card = (
             '<div class="card"><h3>Последние 100 срабатываний (все правила)</h3>'
-            + (recent_html or '<p style="color:#c3bce0">Пока ни одного срабатывания.</p>')
+            + (recent_html or '<p style="color:#c6bfe4">Пока ни одного срабатывания.</p>')
             + '</div>'
         )
 
@@ -7177,7 +7351,7 @@ def build_app(
             <label>Сообщение:<br>
               <textarea name="message_text" rows="6" style="width:100%" required>{html_mod.escape(prefill_text)}</textarea>
             </label><br><br>
-            <p style="color:#c3bce0;font-size:0.85em">
+            <p style="color:#c6bfe4;font-size:0.85em">
               Правило создаётся <b>выключенным</b>. Перед включением — нажми «Превью аудитории» и «Тестовая отправка».
             </p>
             <button type="submit" class="btn-success">Создать (выключенным)</button>
@@ -7195,7 +7369,7 @@ def build_app(
             '<th>За 24ч</th><th>Последний запуск</th><th>Статус</th><th>Действия</th></tr>'
             + (''.join(tr) if tr else '<tr><td colspan=8>Правил ещё нет</td></tr>')
             + '</table></div>'
-            '<p style="color:#c3bce0;font-size:0.85em">'
+            '<p style="color:#c6bfe4;font-size:0.85em">'
             'Воркер прогоняет правила автоматически каждые 5 минут. '
             'Перед каждой отправкой авто проверяются: bot_blocked · admin_dm за 7 дней · оплата (если exclude_paid) · '
             'anti-fatigue (≤1/48ч и ≤2/неделю) · cooldown правила.'
@@ -7246,13 +7420,13 @@ def build_app(
 
         # Test send block.
         test_err_html = (
-            f'<p style="color:#c0392b"><strong>Ошибка:</strong> {html_mod.escape(test_err)}</p>'
+            f'<p style="color:#ef6a6a"><strong>Ошибка:</strong> {html_mod.escape(test_err)}</p>'
             if test_err else ""
         )
         test_form = f"""
         <div class="card">
           <h3>Тестовая отправка</h3>
-          <p style="color:#c3bce0;font-size:0.85em">
+          <p style="color:#c6bfe4;font-size:0.85em">
             Отправляет именно это сообщение указанному получателю. Помечается <code>test</code> в fires —
             не учитывается в cooldown, anti-fatigue и счётчиках. Прогони на себе перед массовым включением.
           </p>
@@ -7267,7 +7441,7 @@ def build_app(
         fires_html = _render_fires_table(fires, with_rule=False)
         fires_card = (
             '<div class="card"><h3>Последние 100 срабатываний</h3>'
-            + (fires_html or '<p style="color:#c3bce0">Пока ни одного срабатывания.</p>')
+            + (fires_html or '<p style="color:#c6bfe4">Пока ни одного срабатывания.</p>')
             + '</div>'
         )
 
@@ -7292,14 +7466,13 @@ def build_app(
                   onsubmit="return confirm('Удалить правило?')">
               <button class="btn-danger">Удалить</button>
             </form>
-            <a class="btn" href="/admin/lifecycle">← к списку</a>
           </div>
         </div>
         {test_form}
         {edit_form}
         {fires_card}
         """
-        return _page(f"Triger #{rid}", body)
+        return _page(f"Триггер #{rid}", body, back=("Триггеры", "/admin/lifecycle"))
 
     @app.get("/admin/lifecycle/{rid}/preview", response_class=HTMLResponse)
     async def lifecycle_preview(rid: int, _user: str = Depends(_check_auth)) -> str:
@@ -7329,7 +7502,7 @@ def build_app(
                 f'{rows}</table></div>'
             )
         else:
-            sample_html = '<p style="color:#c3bce0">Сейчас аудитория пустая.</p>'
+            sample_html = '<p style="color:#c6bfe4">Сейчас аудитория пустая.</p>'
 
         excl = breakdown
         bar_total = max(1, excl["matched_raw"])
@@ -7349,14 +7522,13 @@ def build_app(
             <li>cooldown правила: <b>{excl['excluded_cooldown']}</b> ({pct(excl['excluded_cooldown'])}%)</li>
           </ul>
           <p style="font-size:1.1em">→ <b>{excl['final_count']}</b> юзеров получат сообщение при ближайшем тике.</p>
-          <a class="btn" href="/admin/lifecycle/{rid}">← к правилу</a>
         </div>
         <div class="card">
           <h3>Первые 10 кандидатов</h3>
           {sample_html}
         </div>
         """
-        return _page(f"Превью #{rid}", body)
+        return _page(f"Превью #{rid}", body, back=[("Триггеры", "/admin/lifecycle"), (f"Триггер #{rid}", f"/admin/lifecycle/{rid}")])
 
     @app.post("/admin/lifecycle/{rid}/test_send")
     async def lifecycle_test_send(
