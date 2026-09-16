@@ -16,15 +16,15 @@ const tabs: { stage: number; label: string; icon: (color: string) => ReactNode }
     stage: 2,
     label: 'wizard.tabs.background',
     icon: (color) => (
-      <span aria-hidden="true" className="relative inline-block h-[19px] w-[19px] shrink-0">
-        <span className="absolute bottom-0 left-0 h-[11px] w-[11px] border border-dashed" style={{ borderColor: color }} />
-        <span className="absolute right-0 top-0 h-[15px] w-[15px]" style={{ backgroundColor: color }} />
+      <span aria-hidden="true" className="relative inline-block h-[19px] w-[19px] shrink-0 max-md:h-[13px] max-md:w-[13px]">
+        <span className="absolute bottom-0 left-0 h-[11px] w-[11px] border border-dashed max-md:h-[8px] max-md:w-[8px]" style={{ borderColor: color }} />
+        <span className="absolute right-0 top-0 h-[15px] w-[15px] max-md:h-[10px] max-md:w-[10px]" style={{ backgroundColor: color }} />
       </span>
     )
   },
-  { stage: 4, label: 'wizard.tabs.text', icon: (color) => <em className="font-bold italic text-[25px] leading-none" style={{ color }}>Т</em> },
+  { stage: 4, label: 'wizard.tabs.text', icon: (color) => <em className="font-bold italic text-[25px] leading-none max-md:text-[15px]" style={{ color }}>Т</em> },
   { stage: 3, label: 'wizard.tabs.fx', icon: (color) => <SvgMaskIcon src="/assets/figma/icon-bolt.svg" style={{ width: 13, height: 20, color }} /> },
-  { stage: 5, label: 'wizard.tabs.pool', icon: (color) => <em className="font-bold italic text-[25px] leading-none" style={{ color }}>V</em> }
+  { stage: 5, label: 'wizard.tabs.pool', icon: (color) => <em className="font-bold italic text-[25px] leading-none max-md:text-[15px]" style={{ color }}>V</em> }
 ];
 
 export function StageTabs() {
@@ -82,7 +82,7 @@ export function WizardHeaderCard({ title, artist, onRename }: { title: string; a
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   return (
-    <header className="card-2 flex h-[240px] shrink-0 flex-col px-space-7 py-space-6 max-lg:h-auto max-lg:px-space-5">
+    <header className="card-2 flex h-[240px] shrink-0 flex-col px-space-7 py-space-6 max-lg:h-auto max-lg:px-space-5 max-md:px-[20px] max-md:py-[18px]">
       <div className="flex items-center gap-space-3">
         {editing ? (
           <input
@@ -100,15 +100,15 @@ export function WizardHeaderCard({ title, artist, onRename }: { title: string; a
           <button
             type="button"
             aria-label={t('wizard.rename')}
-            className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-r10 bg-transparent transition-colors hover:bg-accent-20"
+            className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-r10 bg-transparent transition-colors hover:bg-accent-20 max-md:h-[24px] max-md:w-[24px]"
             onClick={() => setEditing(true)}
           >
-            <img src="/assets/figma/icon-pencil.svg" width="15" height="17" alt="" />
+            <img src="/assets/figma/icon-pencil.svg" width="15" height="17" alt="" className="max-md:h-[12px] max-md:w-[11px]" />
           </button>
         )}
       </div>
-      <p className="wizard-body mt-space-2">{artist ?? '—'}</p>
-      <div className="mt-auto pt-space-4">
+      <p className="wizard-body mt-space-2 max-md:mt-0">{artist ?? '—'}</p>
+      <div className="mt-auto pt-space-4 max-md:pt-[12px]">
         <StageTabs />
       </div>
     </header>
@@ -173,17 +173,17 @@ export function PillsFooter({
   const mask = `linear-gradient(to right, transparent 0px, #000 ${fade.left ? 40 : 0}px, #000 calc(100% - ${rightGap + (fade.right ? 40 : 0)}px), transparent calc(100% - ${rightGap}px))`;
 
   return (
-    <div className="card-2 flex h-[226px] shrink-0 flex-col justify-between px-space-6 py-space-6 max-lg:px-space-5">
+    <div className="card-2 flex h-[226px] shrink-0 flex-col justify-between px-space-6 py-space-6 max-lg:px-space-5 max-md:h-auto max-md:gap-[14px] max-md:px-[20px] max-md:py-[20px]">
       <div className="relative">
         <div
           ref={dragScroll.ref}
           className="media-row cursor-grab select-none items-center gap-[20px] active:cursor-grabbing"
-          style={{ height: 60, paddingRight: hasPlus ? 80 : 0, maskImage: mask, WebkitMaskImage: mask }}
+          style={{ height: 'var(--pill-row-h, 60px)', paddingRight: hasPlus ? 'var(--pill-row-pr, 80px)' : 0, maskImage: mask, WebkitMaskImage: mask }}
           onScroll={syncFades}
           {...dragScroll.handlers}
         >
           {pills.length === 0 ? (
-            <span className="soft-btn pointer-events-none h-[60px] w-[310px] shrink-0 !text-text-60">{emptyLabel}</span>
+            <span className="soft-btn pointer-events-none h-[60px] w-[310px] shrink-0 !text-text-60 max-md:h-[44px] max-md:w-[220px]">{emptyLabel}</span>
           ) : (
             pills.map((pill) => (
               <button
@@ -204,9 +204,9 @@ export function PillsFooter({
             aria-label={t('wizard.nextSection')}
             onClick={onPlus}
             disabled={plusDisabled}
-            className="absolute right-0 top-0 z-[2] flex h-[60px] w-[60px] items-center justify-center rounded-r15 bg-text transition hover:opacity-90 active:scale-95 disabled:opacity-40"
+            className="absolute right-0 top-0 z-[2] flex h-[60px] w-[60px] items-center justify-center rounded-r15 bg-text transition hover:opacity-90 active:scale-95 disabled:opacity-40 max-md:h-[44px] max-md:w-[44px]"
           >
-            <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" className="max-md:h-[18px] max-md:w-[18px]">
               <defs>
                 <linearGradient id="footerPlus" x1="0" y1="0" x2="1" y2="1">
                   <stop offset="0" stopColor="#8b6fe6" />
@@ -219,9 +219,9 @@ export function PillsFooter({
         )}
       </div>
 
-      <div className="flex items-center gap-[20px]">
+      <div className="flex items-center gap-[20px] max-md:gap-[10px]">
         <BackSquareButton onClick={onBack} />
-        <button type="button" disabled={!canContinue || loading} onClick={onNext} className={cn('soft-btn h-[60px] flex-1 gap-space-4', ready && 'soft-btn-ready')}>
+        <button type="button" disabled={!canContinue || loading} onClick={onNext} className={cn('soft-btn h-[60px] flex-1 gap-space-4 max-md:h-[44px]', ready && 'soft-btn-ready')}>
           {loading ? <span className="spinner" /> : (<>
             {nextLabel ?? t('wizard.continue')}
             <svg viewBox="0 0 26 16" width="25" height="15" fill="none" aria-hidden="true">
@@ -237,7 +237,7 @@ export function PillsFooter({
 export function BackSquareButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
   const { t } = useTranslation();
   return (
-    <button type="button" aria-label={t('wizard.back')} disabled={disabled} onClick={onClick} className="soft-btn h-[60px] w-[60px] shrink-0">
+    <button type="button" aria-label={t('wizard.back')} disabled={disabled} onClick={onClick} className="soft-btn h-[60px] w-[60px] shrink-0 max-md:h-[44px] max-md:w-[44px]">
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
         <path d="M14.5 5.5 8 12l6.5 6.5M8 12h11.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
       </svg>

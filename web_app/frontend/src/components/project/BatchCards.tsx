@@ -229,8 +229,8 @@ export function TrackCard({
           </button>
         )}
       </div>
-      <p className="mt-[12px] truncate text-[24px] font-[350] leading-[29px] text-transparent" style={gradLight}>{artistNick ?? t('projectDetail.artistFallback')}</p>
-      <div className="mt-[31px]">{children}</div>
+      <p className="mt-[12px] truncate text-[24px] font-[350] leading-[29px] text-transparent max-md:mt-[4px]" style={gradLight}>{artistNick ?? t('projectDetail.artistFallback')}</p>
+      <div className="mt-[31px] max-md:mt-[14px]">{children}</div>
     </section>
   );
 }
@@ -386,16 +386,16 @@ export function GenerationsCard({
   };
   return (
     <section data-limits-dim className="card-2 relative flex min-h-0 flex-1 flex-col overflow-hidden p-[40px] max-md:p-[20px]">
-      <div className="mb-[28px] flex items-center justify-between gap-space-4 max-md:flex-col max-md:items-start max-md:gap-[12px]">
+      <div className="mb-[28px] flex items-center justify-between gap-space-4 max-md:flex-col max-md:items-start max-md:gap-[10px]">
         <h2 className="shrink-0 text-[24px] font-[400] leading-none text-transparent" style={gradLight}>{t('projectDetail.generations')}</h2>
         {/* Figma W36: фокус-кнопка «Выложить все» + TikTok; справа кружок лимита (W47 — поповер) */}
-        <span className="flex shrink-0 items-center gap-[20px] max-md:flex-wrap max-md:gap-[10px]">
+        <span className="flex shrink-0 items-center gap-[20px] max-md:w-full max-md:gap-[8px]">
           <button
             type="button"
             onClick={() => postAll?.()}
             disabled={!postAll}
             className={cn(
-              'flex h-[38px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent bg-grad-soft-20 px-[14px] text-[16px] font-[350] leading-none transition',
+              'flex h-[38px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent bg-grad-soft-20 px-[14px] text-[16px] font-[350] leading-none transition max-md:h-[30px] max-md:gap-[6px] max-md:px-[10px] max-md:text-[13px]',
               postAll ? 'text-text-80 hover:text-text' : 'cursor-not-allowed text-text-40'
             )}
           >
@@ -410,14 +410,14 @@ export function GenerationsCard({
             onClick={downloadAll}
             disabled={!downloadable.length}
             className={cn(
-              'flex h-[38px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-[rgba(246,245,253,0.2)] px-[14px] text-[16px] font-[350] leading-none transition',
+              'flex h-[38px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-[rgba(246,245,253,0.2)] px-[14px] text-[16px] font-[350] leading-none transition max-md:h-[30px] max-md:gap-[6px] max-md:px-[10px] max-md:text-[13px]',
               downloadable.length ? 'text-text-80 hover:border-accent-light hover:text-text' : 'cursor-not-allowed text-text-40'
             )}
           >
             <FigIcon name="pd-download.svg" h={18} />
             {t('projectDetail.downloadAll')}
           </button>
-          <LimitsIndicator offsetY={28} />
+          <span className="max-md:ml-auto"><LimitsIndicator offsetY={28} /></span>
         </span>
       </div>
       <div className="relative min-h-0 flex-1">
@@ -529,7 +529,7 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
       {/* Кадр ролика с управлением внутри: раньше здесь была пустая белая панель, и
           посмотреть готовый ролик прямо на батче было нельзя — только скачать. */}
       <PreviewPlayer
-        className="dash-panel-white mt-[28px] min-h-0 flex-1"
+        className="dash-panel-white mt-[28px] min-h-0 flex-1 max-md:mt-[14px] max-md:aspect-[9/16] max-md:w-full"
         playing={playing}
         onTogglePlay={video?.downloadUrl ? togglePlay : undefined}
         onPrev={() => step(-1)}
@@ -561,7 +561,7 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
       <button
         type="button"
         onClick={onBack}
-        className="mt-[28px] flex h-[60px] items-center justify-center gap-[16px] whitespace-nowrap rounded-[15px] border-2 border-accent-light text-[24px] font-[350] leading-none text-text-80 transition hover:text-text"
+        className="mt-[28px] flex h-[60px] items-center justify-center gap-[16px] whitespace-nowrap rounded-[15px] border-2 border-accent-light text-[24px] font-[350] leading-none text-text-80 transition hover:text-text max-md:mt-[14px] max-md:h-[44px] max-md:text-[15px]"
         style={{ background: 'var(--grad-soft-20)' }}
       >
         {t('common.toProjects')}

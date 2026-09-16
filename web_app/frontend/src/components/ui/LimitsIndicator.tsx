@@ -66,9 +66,9 @@ function LimitBar({ label, used, total }: { label: string; used: number; total: 
   const unlimited = total === null;
   const pct = total ? Math.max(0, Math.min(1, used / total)) : 0;
   return (
-    <span className="flex items-center gap-[16px]">
-      <span className="min-w-[88px] shrink-0 whitespace-nowrap text-[16px] font-[400] leading-[19px] text-transparent" style={SOFT_TEXT}>{label}</span>
-      <span className="relative h-[20px] w-[161px] shrink-0 overflow-hidden rounded-[20px] bg-grad-soft-20">
+    <span className="flex items-center gap-[16px] max-md:gap-[10px]">
+      <span className="min-w-[88px] shrink-0 whitespace-nowrap text-[16px] font-[400] leading-[19px] text-transparent max-md:min-w-0" style={SOFT_TEXT}>{label}</span>
+      <span className="relative h-[20px] w-[161px] shrink-0 overflow-hidden rounded-[20px] bg-grad-soft-20 max-md:h-[14px] max-md:w-auto max-md:flex-1">
         <span
           className={`absolute inset-y-0 left-0 rounded-[20px] ${unlimited ? 'limit-unlimited' : 'bg-grad-main'}`}
           style={{ width: unlimited ? '100%' : `${pct * 100}%` }}
@@ -141,7 +141,7 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
           <span className="pointer-events-none absolute z-[8] h-[25px] w-[25px]" style={{ left: anchor.x, top: anchor.y }}>
             <span
               role="tooltip"
-              className="absolute right-0 block w-[522px] rounded-r15 bg-grad-soft-20 px-[28px] pb-[25px] pt-[29px] backdrop-blur-[50px]"
+              className="absolute right-0 block w-[522px] rounded-r15 bg-grad-soft-20 px-[28px] pb-[25px] pt-[29px] backdrop-blur-[50px] max-md:w-[min(522px,calc(100vw-40px))] max-md:px-[16px] max-md:pb-[16px] max-md:pt-[16px]"
               style={{ top: 25 + offsetY }}
             >
               <span className="flex items-center gap-[16px]">
@@ -149,10 +149,10 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
                 <span className="text-[24px] font-[400] leading-[29px] text-text">{t('limits.title')}</span>
               </span>
 
-              <span className="mt-[28px] block">
+              <span className="mt-[28px] block max-md:mt-[14px]">
                 <LimitBar label={t('limits.tracks')} used={tracksUsed} total={tracksTotal} />
               </span>
-              <span aria-hidden="true" className="my-[28px] block h-px w-full bg-[rgba(246,245,253,0.2)]" />
+              <span aria-hidden="true" className="my-[28px] block h-px w-full bg-[rgba(246,245,253,0.2)] max-md:my-[14px]" />
               <LimitBar label={t('limits.videos')} used={videosUsed} total={videosTotal} />
             </span>
           </span>

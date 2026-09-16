@@ -560,7 +560,7 @@ a { color: inherit; text-decoration: none; }
 }
 
 @media (max-width: 768px) {
-  .app-content { padding: 12px; }
+  .app-content { padding: 12px; gap: 12px; }
   /* строки пула: подпись ужимается с многоточием, степпер не сжимается */
   .mini-pill { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count-stepper { flex-shrink: 0; }
@@ -572,80 +572,107 @@ a { color: inherit; text-decoration: none; }
 /* ===== Мобильная шкала (<768): сначала текст, от него — контейнеры. =====
    Интерфейс свёрстан в фигма-пикселях (text-[24px], h-[60px], p-[40px]); на 375px
    он не влезает. Вместо переверстки — один набор правил: каждый кегль/высота/паддинг
-   отображается в мобильный эквивалент по подстроке класса. Идёт ПОСЛЕ utilities,
-   при равной специфичности побеждает. Точечные max-md-классы сверху не нужны. */
+   отображается в мобильный эквивалент. [class~=] — точное слово: max-md:/!-варианты
+   не задеваются, ими компонент может переопределить шкалу. Блок идёт ПОСЛЕ utilities. */
 @media (max-width: 767px) {
-  [class*="text-[200px]"] { font-size: 120px; }
-  [class*="text-[104px]"] { font-size: 64px; }
-  [class*="text-[96px]"] { font-size: 56px; }
-  [class*="text-[72px]"] { font-size: 44px; }
-  [class*="text-[64px]"] { font-size: 40px; }
-  [class*="text-[48px]"] { font-size: 32px; }
-  [class*="text-[44px]"] { font-size: 30px; }
-  [class*="text-[36px]"] { font-size: 26px; }
-  [class*="text-[32px]"] { font-size: 22px; }
-  [class*="text-[30px]"] { font-size: 21px; }
-  [class*="text-[28px]"] { font-size: 20px; }
-  [class*="text-[26px]"] { font-size: 19px; }
-  [class*="text-[25px]"] { font-size: 18px; }
-  [class*="text-[24px]"] { font-size: 17px; }
-  [class*="text-[22px]"] { font-size: 17px; }
-  [class*="text-[20px]"] { font-size: 16px; }
-  [class*="text-[19px]"] { font-size: 15px; }
-  [class*="text-[18px]"] { font-size: 15px; }
-  [class*="text-[17px]"] { font-size: 14px; }
-  [class*="text-[16px]"] { font-size: 14px; }
-  [class*="text-[15px]"] { font-size: 13px; }
-  [class*="text-[14px]"] { font-size: 13px; }
-  [class*="text-[13px]"] { font-size: 12px; }
-  [class*="text-[12px]"] { font-size: 11px; }
-  [class*="leading-[38px]"] { line-height: 28px; }
-  [class*="leading-[36px]"] { line-height: 27px; }
-  [class*="leading-[34px]"] { line-height: 26px; }
-  [class*="leading-[32px]"] { line-height: 25px; }
-  [class*="leading-[30px]"] { line-height: 24px; }
-  [class*="leading-[28px]"] { line-height: 22px; }
-  [class*="leading-[26px]"] { line-height: 21px; }
-  [class*="leading-[24px]"] { line-height: 20px; }
-  [class*="leading-[22px]"] { line-height: 19px; }
-  [class*="leading-[20px]"] { line-height: 18px; }
-  [class*="leading-[19px]"] { line-height: 17px; }
-  [class*="h-[80px]"] { height: 60px; }
-  [class*="min-h-[80px]"] { min-height: 60px; }
-  [class*="h-[72px]"] { height: 56px; }
-  [class*="min-h-[72px]"] { min-height: 56px; }
-  [class*="h-[64px]"] { height: 52px; }
-  [class*="min-h-[64px]"] { min-height: 52px; }
-  [class*="h-[60px]"] { height: 48px; }
-  [class*="min-h-[60px]"] { min-height: 48px; }
-  [class*="h-[56px]"] { height: 46px; }
-  [class*="min-h-[56px]"] { min-height: 46px; }
-  [class*="h-[52px]"] { height: 44px; }
-  [class*="min-h-[52px]"] { min-height: 44px; }
-  [class*="h-[48px]"] { height: 42px; }
-  [class*="min-h-[48px]"] { min-height: 42px; }
-  [class*="h-[44px]"] { height: 40px; }
-  [class*="min-h-[44px]"] { min-height: 40px; }
-  [class*=" w-[80px]"], [class^="w-[80px]"] { width: 60px; }
-  [class*=" w-[72px]"], [class^="w-[72px]"] { width: 56px; }
-  [class*=" w-[64px]"], [class^="w-[64px]"] { width: 52px; }
-  [class*=" w-[60px]"], [class^="w-[60px]"] { width: 48px; }
-  [class*=" w-[56px]"], [class^="w-[56px]"] { width: 46px; }
-  [class*=" w-[52px]"], [class^="w-[52px]"] { width: 44px; }
-  [class*=" w-[48px]"], [class^="w-[48px]"] { width: 42px; }
-  [class*=" w-[44px]"], [class^="w-[44px]"] { width: 40px; }
-  [class*="p-[72px]"] { padding:28px; }
-  [class*="p-[40px]"] { padding:20px; }
-  [class*="px-[40px]"] { padding-left:20px;padding-right:20px; }
-  [class*="py-[40px]"] { padding-top:24px;padding-bottom:24px; }
-  [class*="p-[28px]"] { padding:18px; }
-  [class*="px-[28px]"] { padding-left:18px;padding-right:18px; }
-  [class*="gap-[40px]"] { gap:20px; }
-  [class*="px-space-6"] { padding-left:16px;padding-right:16px; }
-  [class*="p-space-6"] { padding:16px; }
+  :root { --fig-scale: .72; }
+  [class~="text-[200px]"] { font-size: 120px; }
+  [class~="text-[104px]"] { font-size: 64px; }
+  [class~="text-[96px]"] { font-size: 56px; }
+  [class~="text-[72px]"] { font-size: 44px; }
+  [class~="text-[64px]"] { font-size: 40px; }
+  [class~="text-[48px]"] { font-size: 32px; }
+  [class~="text-[44px]"] { font-size: 30px; }
+  [class~="text-[36px]"] { font-size: 26px; }
+  [class~="text-[32px]"] { font-size: 22px; }
+  [class~="text-[30px]"] { font-size: 21px; }
+  [class~="text-[28px]"] { font-size: 20px; }
+  [class~="text-[26px]"] { font-size: 19px; }
+  [class~="text-[25px]"] { font-size: 18px; }
+  [class~="text-[24px]"] { font-size: 17px; }
+  [class~="text-[22px]"] { font-size: 17px; }
+  [class~="text-[20px]"] { font-size: 16px; }
+  [class~="text-[19px]"] { font-size: 15px; }
+  [class~="text-[18px]"] { font-size: 15px; }
+  [class~="text-[17px]"] { font-size: 14px; }
+  [class~="text-[16px]"] { font-size: 14px; }
+  [class~="text-[15px]"] { font-size: 13px; }
+  [class~="text-[14px]"] { font-size: 13px; }
+  [class~="text-[13px]"] { font-size: 12px; }
+  [class~="text-[12px]"] { font-size: 11px; }
+  [class~="leading-[38px]"] { line-height: 28px; }
+  [class~="leading-[36px]"] { line-height: 27px; }
+  [class~="leading-[34px]"] { line-height: 26px; }
+  [class~="leading-[32px]"] { line-height: 25px; }
+  [class~="leading-[30px]"] { line-height: 24px; }
+  [class~="leading-[28px]"] { line-height: 22px; }
+  [class~="leading-[26px]"] { line-height: 21px; }
+  [class~="leading-[24px]"] { line-height: 20px; }
+  [class~="leading-[22px]"] { line-height: 19px; }
+  [class~="leading-[20px]"] { line-height: 18px; }
+  [class~="leading-[19px]"] { line-height: 17px; }
+  [class~="h-[80px]"] { height: 60px; }
+  [class~="min-h-[80px]"] { min-height: 60px; }
+  [class~="w-[80px]"] { width: 60px; }
+  [class~="h-[72px]"] { height: 56px; }
+  [class~="min-h-[72px]"] { min-height: 56px; }
+  [class~="w-[72px]"] { width: 56px; }
+  [class~="h-[64px]"] { height: 52px; }
+  [class~="min-h-[64px]"] { min-height: 52px; }
+  [class~="w-[64px]"] { width: 52px; }
+  [class~="h-[60px]"] { height: 48px; }
+  [class~="min-h-[60px]"] { min-height: 48px; }
+  [class~="w-[60px]"] { width: 48px; }
+  [class~="h-[56px]"] { height: 46px; }
+  [class~="min-h-[56px]"] { min-height: 46px; }
+  [class~="w-[56px]"] { width: 46px; }
+  [class~="h-[52px]"] { height: 44px; }
+  [class~="min-h-[52px]"] { min-height: 44px; }
+  [class~="w-[52px]"] { width: 44px; }
+  [class~="h-[48px]"] { height: 42px; }
+  [class~="min-h-[48px]"] { min-height: 42px; }
+  [class~="w-[48px]"] { width: 42px; }
+  [class~="h-[44px]"] { height: 40px; }
+  [class~="min-h-[44px]"] { min-height: 40px; }
+  [class~="w-[44px]"] { width: 40px; }
+  [class~="p-[72px]"] { padding:28px; }
+  [class~="p-[40px]"] { padding:20px; }
+  [class~="px-[40px]"] { padding-left:20px;padding-right:20px; }
+  [class~="py-[40px]"] { padding-top:24px;padding-bottom:24px; }
+  [class~="p-[28px]"] { padding:18px; }
+  [class~="px-[28px]"] { padding-left:18px;padding-right:18px; }
+  [class~="gap-[40px]"] { gap:20px; }
+  [class~="px-space-6"] { padding-left:16px;padding-right:16px; }
+  [class~="p-space-6"] { padding:16px; }
+  [class~="mt-[40px]"] { margin-top:20px; }
+  [class~="mt-[36px]"] { margin-top:20px; }
+  [class~="mt-[28px]"] { margin-top:16px; }
+  [class~="mb-[28px]"] { margin-bottom:16px; }
+  [class~="gap-[20px]"] { gap:12px; }
+  [class~="my-[30px]"] { margin-top:16px;margin-bottom:16px; }
   .wizard-h { font-size: 22px; }
-  .wizard-body { font-size: 16px; }
-  .soft-btn { font-size: 16px; }
-  .soft-chip { font-size: 14px; height: 36px; }
-  .soft-input { font-size: 16px; width: 88px; height: 44px; }
+  .wizard-body { font-size: 15px; }
+  .soft-btn { font-size: 15px; }
+  .soft-chip { font-size: 13px; height: 32px; padding: 0 10px; }
+  .soft-input { font-size: 15px; width: 80px; height: 40px; }
+  .dash-panel, .dash-panel-white { padding-left: 14px; padding-right: 14px; }
+  .mode-switch { height: 42px; }
+  .mode-switch-btn { font-size: 14px; gap: 6px; }
+  .mini-pill { font-size: 13px; height: 26px; padding-left: 32px; }
+  .mini-pill-icon { width: 26px; height: 26px; }
+  /* Point сидит выше центра: число степпера опускаем на 2px */
+  .count-stepper strong { font-size: 16px; min-width: 22px; padding-top: 2px; line-height: 1; }
+  .count-stepper button { width: 26px; height: 26px; font-size: 16px; }
+  .pool-pill { height: 44px; font-size: 14px; padding-left: 54px; padding-right: 14px; }
+  .pool-pill-count { width: 44px; height: 44px; font-size: 15px; }
+  .pool-pill-count > * { font-size: 15px !important; }
+  :root { --pill-row-h: 44px; --pill-row-pr: 54px; }
+  .scroll-fade-l, .scroll-fade-r { display: none; }
+  /* Страница — обычный поток, а не fill-height. `flex-1 min-h-0` внутри колонки без
+     заданной высоты схлопывает блок в 0 (карточки статистики, дорожка примеров,
+     «Генерации») и режет концы контейнеров. На телефоне всё — по контенту. */
+  .app-content > * { flex: 0 0 auto; min-height: auto; height: auto; }
+  [class~="min-h-0"] { flex: 0 0 auto; min-height: auto; }
+  [class~="min-h-0"][class~="overflow-hidden"], [class~="min-h-0"][class~="overflow-y-auto"] { overflow: visible; }
+  [class~="h-full"][class~="overflow-y-auto"] { height: auto; overflow: visible; mask-image: none !important; -webkit-mask-image: none !important; }
 }

@@ -136,12 +136,14 @@ function Sidebar({ activeJobId, userName, avatarUrl, isAdmin }: { activeJobId?: 
 function MobileHeader({ onOpen }: { onOpen: () => void }) {
   const { t } = useTranslation();
   return (
-    <header className="sticky top-0 z-sticky mb-space-4 flex items-center justify-between rounded-r20 border border-border bg-nav p-space-4 backdrop-blur md:hidden">
-      <NavLink to="/app" className="flex items-center gap-space-3">
-        <img src="/assets/figma/logo-star.svg" width="32" height="32" alt="Blast" />
-        <span className="font-bold">Blast</span>
+    /* Шапка не липнет: скроллится вместе со страницей, чтобы не съедать экран. Компактная —
+       лого 24, «Blast» 15px (+1px вниз: у Point кап-высота сидит выше центра), бургер 36. */
+    <header className="flex items-center justify-between rounded-r25 border border-border bg-nav px-[20px] py-[12px] md:hidden">
+      <NavLink to="/app" className="flex items-center gap-[8px]">
+        <img src="/assets/figma/logo-star.svg" width="24" height="24" alt="Blast" />
+        <span className="translate-y-[1px] text-[15px] font-bold leading-none">Blast</span>
       </NavLink>
-      <Button variant="ghost" size="sm" onClick={onOpen} aria-label={t('nav.openMenu')}>☰</Button>
+      <button type="button" onClick={onOpen} aria-label={t('nav.openMenu')} className="flex h-[36px] w-[36px] items-center justify-center rounded-r10 bg-grad-soft-20 text-[16px] text-text-80">☰</button>
     </header>
   );
 }
@@ -158,7 +160,8 @@ function Drawer({ open, onClose, activeJobId, isAdmin }: { open: boolean; onClos
           <Button variant="ghost" size="sm" onClick={onClose}>×</Button>
         </div>
         <nav className="flex flex-col gap-space-3">
-          {navigation(isAdmin).map((item) => (
+          {/* админ-аналитика — десктопный инструмент, в мобильном меню её нет */}
+          {navigation(false).map((item) => (
             <NavLink
               key={item.href}
               to={item.href === '/app/generate' && activeJobId ? `/app/processing/${activeJobId}` : item.href}

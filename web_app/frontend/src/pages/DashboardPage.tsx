@@ -35,12 +35,12 @@ function formatViews(n?: number): string {
 /** Заголовок карточки: 32px Point Book + стрелка «›» (Figma 662:3 / 662:48). */
 function CardHeader({ title, to }: { title: string; to: string }) {
   return (
-    <Link to={to} className="group flex items-center gap-[14px] text-text">
+    <Link to={to} className="group flex items-center gap-[14px] text-text max-md:gap-[8px]">
       <span className="text-[32px] font-[350] leading-none">{title}</span>
       <FigIcon
         name="home-arrow.svg"
         h={16}
-        className="translate-y-[1px] transition-transform duration-200 group-hover:translate-x-[4px]"
+        className="translate-y-[1px] transition-transform duration-200 group-hover:translate-x-[4px] max-md:translate-y-[2px]"
       />
     </Link>
   );
@@ -63,12 +63,12 @@ function ProjectRow({ project }: { project: Project }) {
   const allPosted = generated > 0 && posted === generated;
   return (
     <Link to={`/app/projects/${project.id}`} className="group flex items-center gap-space-5">
-      <ProjectCover name={project.name} src={project.coverUrl} className="h-[80px] w-[80px] shrink-0 rounded-[5px]" />
+      <ProjectCover name={project.name} src={project.coverUrl} className="h-[80px] w-[80px] shrink-0 rounded-[5px] max-md:h-[56px] max-md:w-[56px]" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[24px] leading-none text-text-80 transition-colors group-hover:text-text">
           {project.name}
         </div>
-        <div className="mt-[14px] flex min-w-0 items-center gap-[8px] text-[16px] leading-none text-text-80">
+        <div className="mt-[14px] flex min-w-0 items-center gap-[8px] text-[16px] leading-none text-text-80 max-md:mt-[8px]">
           <span className="h-[6px] w-[6px] shrink-0 rounded-full" style={{ background: dot }} />
           <span className="truncate">{label}</span>
         </div>
@@ -106,7 +106,7 @@ function Hero({ name, resume, onCreate, onResume }: {
 }) {
   const { t } = useTranslation();
   return (
-    <section className="card-2 relative flex min-h-[300px] items-center justify-center overflow-hidden lg:min-h-0 lg:flex-1">
+    <section className="card-2 relative flex min-h-[300px] items-center justify-center overflow-hidden lg:min-h-0 lg:flex-1 max-md:min-h-0 max-md:py-[28px]">
       <img
         src="/assets/figma/home-lines.svg"
         alt=""
@@ -115,7 +115,7 @@ function Hero({ name, resume, onCreate, onResume }: {
       />
       <div className="relative flex flex-col items-center px-space-6 text-center">
         <h1
-          className="text-[clamp(40px,calc(var(--app-layout-w,100vw)*.05),64px)] font-[400] leading-none text-transparent"
+          className="text-[clamp(40px,calc(var(--app-layout-w,100vw)*.05),64px)] font-[400] leading-none text-transparent max-md:text-[30px]"
           style={{
             backgroundImage: 'linear-gradient(184deg, #f6f5fd 8%, rgba(246,245,253,.8) 95%)',
             WebkitBackgroundClip: 'text',
@@ -130,20 +130,21 @@ function Hero({ name, resume, onCreate, onResume }: {
           <>
             {/* Без надстрочного «ПРОДОЛЖИТЬ»: сама фраза «N роликов готовы в …» уже говорит,
                 что это незакрытое дело, а капслок над ней только шумел. */}
-            <p className="mt-[24px] max-w-[460px] text-[24px] font-[350] leading-[1.15] text-text-80">
+            <p className="mt-[24px] max-w-[460px] text-[24px] font-[350] leading-[1.15] text-text-80 max-md:mt-[12px] max-md:max-w-[300px]">
               {resume.kind === 'post'
                 ? t('dashboard.resumePost', { count: resume.count ?? 0, name: resume.projectName })
                 : t('dashboard.resumeWizard', { name: resume.projectName })}
             </p>
-            <div className="mt-[36px] flex flex-wrap items-center justify-center gap-[16px]">
+            {/* на телефоне обе кнопки в ряд и ниже (44): текст над ними получает место и садится к центру */}
+            <div className="mt-[36px] flex flex-wrap items-center justify-center gap-[16px] max-md:mt-[18px] max-md:flex-nowrap max-md:gap-[8px]">
               <button
                 type="button"
                 onClick={onResume}
-                className="flex h-[60px] items-center rounded-r15 bg-accent px-space-6 text-[20px] font-[400] leading-none text-text transition hover:brightness-110 focus-visible:outline-none"
+                className="flex h-[60px] items-center rounded-r15 bg-accent px-space-6 text-[20px] font-[400] leading-none text-text transition hover:brightness-110 focus-visible:outline-none max-md:h-[44px] max-md:flex-1 max-md:justify-center max-md:whitespace-nowrap max-md:px-[10px] max-md:text-[13px]"
               >
                 {resume.kind === 'post' ? t('dashboard.resumePostCta') : t('dashboard.resumeWizardCta')}
               </button>
-              <button type="button" onClick={onCreate} className="soft-btn h-[60px] gap-space-3 px-space-6 text-[20px] font-[400]">
+              <button type="button" onClick={onCreate} className="soft-btn h-[60px] gap-space-3 px-space-6 text-[20px] font-[400] max-md:h-[44px] max-md:flex-1 max-md:gap-[6px] max-md:whitespace-nowrap max-md:px-[10px] max-md:text-[13px]">
                 <img src="/assets/figma/home-note.svg" width="14" height="19" alt="" aria-hidden />
                 {t('dashboard.createProject')}
               </button>
@@ -151,13 +152,13 @@ function Hero({ name, resume, onCreate, onResume }: {
           </>
         ) : (
           <>
-            <p className="mt-[24px] max-w-[320px] text-[24px] font-[350] leading-[1.15] text-text-80">
+            <p className="mt-[24px] max-w-[320px] text-[24px] font-[350] leading-[1.15] text-text-80 max-md:mt-[12px] max-md:max-w-[260px]">
               {t('dashboard.subtitle')}
             </p>
             <button
               type="button"
               onClick={onCreate}
-              className="soft-btn mt-[40px] h-[60px] gap-space-3 px-space-6 text-[20px] font-[400]"
+              className="soft-btn mt-[40px] h-[60px] gap-space-3 px-space-6 text-[20px] font-[400] max-md:mt-[18px] max-md:h-[44px] max-md:px-[14px] max-md:text-[14px]"
             >
               <img src="/assets/figma/home-note.svg" width="14" height="19" alt="" aria-hidden />
               {t('dashboard.createProject')}
@@ -198,7 +199,7 @@ function ProjectsCard({ projects }: { projects: Project[] }) {
   return (
     <section className="card-2 flex flex-col overflow-hidden p-[40px]">
       <CardHeader title={t('dashboard.allProjects')} to="/app/projects" />
-      <div className="mt-[40px] flex flex-1 flex-col justify-center">
+      <div className="mt-[40px] flex flex-1 flex-col justify-center max-md:mt-[16px]">
         {projects.length === 0 ? (
           // Нулевой аккаунт: фантомные строки + прямое действие вместо демо-проектов
           <div className="relative flex flex-1 flex-col justify-center">
@@ -259,12 +260,14 @@ function StatsCard({ connected, handle, published, created, previewData, analysi
   return (
     <section className="card-2 group relative flex flex-col overflow-hidden p-[40px]">
       <Link to="/app/stats" className="absolute inset-0" aria-label={t('dashboard.stats')} />
-      <span className="pointer-events-none relative flex items-center gap-[14px] text-text">
+      <span className="pointer-events-none relative flex items-center gap-[14px] text-text max-md:gap-[8px]">
         <span className="text-[32px] font-[350] leading-none">{t('dashboard.stats')}</span>
-        <FigIcon name="home-arrow.svg" h={16} className="translate-y-[1px] transition-transform duration-200 group-hover:translate-x-[4px]" />
+        <FigIcon name="home-arrow.svg" h={16} className="translate-y-[1px] transition-transform duration-200 group-hover:translate-x-[4px] max-md:translate-y-[2px]" />
+        {/* телефон: «Скоро» компактно в строке заголовка, а не одиноко по центру пустой карточки */}
+        {!connected && <span className="pointer-events-auto relative z-[1] ml-auto hidden max-md:block"><TiktokButton connected={false} size="sm" /></span>}
       </span>
       {!connected ? (
-        <div className="relative z-[1] flex flex-1 items-center justify-center">
+        <div className="relative z-[1] flex flex-1 items-center justify-center max-md:hidden">
           <TiktokButton connected={false} />
         </div>
       ) : (

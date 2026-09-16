@@ -131,7 +131,7 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
   if (!open) return null;
   return createPortal(<div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onMouseDown={onClose}>
     <section role="dialog" aria-modal="true" aria-label={t('wizard.sources.title')} className="flex max-h-[calc(var(--app-layout-h,100vh)*.92)] w-[1000px] max-w-full flex-col overflow-hidden rounded-r25 bg-[#21153d] text-text" onMouseDown={e => e.stopPropagation()}>
-      <header className="flex shrink-0 items-start justify-between gap-4 px-[28px] pb-[14px] pt-[26px]">
+      <header className="flex shrink-0 items-start justify-between gap-4 px-[28px] pb-[14px] pt-[26px] max-md:px-[16px] max-md:pt-[16px]">
         <div>
           <h2 className="text-[24px] leading-tight">{t('wizard.sources.title')}</h2>
           <p className="mt-[8px] max-w-[640px] text-[14px] leading-[1.45] text-text-60">{t('wizard.sources.editorHint')}</p>
@@ -141,7 +141,7 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
         </button>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-[20px] overflow-auto px-[28px] pb-[20px] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="no-scrollbar grid min-h-0 flex-1 grid-cols-1 gap-[20px] overflow-auto px-[28px] pb-[20px] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] max-md:gap-[14px] max-md:px-[16px]">
         {/* Левая колонка — откуда приходят файлы и что с ними происходит прямо сейчас */}
         <div className="flex min-w-0 flex-col gap-[14px]">
           {/* Формат и источник — два одинаковых сегмент-контрола в одном блоке: раньше это

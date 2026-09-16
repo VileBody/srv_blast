@@ -1,5 +1,6 @@
 import React, { ReactNode, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { usePhone } from '../../lib/usePhone';
 import { cn } from '../../lib/cn';
 import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
@@ -66,7 +67,7 @@ function SectionCard({ title, note, warn, children }: { title: string; note: str
     <section className={cn('rounded-r15 bg-grad-soft-10 p-space-5', warn && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
       <div className="mb-space-4 flex items-baseline justify-between gap-space-3">
         <h3 className="text-[24px] font-[400] text-text max-xl:text-[20px]">{title}</h3>
-        <span className={cn('text-[15px]', warn ? 'text-[var(--warning)]' : 'text-text-60')}>{note}</span>
+        <span className={cn('text-[15px] max-md:text-right', warn ? 'text-[var(--warning)]' : 'text-text-60')}>{note}</span>
       </div>
       <div className="flex flex-col gap-space-3">{children}</div>
     </section>
@@ -192,26 +193,31 @@ export function StageSlice() {
     });
   };
 
-  const restNote = (rest: number, base: string) =>
-    rest === 0 ? base : rest > 0
-      ? `${base} · ${t('wizard.pool.unallocated', { n: rest })}`
-      : `${base} · ${t('wizard.pool.over', { n: -rest })}`;
+  const isPhone = usePhone();
+  const restNote = (rest: number, base: string) => {
+    const tail = rest === 0 ? '' : rest > 0 ? t('wizard.pool.unallocated', { n: rest }) : t('wizard.pool.over', { n: -rest });
+    return [base, tail].filter(Boolean).join(' · ');
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* «Всего видео» неподвижен; секции скроллятся под ним */}
       <div className="relative z-[5] shrink-0">
-        <div className="relative flex h-[80px] items-center justify-between rounded-r15 border-2 border-accent-light bg-grad-soft-10 px-space-6 max-md:h-auto max-md:flex-wrap max-md:gap-[10px] max-md:px-space-4 max-md:py-space-3">
-          <span className="wizard-h !text-[28px] max-xl:!text-[22px]">{t('wizard.pool.total')}</span>
-          {/* Figma W19: кружок-индикатор лимита в 20px справа от «+» (W46 — поповер по ховеру) */}
-          <span className="relative flex items-center gap-[20px] max-md:flex-wrap max-md:gap-[10px]">
+        <div className="relative flex h-[80px] items-center justify-between rounded-r15 border-2 border-accent-light bg-grad-soft-10 px-space-6 max-md:h-auto max-md:flex-wrap max-md:gap-x-[10px] max-md:gap-y-[8px] max-md:px-space-4 max-md:py-[10px]">
+          <span className="wizard-h !text-[28px] max-xl:!text-[22px] max-md:!text-[18px]">{t('wizard.pool.total')}</span>
+          {/* Figma W19: кружок-индикатор лимита в 20px справа от «+» (W46 — поповер по ховеру).
+              Телефон: заголовок, степпер и кружок — одна строка; «Распределить» появляется
+              отдельной строкой только когда счётчик ушёл от раскладки, после нажатия исчезает. */}
+          <span className="relative flex items-center gap-[20px] max-md:contents">
             {(bgRest !== 0 || subsRest !== 0 || hooksRest !== 0 || stylesRest !== 0) && (
-              <button type="button" onClick={distributeEvenly} className="flex h-[34px] items-center whitespace-nowrap rounded-r10 border border-accent bg-grad-soft-20 px-[14px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125">
+              <button type="button" onClick={distributeEvenly} className="flex h-[34px] items-center whitespace-nowrap rounded-r10 border border-accent bg-grad-soft-20 px-[14px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 max-md:order-last max-md:h-[30px] max-md:basis-full max-md:justify-center max-md:text-[13px]">
                 {t('wizard.pool.distributeEven')}
               </button>
             )}
-            <Stepper value={alloc.total} min={fixedCount + (units.length ? 1 : 0)} onChange={(total) => setAllocation({ total })} />
-            <LimitsIndicator />
+            <span className="flex items-center gap-[20px] max-md:ml-auto max-md:gap-[12px]">
+              <Stepper value={alloc.total} min={fixedCount + (units.length ? 1 : 0)} onChange={(total) => setAllocation({ total })} />
+              <LimitsIndicator />
+            </span>
           </span>
         </div>
       </div>
@@ -281,7 +287,7 @@ export function StageSlice() {
         )}
 
         {stylesInPool.length > 0 && (
-          <SectionCard title={t('wizard.pool.styles')} note={restNote(stylesRest, t('wizard.pool.stylesNote', { count: hookTarget }))} warn={stylesRest !== 0}>
+          <SectionCard title={t('wizard.pool.styles')} note={restNote(stylesRest, isPhone ? '' : t('wizard.pool.stylesNote', { count: hookTarget }))} warn={stylesRest !== 0}>
             {stylesInPool.map((style) => (
               <div key={style} className="flex items-center justify-between gap-space-3">
                 <MiniPill icon={boltIcon()} label={chip(style)} />
@@ -397,7 +403,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
         </div>
 
         <div className="min-h-0 flex-1 overflow-hidden rounded-r15 border border-[rgba(139,111,230,.28)] bg-grad-soft-10">
-          <div className="grid h-[52px] grid-cols-[132px_minmax(0,1fr)] max-md:grid-cols-[96px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.09)] bg-[rgba(139,111,230,.08)] px-space-5 text-[13px] uppercase tracking-[.08em] text-text-40">
+          <div className="grid h-[52px] grid-cols-[132px_minmax(0,1fr)] max-md:grid-cols-[96px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.09)] bg-[rgba(139,111,230,.08)] px-space-5 text-[13px] uppercase tracking-[.08em] text-text-40 max-md:h-[36px] max-md:px-[14px] max-md:text-[11px]">
             <span>{t('wizard.pool.parameter')}</span>
             <span>{t('wizard.pool.selectedValue')}</span>
           </div>
@@ -409,10 +415,10 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
               [t('wizard.pool.transition'), transitionLabel, <img key="transition" src="/assets/figma/combo-transition.svg" width="22" height="22" alt="" />],
               [t('wizard.pool.style'), styleLabel, <img key="style" src="/assets/figma/combo-style.svg" width="22" height="22" alt="" />]
             ].map(([label, value, icon]) => (
-              <div key={String(label)} className="grid min-h-0 flex-1 grid-cols-[132px_minmax(0,1fr)] max-md:grid-cols-[96px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.07)] px-space-5 last:border-0">
+              <div key={String(label)} className="grid min-h-0 flex-1 grid-cols-[132px_minmax(0,1fr)] max-md:grid-cols-[96px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.07)] px-space-5 last:border-0 max-md:min-h-[40px] max-md:px-[14px]">
                 <span className="text-[15px] text-text-40">{label}</span>
-                <span className="flex min-w-0 items-center gap-space-3 text-[19px] text-text-80">
-                  <span className="flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-r10 bg-accent-20" aria-hidden="true">{icon}</span>
+                <span className="flex min-w-0 items-center gap-space-3 text-[19px] text-text-80 max-md:gap-[8px] max-md:text-[14px]">
+                  <span className="flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-r10 bg-accent-20 max-md:h-[26px] max-md:w-[26px] max-md:rounded-[7px] max-md:[&>*]:scale-[.7]" aria-hidden="true">{icon}</span>
                   <span className="truncate">{value}</span>
                 </span>
               </div>

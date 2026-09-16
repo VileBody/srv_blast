@@ -489,13 +489,13 @@ export function SubtitleTimeline() {
       )}
 
       {/* Плеер (макет): квадратный play, табло времени, «Фокус» — одна высота 80 */}
-      <div className="mt-[20px] flex flex-wrap items-center gap-space-4 max-md:gap-[10px]">
+      <div className="mt-[20px] flex flex-wrap items-center gap-space-4 max-md:mt-[12px] max-md:gap-[8px]">
         <button
           type="button"
           onClick={toggle}
           disabled={!url || !ready}
           aria-label={playing ? t('wizard.subs.timeline.pause') : t('wizard.subs.timeline.play')}
-          className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[52px] max-md:w-[52px]"
+          className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[40px] max-md:w-[40px]"
         >
           {playing ? (
             <span className="flex gap-[6px]" aria-hidden><span className="h-[20px] w-[6px] rounded-[2px] bg-text" /><span className="h-[20px] w-[6px] rounded-[2px] bg-text" /></span>
@@ -503,7 +503,7 @@ export function SubtitleTimeline() {
             <span aria-hidden className="ml-[5px] h-0 w-0 border-y-[11px] border-l-[18px] border-y-transparent border-l-[var(--text)]" />
           )}
         </button>
-        <span className="flex h-[64px] items-center rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] tabular-nums leading-none text-text-80 max-md:h-[52px] max-md:px-[12px] max-md:text-[18px]">
+        <span className="flex h-[64px] items-center rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] tabular-nums leading-none text-text-80 max-md:h-[40px] max-md:px-[10px] max-md:text-[14px]">
           {fmt(time - clipStart)}
         </span>
         <button
@@ -511,10 +511,10 @@ export function SubtitleTimeline() {
           disabled={selected === null}
           onClick={() => { if (selected !== null) toggleAsrFocus(selected); }}
           aria-pressed={focusOn}
-          className="group flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] font-[350] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[52px] max-md:gap-[8px] max-md:pl-[8px] max-md:pr-[12px] max-md:text-[18px]"
+          className="group flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] font-[350] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[40px] max-md:shrink-0 max-md:gap-[6px] max-md:whitespace-nowrap max-md:pl-[6px] max-md:pr-[10px] max-md:text-[14px]"
         >
           {focusOn ? (
-            <span aria-hidden className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-text transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105">
+            <span aria-hidden className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-text transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105 max-md:h-[26px] max-md:w-[26px] max-md:[&>*]:scale-[.65]">
               <SvgMaskIcon src="/assets/figma/pd-star.svg" style={{ width: 19, height: 18, color: 'var(--accent)' }} />
             </span>
           ) : (
@@ -523,7 +523,7 @@ export function SubtitleTimeline() {
           {focusOn ? t('wizard.subs.timeline.unfocus') : t('wizard.subs.timeline.focus')}
         </button>
         {/* зум дорожки: та же пилюля-контейнер, внутри бегунок; крайние значения — обзор / точная правка */}
-        <label className="flex h-[64px] min-w-[180px] flex-1 items-center gap-[12px] rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] leading-none text-text-80 max-lg:min-w-0 max-md:h-[52px] max-md:basis-full max-md:text-[18px]">
+        <label className="flex h-[64px] min-w-[180px] flex-1 items-center gap-[12px] rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] leading-none text-text-80 max-lg:min-w-0 max-md:h-[40px] max-md:basis-full max-md:text-[14px]">
           <span aria-hidden className="select-none pt-[3px]">−</span>
           <input
             type="range"

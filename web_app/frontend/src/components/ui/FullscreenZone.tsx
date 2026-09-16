@@ -36,8 +36,8 @@ export function FullscreenZone({
 
   const columns = (
     <>
-      <div className="flex w-[390px] max-w-full shrink-0 flex-col">{left}</div>
-      <div className="flex w-[373px] max-w-full shrink-0 flex-col">{right}</div>
+      <div className="flex w-[390px] max-w-full shrink-0 flex-col max-md:w-full">{left}</div>
+      <div className="flex w-[373px] max-w-full shrink-0 flex-col max-md:w-full">{right}</div>
     </>
   );
 
@@ -54,7 +54,7 @@ export function FullscreenZone({
         type="button"
         onClick={onCollapse}
         aria-label={t('common.collapse')}
-        className="group/collapse absolute right-[40px] top-[40px] z-[2] flex h-[37px] w-[37px] items-center justify-center rounded-r10 transition-colors hover:bg-accent-20"
+        className="group/collapse absolute right-[40px] top-[40px] z-[2] flex h-[37px] w-[37px] items-center justify-center rounded-r10 transition-colors hover:bg-accent-20 max-md:right-[16px] max-md:top-[16px] max-md:bg-accent-20"
       >
         <span className="pointer-events-none absolute right-[45px] top-1/2 z-[5] flex h-[37px] -translate-y-1/2 items-center whitespace-nowrap rounded-r10 bg-[#2b2145] px-[14px] text-[14px] text-text opacity-0 shadow-soft transition-opacity group-hover/collapse:opacity-100">{t('common.collapse')}</span>
         <img src="/assets/figma/fx-expand.svg" width="20" height="20" alt="" />
@@ -75,7 +75,7 @@ export function FullscreenZone({
       ) : (
         // grid place-items-center центрирует по обеим осям; my-[80px] — минимальный зазор,
         // чтобы на низком окне зона скроллилась, а не обрезала колонки (Figma: поля 80).
-        <div className="my-[80px] flex h-[745px] w-[783px] max-w-[calc(100%_-_40px)] gap-[20px] max-lg:w-full max-lg:px-space-5">
+        <div className="my-[80px] flex h-[745px] w-[783px] max-w-[calc(100%_-_40px)] gap-[20px] max-lg:w-full max-lg:px-space-5 max-md:my-0 max-md:h-auto max-md:max-w-full max-md:flex-col max-md:px-[16px] max-md:pb-[24px] max-md:pt-[72px]">
           {columns}
         </div>
       )}
