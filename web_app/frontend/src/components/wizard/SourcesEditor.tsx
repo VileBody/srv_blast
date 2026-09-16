@@ -134,7 +134,7 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
       <header className="flex shrink-0 items-start justify-between gap-4 px-[28px] pb-[14px] pt-[26px] max-md:px-[16px] max-md:pt-[16px]">
         <div>
           <h2 className="text-[24px] leading-tight">{t('wizard.sources.title')}</h2>
-          <p className="mt-[8px] max-w-[640px] text-[14px] leading-[1.45] text-text-60">{t('wizard.sources.editorHint')}</p>
+          <p className="mt-[8px] max-w-[640px] text-[14px] leading-[1.45] text-text-60 max-md:text-[13px]">{t('wizard.sources.editorHint')}</p>
         </div>
         <button type="button" className={ICON_BTN} onClick={onClose} aria-label={t('wizard.sources.close')}>
           <span className="translate-y-[1px]" aria-hidden="true">✕</span>
@@ -157,7 +157,7 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
                 ))}
               </span>
             </div>
-            <div className="flex items-center justify-between gap-[12px]">
+            <div className="flex items-center justify-between gap-[12px] max-md:hidden">
               <span className="text-[14px] text-text-60">{t('wizard.sources.chooseSource')}</span>
               <span className={SEGMENT}>
                 {([['pc', t('wizard.sources.fromPc')], ['qr', t('wizard.sources.fromPhone')]] as const).map(([value, label]) => (
