@@ -214,7 +214,7 @@ export function TrackCard({
 }) {
   const { t } = useTranslation();
   return (
-    <section className="card-2 h-[240px] shrink-0 px-[40px] pb-[35px] pt-[35px]">
+    <section className="card-2 h-[240px] shrink-0 px-[40px] pb-[35px] pt-[35px] max-md:h-auto max-md:px-[20px] max-md:pb-[24px] max-md:pt-[24px]">
       <div className="flex items-start justify-between gap-[20px]">
         <h1 className="min-w-0 truncate text-[32px] font-[400] leading-[38px] text-transparent" style={gradLight}>{title ?? t('projectDetail.trackFallback')}</h1>
         {/* Плашки «Текущий проект» здесь нет: ты и так внутри этого проекта, метка ничего
@@ -385,11 +385,11 @@ export function GenerationsCard({
     });
   };
   return (
-    <section data-limits-dim className="card-2 relative flex min-h-0 flex-1 flex-col overflow-hidden p-[40px]">
-      <div className="mb-[28px] flex items-center justify-between gap-space-4">
+    <section data-limits-dim className="card-2 relative flex min-h-0 flex-1 flex-col overflow-hidden p-[40px] max-md:p-[20px]">
+      <div className="mb-[28px] flex items-center justify-between gap-space-4 max-md:flex-col max-md:items-start max-md:gap-[12px]">
         <h2 className="shrink-0 text-[24px] font-[400] leading-none text-transparent" style={gradLight}>{t('projectDetail.generations')}</h2>
         {/* Figma W36: фокус-кнопка «Выложить все» + TikTok; справа кружок лимита (W47 — поповер) */}
-        <span className="flex shrink-0 items-center gap-[20px]">
+        <span className="flex shrink-0 items-center gap-[20px] max-md:flex-wrap max-md:gap-[10px]">
           <button
             type="button"
             onClick={() => postAll?.()}
