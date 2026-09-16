@@ -2139,6 +2139,22 @@ def build_app(
             f'style="{"background:#f2effc;color:#07030f;font-weight:600" if users_bucket == "month" else "background:#1a1331;color:#8d86ad"}">Месяц</a>'
         )
 
+        def _rating_row(key: str, label: str) -> str:
+            cnt = int(rating_map.get(key, 0))
+            pct = cnt / total_ratings * 100 if total_ratings else 0
+            dot = f'<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{_RATING_COLORS[key]};margin-right:6px"></span>'
+            return (f'<div class="pm-kpi"><div class="l">{dot}{label}</div>'
+                    f'<div class="v" style="font-size:1.6em">{pct:.0f}%</div><div class="s">{cnt}</div></div>')
+        if total_ratings == 0:
+            ratings_panel_html = "<p class='meta'>Оценок пока нет</p>"
+        else:
+            ratings_panel_html = (
+                '<div style="display:flex;align-items:center;gap:22px;flex:1;min-height:0">'
+                '<div class="donut"><canvas id="ratingsChart"></canvas></div>'
+                '<div class="stack" style="gap:10px;flex:0 0 auto;min-width:90px">'
+                + _rating_row("high", "7–10") + _rating_row("mid_low", "5–6") + _rating_row("low", "до 5")
+                + "</div></div>"
+            )
         users_seg = (
             '<div class="seg">'
             f'<a href="/admin/?users_bucket=week&channel={channel}&period={active_period}" class="{"on" if users_bucket == "week" else ""}">Недели</a>'
@@ -2161,14 +2177,7 @@ def build_app(
           </div>
           <div class="pm-panel" style="grid-column: span 4; gap: 12px">
             <div class="ph"><b>Оценки видео <span>{total_ratings} всего</span></b></div>
-            {"<p class='meta'>Оценок пока нет</p>" if total_ratings == 0 else f"""<div style="display:flex;align-items:center;gap:22px;flex:1;min-height:0">
-              <div class="donut"><canvas id="ratingsChart"></canvas></div>
-              <div class="stack" style="gap:10px;flex:0 0 auto;min-width:90px">
-                <div class="pm-kpi"><div class="l"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{_RATING_COLORS['high']};margin-right:6px"></span>7–10</div><div class="v" style="font-size:1.6em">{int(rating_map.get('high', 0)) / total_ratings * 100:.0f}%</div><div class="s">{int(rating_map.get('high', 0))} оценок</div></div>
-                <div class="pm-kpi"><div class="l"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{_RATING_COLORS['mid_low']};margin-right:6px"></span>5–6</div><div class="v" style="font-size:1.6em">{int(rating_map.get('mid_low', 0)) / total_ratings * 100:.0f}%</div><div class="s">{int(rating_map.get('mid_low', 0))}</div></div>
-                <div class="pm-kpi"><div class="l"><span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{_RATING_COLORS['low']};margin-right:6px"></span>до 5</div><div class="v" style="font-size:1.6em">{int(rating_map.get('low', 0)) / total_ratings * 100:.0f}%</div><div class="s">{int(rating_map.get('low', 0))}</div></div>
-              </div>
-            </div>"""}
+            {ratings_panel_html}
           </div>
           <div class="pm-panel" style="grid-column: span 8; gap: 12px">
             <div class="ph"><b>Приток и отток <span>{users_bucket_lbl.lower()} · {users_total:,} всего, {users_blocked:,} отписались</span></b>{users_seg}</div>
@@ -3567,10 +3576,15 @@ def build_app(
             f'<div class="v" style="font-size:1.5em">{(rating_map.get(k, 0) / src_total_ratings * 100 if src_total_ratings else 0):.0f}%</div><div class="s">{rating_map.get(k, 0)}</div></div>'
             for k in ("high", "mid_low", "low")
         )
+        deep_link_html = f' · <code>{html_mod.escape(deep_link)}</code>' if deep_link else ""
+        copy_button_html = (
+            '<button type="button" class="btn btn-secondary" onclick="navigator.clipboard.writeText(' + json.dumps(deep_link)
+            + ');this.textContent=&#39;Скопировано&#39;">Скопировать ссылку</button>'
+        ) if deep_link else ""
         body = f"""
         <div class="pm-head">
-          <div><h1>{src_escaped}</h1><div class="sub">{total_users} пользователей пришли с этого источника{f' · <code>{html_mod.escape(deep_link)}</code>' if deep_link else ''}</div></div>
-          {f'<button type="button" class="btn btn-secondary" onclick="navigator.clipboard.writeText({json.dumps(deep_link)});this.textContent=\'Скопировано\'">Скопировать ссылку</button>' if deep_link else ''}
+          <div><h1>{src_escaped}</h1><div class="sub">{total_users} пользователей пришли с этого источника{deep_link_html}</div></div>
+          {copy_button_html}
         </div>
         <div class="pm-grid">
           <div class="pm-panel" style="grid-column: span 12">
