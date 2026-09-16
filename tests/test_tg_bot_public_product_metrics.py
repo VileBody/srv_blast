@@ -6,7 +6,11 @@ import pytest
 
 from services.tg_bot_public import product_metrics as pm
 from services.tg_bot_public import admin_product_card
-from services.tg_bot_public.credits_db import _web_event_ts, source_economics_row
+from services.tg_bot_public.credits_db import (
+    _web_event_ts,
+    payment_channel_sql_filter,
+    source_economics_row,
+)
 
 NOW = datetime(2026, 9, 16, 12, 0, 0)
 D = timedelta(days=1)
@@ -196,3 +200,32 @@ def test_new_users_follow_the_active_window_not_the_period() -> None:
     assert r7["users"]["new_window"] == 1 and r7["users"]["new_window_prev"] == 0
     assert r30["users"]["new_window"] == 2 and r30["users"]["new_window_prev"] == 1
     assert r7["users"]["new_period"] == 3  # период дашборда — по-прежнему своё
+
+
+# --- payments split by ORDER channel, not by payer -------------------------
+
+def test_site_payment_filter_matches_only_web_orders() -> None:
+    """Site view must take orders started in the web checkout (the `-web-` order_id
+    segment / non-empty idempotency_key), not every payment of anyone who once
+    opened the site — that rule dragged a bot buyer's whole history into 'Сайт'."""
+    clause = payment_channel_sql_filter("site")
+    assert clause.startswith("AND ")
+    assert "idempotency_key <> ''" in clause
+    assert "order_id LIKE '%-web-%'" in clause
+    assert "web_activity_log" not in clause
+
+
+def test_bot_payment_filter_is_the_complement_of_site() -> None:
+    site = payment_channel_sql_filter("site")
+    bot = payment_channel_sql_filter("bot")
+    assert bot == site.replace("AND ", "AND NOT ", 1)
+    assert payment_channel_sql_filter("all") == ""
+
+
+@pytest.mark.parametrize("bad", ["", "web", "SITE ", None])
+def test_payment_filter_rejects_unknown_channel(bad) -> None:
+    if bad == "SITE ":
+        assert payment_channel_sql_filter(bad).startswith("AND ")  # normalised
+        return
+    with pytest.raises(ValueError):
+        payment_channel_sql_filter(bad)
