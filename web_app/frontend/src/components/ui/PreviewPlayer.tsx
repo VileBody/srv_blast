@@ -42,7 +42,7 @@ export function PreviewPlayer({
   const arrow = 'absolute top-1/2 z-[4] flex h-[44px] w-[44px] -translate-y-1/2 items-center justify-center '
     + 'rounded-full bg-[rgba(5,1,15,0.55)] text-text-80 backdrop-blur-[8px] transition-[opacity,color,filter] hover:text-text';
   return (
-    <div className={cn('group/preview relative overflow-hidden', className)} style={style}>
+    <div className={cn('group/preview clip-round relative overflow-hidden', className)} style={style}>
       {children}
       {showSteps && onPrev && onNext && (
         <>

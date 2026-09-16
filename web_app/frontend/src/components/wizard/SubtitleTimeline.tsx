@@ -528,7 +528,7 @@ export function SubtitleTimeline() {
           <input
             type="range"
             min={0.5}
-            max={2.5}
+            max={5}
             step={0.05}
             value={zoom}
             onChange={(e) => setZoom(Number(e.target.value))}

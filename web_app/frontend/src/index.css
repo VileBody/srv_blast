@@ -417,14 +417,19 @@ a { color: inherit; text-decoration: none; }
 
   .media-row {
     position: relative; display: flex; height: 100%; width: 100%; overflow-x: auto;
-    scrollbar-width: none; touch-action: pan-y;
+    /* pan-x pan-y: палец листает ленту нативно (pan-y запрещал горизонтальный свайп —
+       ленту двигал только JS-drag, который дрался с нативным скроллом и глотал тапы) */
+    scrollbar-width: none; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch;
   }
   .media-row::-webkit-scrollbar { display: none; }
   .media-row-previews { scroll-snap-type: x proximity; scroll-padding-inline: 40px; }
   .media-row-previews .media-card { scroll-snap-align: start; }
-  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar { scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+  /* WebKit: overflow:hidden + border-radius не режет <video>/<img> без маски —
+     превью торчало из-под даш-обводки на телефоне */
+  .clip-round { -webkit-mask-image: -webkit-radial-gradient(white, black); mask-image: radial-gradient(white, black); }
   .no-scrollbar::-webkit-scrollbar { display: none; }
-  .media-card {
+  .media-card { -webkit-mask-image: -webkit-radial-gradient(white, black);
     position: relative; flex-shrink: 0; height: 100%; border-radius: var(--r10); overflow: hidden;
     cursor: pointer; background: var(--card-2); transition: box-shadow var(--t-fast), filter var(--t-fast);
   }

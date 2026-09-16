@@ -64,7 +64,8 @@ function useHorizontalScroll() {
    */
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const element = ref.current;
-    if (!element) return;
+    // тач листает нативно (touch-action: pan-x) — JS-drag только для мыши
+    if (!element || event.pointerType === 'touch') return;
     drag.current = { active: true, moved: false, startX: event.clientX, startScroll: element.scrollLeft, pointerId: event.pointerId };
   };
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {

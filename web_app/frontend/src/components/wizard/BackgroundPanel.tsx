@@ -43,7 +43,8 @@ export function useDragScroll() {
   const drag = useRef({ active: false, moved: false, startX: 0, startScroll: 0 });
 
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!ref.current) return;
+    // тач листает лентой нативно (touch-action: pan-x) — JS-drag только для мыши
+    if (!ref.current || e.pointerType === 'touch') return;
     drag.current = { active: true, moved: false, startX: e.clientX, startScroll: ref.current.scrollLeft };
   };
   const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {

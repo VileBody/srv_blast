@@ -436,7 +436,7 @@ export function StageHooks() {
                 </span>
                 {/* Подсказка-плашка внутри строки (Figma Group 1865/1866): начинается после лейблов, не наезжает */}
                 {hint === item.kind && (
-                  <span className="absolute right-[84px] top-1/2 z-[1] flex h-[58px] w-[min(390px,58%)] -translate-y-1/2 items-center overflow-hidden rounded-r10 bg-[#2b2145] px-space-4 text-[15px] leading-[1.25] text-text shadow-[0_8px_28px_rgba(0,0,0,.45)] ring-1 ring-[var(--accent-light)]">
+                  <span className="absolute right-[84px] top-1/2 z-[1] flex h-[58px] w-[min(390px,58%)] -translate-y-1/2 items-center overflow-hidden rounded-r10 bg-[#2b2145] px-space-4 text-[15px] leading-[1.25] text-text shadow-[0_8px_28px_rgba(0,0,0,.45)] ring-1 ring-[var(--accent-light)] max-md:fixed max-md:inset-x-[12px] max-md:bottom-[12px] max-md:top-auto max-md:z-[60] max-md:h-auto max-md:w-auto max-md:translate-y-0 max-md:py-[12px] max-md:text-[13px] max-md:leading-[1.35]">
                     {t(item.hint)}
                   </span>
                 )}
@@ -444,6 +444,8 @@ export function StageHooks() {
                   className="absolute right-[28px] z-[2] flex h-[40px] w-[40px] items-center justify-center max-md:right-[12px] max-md:h-[32px] max-md:w-[32px]"
                   onMouseEnter={() => setHint(item.kind)}
                   onMouseLeave={() => setHint(null)}
+                  // тач: ховера нет — по тапу показываем/прячем, тап не должен выбирать строку
+                  onClick={(e) => { e.stopPropagation(); setHint(hint === item.kind ? null : item.kind); }}
                   aria-label={t('wizard.fx.whatIs', { label: chip(HOOK_LABELS[item.kind]) })}
                 >
                   <img src="/assets/figma/hint-circle.svg" width="40" height="40" alt="" aria-hidden="true" className="absolute inset-0" />

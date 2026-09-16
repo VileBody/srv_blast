@@ -24,7 +24,7 @@ function LimitRing({ pct }: { pct: number }) {
   const C = 2 * Math.PI * R;
   const filled = Math.max(0, Math.min(1, pct)) * C;
   return (
-    <svg viewBox="0 0 25 25" width="25" height="25" aria-hidden="true" className="block shrink-0 max-md:h-[20px] max-md:w-[20px]">
+    <svg viewBox="0 0 25 25" width="25" height="25" aria-hidden="true" className="block shrink-0 max-md:h-[26px] max-md:w-[26px]">
       <defs>
         <linearGradient id="limitRingArc" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#8b6fe6" />
@@ -120,7 +120,7 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
   return (
     <span
       ref={ringRef}
-      className="relative z-[8] inline-flex max-md:translate-y-[2px]"
+      className="relative z-[8] inline-flex max-md:translate-y-[1px]"
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => setOpen(false)}
     >
@@ -138,10 +138,10 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
       {open && anchor && createPortal(
         <>
           <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-[6] rounded-r25 bg-[rgba(20,14,36,0.4)]" />
-          <span className="pointer-events-none absolute z-[8] h-[25px] w-[25px]" style={{ left: anchor.x, top: anchor.y }}>
+          <span className="pointer-events-none absolute z-[8] h-[25px] w-[25px] max-md:!left-[20px] max-md:right-[20px] max-md:w-auto" style={{ left: anchor.x, top: anchor.y }}>
             <span
               role="tooltip"
-              className="absolute right-0 block w-[522px] rounded-r15 bg-grad-soft-20 px-[28px] pb-[25px] pt-[29px] backdrop-blur-[50px] max-md:w-[calc(100vw-64px)] max-md:px-[14px] max-md:pb-[14px] max-md:pt-[14px]"
+              className="absolute right-0 block w-[522px] rounded-r15 bg-grad-soft-20 px-[28px] pb-[25px] pt-[29px] backdrop-blur-[50px] max-md:left-0 max-md:w-auto max-md:px-[14px] max-md:pb-[14px] max-md:pt-[14px]"
               style={{ top: 25 + offsetY }}
             >
               <span className="flex items-center gap-[16px]">
