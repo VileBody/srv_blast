@@ -148,7 +148,7 @@ function MobileHeader({ onOpen }: { onOpen: () => void }) {
   );
 }
 
-function Drawer({ open, onClose, activeJobId, isAdmin }: { open: boolean; onClose: () => void; activeJobId?: string; isAdmin?: boolean }) {
+function Drawer({ open, onClose, activeJobId }: { open: boolean; onClose: () => void; activeJobId?: string }) {
   const { t } = useTranslation();
   if (!open) return null;
   return (
@@ -234,7 +234,7 @@ export function AppShell() {
         <div className="app-frame" style={frameStyle}>
           {/* Тот же выбор аватара, что в ЛК: свой, иначе из TikTok — сайдбар отставал и показывал букву */}
           <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} isAdmin={meQuery.data?.isAdmin} />
-        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} isAdmin={meQuery.data?.isAdmin} />
+        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} />
         {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
         <main className="with-sidebar min-w-0 flex-1">
