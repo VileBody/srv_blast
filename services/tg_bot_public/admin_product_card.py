@@ -81,6 +81,10 @@ def _pct(value: Optional[float]) -> str:
     return "—" if value is None else f"{value:.0f}%"
 
 
+def _pct1(value: Optional[float]) -> str:
+    return "—" if value is None else f"{value:.1f}%"
+
+
 def _rub(value: Optional[float]) -> str:
     return "—" if value is None else f"{_n(value)} ₽"
 
@@ -165,7 +169,7 @@ def render_product_card(
       <div class="pm-panel" style="grid-column: span 12">
         <div class="ph"><b>Пользователи</b>{active_seg}</div>
         <div class="pm-kpis" style="grid-template-columns: repeat(4, minmax(0, 1fr))">
-          {_kpi("Все", _n(u["total"]), "за всё время")}
+          {_kpi("Пользователи", _n(u["total"]), f'зарегистрировались {_n(u["registered_total"])} · без заблокировавших бота')}
           {_kpi(f"Активные за {active_days} дн", _n(u["active_30d"]), f'{_pct(u["active_pct"])} · не заблокировали бота', accent=True)}
           {_kpi("Отписались", _n(u["blocked"]), f'{_pct(u["blocked_pct"])} · последнее действие — блок')}
           {_kpi("Новые за период", _n(u["new_period"]), _delta(u["new_period"], u["new_prev"]))}
@@ -196,8 +200,8 @@ def render_product_card(
         <div class="ph"><b>Деньги <span>за период · LTV и конверсия — за всё время</span></b><a href="/admin/sources?period={sources_period}">Расходы по источникам →</a></div>
         <div class="pm-kpis" style="grid-template-columns: repeat(6, minmax(0, 1fr))">
           {_kpi("Выручка", _rub(m["revenue_period"]), _delta(m["revenue_period"], m["revenue_prev"]), accent=True)}
-          {_kpi("Платящих", _n(m["payers_period"]), f'новых {_n(m["new_payers_period"])} · до оплаты {_days(m["time_to_pay_median_days"])}')}
-          {_kpi("Конверсия в оплату", _pct(m["paid_conversion_pct"]), f'{_n(m["payers_all"])} из {_n(u["total"])}')}
+          {_kpi("Платящих", _n(m["payers_period"]), f'из них новых {_n(m["new_payers_period"])}')}
+          {_kpi("Конверсия в оплату", _pct(m["paid_conversion_pct"]), f'{_n(m["payers_live"])} платящих из {_n(u["total"])}')}
           {_kpi("Средний чек", _rub(m["arppu_period"]), "на платящего за период")}
           {_kpi("LTV", _rub(m["ltv"]), "выручка на платящего")}
           {_kpi("CAC", _rub(m["cac"]), cac_sub)}
@@ -217,11 +221,13 @@ def render_product_card(
         <div class="pm-funnel">{rows or '<p>Нет данных</p>'}</div>
       </div>"""
 
-    ret_tiles = "".join(
-        f'<div class="t"><div class="l">{"Вернулись " if i == 0 else ""}через {h["days"]}+ дн</div><div class="v">{_pct(h["pct"])}</div>'
-        f'<div class="s">{_n(h["returned"])} из {_n(h["matured"])}</div></div>'
-        for i, h in enumerate(ret["horizons"])
-    )
+    day_head = "".join(f'<div class="h c">D{d}</div>' for d in ret["days"])
+    seg_rows = ""
+    for seg in ret["segments"]:
+        seg_rows += f'<div class="w"><b>{seg["label"]}</b></div><div class="w">{_n(seg["size"])}</div>'
+        for c in seg["cells"]:
+            seg_rows += f'<div class="c" title="{_n(c["returned"])} из {_n(c["matured"])}">{_pct1(c["pct"])}</div>'
+    ret_table = f'<div class="pm-cohort" style="grid-template-columns: 110px 60px repeat({len(ret["days"])}, minmax(0, 1fr))"><div class="h">Сегмент</div><div class="h">чел.</div>{day_head}{seg_rows}</div>'
     cohort = '<div class="h">Когорта</div><div class="h">чел.</div>' + "".join(
         f'<div class="h c">нед {k}</div>' for k in range(ret["cohort_offsets"])
     )
@@ -230,9 +236,10 @@ def render_product_card(
     retention_panel = f"""
       <div class="pm-panel" style="grid-column: span 7; gap: 14px">
         <div class="ph"><b>Возвращаемость</b><span>медиана до второго визита {_days(ret["median_days_to_return"])}</span></div>
-        <div class="pm-ret">{ret_tiles}</div>
+        {ret_table}
+        <div class="pm-note">D<i>n</i> — доля пользователей, сделавших что-то ровно на n-й день после первого визита (только действия человека, рассылки не в счёт). «Платные» — есть хотя бы одна оплата.</div>
         <div class="pm-cohort">{cohort}</div>
-        <div class="pm-note">Строка — неделя первого визита, ячейка — доля когорты с хотя бы одним действием в n-ю неделю после прихода. Точка — неделя ещё не наступила.</div>
+        <div class="pm-note">Недельные когорты: строка — неделя первого визита, ячейка — доля когорты с действием в n-ю неделю. Точка — неделя ещё не наступила.</div>
       </div>"""
 
     spend_table = "".join(

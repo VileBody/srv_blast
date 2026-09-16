@@ -2039,8 +2039,6 @@ def build_app(
               <div class="stage-chip"><div class="count" style="color:#4ecf8a">{q_succeeded}</div><div class="label">готово</div></div>
               <div class="stage-chip"><div class="count" style="color:#ef6a6a">{q_failed}</div><div class="label">с ошибкой</div></div>
             </div>
-            {f'<div class="pm-section"><b>Запросы к нейросетям сейчас</b></div><div class="stage-grid" style="margin:0">{llm_chips}</div>' if llm_chips else ''}
-            {f'<div class="pm-section"><b>Воркеры</b></div><div class="table-wrap"><table><tr><th>Воркер</th><th>Активных</th><th>Зарезервировано</th></tr>{worker_rows}</table></div>' if worker_rows else ''}
             </div>
             """
         else:
@@ -2073,14 +2071,13 @@ def build_app(
         health_card = f"""
         <div class="card">
         <div class="toolbar"><h2 style="margin:0">Состояние системы</h2><a href="/admin/ops">операции →</a></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-          <span class="status-pill {'warn' if maintenance_state == 'ON' else 'ok'}"><i></i>режим обслуживания {'включён' if maintenance_state == 'ON' else 'выключен'}</span>
-          <span class="status-pill {'ok' if alert_configured else 'warn'}"><i></i>алерты в Telegram {'настроены' if alert_configured else 'не настроены'}</span>
-          <span class="status-pill {'ok' if effective_nodes else 'bad'}"><i></i>рендер-нод: {len(effective_nodes)}</span>
-          <span class="status-pill {'ok' if webhook_ok else 'bad'}"><i></i>доставка: {html_mod.escape(str(settings.tg_delivery_mode or 'polling'))}{f' · очередь {webhook_pending}' if webhook_pending else ''}</span>
+        <div class="stage-grid" style="margin-top:12px">
+          <div class="stage-chip"><div class="count" style="color:{'var(--warn)' if maintenance_state == 'ON' else 'var(--ok)'}">{'вкл' if maintenance_state == 'ON' else 'выкл'}</div><div class="label">режим обслуживания</div></div>
+          <div class="stage-chip"><div class="count" style="color:{'var(--ok)' if alert_configured else 'var(--warn)'}">{'да' if alert_configured else 'нет'}</div><div class="label">алерты в Telegram</div></div>
+          <div class="stage-chip"><div class="count" style="color:{'var(--ok)' if effective_nodes else 'var(--danger)'}">{len(effective_nodes)}</div><div class="label">рендер-нод в пуле</div></div>
+          <div class="stage-chip"><div class="count" style="color:{'var(--ok)' if webhook_ok else 'var(--danger)'}">{html_mod.escape(str(settings.tg_delivery_mode or 'polling'))}</div><div class="label">доставка{f' · очередь {webhook_pending}' if webhook_pending else ''}</div></div>
         </div>
         {f"<p style='color:var(--danger);margin-top:10px'>Ошибка вебхука: {webhook_last_error}</p>" if webhook_last_error else ""}
-        {f"<div class='pm-section'><b>Нейросети</b><span>занято / лимит</span></div><div class='stage-grid' style='margin:0'>{llm_worker_html}</div>" if llm_worker_html else ""}
         </div>
         """
 
@@ -5978,7 +5975,7 @@ def build_app(
     @app.get("/admin/clients", response_class=HTMLResponse)
     async def clients_list(request: Request, _user: str = Depends(_check_auth)) -> str:
         page = _query_int(request, "page", default=1, min_value=1, max_value=10_000)
-        min_c = _query_int(request, "min_credits", default=5, min_value=0, max_value=10_000)
+        min_c = _query_int(request, "min_credits", default=0, min_value=0, max_value=10_000)
         tag_filter = str(request.query_params.get("tag") or "").strip()
         product_filter = str(request.query_params.get("product") or "").strip().lower()
         sort = str(request.query_params.get("sort") or "credits")
@@ -6083,11 +6080,11 @@ def build_app(
         </div>
 
         <div class="card">
-          <div class="toolbar"><h2 style="margin:0">Клиенты</h2><span class="meta">{total} найдено</span></div>
+          <div class="toolbar"><h2 style="margin:0">Клиенты</h2><span class="meta">{total} · только с оплатами (бот или вручную)</span></div>
           <div class="table-wrap" style="margin-top:8px"><table>
             <tr><th>Клиент</th><th>Баланс</th><th>Генераций</th><th>Выручка</th><th>Продукты</th>
                 <th>Списание</th><th>Активность</th><th>Источник</th></tr>
-            {''.join(tr) if tr else '<tr><td colspan=8>Никого не нашли — снизьте порог баланса или измените фильтры.</td></tr>'}
+            {''.join(tr) if tr else '<tr><td colspan=8>Никого не нашли — в клиентах только те, кто платил (через бота или вручную).</td></tr>'}
           </table></div>
           {_pagination_html(page, total_pages, base_url=f'?{export_qs}&sort={sort}&')}
         </div>

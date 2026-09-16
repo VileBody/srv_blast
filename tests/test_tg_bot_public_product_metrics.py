@@ -29,9 +29,22 @@ def test_active_excludes_users_who_blocked_after_last_action() -> None:
         _ev("tg:4", "start", 40), _ev("tg:4", "bot_blocked", 39), _ev("tg:4", "start", 2),  # вернулся после блокировки
     ]
     r = _compute(events)
-    assert r["users"]["total"] == 4
-    assert r["users"]["active_30d"] == 2  # tg:1 и tg:4
-    assert r["users"]["blocked"] == 1     # только tg:2
+    assert r["users"]["registered_total"] == 4
+    assert r["users"]["total"] == 3          # «все» = без заблокировавших
+    assert r["users"]["active_30d"] == 2     # tg:1 и tg:4
+    assert r["users"]["blocked"] == 1        # только tg:2
+
+
+def test_bot_initiated_events_do_not_make_users_active() -> None:
+    # Рассылка всей базе не должна «оживлять» пользователей.
+    events = [
+        _ev("tg:1", "start", 80), _ev("tg:1", "reminder_sent", 2), _ev("tg:1", "sales_pitch", 1),
+        _ev("tg:2", "start", 80), _ev("tg:2", "admin_dm", 1), _ev("tg:2", "generation_done", 1),
+        _ev("tg:3", "start", 80), _ev("tg:3", "view_packages", 3),
+    ]
+    r = _compute(events)
+    assert r["users"]["active_30d"] == 1     # только tg:3 что-то сделал сам
+    assert pm.is_user_event("audio_uploaded") and not pm.is_user_event("lifecycle_test_send")
 
 
 def test_funnel_percent_is_of_first_step_and_paid_comes_from_payments() -> None:
@@ -90,19 +103,23 @@ def test_cac_is_none_without_spend() -> None:
     assert r["money"]["cac"] is None and r["money"]["ltv_to_cac"] is None
 
 
-def test_retention_horizons_only_count_matured_users() -> None:
+def test_retention_is_day_bounded_by_segment_and_ignores_system_events() -> None:
     events = [
-        _ev("tg:1", "start", 40), _ev("tg:1", "audio_uploaded", 30),  # вернулся через 10 дн
-        _ev("tg:2", "start", 40),                                       # не вернулся
-        _ev("tg:3", "start", 3), _ev("tg:3", "start", 1),               # вернулся через 2 дн, для 7/30 ещё не «созрел»
-        _ev("tg:4", "start", 40), _ev("tg:4", "bot_blocked", 20),       # блокировка возвратом не считается
+        _ev("tg:1", "start", 40), _ev("tg:1", "audio_uploaded", 39),   # вернулся на D1
+        _ev("tg:2", "start", 40), _ev("tg:2", "reminder_sent", 39),    # рассылка — не возврат
+        _ev("tg:3", "start", 40), _ev("tg:3", "start", 33),            # D7
+        _ev("tg:4", "start", 2), _ev("tg:4", "start", 1),              # D1, но для D3+ не созрел
     ]
-    r = _compute(events)
-    h = {x["days"]: x for x in r["retention"]["horizons"]}
-    assert h[1]["matured"] == 4 and h[1]["returned"] == 2
-    assert h[7]["matured"] == 3 and h[7]["returned"] == 1
-    assert h[30]["matured"] == 3 and h[30]["returned"] == 0
-    assert r["retention"]["median_days_to_return"] == pytest.approx(6.0)
+    payments = [pm.Payment("tg:3", 990, NOW - 30 * D)]
+    r = _compute(events, payments)
+    seg = {x["key"]: x for x in r["retention"]["segments"]}
+    assert r["retention"]["days"] == [1, 3, 7, 14, 30]
+    d = {c["day"]: c for c in seg["all"]["cells"]}
+    assert d[1]["matured"] == 4 and d[1]["returned"] == 2
+    assert d[3]["matured"] == 3 and d[3]["returned"] == 0
+    assert d[7]["matured"] == 3 and d[7]["returned"] == 1
+    assert seg["paid"]["size"] == 1 and {c["day"]: c for c in seg["paid"]["cells"]}[7]["pct"] == 100
+    assert seg["free"]["size"] == 3 and {c["day"]: c for c in seg["free"]["cells"]}[1]["pct"] == pytest.approx(200 / 3)
 
 
 def test_cohorts_have_future_weeks_as_none_and_week0_100() -> None:
@@ -146,7 +163,7 @@ def test_card_renders_without_caps_and_with_all_sections() -> None:
     html = admin_product_card.render_product_card(
         r, channel="bot", active_period="30d", period_label="30 дней", spend_rows=[],
     )
-    for needle in ("Пользователи", "Активные за 30 дн", "Готовые ролики", "LTV", "CAC", "через 7+ дн", "Воронка", "Возвращаемость"):
+    for needle in ("Пользователи", "Активные за 30 дн", "Готовые ролики", "LTV", "CAC", "Платные", "Бесплатные", "D7", "Воронка", "Возвращаемость"):
         assert needle in html
     assert "Последние действия" not in html
     assert "от пред." not in html
