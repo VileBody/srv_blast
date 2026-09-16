@@ -302,7 +302,15 @@ export function StageHooks() {
   const [dropError, setDropError] = useState(false);
   const [hint, setHint] = useState<HookKind | null>(null);
 
-  const drops = dropsQuery.data?.drops ?? [];
+  // Кандидаты ВНЕ отрывка не предлагаем: выбрав такой, человек упирался в неактивное
+  // «Продолжить» без объяснения (dropReady в визарде требует дроп внутри окна).
+  const drops = (dropsQuery.data?.drops ?? []).filter((d) => {
+    const s = dropToSeconds(normalizeDropTime(d.time));
+    return s !== null && clipFromS !== null && clipToS !== null && s >= clipFromS && s <= clipToS;
+  });
+  // Сохранённый дроп вылетел из окна (окно поменяли после выбора) — говорим об этом сразу
+  const storedDropS = dropToSeconds(hooks.dropTime);
+  const storedDropOutside = storedDropS !== null && clipReady && (storedDropS < clipFromS! || storedDropS > clipToS!);
   // В сторе тайминг всегда трёхчастный, в списке — «mm:ss»: сравниваем в одной форме
   const customActive = Boolean(hooks.dropTime && !drops.some((d) => normalizeDropTime(d.time) === hooks.dropTime));
   // Пока анализ идёт, ряд занимают заглушки: иначе человек видит один «Свой вариант»
@@ -392,7 +400,7 @@ export function StageHooks() {
         )}
       </div>
 
-      {dropError && <p className="mt-[8px] shrink-0 text-[14px] leading-[1.3] text-[var(--warning)]">{t('wizard.fx.dropOutsideClip')}</p>}
+      {(dropError || storedDropOutside) && <p className="mt-[8px] shrink-0 text-[14px] leading-[1.3] text-[var(--warning)]">{t('wizard.fx.dropOutsideClip')}</p>}
 
       <p className="wizard-body mt-[28px] shrink-0 max-md:mt-[16px]">{t('wizard.fx.chooseType')}</p>
 
