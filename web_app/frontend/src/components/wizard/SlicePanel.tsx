@@ -230,7 +230,7 @@ export function StageSlice() {
             <div key={unit.key} className="flex items-center justify-between gap-space-3">
               <span className="flex min-w-0 items-center gap-space-3">
                 <MiniPill icon={unit.icon === 'tag' ? tagIcon() : photoIcon()} label={t(unit.labelKey, { name: chip(unit.name) })} />
-                {unit.noHook && <span className="rounded-r9 border border-border px-space-2 py-[2px] text-[12px] text-text-60">{t('wizard.pool.noFx')}</span>}
+                {unit.noHook && <span className="shrink-0 whitespace-nowrap rounded-r9 border border-border px-space-2 py-[2px] text-[12px] leading-none text-text-60">{t('wizard.pool.noFx')}</span>}
               </span>
               <Stepper value={alloc.background[unit.key] ?? 0} onChange={(value) => setCount('background', unit.key, value)} />
             </div>
