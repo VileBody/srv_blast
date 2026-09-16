@@ -71,7 +71,7 @@ function StatCard({ icon, title, value, unit, trend }: {
   trend?: string;
 }) {
   return (
-    <div className="taste-metric relative h-[192px] min-w-0 shrink-0 rounded-r15 bg-grad-soft-20 lg:flex-1 max-md:h-[120px]">
+    <div className="taste-metric relative h-[192px] min-w-0 shrink-0 rounded-r15 bg-grad-soft-20 lg:flex-1 max-md:h-[104px]">
       <span className="absolute left-[28px] top-[28px] flex items-center gap-[8px] max-md:left-[14px] max-md:top-[14px]">
         <img src={`/assets/figma/${icon}`} width={14} height={14} alt="" aria-hidden="true" className="h-[14px] w-[14px] shrink-0 object-contain" />
         <span className="whitespace-nowrap text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{title}</span>
@@ -79,9 +79,9 @@ function StatCard({ icon, title, value, unit, trend }: {
       {trend && <span className="absolute right-[28px] top-[28px] max-md:right-[14px] max-md:top-[14px]"><TrendBadge value={trend} /></span>}
       {/* цифра центрируется в зоне под заголовком (top-[72px]..низ): отступы сверху/снизу примерно
           равны. items-baseline + leading-none раньше уводили глиф вверх, к заголовку. */}
-      <span className="absolute inset-x-[28px] bottom-0 top-[72px] flex items-center gap-[12px] max-md:inset-x-[14px] max-md:top-[44px]">
-        <span className="text-[96px] font-[350] leading-[0.86] text-transparent max-md:text-[72px]" style={gradLight}>{value}</span>
-        <span className="translate-y-[18px] text-[24px] font-[350] leading-none text-transparent max-md:translate-y-[8px]" style={gradLight}>{unit}</span>
+      <span className="absolute inset-x-[28px] bottom-0 top-[72px] flex items-center gap-[12px] max-md:inset-x-[14px] max-md:top-[40px] max-md:items-baseline max-md:gap-[8px]">
+        <span className="text-[96px] font-[350] leading-[0.86] text-transparent max-md:text-[52px] max-md:leading-none" style={gradLight}>{value}</span>
+        <span className="translate-y-[18px] text-[24px] font-[350] leading-none text-transparent max-md:translate-y-0" style={gradLight}>{unit}</span>
       </span>
     </div>
   );
@@ -401,7 +401,7 @@ export function StatsPage() {
       <div className="flex min-h-0 flex-1 flex-col gap-[20px]">
       {/* «Статистика» 1192×379 */}
       <section className="card-2 h-auto min-h-[379px] shrink-0 p-[24px] sm:p-[32px] lg:h-[379px] lg:p-[40px] max-md:min-h-0 max-md:p-[20px]">
-        <div className="flex flex-col items-start justify-between gap-[20px] sm:flex-row sm:gap-space-4 max-md:flex-row max-md:items-center max-md:gap-[10px]">
+        <div className="flex flex-col items-start justify-between gap-[20px] sm:flex-row sm:gap-space-4 max-md:flex-row max-md:items-start max-md:gap-[10px]">
           <div>
             <h1 className="text-[32px] font-[400] leading-none text-text">{t('stats.title')}</h1>
             {/*
@@ -410,7 +410,7 @@ export function StatsPage() {
               с ником из аккаунта Blast — читалось как «подключён чужой тикток».
             */}
             {tiktok?.handle && (
-              <span className="mt-[16px] flex items-center gap-[10px]">
+              <span className="mt-[16px] flex items-center gap-[10px] max-md:mt-[9px]">
                 <span className="h-[21px] w-[21px] shrink-0 overflow-hidden rounded-full bg-accent-20">
                   {meQuery.data?.user.avatarUrl && <img src={meQuery.data.user.avatarUrl} alt="" className="h-full w-full object-cover" />}
                 </span>
@@ -426,7 +426,7 @@ export function StatsPage() {
                 onClick={() => setPeriodOpen((v) => !v)}
                 aria-haspopup="listbox"
                 aria-expanded={periodOpen}
-                className="flex h-[60px] w-[180px] items-center justify-center gap-[10px] rounded-r15 bg-grad-soft-20 text-[24px] font-[400] leading-[29px] text-text-80 transition hover:text-text"
+                className="flex h-[60px] w-[180px] items-center justify-center gap-[10px] rounded-r15 bg-grad-soft-20 text-[24px] font-[400] leading-[29px] text-text-80 transition hover:text-text max-md:h-[32px] max-md:w-auto max-md:gap-[6px] max-md:rounded-r10 max-md:px-[12px] max-md:text-[13px] max-md:leading-none"
               >
                 {t(`stats.period.${period}`)}
                 <FigIcon name="home-arrow.svg" h={9} className={cn('transition-transform', periodOpen ? '-rotate-90' : 'rotate-90')} />
@@ -434,7 +434,7 @@ export function StatsPage() {
               {periodOpen && (
                 <>
                   <span className="fixed inset-0 z-[9]" onClick={() => setPeriodOpen(false)} aria-hidden="true" />
-                  <ul role="listbox" className="absolute right-0 top-[64px] z-[10] w-[180px] overflow-hidden rounded-r15 bg-card-2 p-[6px] shadow-[0_20px_60px_rgba(0,0,0,.5)]">
+                  <ul role="listbox" className="absolute right-0 top-[64px] z-[10] w-[180px] overflow-hidden rounded-r15 bg-card-2 p-[6px] shadow-[0_20px_60px_rgba(0,0,0,.5)] max-md:top-[38px] max-md:w-[150px]">
                     {(['week', 'month', 'all'] as const).map((p) => (
                       <li key={p}>
                         <button
@@ -442,7 +442,7 @@ export function StatsPage() {
                           role="option"
                           aria-selected={period === p}
                           onClick={() => { setPeriod(p); setPeriodOpen(false); }}
-                          className={cn('flex h-[44px] w-full items-center rounded-r10 px-[14px] text-[18px] font-[400] transition', period === p ? 'bg-grad-soft-20 text-text' : 'text-text-80 hover:bg-grad-soft-10 hover:text-text')}
+                          className={cn('flex h-[44px] w-full items-center rounded-r10 px-[14px] text-[18px] font-[400] transition max-md:h-[36px] max-md:text-[14px]', period === p ? 'bg-grad-soft-20 text-text' : 'text-text-80 hover:bg-grad-soft-10 hover:text-text')}
                         >
                           {t(`stats.period.${p}`)}
                         </button>
