@@ -35,8 +35,9 @@ CARD_CSS = """
   .pm-kpi .v.acc { color: var(--accent); }
   .pm-kpi .s { font-size: .84em; color: var(--text-35); }
   .pm-down { color: var(--danger); } .pm-up { color: var(--ok); }
-  .pm-split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 18px; align-items: stretch; }
-  .pm-window { background: var(--surface-2); border-radius: 14px; padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .pm-split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 18px; align-items: start; }
+  .pm-split-left { display: flex; flex-direction: column; gap: 18px; }
+  .pm-window { background: var(--surface-2); border-radius: 14px; padding: 12px 18px 14px; display: flex; flex-direction: column; gap: 12px; }
   .pm-window-head { display: flex; align-items: center; gap: 8px; color: var(--text-50); font-size: .86em; }
   .pm-window .pm-seg { background: var(--surface-3); }
   @media (max-width: 900px) { .pm-split { grid-template-columns: 1fr; } }
@@ -172,11 +173,13 @@ def render_product_card(
 
     users_panel = f"""
       <div class="pm-panel" style="grid-column: span 12">
-        <div class="ph"><b>Пользователи</b></div>
         <div class="pm-split">
-          <div class="pm-kpis" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
-            {_kpi("Пользователи", _n(u["total"]), f'зарегистрировались {_n(u["registered_total"])} · без заблокировавших бота')}
-            {_kpi("Отписались", _n(u["blocked"]), f'{_pct(u["blocked_pct"])} · последнее действие — блок')}
+          <div class="pm-split-left">
+            <div class="ph"><b>Пользователи</b></div>
+            <div class="pm-kpis" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
+              {_kpi("Пользователи", _n(u["total"]), f'зарегистрировались {_n(u["registered_total"])} · без заблокировавших бота')}
+              {_kpi("Отписались", _n(u["blocked"]), f'{_pct(u["blocked_pct"])} · последнее действие — блок')}
+            </div>
           </div>
           <div class="pm-window">
             <div class="pm-window-head"><span>За последние</span>{active_seg}<span>дней</span></div>
