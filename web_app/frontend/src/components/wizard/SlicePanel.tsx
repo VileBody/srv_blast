@@ -397,7 +397,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
         </div>
 
         <div className="min-h-0 flex-1 overflow-hidden rounded-r15 border border-[rgba(139,111,230,.28)] bg-grad-soft-10">
-          <div className="grid h-[52px] grid-cols-[132px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.09)] bg-[rgba(139,111,230,.08)] px-space-5 text-[13px] uppercase tracking-[.08em] text-text-40">
+          <div className="grid h-[52px] grid-cols-[132px_minmax(0,1fr)] max-md:grid-cols-[96px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.09)] bg-[rgba(139,111,230,.08)] px-space-5 text-[13px] uppercase tracking-[.08em] text-text-40">
             <span>{t('wizard.pool.parameter')}</span>
             <span>{t('wizard.pool.selectedValue')}</span>
           </div>
@@ -409,7 +409,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
               [t('wizard.pool.transition'), transitionLabel, <img key="transition" src="/assets/figma/combo-transition.svg" width="22" height="22" alt="" />],
               [t('wizard.pool.style'), styleLabel, <img key="style" src="/assets/figma/combo-style.svg" width="22" height="22" alt="" />]
             ].map(([label, value, icon]) => (
-              <div key={String(label)} className="grid min-h-0 flex-1 grid-cols-[132px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.07)] px-space-5 last:border-0">
+              <div key={String(label)} className="grid min-h-0 flex-1 grid-cols-[132px_minmax(0,1fr)] max-md:grid-cols-[96px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.07)] px-space-5 last:border-0">
                 <span className="text-[15px] text-text-40">{label}</span>
                 <span className="flex min-w-0 items-center gap-space-3 text-[19px] text-text-80">
                   <span className="flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-r10 bg-accent-20" aria-hidden="true">{icon}</span>

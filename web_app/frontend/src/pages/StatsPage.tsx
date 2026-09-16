@@ -71,15 +71,15 @@ function StatCard({ icon, title, value, unit, trend }: {
   trend?: string;
 }) {
   return (
-    <div className="taste-metric relative h-[192px] min-w-0 shrink-0 rounded-r15 bg-grad-soft-20 lg:flex-1">
-      <span className="absolute left-[28px] top-[28px] flex items-center gap-[8px]">
+    <div className="taste-metric relative h-[192px] min-w-0 shrink-0 rounded-r15 bg-grad-soft-20 lg:flex-1 max-md:h-[132px]">
+      <span className="absolute left-[28px] top-[28px] flex items-center gap-[8px] max-md:left-[18px] max-md:top-[18px]">
         <img src={`/assets/figma/${icon}`} width={14} height={14} alt="" aria-hidden="true" className="h-[14px] w-[14px] shrink-0 object-contain" />
         <span className="whitespace-nowrap text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{title}</span>
       </span>
-      {trend && <span className="absolute right-[28px] top-[28px]"><TrendBadge value={trend} /></span>}
+      {trend && <span className="absolute right-[28px] top-[28px] max-md:right-[18px] max-md:top-[18px]"><TrendBadge value={trend} /></span>}
       {/* цифра центрируется в зоне под заголовком (top-[72px]..низ): отступы сверху/снизу примерно
           равны. items-baseline + leading-none раньше уводили глиф вверх, к заголовку. */}
-      <span className="absolute inset-x-[28px] bottom-0 top-[72px] flex items-center gap-[12px]">
+      <span className="absolute inset-x-[28px] bottom-0 top-[72px] flex items-center gap-[12px] max-md:inset-x-[18px] max-md:top-[52px]">
         <span className="text-[96px] font-[350] leading-[0.86] text-transparent max-md:text-[72px]" style={gradLight}>{value}</span>
         <span className="translate-y-[18px] text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{unit}</span>
       </span>

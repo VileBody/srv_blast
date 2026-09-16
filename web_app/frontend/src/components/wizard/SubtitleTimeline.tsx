@@ -489,7 +489,7 @@ export function SubtitleTimeline() {
       )}
 
       {/* Плеер (макет): квадратный play, табло времени, «Фокус» — одна высота 80 */}
-      <div className="mt-[20px] flex flex-wrap items-center gap-space-4">
+      <div className="mt-[20px] flex flex-wrap items-center gap-space-4 max-md:gap-[10px]">
         <button
           type="button"
           onClick={toggle}
@@ -511,7 +511,7 @@ export function SubtitleTimeline() {
           disabled={selected === null}
           onClick={() => { if (selected !== null) toggleAsrFocus(selected); }}
           aria-pressed={focusOn}
-          className="group flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] font-[350] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[52px] max-md:pr-[14px] max-md:text-[18px]"
+          className="group flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] font-[350] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[52px] max-md:gap-[8px] max-md:pl-[8px] max-md:pr-[12px] max-md:text-[18px]"
         >
           {focusOn ? (
             <span aria-hidden className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-text transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105">

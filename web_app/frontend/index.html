@@ -3,17 +3,6 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Телефон: интерфейс рисован под 24px-кегли и 40px-паддинги, в 375px не влезает.
-         Вместо переверстки — layout-вьюпорт 460px, браузер сам вписывает его в экран
-         (≈0.82 на iPhone). vw/dvh/fixed-элементы остаются согласованы, в отличие от CSS zoom. -->
-    <script>
-      (function () {
-        var w = Math.min(window.screen.width, window.screen.height);
-        if (w >= 768) return;
-        var m = document.querySelector('meta[name="viewport"]');
-        if (m) m.setAttribute('content', 'width=460, viewport-fit=cover');
-      })();
-    </script>
     <meta name="theme-color" content="#05010f" />
     <!-- Иконки вкладки не было вообще — браузер показывал пустой лист. -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
