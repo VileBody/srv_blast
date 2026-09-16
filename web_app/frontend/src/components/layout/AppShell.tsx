@@ -138,7 +138,7 @@ function MobileHeader({ onOpen }: { onOpen: () => void }) {
   return (
     /* Шапка не липнет: скроллится вместе со страницей, чтобы не съедать экран. Компактная —
        лого 24, «Blast» 15px (+1px вниз: у Point кап-высота сидит выше центра), бургер 36. */
-    <header className="flex items-center justify-between rounded-r25 border border-border bg-nav px-[20px] py-[12px] md:hidden">
+    <header className="flex items-center justify-between rounded-r15 border border-border bg-nav px-[20px] py-[12px] md:hidden">
       <NavLink to="/app" className="flex items-center gap-[8px]">
         <img src="/assets/figma/logo-star.svg" width="24" height="24" alt="Blast" />
         <span className="translate-y-[1px] text-[15px] font-bold leading-none">Blast</span>

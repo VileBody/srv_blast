@@ -111,7 +111,7 @@ function Hero({ name, resume, onCreate, onResume }: {
         src="/assets/figma/home-lines.svg"
         alt=""
         aria-hidden
-        className="pointer-events-none absolute left-[-37.2%] top-0 aspect-[2078/728] w-[174.3%] max-w-none select-none"
+        className="pointer-events-none absolute left-[-37.2%] top-0 aspect-[2078/728] w-[174.3%] max-w-none select-none max-md:left-[-70%] max-md:top-[-6%] max-md:w-[240%]"
       />
       <div className="relative flex flex-col items-center px-space-6 text-center">
         <h1
@@ -144,8 +144,8 @@ function Hero({ name, resume, onCreate, onResume }: {
               >
                 {resume.kind === 'post' ? t('dashboard.resumePostCta') : t('dashboard.resumeWizardCta')}
               </button>
-              <button type="button" onClick={onCreate} className="soft-btn h-[60px] gap-space-3 px-space-6 text-[20px] font-[400] max-md:h-[44px] max-md:flex-1 max-md:gap-[6px] max-md:whitespace-nowrap max-md:px-[10px] max-md:text-[13px]">
-                <img src="/assets/figma/home-note.svg" width="14" height="19" alt="" aria-hidden />
+              <button type="button" onClick={onCreate} className="soft-btn h-[60px] gap-space-3 px-space-6 text-[20px] font-[400] max-md:h-[44px] max-md:flex-1 max-md:gap-[6px] max-md:whitespace-nowrap max-md:!bg-[#2a1e49] max-md:px-[10px] max-md:text-[13px]">
+                <img src="/assets/figma/home-note.svg" width="14" height="19" alt="" aria-hidden className="max-md:h-[14px] max-md:w-[10px]" />
                 {t('dashboard.createProject')}
               </button>
             </div>
@@ -158,9 +158,9 @@ function Hero({ name, resume, onCreate, onResume }: {
             <button
               type="button"
               onClick={onCreate}
-              className="soft-btn mt-[40px] h-[60px] gap-space-3 px-space-6 text-[20px] font-[400] max-md:mt-[18px] max-md:h-[44px] max-md:px-[14px] max-md:text-[14px]"
+              className="soft-btn mt-[40px] h-[60px] gap-space-3 px-space-6 text-[20px] font-[400] max-md:mt-[18px] max-md:h-[44px] max-md:!bg-[#2a1e49] max-md:px-[14px] max-md:text-[14px]"
             >
-              <img src="/assets/figma/home-note.svg" width="14" height="19" alt="" aria-hidden />
+              <img src="/assets/figma/home-note.svg" width="14" height="19" alt="" aria-hidden className="max-md:h-[14px] max-md:w-[10px]" />
               {t('dashboard.createProject')}
             </button>
           </>
@@ -272,7 +272,7 @@ function StatsCard({ connected, handle, published, created, previewData, analysi
         </div>
       ) : (
         <div className="pointer-events-none relative flex min-h-0 flex-1 flex-col justify-center gap-[20px]">
-          <span className="flex items-center gap-[10px] text-[16px] font-[350] leading-none text-text-60">
+          <span className="flex items-center gap-[10px] text-[16px] font-[350] leading-none text-text-60 max-md:mt-[10px]">
             <span className="h-[8px] w-[8px] rounded-full bg-accent-light" />
             @{handle}
           </span>
@@ -291,7 +291,7 @@ function StatsCard({ connected, handle, published, created, previewData, analysi
             </>
           ) : (
             <div className="rounded-r15 bg-grad-soft-10 p-[24px] text-center">
-              <span className="mx-auto flex h-[43px] w-fit items-center gap-[16px] rounded-r10 bg-grad-soft-20 px-[15px] text-[16px] font-[400] leading-none text-text-80">
+              <span className="mx-auto flex h-[43px] w-fit items-center gap-[16px] rounded-r10 bg-grad-soft-20 px-[15px] text-[16px] font-[400] leading-none text-text-80 max-md:h-auto max-md:w-full max-md:flex-wrap max-md:justify-center max-md:gap-[10px] max-md:px-[10px] max-md:py-[10px] max-md:text-[13px]">
                 <span>{t('stats.chipCreated', { n: created })}</span>
                 <span className="text-text-60">|</span>
                 <span>{t('stats.chipPublished', { n: published })}</span>
