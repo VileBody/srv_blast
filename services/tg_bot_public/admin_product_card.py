@@ -35,6 +35,11 @@ CARD_CSS = """
   .pm-kpi .v.acc { color: var(--accent); }
   .pm-kpi .s { font-size: .84em; color: var(--text-35); }
   .pm-down { color: var(--danger); } .pm-up { color: var(--ok); }
+  .pm-split { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 18px; align-items: stretch; }
+  .pm-window { background: var(--surface-2); border-radius: 14px; padding: 14px 18px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .pm-window-head { display: flex; align-items: center; gap: 8px; color: var(--text-50); font-size: .86em; }
+  .pm-window .pm-seg { background: var(--surface-3); }
+  @media (max-width: 900px) { .pm-split { grid-template-columns: 1fr; } }
   .pm-seg { display: inline-flex; background: var(--surface-2); border-radius: 999px; padding: 2px; gap: 2px; }
   .pm-seg a { padding: 4px 10px 2px; border-radius: 999px; color: var(--text-50); font-size: .8em; text-decoration: none; line-height: 1.3; }
   .pm-seg a.on { background: var(--text); color: var(--bg); font-weight: 600; }
@@ -167,12 +172,19 @@ def render_product_card(
 
     users_panel = f"""
       <div class="pm-panel" style="grid-column: span 12">
-        <div class="ph"><b>Пользователи</b>{active_seg}</div>
-        <div class="pm-kpis" style="grid-template-columns: repeat(4, minmax(0, 1fr))">
-          {_kpi("Пользователи", _n(u["total"]), f'зарегистрировались {_n(u["registered_total"])} · без заблокировавших бота')}
-          {_kpi(f"Активные за {active_days} дн", _n(u["active_30d"]), f'{_pct(u["active_pct"])} · не заблокировали бота', accent=True)}
-          {_kpi("Отписались", _n(u["blocked"]), f'{_pct(u["blocked_pct"])} · последнее действие — блок')}
-          {_kpi("Новые за период", _n(u["new_period"]), _delta(u["new_period"], u["new_prev"]))}
+        <div class="ph"><b>Пользователи</b></div>
+        <div class="pm-split">
+          <div class="pm-kpis" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
+            {_kpi("Пользователи", _n(u["total"]), f'зарегистрировались {_n(u["registered_total"])} · без заблокировавших бота')}
+            {_kpi("Отписались", _n(u["blocked"]), f'{_pct(u["blocked_pct"])} · последнее действие — блок')}
+          </div>
+          <div class="pm-window">
+            <div class="pm-window-head"><span>За последние</span>{active_seg}<span>дней</span></div>
+            <div class="pm-kpis" style="grid-template-columns: repeat(2, minmax(0, 1fr))">
+              {_kpi("Активные", _n(u["active_30d"]), f'{_pct(u["active_pct"])} · сами что-то делали в боте', accent=True)}
+              {_kpi("Новые", _n(u["new_window"]), _delta(u["new_window"], u["new_window_prev"]))}
+            </div>
+          </div>
         </div>
       </div>"""
 
