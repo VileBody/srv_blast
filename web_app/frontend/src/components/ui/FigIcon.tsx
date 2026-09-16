@@ -52,7 +52,8 @@ export function FigIcon({
       alt={alt}
       aria-hidden={alt ? undefined : true}
       className={className}
-      style={{ width, height, maxWidth: 'none' }}
+      /* --fig-scale: на телефоне все фигма-иконки уменьшаются вместе с текстом (index.css) */
+      style={{ width: `calc(${width}px * var(--fig-scale, 1))`, height: `calc(${height}px * var(--fig-scale, 1))`, maxWidth: 'none' }}
     />
   );
 }

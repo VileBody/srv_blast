@@ -20,11 +20,14 @@ import { FigIcon } from './FigIcon';
 export function TiktokButton({
   connected,
   onClick,
-  className
+  className,
+  size = 'md'
 }: {
   connected: boolean;
   onClick?: () => void;
   className?: string;
+  /** компактная — в строку заголовка на телефоне */
+  size?: 'md' | 'sm';
 }) {
   const { t } = useTranslation();
   const statusQuery = useQuery({ queryKey: ['tiktok-status'], queryFn: api.tiktokStatus, staleTime: 5 * 60_000 });
@@ -39,16 +42,17 @@ export function TiktokButton({
       title={locked ? t('tiktok.soonHint') : undefined}
       onClick={locked ? undefined : (onClick ?? (connected ? undefined : connect))}
       className={cn(
-        'flex h-[60px] shrink-0 items-center justify-center gap-[15px] rounded-r15 border bg-grad-soft-20 backdrop-blur-[15px] transition',
-        locked ? 'w-auto min-w-[150px] px-[22px]' : 'w-[240px]',
+        'flex shrink-0 items-center justify-center rounded-r15 border bg-grad-soft-20 backdrop-blur-[15px] transition',
+        size === 'sm' ? 'h-[34px] gap-[8px] px-[12px]' : 'h-[60px] gap-[15px]',
+        size === 'sm' ? 'w-auto' : locked ? 'w-auto min-w-[150px] px-[22px]' : 'w-[240px]',
         locked ? 'cursor-not-allowed opacity-45' : 'hover:brightness-125',
         connected ? 'border-accent' : 'border-transparent',
         className
       )}
     >
-      <FigIcon name="tt-logo.svg" h={25} />
+      <FigIcon name="tt-logo.svg" h={size === 'sm' ? 16 : 25} />
       <span
-        className="translate-y-px text-[24px] font-[400] leading-none text-transparent"
+        className={cn('translate-y-px font-[400] leading-none text-transparent', size === 'sm' ? 'text-[14px]' : 'text-[24px]')}
         style={{
           backgroundImage: 'linear-gradient(184deg, rgba(246,245,253,0.8) 8.5%, rgba(246,245,253,0.64) 94.6%)',
           WebkitBackgroundClip: 'text',

@@ -81,17 +81,17 @@ export function StageSubtitles() {
 
       {/* Белый свотч — дефолт; обводка на нём = включён белый. Клик возвращает белый. */}
       {/* Цвет: одинаковый отступ от проверки субтитров сверху и до типов снизу */}
-      <div className="mt-[40px] flex items-center gap-[28px]">
+      <div className="mt-[40px] flex items-center gap-[28px] max-md:mt-[16px] max-md:gap-[12px]">
         <button
           type="button"
           aria-label={t('wizard.subs.whiteColor')}
-          className="h-[60px] w-[60px] shrink-0 rounded-r15 bg-[#f6f5fd] transition"
+          className="h-[60px] w-[60px] shrink-0 rounded-r15 bg-[#f6f5fd] transition max-md:h-[40px] max-md:w-[40px] max-md:rounded-r10"
           style={{ boxShadow: isWhite ? '0 0 0 2px var(--accent-light)' : undefined }}
           onClick={() => setSubtitles({ color: '#f6f5fd' })}
         />
         <div
           ref={barRef}
-          className="color-slider h-[60px] flex-1"
+          className="color-slider h-[60px] flex-1 max-md:h-[40px] max-md:touch-none"
           style={{ background: HUE_GRADIENT }}
           onPointerDown={onBarDown}
           role="slider"
@@ -102,8 +102,8 @@ export function StageSubtitles() {
         </div>
       </div>
 
-      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px]">
-        <div className="px-[40px]">
+      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px] max-md:mt-[16px] max-md:min-h-0 max-md:flex-none max-md:pb-[14px] max-md:pt-[14px]">
+        <div className="px-[40px] max-md:px-[14px]">
           <span className="wizard-body">{t('wizard.subs.chooseType')}</span>
         </div>
         {stylesQuery.isLoading ? (
@@ -116,12 +116,12 @@ export function StageSubtitles() {
             <InlineError error={stylesQuery.error} offline={stylesQuery.fetchStatus === 'paused'} onRetry={() => stylesQuery.refetch()} retrying={stylesQuery.isFetching} />
           </div>
         ) : (
-          <div className="relative mt-[12px] min-h-[253px] flex-1">
+          <div className="relative mt-[12px] min-h-[253px] flex-1 max-md:h-[180px] max-md:min-h-0 max-md:flex-none">
             <span className="scroll-fade-l" />
             <span className="scroll-fade-r" />
             <div
               ref={cardsScroll.ref}
-              className="media-row cursor-grab select-none items-stretch gap-[20px] px-[40px] active:cursor-grabbing"
+              className="media-row cursor-grab select-none items-stretch gap-[20px] px-[40px] active:cursor-grabbing max-md:gap-[10px] max-md:px-[14px]"
               {...cardsScroll.handlers}
             >
               {stylesQuery.data?.styles.map((item) => (
@@ -156,7 +156,8 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
     <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
       <div className="card-2 flex min-h-0 flex-1 flex-col px-space-6 py-space-6 max-lg:px-space-5">
         <h2 className="wizard-h mb-space-5 shrink-0 whitespace-nowrap">{t('wizard.workZone')}</h2>
-        <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10">
+        {/* телефон: у зоны своя высота (9:16) — иначе в авто-колонке она схлопывается вместе с даш-рамкой */}
+        <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10 max-md:aspect-[9/16] max-md:w-full">
           {currentName && <SubtitleCatalogPreview className="absolute inset-0" name={currentName} />}
           <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
           {!currentName && (

@@ -220,17 +220,18 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
 
   return (
     <div className="flex min-h-full flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-space-4">
-        <h2 className="wizard-h flex items-center gap-space-3">
+      {/* телефон: заголовок в одну строку, под ним «Доступно» и «Сбросить» одним кеглем */}
+      <div className="flex shrink-0 items-center justify-between gap-space-4 max-md:flex-col max-md:items-start max-md:gap-[6px]">
+        <h2 className="wizard-h flex items-center gap-space-3 whitespace-nowrap">
           <FigIcon name="icon-note.svg" h={19} />
           {t('wizard.track.intro')}
         </h2>
-        <span className="flex items-center gap-space-4">
-          <span className="wizard-body">{creditsLeft === null ? t('wizard.track.availableUnlimited') : t('wizard.track.available', { count: creditsLeft })}</span>
+        <span className="flex items-baseline gap-space-4 max-md:gap-[12px]">
+          <span className="wizard-body max-md:text-[13px] max-md:leading-none max-md:text-text-60">{creditsLeft === null ? t('wizard.track.availableUnlimited') : t('wizard.track.available', { count: creditsLeft })}</span>
           <button
             type="button"
             onClick={() => { audioRef.current?.pause(); audioRef.current = null; setPlaying(false); setAudioUrl(null); reset(projectId); }}
-            className="text-[14px] text-text-40 underline decoration-dotted underline-offset-4 transition hover:text-text-60"
+            className="text-[14px] text-text-40 underline decoration-dotted underline-offset-4 transition hover:text-text-60 max-md:text-[13px] max-md:leading-none"
           >
             {t('wizard.track.reset')}
           </button>
@@ -239,17 +240,17 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
 
       <input ref={fileInputRef} className="sr-only" type="file" accept="audio/*" onChange={onUpload} />
       {!track ? (
-        <div className="mt-space-6 grid gap-space-3">
+        <div className="mt-space-6 grid gap-space-3 max-md:mt-[14px] max-md:gap-[8px]">
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={onDrop}
-            className={cn('dash-panel flex h-[100px] w-full items-center justify-center gap-space-5 px-space-7 transition max-lg:px-space-5', dragOver && 'brightness-150')}
+            className={cn('dash-panel flex h-[100px] w-full items-center justify-center gap-space-5 px-space-7 transition max-lg:px-space-5 max-md:h-[64px] max-md:gap-[10px]', dragOver && 'brightness-150')}
           >
-            <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-r10 bg-text">
-              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-r10 bg-text max-md:h-[28px] max-md:w-[28px]">
+              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" className="max-md:h-[16px] max-md:w-[16px]">
                 <defs>
                   <linearGradient id="plusGrad" x1="0" y1="0" x2="1" y2="1">
                     <stop offset="0" stopColor="#8b6fe6" />
@@ -264,7 +265,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
           {previousQuery.data?.track && (
             <button
               type="button"
-              className="flex h-[56px] items-center justify-between rounded-r15 bg-grad-soft-10 px-space-5 text-left transition hover:brightness-125"
+              className="flex h-[56px] items-center justify-between rounded-r15 bg-grad-soft-10 px-space-5 text-left transition hover:brightness-125 max-md:h-[44px] max-md:px-[12px]"
               onClick={() => {
                 const previous = previousQuery.data.track;
                 if (!previous) return;
@@ -272,8 +273,8 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
                 setAudioUrl(previous.localUrl || previous.s3Key);
               }}
             >
-              <span className="truncate text-[16px] text-text-80">{t('wizard.track.previous')}</span>
-              <span className="ml-space-4 truncate text-[16px] text-text">{previousQuery.data.track.filename}</span>
+              <span className="truncate text-[16px] text-text-80 max-md:text-[13px]">{t('wizard.track.previous')}</span>
+              <span className="ml-space-4 truncate text-[16px] text-text max-md:text-[13px]">{previousQuery.data.track.filename}</span>
             </button>
           )}
         </div>
@@ -282,7 +283,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
           type="button"
           onClick={() => fileInputRef.current?.click()}
           title={t('wizard.track.replaceFile')}
-          className="dash-panel mt-space-6 flex h-[90px] min-h-[90px] w-full shrink-0 items-center justify-between gap-space-4 px-space-5"
+          className="dash-panel mt-space-6 flex h-[90px] min-h-[90px] w-full shrink-0 items-center justify-between gap-space-4 px-space-5 max-md:mt-[14px] max-md:h-[56px] max-md:min-h-0 max-md:gap-[8px]"
         >
           <span className="wizard-body truncate text-left">{baseName}</span>
           <span className="flex shrink-0 items-center gap-space-3">
@@ -293,30 +294,32 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
       )}
 
       {/* Лимит длины отрывка виден ДО ввода — рядом с заголовком, а не тостом постфактум */}
-      <div className="mt-space-6 flex shrink-0 flex-wrap items-baseline justify-between gap-space-3">
+      <div className="mt-space-6 flex shrink-0 flex-wrap items-baseline justify-between gap-space-3 max-md:mt-[18px] max-md:flex-col max-md:gap-[6px]">
         <h2 className="wizard-h">{t('wizard.track.timing')}</h2>
-        <span className="flex items-center gap-space-3">
-          <span className={cn('soft-chip', overLimit && '!text-[var(--warning)]')}>{t('wizard.track.segmentCap', { seconds: maxSegmentSeconds })}</span>
+        <span className="flex items-baseline gap-space-3 max-md:gap-[12px]">
+          <span className={cn('soft-chip max-md:hidden', overLimit && '!text-[var(--warning)]')}>{t('wizard.track.segmentCap', { seconds: maxSegmentSeconds })}</span>
+          {/* телефон: без пилюли — тем же текстом, что «Доступно: N видео» */}
+          <span className={cn('hidden text-[13px] leading-none text-text-60 max-md:inline', overLimit && '!text-[var(--warning)]')}>{t('wizard.track.segmentCap', { seconds: maxSegmentSeconds })}</span>
           {!paidPlan && (
-            <a href="/app/pricing" className="text-[14px] text-text-40 underline decoration-dotted underline-offset-4 transition hover:text-text-60">
+            <a href="/app/pricing" className="text-[14px] text-text-40 underline decoration-dotted underline-offset-4 transition hover:text-text-60 max-md:text-[13px] max-md:leading-none">
               {t('wizard.track.segmentUpgrade', { seconds: SEGMENT_SECONDS.paid })}
             </a>
           )}
         </span>
       </div>
       {/* Акцентная обводка с момента загрузки трека и дальше — пройденный/активный этап */}
-      <div className={cn('mt-space-5 flex h-[190px] min-h-[190px] w-full shrink-0 items-center justify-center gap-space-4 px-space-5', track ? 'dash-panel' : 'dash-panel-white', (overLimit || backwards) && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
+      <div className={cn('mt-space-5 flex h-[190px] min-h-[190px] w-full shrink-0 items-center justify-center gap-space-4 px-space-5 max-md:mt-[12px] max-md:h-[84px] max-md:min-h-0 max-md:gap-[8px] max-md:px-[10px]', track ? 'dash-panel' : 'dash-panel-white', (overLimit || backwards) && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
         <button
           type="button"
           aria-label={playing ? t('wizard.track.pause') : t('wizard.track.play')}
           disabled={!effectiveAudioUrl}
           onClick={togglePlay}
-          className="soft-btn h-[60px] w-[60px] shrink-0"
+          className="soft-btn h-[60px] w-[60px] shrink-0 max-md:h-[40px] max-md:w-[40px]"
         >
           {playing ? (
-            <span className="flex gap-[6px]" aria-hidden="true"><span className="h-[20px] w-[5px] rounded-[2px] bg-text" /><span className="h-[20px] w-[5px] rounded-[2px] bg-text" /></span>
+            <span className="flex gap-[6px]" aria-hidden="true"><span className="h-[20px] w-[5px] rounded-[2px] bg-text max-md:h-[14px] max-md:w-[4px]" /><span className="h-[20px] w-[5px] rounded-[2px] bg-text max-md:h-[14px] max-md:w-[4px]" /></span>
           ) : (
-            <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="currentColor" /></svg>
+            <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" className="max-md:h-[14px] max-md:w-[14px]"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="currentColor" /></svg>
           )}
         </button>
         <span className="wizard-body">{t('wizard.track.from')}</span>
@@ -337,7 +340,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
         <input ref={timingToInputRef} value={timingTo} onChange={(e) => commitTiming('timingTo', clampTiming(e.target.value, track?.durationS))} inputMode="numeric" maxLength={8} aria-label={t('wizard.track.segEnd')} placeholder="00:00:00" className="soft-input" />
       </div>
       {/* Живая длина отрывка: перебор виден сразу, введённое не стирается */}
-      <p className={cn('mt-space-5 max-w-[520px] shrink-0 text-[15px] leading-[1.5]', overLimit || backwards ? 'text-[var(--warning)]' : 'wizard-body')}>
+      <p className={cn('mt-space-5 max-w-[520px] shrink-0 text-[15px] leading-[1.5] max-md:mt-[10px] max-md:text-[13px]', overLimit || backwards ? 'text-[var(--warning)]' : 'wizard-body max-md:!text-[13px]')}>
         {backwards
           ? t('wizard.track.segmentBackwards')
           : overLimit
@@ -531,6 +534,13 @@ export function WizardPage() {
 
   // Примерка субтитров: ASR стартует, как только человек ушёл с «Трека», и успевает к «Тексту»
   useAsrPreview(stage !== 1 && trackReady && timingReady);
+
+  // Телефон: шаги идут одной колонкой, и после «Продолжить» страница оставалась внизу —
+  // человек видел футер следующего шага, а не его начало. Скроллим контент к началу.
+  useEffect(() => {
+    if (!window.matchMedia('(max-width: 767px)').matches) return;
+    document.querySelector('.app-content')?.scrollTo({ top: 0 });
+  }, [stage]);
 
   // Этап «Трек» можно проскочить только мимо UI (персист стора, прямой ?qaStage, старый батч) —
   // возвращаем на него, иначе визард дойдёт до «Сгенерировать» с пустым треком.

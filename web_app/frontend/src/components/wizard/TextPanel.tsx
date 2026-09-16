@@ -45,6 +45,7 @@ export function TextPanel({ canContinue, highlight, loading, timingReady, onNext
         {title}
       </h2>
 
+      {/* телефон: поле растёт вместе с текстом (rows), а не скроллится внутри узкой рамки */}
       <div className={cn('relative min-h-0 flex-1 overflow-hidden', highlight ? 'dash-panel' : 'dash-panel-white')}>
         {!timingReady ? (
           // Заблокировано: объясняем, чего ждём, а не показываем мёртвое поле
@@ -62,10 +63,11 @@ export function TextPanel({ canContinue, highlight, loading, timingReady, onNext
               onChange={(event) => setField('lyrics', event.target.value)}
               placeholder={t('wizard.text.placeholder')}
               spellCheck={false}
-              className="subtle-scroll h-full w-full resize-none bg-transparent p-space-5 pb-[64px] text-[15px] leading-[1.6] text-text outline-none placeholder:text-text-40 focus-visible:outline-none"
+              rows={Math.max(4, lyrics.split('\n').length + 1)}
+              className="subtle-scroll h-full w-full resize-none bg-transparent p-space-5 pb-[64px] text-[15px] leading-[1.6] text-text outline-none placeholder:text-text-40 focus-visible:outline-none max-md:h-auto max-md:p-[12px] max-md:pb-[12px] max-md:text-[14px]"
             />
             {/* счётчик строк: столько строк субтитров и уедет в ролик */}
-            <p className="pointer-events-none absolute bottom-space-4 left-1/2 w-max -translate-x-1/2 rounded-r15 bg-[var(--card-2)] px-space-4 py-space-2 text-center text-[14px] text-text-60 shadow-soft">
+            <p className="pointer-events-none absolute bottom-space-4 left-1/2 w-max -translate-x-1/2 rounded-r15 bg-[var(--card-2)] px-space-4 py-space-2 text-center text-[14px] text-text-60 shadow-soft max-md:hidden">
               {lyrics.trim()
                 ? t('wizard.text.lines', { count: lyrics.split('\n').filter((line) => line.trim()).length })
                 : t('wizard.text.hint')}
@@ -74,8 +76,17 @@ export function TextPanel({ canContinue, highlight, loading, timingReady, onNext
         )}
       </div>
 
+      {timingReady && (
+        /* телефон: подсказка/счётчик строк — текстом под рамкой, а не пилюлей поверх поля */
+        <p className="mt-[8px] hidden text-[13px] leading-[1.4] text-text-60 max-md:block">
+          {lyrics.trim()
+            ? t('wizard.text.lines', { count: lyrics.split('\n').filter((line) => line.trim()).length })
+            : t('wizard.text.hint')}
+        </p>
+      )}
+
       {/* W7: «Продолжить» на всю ширину со стрелкой, без кнопки «Назад» на первом шаге */}
-      <div className="mt-space-5 shrink-0">
+      <div className="mt-space-5 shrink-0 max-md:mt-[12px]">
         <button
           type="button"
           disabled={!canContinue || loading}

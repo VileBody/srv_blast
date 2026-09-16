@@ -40,8 +40,8 @@ function LimitRow({ label, used, total }: { label: string; used: number; total: 
   const unlimited = total === null;
   const pct = total ? Math.max(0, Math.min(1, used / total)) : 0;
   return (
-    <div className="flex h-[29px] items-center">
-      <span className="w-[161px] shrink-0 text-[24px] font-[350] leading-[29px] text-transparent" style={gradSoft}>{label}</span>
+    <div className="flex h-[29px] items-center max-md:h-auto max-md:flex-wrap max-md:gap-y-[6px]">
+      <span className="w-[161px] shrink-0 text-[24px] font-[350] leading-[29px] text-transparent max-md:w-[110px]" style={gradSoft}>{label}</span>
       <span
         className="relative h-[20px] min-w-0 flex-1 translate-y-[1px] overflow-hidden rounded-[20px] bg-grad-soft-20"
         role="img"
@@ -52,7 +52,7 @@ function LimitRow({ label, used, total }: { label: string; used: number; total: 
           style={{ width: unlimited ? '100%' : `${pct * 100}%` }}
         />
       </span>
-      <span className="flex w-[231px] shrink-0 items-center justify-end text-right text-[16px] font-[400] leading-[19px] text-transparent" style={gradSoft}>
+      <span className="flex w-[231px] shrink-0 items-center justify-end text-right text-[16px] font-[400] leading-[19px] text-transparent max-md:w-auto max-md:pl-[12px]" style={gradSoft}>
         {total === null ? (
           <><img src="/assets/figma/pf-infinity.svg" width="23" height="12" alt="" aria-hidden className="mr-[8px] max-w-none shrink-0" /><span>{t('limits.unlimited').replace(/^∞\s*/, '')}</span></>
         ) : t('limits.used', { used, total })}
@@ -91,18 +91,20 @@ function Bullet({ icon, children, muted }: { icon: string; children: React.React
 function FreeTariff() {
   const { t } = useTranslation();
   return (
-    <div className="relative mt-[28px] h-[220px] overflow-hidden rounded-r15">
+    /* на телефоне абсолютная фигма-раскладка (220px, кнопка справа снизу) наезжает сама на
+       себя — там блок становится обычным потоком: текст → буллеты → кнопка на всю ширину */
+    <div className="relative mt-[28px] h-[220px] overflow-hidden rounded-r15 max-md:h-auto max-md:p-[18px]">
       <img src="/assets/figma/pf-promo-bg.svg" alt="" aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full max-w-none select-none" />
-      <p className="absolute left-[28px] top-[28px] text-[24px] font-[400] leading-[29px] text-text">{t('profile.promoTitle')}</p>
-      <p className="absolute left-[28px] top-[73px] text-[16px] font-[400] leading-[19px] text-text-80">{t('profile.promoSubtitle')}</p>
-      <div className="absolute left-[28px] top-[104px] flex flex-col">
+      <p className="absolute left-[28px] top-[28px] text-[24px] font-[400] leading-[29px] text-text max-md:static">{t('profile.promoTitle')}</p>
+      <p className="absolute left-[28px] top-[73px] text-[16px] font-[400] leading-[19px] text-text-80 max-md:static max-md:mt-[6px]">{t('profile.promoSubtitle')}</p>
+      <div className="absolute left-[28px] top-[104px] flex flex-col max-md:static max-md:mt-[10px]">
         <Bullet icon="pf-note.svg" muted>{t('profile.promoTracks')}</Bullet>
         <Bullet icon="pf-scissors.svg" muted>{t('profile.promoVideos')}</Bullet>
         <Bullet icon="pf-check.svg" muted>{t('profile.promoTemplates')}</Bullet>
       </div>
       <Link
         to="/app/pricing"
-        className="group absolute bottom-[28px] right-[28px] flex h-[60px] w-[320px] items-center justify-center gap-[16px] rounded-r15 border border-accent bg-grad-soft-20 text-[24px] font-[400] leading-none text-transparent backdrop-blur-[80px] transition hover:brightness-125"
+        className="group absolute bottom-[28px] right-[28px] flex h-[60px] w-[320px] items-center justify-center gap-[16px] rounded-r15 border border-accent bg-grad-soft-20 text-[24px] font-[400] leading-none text-transparent backdrop-blur-[80px] transition hover:brightness-125 max-md:static max-md:mt-[16px] max-md:w-full"
       >
         <span className="translate-y-[2px]" style={gradSoft}>{t('profile.expandAccess')}</span>
         <FigIcon name="home-arrow.svg" h={15.464} className="transition-transform duration-150 group-hover:translate-x-[2px]" />
@@ -490,8 +492,8 @@ export function ProfilePage() {
      */
     <div className="flex min-h-full shrink-0 flex-col gap-[20px] pb-[calc(var(--rail-pad-y)_-_var(--space-6))] md:pt-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       {/* шапка 1192×202: аватар 120 в кольце, имя 24, ник 32 с карандашом, справа TikTok */}
-      <section className="card-2 flex h-[202px] shrink-0 items-center gap-[40px] px-[40px]">
-        <label className="relative h-[120px] w-[120px] shrink-0 cursor-pointer">
+      <section className="card-2 flex h-[202px] shrink-0 items-center gap-[40px] px-[40px] max-md:h-auto max-md:flex-wrap max-md:gap-[16px] max-md:py-[20px]">
+        <label className="relative h-[120px] w-[120px] shrink-0 cursor-pointer max-md:h-[80px] max-md:w-[80px]">
           <span className="absolute inset-0 rounded-full border-2 border-accent-light" aria-hidden="true" />
           <span className="absolute inset-[8px] overflow-hidden rounded-full bg-accent-20">
             {/* свой аватар важнее подтянутого из TikTok; инициал — последний фолбэк */}
@@ -654,7 +656,7 @@ export function ProfilePage() {
       {/* Состояние оплаты и отмена подписки — на платном плане, сразу под тарифом */}
       <BillingCard subscription={subscription} />
 
-      <section className="card-2 flex shrink-0 items-center justify-between gap-[24px] p-[40px]">
+      <section className="card-2 flex shrink-0 items-center justify-between gap-[24px] p-[40px] max-md:flex-col max-md:items-start max-md:gap-[14px]">
         <div>
           <h2 className="text-[24px] font-[400] text-text">{t('profile.deleteTitle')}</h2>
           <p className="mt-[8px] max-w-[720px] text-[16px] leading-[22px] text-text-60">{t('profile.deleteText')}</p>

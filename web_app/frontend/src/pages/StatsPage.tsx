@@ -71,17 +71,17 @@ function StatCard({ icon, title, value, unit, trend }: {
   trend?: string;
 }) {
   return (
-    <div className="taste-metric relative h-[192px] min-w-0 flex-1 rounded-r15 bg-grad-soft-20">
-      <span className="absolute left-[28px] top-[28px] flex items-center gap-[8px]">
+    <div className="taste-metric relative h-[192px] min-w-0 shrink-0 rounded-r15 bg-grad-soft-20 lg:flex-1 max-md:h-[120px]">
+      <span className="absolute left-[28px] top-[28px] flex items-center gap-[8px] max-md:left-[14px] max-md:top-[14px]">
         <img src={`/assets/figma/${icon}`} width={14} height={14} alt="" aria-hidden="true" className="h-[14px] w-[14px] shrink-0 object-contain" />
         <span className="whitespace-nowrap text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{title}</span>
       </span>
-      {trend && <span className="absolute right-[28px] top-[28px]"><TrendBadge value={trend} /></span>}
+      {trend && <span className="absolute right-[28px] top-[28px] max-md:right-[14px] max-md:top-[14px]"><TrendBadge value={trend} /></span>}
       {/* цифра центрируется в зоне под заголовком (top-[72px]..низ): отступы сверху/снизу примерно
           равны. items-baseline + leading-none раньше уводили глиф вверх, к заголовку. */}
-      <span className="absolute inset-x-[28px] bottom-0 top-[72px] flex items-center gap-[12px]">
-        <span className="text-[96px] font-[350] leading-[0.86] text-transparent" style={gradLight}>{value}</span>
-        <span className="translate-y-[18px] text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{unit}</span>
+      <span className="absolute inset-x-[28px] bottom-0 top-[72px] flex items-center gap-[12px] max-md:inset-x-[14px] max-md:top-[44px]">
+        <span className="text-[96px] font-[350] leading-[0.86] text-transparent max-md:text-[72px]" style={gradLight}>{value}</span>
+        <span className="translate-y-[18px] text-[24px] font-[350] leading-none text-transparent max-md:translate-y-[8px]" style={gradLight}>{unit}</span>
       </span>
     </div>
   );
@@ -400,8 +400,8 @@ export function StatsPage() {
     <div className="flex min-h-0 flex-1 flex-col lg:min-h-[var(--app-page-h)] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
       <div className="flex min-h-0 flex-1 flex-col gap-[20px]">
       {/* «Статистика» 1192×379 */}
-      <section className="card-2 h-auto min-h-[379px] shrink-0 p-[24px] sm:p-[32px] lg:h-[379px] lg:p-[40px]">
-        <div className="flex flex-col items-start justify-between gap-[20px] sm:flex-row sm:gap-space-4">
+      <section className="card-2 h-auto min-h-[379px] shrink-0 p-[24px] sm:p-[32px] lg:h-[379px] lg:p-[40px] max-md:min-h-0 max-md:p-[20px]">
+        <div className="flex flex-col items-start justify-between gap-[20px] sm:flex-row sm:gap-space-4 max-md:flex-row max-md:items-center max-md:gap-[10px]">
           <div>
             <h1 className="text-[32px] font-[400] leading-none text-text">{t('stats.title')}</h1>
             {/*
@@ -453,11 +453,14 @@ export function StatsPage() {
               )}
             </div>
           ) : (
-            <TiktokButton connected={false} />
+            <>
+              <TiktokButton connected={false} className="max-md:hidden" />
+              <TiktokButton connected={false} size="sm" className="md:hidden" />
+            </>
           )}
         </div>
 
-        <div className="mt-[28px] flex flex-col gap-[20px] lg:flex-row">
+        <div className="mt-[28px] flex flex-col gap-[20px] lg:flex-row max-md:mt-[16px] max-md:gap-[10px]">
           <StatCard icon="st-views.svg" title={t('stats.viewsTitle')} value={previewData ? '122' : tiktok ? fmtViews(views) : '—'} unit={t('stats.thousand')} trend={previewData ? '37.8%' : tiktok ? trend(views, previousViews) : undefined} />
           <StatCard icon="st-engagement.png" title={t('stats.engagement')} value={previewData ? '3.6' : tiktok ? engagement.toFixed(engagement >= 10 ? 0 : 1) : '—'} unit="%" trend={previewData ? '1.8%' : undefined} />
           {/* «Опубликовано» — только реально выложенное. Без подключённого TikTok показываем

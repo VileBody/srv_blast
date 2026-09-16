@@ -302,7 +302,15 @@ export function StageHooks() {
   const [dropError, setDropError] = useState(false);
   const [hint, setHint] = useState<HookKind | null>(null);
 
-  const drops = dropsQuery.data?.drops ?? [];
+  // Кандидаты ВНЕ отрывка не предлагаем: выбрав такой, человек упирался в неактивное
+  // «Продолжить» без объяснения (dropReady в визарде требует дроп внутри окна).
+  const drops = (dropsQuery.data?.drops ?? []).filter((d) => {
+    const s = dropToSeconds(normalizeDropTime(d.time));
+    return s !== null && clipFromS !== null && clipToS !== null && s >= clipFromS && s <= clipToS;
+  });
+  // Сохранённый дроп вылетел из окна (окно поменяли после выбора) — говорим об этом сразу
+  const storedDropS = dropToSeconds(hooks.dropTime);
+  const storedDropOutside = storedDropS !== null && clipReady && (storedDropS < clipFromS! || storedDropS > clipToS!);
   // В сторе тайминг всегда трёхчастный, в списке — «mm:ss»: сравниваем в одной форме
   const customActive = Boolean(hooks.dropTime && !drops.some((d) => normalizeDropTime(d.time) === hooks.dropTime));
   // Пока анализ идёт, ряд занимают заглушки: иначе человек видит один «Свой вариант»
@@ -336,7 +344,7 @@ export function StageHooks() {
       )}
 
       {/* Тайминг дропа (Figma 606:217): панель 620×60, активный чип — пил во всю высоту */}
-      <div className="mt-[20px] flex h-[60px] shrink-0 items-stretch rounded-r15 bg-grad-soft-10">
+      <div className="mt-[20px] flex h-[60px] shrink-0 items-stretch rounded-r15 bg-grad-soft-10 max-md:mt-[12px] max-md:h-[48px]">
         {dropsLoading && [0, 1, 2].map((index) => (
           <span key={index} className="flex h-full flex-1 items-center justify-center" aria-hidden="true">
             <span className="h-[26px] w-[92px] animate-pulse rounded-[8px] bg-accent-20" />
@@ -347,19 +355,24 @@ export function StageHooks() {
             key={drop.time}
             type="button"
             className={cn(
-              'flex h-full flex-1 items-center justify-center rounded-r15 text-[24px] font-[350] text-text-80 transition hover:text-text max-xl:text-[17px]',
+              'flex h-full min-w-0 flex-1 items-center justify-center rounded-r15 text-[24px] font-[350] text-text-80 transition hover:text-text max-xl:text-[17px] max-md:px-[2px] max-md:text-[13px]',
               hooks.dropTime === normalizeDropTime(drop.time) && 'border-2 border-accent-light bg-grad-soft-20 !text-text'
             )}
             onClick={() => { setDropError(false); setCustomDrop(false); setHooks({ dropTime: normalizeDropTime(drop.time) }); }}
           >
             {/* глиф Point сидит выше геометрического центра пила */}
-            <span className="translate-y-[1px]">{drop.time}<small className="ml-2 text-xs opacity-70">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small></span>
+            <span className="translate-y-[1px] whitespace-nowrap">
+              {drop.time}
+              <small className="ml-2 text-xs opacity-70 max-md:hidden">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small>
+              {/* телефон: без процентов — звезда справа от лучшего тайминга, в той же строке */}
+              {drop.best && <small className="ml-[3px] hidden text-[10px] text-accent-light max-md:inline">★</small>}
+            </span>
           </button>
         ))}
         {customDrop ? (
           <input
             autoFocus
-            className="soft-input !h-full flex-[1.4] !w-auto"
+            className="soft-input !h-full flex-[1.4] !w-auto max-md:min-w-0 max-md:flex-1 max-md:!text-[13px]"
             placeholder="00:00:00"
             defaultValue={customActive ? hooks.dropTime : ''}
             onChange={(e: ChangeEvent<HTMLInputElement>) => { e.target.value = clampDrop(e.target.value, track?.durationS); }}
@@ -377,23 +390,23 @@ export function StageHooks() {
           <button
             type="button"
             className={cn(
-              'flex h-full flex-[1.4] items-center justify-center rounded-r15 text-[24px] font-[350] text-text-80 transition hover:text-text max-xl:text-[17px]',
+              'flex h-full flex-[1.4] items-center justify-center rounded-r15 text-[24px] font-[350] text-text-80 transition hover:text-text max-xl:text-[17px] max-md:flex-1 max-md:text-[14px]',
               customActive && 'border-2 border-accent-light bg-grad-soft-20 !text-text'
             )}
             onClick={() => setCustomDrop(true)}
           >
-            <span className="translate-y-[1px]">{customActive ? hooks.dropTime : t('wizard.fx.customDrop')}</span>
+            <span className="translate-y-[1px] whitespace-nowrap">{customActive ? hooks.dropTime : <><span className="max-md:hidden">{t('wizard.fx.customDrop')}</span><span className="hidden max-md:inline">{t('wizard.fx.customDropShort')}</span></>}</span>
           </button>
         )}
       </div>
 
-      {dropError && <p className="mt-[8px] shrink-0 text-[14px] leading-[1.3] text-[var(--warning)]">{t('wizard.fx.dropOutsideClip')}</p>}
+      {(dropError || storedDropOutside) && <p className="mt-[8px] shrink-0 text-[14px] leading-[1.3] text-[var(--warning)]">{t('wizard.fx.dropOutsideClip')}</p>}
 
-      <p className="wizard-body mt-[28px] shrink-0">{t('wizard.fx.chooseType')}</p>
+      <p className="wizard-body mt-[28px] shrink-0 max-md:mt-[16px]">{t('wizard.fx.chooseType')}</p>
 
       {/* Список типов: строки 620×80, скролл уходит под градиентные фейды (Figma Rectangle 771/772) */}
-      <div className="relative mt-[12px] min-h-0 flex-1">
-        <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px]" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
+      <div className="relative mt-[12px] min-h-0 flex-1 max-md:mt-[8px]">
+        <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px] max-md:gap-[10px] max-md:py-0" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
           {HOOK_TYPES.map((item) => {
             const active = hooks.kind === item.kind;
             const configured = hookPills(hooks).some((pill) => pill.kind === item.kind);
@@ -405,7 +418,7 @@ export function StageHooks() {
                 type="button"
                 disabled={locked}
                 className={cn(
-                  'relative flex h-[80px] shrink-0 items-center rounded-r15 bg-grad-soft-10 px-[28px] text-left transition hover:bg-grad-soft-20 hover:shadow-[inset_0_0_0_1px_rgba(139,111,230,.55)]',
+                  'relative flex h-[80px] shrink-0 items-center rounded-r15 bg-grad-soft-10 px-[28px] text-left transition hover:bg-grad-soft-20 hover:shadow-[inset_0_0_0_1px_rgba(139,111,230,.55)] max-md:h-[52px] max-md:px-[16px]',
                   // Подсвечены все настроенные типы, а не только открытый (правка ревью)
                   (active || configured) && 'border-2 border-accent-light',
                   active && 'bg-grad-soft-20',
@@ -428,7 +441,7 @@ export function StageHooks() {
                   </span>
                 )}
                 <span
-                  className="absolute right-[28px] z-[2] flex h-[40px] w-[40px] items-center justify-center"
+                  className="absolute right-[28px] z-[2] flex h-[40px] w-[40px] items-center justify-center max-md:right-[12px] max-md:h-[32px] max-md:w-[32px]"
                   onMouseEnter={() => setHint(item.kind)}
                   onMouseLeave={() => setHint(null)}
                   aria-label={t('wizard.fx.whatIs', { label: chip(HOOK_LABELS[item.kind]) })}
@@ -814,14 +827,14 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
           <button
             type="button"
             onClick={() => setFullscreen(true)}
-            className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125"
+            className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 max-md:hidden"
           >
             <img src="/assets/figma/fx-expand.svg" width="16" height="16" alt="" aria-hidden />
             {t('common.expand')}
           </button>
         </div>
 
-        <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10">
+        <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10 max-md:aspect-[9/16] max-md:w-full">
           {kind && <EffectPreview previewId={previewId} />}
           <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
           {!kind ? (

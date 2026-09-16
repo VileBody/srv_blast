@@ -186,15 +186,17 @@ function FootageTypeStepper() {
   return (
     /* Стрелки держатся текста на постоянном отступе: фиксированная ширина ряда разносила
        их по краям и у коротких подписей («16:9») зазор становился огромным. */
-    <span className="inline-flex items-center gap-[15px]">
-      {arrow(-1)}
+    /* телефон: подпись становится заголовком строки («Вертикальные 9:16»), стрелки — две
+       пилюли справа; на десктопе порядок фигмы «‹ подпись ›» через md:order-* */
+    <span className="inline-flex items-center gap-[15px] max-md:w-full max-md:gap-[8px]">
       <span
-        className="whitespace-nowrap text-center text-[24px] font-[350] leading-normal text-transparent"
+        className="whitespace-nowrap text-center text-[24px] font-[350] leading-normal text-transparent md:order-2 max-md:mr-auto max-md:text-[15px]"
         style={{ backgroundImage: 'var(--grad-main)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}
       >
         {label}
       </span>
-      {arrow(1)}
+      <span className="md:order-1 max-md:flex max-md:h-[28px] max-md:w-[28px] max-md:items-center max-md:justify-center max-md:rounded-[8px] max-md:bg-grad-soft-20">{arrow(-1)}</span>
+      <span className="md:order-3 max-md:flex max-md:h-[28px] max-md:w-[28px] max-md:items-center max-md:justify-center max-md:rounded-[8px] max-md:bg-grad-soft-20">{arrow(1)}</span>
     </span>
   );
 }
@@ -375,8 +377,8 @@ export function StageBackground() {
   return (
     <div className="flex h-full flex-col">
       {/* Figma W12: слева заголовок, справа «Загрузить футажи» (иконка 20 + текст 24) */}
-      <div className="flex items-center justify-between gap-space-4">
-        <h2 className="wizard-h flex items-center gap-space-3">
+      <div className="flex items-center justify-between gap-space-4 max-md:gap-[10px]">
+        <h2 className="wizard-h flex min-w-0 items-center gap-space-3 whitespace-nowrap max-md:truncate">
           <BgSquaresIcon color="var(--accent-light)" />
           {heading}
         </h2>
@@ -384,15 +386,17 @@ export function StageBackground() {
           <button
             type="button"
             onClick={() => setSourcesOpen(true)}
-            className={cn('wizard-body flex h-[44px] shrink-0 items-center gap-[10px] whitespace-nowrap rounded-r15 px-[16px] transition hover:text-text', background.sourceVideos.length > 0 && 'border border-accent-light bg-grad-soft-20 !text-text')}
+            className={cn('wizard-body flex h-[44px] shrink-0 items-center gap-[10px] whitespace-nowrap rounded-r15 px-[16px] transition hover:text-text max-md:h-[32px] max-md:gap-[6px] max-md:rounded-r10 max-md:bg-grad-soft-20 max-md:px-[10px] max-md:!text-[13px]', background.sourceVideos.length > 0 && 'border border-accent-light bg-grad-soft-20 !text-text')}
           >
             <SvgMaskIcon src="/assets/figma/bg-upload.svg" style={{ width: 20, height: 20, color: WHITE80 }} />
-            {background.sourceVideos.length > 0 ? t('wizard.bg.ownFootageCount', { count: background.sourceVideos.length }) : t('wizard.bg.uploadFootage')}
+            {background.sourceVideos.length > 0
+              ? t('wizard.bg.ownFootageCount', { count: background.sourceVideos.length })
+              : <><span className="max-md:hidden">{t('wizard.bg.uploadFootage')}</span><span className="hidden max-md:inline">{t('wizard.bg.uploadShort')}</span></>}
           </button>
         )}
       </div>
 
-      <div className="mt-[20px]">
+      <div className="mt-[20px] max-md:mt-[14px]">
         <ModeSwitch />
       </div>
 
@@ -401,9 +405,9 @@ export function StageBackground() {
         onClose={() => setSourcesOpen(false)}
       />
 
-      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px]">
-        <div className="flex items-center justify-between px-[40px]">
-          <span className="wizard-body">{panelTitle}</span>
+      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px] max-md:mt-[14px] max-md:min-h-0 max-md:flex-none max-md:pb-[14px] max-md:pt-[14px]">
+        <div className="flex items-center justify-between px-[40px] max-md:flex-wrap max-md:gap-[10px] max-md:px-[16px]">
+          <span className={cn('wizard-body', background.mode === 'footage' && 'max-md:hidden')}>{panelTitle}</span>
           {/* Figma W12: у футажей на месте счётчика — степпер типа футажей */}
           {background.mode === 'footage' && <FootageTypeStepper />}
           {background.mode === 'photo' && (
@@ -430,12 +434,12 @@ export function StageBackground() {
               <InlineError error={listQuery.error} offline={listQuery.fetchStatus === 'paused'} onRetry={() => listQuery.refetch()} retrying={listQuery.isFetching} />
             </div>
           ) : (
-            <div className="relative mt-[12px] min-h-[253px] flex-1">
+            <div className="relative mt-[12px] min-h-[253px] flex-1 max-md:mt-[8px] max-md:h-[200px] max-md:min-h-0 max-md:flex-none">
               <span className="scroll-fade-l" />
               <span className="scroll-fade-r" />
               <div
                 ref={cardsScroll.ref}
-                className="media-row cursor-grab select-none items-center gap-[20px] px-[40px] active:cursor-grabbing"
+                className="media-row cursor-grab select-none items-center gap-[20px] px-[40px] active:cursor-grabbing max-md:gap-[10px] max-md:px-[14px]"
                 {...cardsScroll.handlers}
               >
                 {list?.map((item) => (
@@ -471,7 +475,7 @@ export function StageBackground() {
               <span className="scroll-fade-r !h-[60px]" />
               <div
                 ref={gluesScroll.ref}
-                className="media-row cursor-grab select-none items-center gap-[20px] px-[40px] active:cursor-grabbing"
+                className="media-row cursor-grab select-none items-center gap-[20px] px-[40px] active:cursor-grabbing max-md:gap-[10px] max-md:px-[14px]"
                 {...gluesScroll.handlers}
               >
                 {GLUE_TYPES.map((glue) => (
@@ -590,7 +594,7 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
   return (
     <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
       <div className="card-2 flex min-h-0 flex-1 flex-col px-space-6 py-space-6 max-lg:px-space-5">
-        <div className="mb-space-5 flex shrink-0 flex-nowrap items-center justify-between gap-space-3">
+        <div className="mb-space-5 flex shrink-0 flex-nowrap items-center justify-between gap-space-3 max-md:mb-[12px]">
           <h2 className="wizard-h whitespace-nowrap">{t('wizard.workZone')}</h2>
           {/* Компактная пилюля «‹ N/M ›» — тот же элемент, что на превью батча. Листать
               можно и ей, и стрелками внутри плеера: она вспомогательная. */}
@@ -690,7 +694,7 @@ export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext
         ) : background.mode === 'footage' ? (
           <div className="flex min-h-0 flex-1 justify-center">
             <PreviewPlayer
-              className="h-full w-auto max-w-full rounded-r15 bg-grad-soft-10"
+              className="h-full w-auto max-w-full rounded-r15 bg-grad-soft-10 max-md:h-auto max-md:w-full"
               style={{ aspectRatio: '9 / 16' }}
               {...playerProps}
               showSteps={playerProps.showSteps && Boolean(current)}

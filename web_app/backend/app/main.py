@@ -1165,7 +1165,17 @@ async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> 
     кандидаты ищутся ВНУТРИ отрывка, а не по всему треку.
     """
     if RUNTIME.backend != "production":
-        return {"status": "COMPLETED", "bpm": 142, "drops": store.DROPS, "mock": True}
+        # Кандидаты внутри окна (30/55/80 %), как их вернул бы оркестратор: фиксированные
+        # 01:34/01:36/01:41 при отрывке 00:11–00:22 давали дроп вне окна и мёртвое «Продолжить».
+        start_m = render_job_builder.mmss_seconds(clipFrom)
+        end_m = render_job_builder.mmss_seconds(clipTo)
+        if start_m is None or end_m is None or end_m <= start_m:
+            return {"status": "NEEDS_CLIP", "bpm": 0, "drops": [], "mock": True}
+        drops_m = []
+        for index, (share, conf) in enumerate(((0.3, 0.94), (0.55, 0.82), (0.8, 0.78))):
+            seconds = round(start_m + (end_m - start_m) * share)
+            drops_m.append({"time": f"{int(seconds // 60):02d}:{int(seconds % 60):02d}", "seconds": seconds, "best": index == 0, "confidence": conf})
+        return {"status": "COMPLETED", "bpm": 142, "drops": drops_m, "mock": True}
 
     start = render_job_builder.mmss_seconds(clipFrom)
     end = render_job_builder.mmss_seconds(clipTo)
