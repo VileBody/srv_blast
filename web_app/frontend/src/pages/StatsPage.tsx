@@ -71,7 +71,7 @@ function StatCard({ icon, title, value, unit, trend }: {
   trend?: string;
 }) {
   return (
-    <div className="taste-metric relative h-[192px] min-w-0 shrink-0 rounded-r15 bg-grad-soft-20 lg:flex-1">
+    <div className="taste-metric relative h-[192px] min-w-0 flex-1 rounded-r15 bg-grad-soft-20">
       <span className="absolute left-[28px] top-[28px] flex items-center gap-[8px]">
         <img src={`/assets/figma/${icon}`} width={14} height={14} alt="" aria-hidden="true" className="h-[14px] w-[14px] shrink-0 object-contain" />
         <span className="whitespace-nowrap text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{title}</span>
@@ -80,7 +80,7 @@ function StatCard({ icon, title, value, unit, trend }: {
       {/* цифра центрируется в зоне под заголовком (top-[72px]..низ): отступы сверху/снизу примерно
           равны. items-baseline + leading-none раньше уводили глиф вверх, к заголовку. */}
       <span className="absolute inset-x-[28px] bottom-0 top-[72px] flex items-center gap-[12px]">
-        <span className="text-[96px] font-[350] leading-[0.86] text-transparent max-md:text-[72px]" style={gradLight}>{value}</span>
+        <span className="text-[96px] font-[350] leading-[0.86] text-transparent" style={gradLight}>{value}</span>
         <span className="translate-y-[18px] text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{unit}</span>
       </span>
     </div>

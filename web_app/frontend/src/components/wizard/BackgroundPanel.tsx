@@ -189,7 +189,7 @@ function FootageTypeStepper() {
     <span className="inline-flex items-center gap-[15px]">
       {arrow(-1)}
       <span
-        className="whitespace-nowrap text-center text-[24px] font-[350] leading-normal text-transparent max-md:text-[18px]"
+        className="whitespace-nowrap text-center text-[24px] font-[350] leading-normal text-transparent"
         style={{ backgroundImage: 'var(--grad-main)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}
       >
         {label}
@@ -375,7 +375,7 @@ export function StageBackground() {
   return (
     <div className="flex h-full flex-col">
       {/* Figma W12: слева заголовок, справа «Загрузить футажи» (иконка 20 + текст 24) */}
-      <div className="flex items-center justify-between gap-space-4 max-md:flex-col max-md:items-start max-md:gap-space-3">
+      <div className="flex items-center justify-between gap-space-4">
         <h2 className="wizard-h flex items-center gap-space-3">
           <BgSquaresIcon color="var(--accent-light)" />
           {heading}
@@ -384,7 +384,7 @@ export function StageBackground() {
           <button
             type="button"
             onClick={() => setSourcesOpen(true)}
-            className={cn('wizard-body flex h-[44px] shrink-0 items-center gap-[10px] whitespace-nowrap rounded-r15 px-[16px] transition hover:text-text max-md:h-[40px] max-md:px-[12px]', background.sourceVideos.length > 0 && 'border border-accent-light bg-grad-soft-20 !text-text')}
+            className={cn('wizard-body flex h-[44px] shrink-0 items-center gap-[10px] whitespace-nowrap rounded-r15 px-[16px] transition hover:text-text', background.sourceVideos.length > 0 && 'border border-accent-light bg-grad-soft-20 !text-text')}
           >
             <SvgMaskIcon src="/assets/figma/bg-upload.svg" style={{ width: 20, height: 20, color: WHITE80 }} />
             {background.sourceVideos.length > 0 ? t('wizard.bg.ownFootageCount', { count: background.sourceVideos.length }) : t('wizard.bg.uploadFootage')}
@@ -401,8 +401,8 @@ export function StageBackground() {
         onClose={() => setSourcesOpen(false)}
       />
 
-      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px] max-md:mt-[24px] max-md:pb-[20px] max-md:pt-[20px]">
-        <div className="flex items-center justify-between px-[40px] max-md:flex-wrap max-md:gap-[10px] max-md:px-[16px]">
+      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px]">
+        <div className="flex items-center justify-between px-[40px]">
           <span className="wizard-body">{panelTitle}</span>
           {/* Figma W12: у футажей на месте счётчика — степпер типа футажей */}
           {background.mode === 'footage' && <FootageTypeStepper />}

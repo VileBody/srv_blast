@@ -98,8 +98,7 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
         className={cn(
           // отступ 24, а не 14: на 14 кнопка налезала на обложку
           'absolute right-[24px] top-[24px] z-[2] flex h-[32px] w-[32px] items-center justify-center rounded-r10 bg-[rgba(5,1,15,0.62)] text-[18px] leading-none text-text-80 backdrop-blur-[12px] transition',
-          // на тач-устройствах ховера нет — кнопка видна всегда
-          menuOpen ? 'opacity-100 text-text' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100'
+          menuOpen ? 'opacity-100 text-text' : 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100'
         )}
       >
         ⋯
