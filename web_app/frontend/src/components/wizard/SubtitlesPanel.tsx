@@ -102,7 +102,7 @@ export function StageSubtitles() {
         </div>
       </div>
 
-      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px] max-md:mt-[16px] max-md:min-h-0 max-md:pb-[14px] max-md:pt-[14px]">
+      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px] max-md:mt-[16px] max-md:min-h-0 max-md:flex-none max-md:pb-[14px] max-md:pt-[14px]">
         <div className="px-[40px] max-md:px-[14px]">
           <span className="wizard-body">{t('wizard.subs.chooseType')}</span>
         </div>
@@ -116,7 +116,7 @@ export function StageSubtitles() {
             <InlineError error={stylesQuery.error} offline={stylesQuery.fetchStatus === 'paused'} onRetry={() => stylesQuery.refetch()} retrying={stylesQuery.isFetching} />
           </div>
         ) : (
-          <div className="relative mt-[12px] min-h-[253px] flex-1 max-md:h-[180px] max-md:min-h-0">
+          <div className="relative mt-[12px] min-h-[253px] flex-1 max-md:h-[180px] max-md:min-h-0 max-md:flex-none">
             <span className="scroll-fade-l" />
             <span className="scroll-fade-r" />
             <div

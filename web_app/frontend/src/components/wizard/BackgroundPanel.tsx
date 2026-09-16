@@ -405,7 +405,7 @@ export function StageBackground() {
         onClose={() => setSourcesOpen(false)}
       />
 
-      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px] max-md:mt-[14px] max-md:min-h-0 max-md:pb-[14px] max-md:pt-[14px]">
+      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px] max-md:mt-[14px] max-md:min-h-0 max-md:flex-none max-md:pb-[14px] max-md:pt-[14px]">
         <div className="flex items-center justify-between px-[40px] max-md:flex-wrap max-md:gap-[10px] max-md:px-[16px]">
           <span className={cn('wizard-body', background.mode === 'footage' && 'max-md:hidden')}>{panelTitle}</span>
           {/* Figma W12: у футажей на месте счётчика — степпер типа футажей */}
@@ -434,7 +434,7 @@ export function StageBackground() {
               <InlineError error={listQuery.error} offline={listQuery.fetchStatus === 'paused'} onRetry={() => listQuery.refetch()} retrying={listQuery.isFetching} />
             </div>
           ) : (
-            <div className="relative mt-[12px] min-h-[253px] flex-1 max-md:mt-[8px] max-md:min-h-[200px]">
+            <div className="relative mt-[12px] min-h-[253px] flex-1 max-md:mt-[8px] max-md:h-[200px] max-md:min-h-0 max-md:flex-none">
               <span className="scroll-fade-l" />
               <span className="scroll-fade-r" />
               <div

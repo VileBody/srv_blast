@@ -449,13 +449,13 @@ export function SubtitleTimeline() {
             <button
               type="button"
               aria-label={t('wizard.subs.timeline.help')}
-              className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 pt-[2px] text-[18px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98]"
+              className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 pt-[2px] text-[18px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] max-md:h-[30px] max-md:w-[30px] max-md:text-[15px]"
             >
               ?
             </button>
             <span
               role="tooltip"
-              className="pointer-events-none absolute right-0 top-[calc(100%+8px)] z-[5] w-[320px] rounded-r12 bg-[#2b2145] px-space-4 py-space-3 text-[14px] leading-[1.35] text-text opacity-0 shadow-[0_8px_28px_rgba(0,0,0,.45)] ring-1 ring-[var(--accent-light)] transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100"
+              className="pointer-events-none absolute right-0 top-[calc(100%+8px)] z-[5] w-[320px] rounded-r12 bg-[#2b2145] px-space-4 py-space-3 text-[14px] leading-[1.35] text-text opacity-0 shadow-[0_8px_28px_rgba(0,0,0,.45)] ring-1 ring-[var(--accent-light)] transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100 max-md:fixed max-md:inset-x-[12px] max-md:top-auto max-md:bottom-[12px] max-md:z-[60] max-md:w-auto max-md:text-[13px]"
             >
               {t('wizard.subs.timeline.hint')}
             </span>
@@ -498,9 +498,9 @@ export function SubtitleTimeline() {
           className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[40px] max-md:w-[40px]"
         >
           {playing ? (
-            <span className="flex gap-[6px]" aria-hidden><span className="h-[20px] w-[6px] rounded-[2px] bg-text" /><span className="h-[20px] w-[6px] rounded-[2px] bg-text" /></span>
+            <span className="flex gap-[6px] max-md:gap-[4px]" aria-hidden><span className="h-[20px] w-[6px] rounded-[2px] bg-text max-md:h-[13px] max-md:w-[4px]" /><span className="h-[20px] w-[6px] rounded-[2px] bg-text max-md:h-[13px] max-md:w-[4px]" /></span>
           ) : (
-            <span aria-hidden className="ml-[5px] h-0 w-0 border-y-[11px] border-l-[18px] border-y-transparent border-l-[var(--text)]" />
+            <span aria-hidden className="ml-[5px] h-0 w-0 border-y-[11px] border-l-[18px] border-y-transparent border-l-[var(--text)] max-md:ml-[3px] max-md:border-y-[7px] max-md:border-l-[11px]" />
           )}
         </button>
         <span className="flex h-[64px] items-center rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] tabular-nums leading-none text-text-80 max-md:h-[40px] max-md:px-[10px] max-md:text-[14px]">
@@ -514,11 +514,11 @@ export function SubtitleTimeline() {
           className="group flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] font-[350] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[40px] max-md:shrink-0 max-md:gap-[6px] max-md:whitespace-nowrap max-md:pl-[6px] max-md:pr-[10px] max-md:text-[14px]"
         >
           {focusOn ? (
-            <span aria-hidden className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-text transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105 max-md:h-[26px] max-md:w-[26px] max-md:[&>*]:scale-[.65]">
-              <SvgMaskIcon src="/assets/figma/pd-star.svg" style={{ width: 19, height: 18, color: 'var(--accent)' }} />
+            <span aria-hidden className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-text transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105 max-md:h-[22px] max-md:w-[22px]">
+              <SvgMaskIcon src="/assets/figma/pd-star.svg" style={{ width: 19, height: 18, color: 'var(--accent)' }} className="max-md:!h-[11px] max-md:!w-[12px]" />
             </span>
           ) : (
-            <img src="/assets/figma/obj-zvezda5.svg" width="40" height="40" alt="" aria-hidden="true" className="h-[40px] w-[40px] shrink-0 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105" />
+            <img src="/assets/figma/obj-zvezda5.svg" width="40" height="40" alt="" aria-hidden="true" className="h-[40px] w-[40px] shrink-0 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105 max-md:h-[22px] max-md:w-[22px]" />
           )}
           {focusOn ? t('wizard.subs.timeline.unfocus') : t('wizard.subs.timeline.focus')}
         </button>
