@@ -170,6 +170,11 @@ def compute(
     total_users = len(live)
     new_users = sum(1 for at in first_seen.values() if df <= at < dt)
     new_users_prev = sum(1 for at in first_seen.values() if df - (dt - df) <= at < df)
+    # «Новые» в блоке пользователей живут в том же окне, что и «Активные» (7/30/90),
+    # а не в периоде дашборда — так тумблер управляет обеими плитками.
+    win = timedelta(days=active_days)
+    new_window = sum(1 for at in first_seen.values() if active_cut <= at < now)
+    new_window_prev = sum(1 for at in first_seen.values() if active_cut - win <= at < active_cut)
 
     # ── Продукт за период ───────────────────────────────────────────────
     period_events = [e for e in source.events if df <= e.at < dt]
@@ -246,6 +251,8 @@ def compute(
             "blocked_pct": _pct(len(blocked), total_users),
             "new_period": new_users,
             "new_prev": new_users_prev,
+            "new_window": new_window,
+            "new_window_prev": new_window_prev,
             "active_period": len(period_active),
         },
         "product": {

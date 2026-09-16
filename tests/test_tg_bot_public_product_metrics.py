@@ -163,7 +163,7 @@ def test_card_renders_without_caps_and_with_all_sections() -> None:
     html = admin_product_card.render_product_card(
         r, channel="bot", active_period="30d", period_label="30 дней", spend_rows=[],
     )
-    for needle in ("Пользователи", "Активные за 30 дн", "Готовые ролики", "LTV", "CAC", "Платные", "Бесплатные", "D7", "Воронка", "Возвращаемость"):
+    for needle in ("Пользователи", "Активные", "За последние", "Готовые ролики", "LTV", "CAC", "Платные", "Бесплатные", "D7", "Воронка", "Возвращаемость"):
         assert needle in html
     assert "Последние действия" not in html
     assert "от пред." not in html
@@ -186,3 +186,13 @@ def test_source_economics_row_derives_cac_and_roas() -> None:
     assert row["cac"] == 2000 and row["cost_per_user"] == 200 and row["roas"] == 1.5
     empty = source_economics_row({"src": "", "users_new": 0, "payers_new": 0, "spend_rub": 0})
     assert empty["source"] == "(без источника)" and empty["cac"] is None and empty["roas"] is None
+
+
+def test_new_users_follow_the_active_window_not_the_period() -> None:
+    events = [_ev("tg:1", "start", 3), _ev("tg:2", "start", 20), _ev("tg:3", "start", 40)]
+    src = pm.MetricsSource(events=events, payments=[])
+    r7 = pm.compute(src, channel="bot", date_from=NOW - 90 * D, date_to=NOW, now=NOW, active_days=7)
+    r30 = pm.compute(src, channel="bot", date_from=NOW - 90 * D, date_to=NOW, now=NOW, active_days=30)
+    assert r7["users"]["new_window"] == 1 and r7["users"]["new_window_prev"] == 0
+    assert r30["users"]["new_window"] == 2 and r30["users"]["new_window_prev"] == 1
+    assert r7["users"]["new_period"] == 3  # период дашборда — по-прежнему своё
