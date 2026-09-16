@@ -334,8 +334,9 @@ export function ProgressTrack({ done, total, minutesLeft }: { done: number; tota
         className="absolute inset-y-0 left-0 rounded-[15px] bg-grad-main transition-[width] duration-500"
         style={{ width: `${pct * 100}%` }}
       />
-      <span className="relative z-[1] pl-[28px] text-[16px] leading-none text-text">{t('processing.progress', { done, total })}</span>
-      <span className="relative z-[1] ml-auto pr-[28px] text-[16px] leading-none text-text">
+      {/* телефон: 13px и без переносов — «Прогресс: 0/1 видео» и «Осталось 3 минуты» в одну строку */}
+      <span className="relative z-[1] whitespace-nowrap pl-[28px] text-[16px] leading-none text-text max-md:pl-[14px] max-md:text-[13px]">{t('processing.progress', { done, total })}</span>
+      <span className="relative z-[1] ml-auto whitespace-nowrap pr-[28px] text-[16px] leading-none text-text max-md:pr-[14px] max-md:text-[13px]">
         {finished ? t('processing.allDone') : t('processing.minutesLeft', { count: minutesLeft })}
       </span>
     </div>
