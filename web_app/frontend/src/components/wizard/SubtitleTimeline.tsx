@@ -29,6 +29,10 @@ const BEATS_VISIBLE = 8;
 /** минимальная ширина зоны между пунктиром — иначе подписи наезжают друг на друга */
 const MIN_ZONE_PX = 150;
 const MIN_PX_PER_SEC = 60;
+/* на телефоне дорожка ~300px: если вписывать столько же зон, слова ужимаются до «з.»;
+   держим плотность выше и даём дорожке скроллиться пальцем */
+const MIN_PX_PER_SEC_NARROW = 120;
+const NARROW_LANE_PX = 480;
 /* Геометрия по Figma: контейнер 540×180; сверху 20 → слова 60 → 20 → ползунок 20 → 20 → тайминги.
    Пунктир секунд и плейхед идут от верха контейнера до ползунка. */
 const BOX_H = 180;
@@ -132,7 +136,7 @@ export function SubtitleTimeline() {
   const beatPeriod = dropsQuery.data?.bpm && dropsQuery.data.bpm >= 40 ? 60 / dropsQuery.data.bpm : 0;
   // общий зум: 1 = базовый масштаб (два такта в окне), меньше — обзор всех слов, больше — точная правка
   const [zoom, setZoom] = useState(1);
-  const pxPerSec = Math.max(MIN_PX_PER_SEC, (zoom * (laneW - X0 * 2)) / (beats.length ? BEATS_VISIBLE * beatPeriod : ZONES_VISIBLE));
+  const pxPerSec = Math.max(laneW < NARROW_LANE_PX ? MIN_PX_PER_SEC_NARROW : MIN_PX_PER_SEC, (zoom * (laneW - X0 * 2)) / (beats.length ? BEATS_VISIBLE * beatPeriod : ZONES_VISIBLE));
   /*
    * Шаг сетки — стабильная лестница, а не «что влезло»: с bpm это 1 → 2 → 4 (такт) → 8 битов,
    * без bpm — 0.5 → 1 → 2 → 5 с. Берём первый шаг, при котором между пунктиром не меньше
@@ -433,7 +437,7 @@ export function SubtitleTimeline() {
   const progress = Math.min(1, Math.max(0, (time - clipStart) / duration));
 
   return (
-    <section className="mt-[24px] rounded-r15 bg-grad-soft-10 px-[28px] py-[24px]" aria-label={t('wizard.subs.timeline.title')}>
+    <section className="mt-[24px] rounded-r15 bg-grad-soft-10 px-[28px] py-[24px] max-md:px-[16px] max-md:py-[16px]" aria-label={t('wizard.subs.timeline.title')}>
       <div className="flex items-center justify-between gap-space-3">
         <div className="flex items-center gap-space-3">
           <span className="wizard-body">{t('wizard.subs.timeline.title')}</span>
@@ -491,7 +495,7 @@ export function SubtitleTimeline() {
           onClick={toggle}
           disabled={!url || !ready}
           aria-label={playing ? t('wizard.subs.timeline.pause') : t('wizard.subs.timeline.play')}
-          className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40"
+          className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[52px] max-md:w-[52px]"
         >
           {playing ? (
             <span className="flex gap-[6px]" aria-hidden><span className="h-[20px] w-[6px] rounded-[2px] bg-text" /><span className="h-[20px] w-[6px] rounded-[2px] bg-text" /></span>
@@ -499,7 +503,7 @@ export function SubtitleTimeline() {
             <span aria-hidden className="ml-[5px] h-0 w-0 border-y-[11px] border-l-[18px] border-y-transparent border-l-[var(--text)]" />
           )}
         </button>
-        <span className="flex h-[64px] items-center rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] tabular-nums leading-none text-text-80">
+        <span className="flex h-[64px] items-center rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] tabular-nums leading-none text-text-80 max-md:h-[52px] max-md:px-[12px] max-md:text-[18px]">
           {fmt(time - clipStart)}
         </span>
         <button
@@ -507,7 +511,7 @@ export function SubtitleTimeline() {
           disabled={selected === null}
           onClick={() => { if (selected !== null) toggleAsrFocus(selected); }}
           aria-pressed={focusOn}
-          className="group flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] font-[350] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40"
+          className="group flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] font-[350] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[52px] max-md:pr-[14px] max-md:text-[18px]"
         >
           {focusOn ? (
             <span aria-hidden className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-text transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105">
@@ -519,7 +523,7 @@ export function SubtitleTimeline() {
           {focusOn ? t('wizard.subs.timeline.unfocus') : t('wizard.subs.timeline.focus')}
         </button>
         {/* зум дорожки: та же пилюля-контейнер, внутри бегунок; крайние значения — обзор / точная правка */}
-        <label className="flex h-[64px] min-w-[180px] flex-1 items-center gap-[12px] rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] leading-none text-text-80 max-lg:min-w-0">
+        <label className="flex h-[64px] min-w-[180px] flex-1 items-center gap-[12px] rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] leading-none text-text-80 max-lg:min-w-0 max-md:h-[52px] max-md:basis-full max-md:text-[18px]">
           <span aria-hidden className="select-none pt-[3px]">−</span>
           <input
             type="range"
@@ -592,7 +596,7 @@ export function SubtitleTimeline() {
                     onPointerCancel={onPillUp}
                     onDoubleClick={(e) => { e.stopPropagation(); toggleAsrFocus(index); }}
                     className={cn(
-                      'absolute flex cursor-grab select-none items-center justify-center rounded-r12 px-[16px] text-[24px] font-[350] leading-none transition-[box-shadow,background-color,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] active:cursor-grabbing',
+                      'absolute flex cursor-grab touch-none select-none items-center justify-center rounded-r12 px-[16px] text-[24px] font-[350] leading-none transition-[box-shadow,background-color,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] active:cursor-grabbing max-md:px-[10px] max-md:text-[18px]',
                       // три состояния (макет): обычное / выделенное / фокусное — все НЕПРОЗРАЧНЫЕ
                       word.focus
                         ? 'bg-text text-accent'
@@ -615,8 +619,8 @@ export function SubtitleTimeline() {
                       </span>
                     )}
                     {/* ручки длительности — тянут только край */}
-                    <span onPointerDown={onPillDown(index, 'start')} className="absolute inset-y-0 left-0 w-[8px] cursor-ew-resize hover:bg-[rgba(246,245,253,0.18)]" />
-                    <span onPointerDown={onPillDown(index, 'end')} className="absolute inset-y-0 right-0 w-[8px] cursor-ew-resize hover:bg-[rgba(246,245,253,0.18)]" />
+                    <span onPointerDown={onPillDown(index, 'start')} className="absolute inset-y-0 left-0 w-[8px] cursor-ew-resize touch-none hover:bg-[rgba(246,245,253,0.18)] max-md:w-[14px]" />
+                    <span onPointerDown={onPillDown(index, 'end')} className="absolute inset-y-0 right-0 w-[8px] cursor-ew-resize touch-none hover:bg-[rgba(246,245,253,0.18)] max-md:w-[14px]" />
                   </div>
                 );
               })}

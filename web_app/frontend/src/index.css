@@ -129,8 +129,10 @@
   --z-base:    1;
   --z-sticky:  10;
   --z-sidebar: 100;
-  --z-drawer:  200;
   --z-overlay: 900;
+  /* дровер выше оверлея: раньше 200 < 900, и мобильное меню лежало ПОД собственным
+     затемнением — видно сквозь дым, любой тап закрывал его вместо перехода */
+  --z-drawer:  950;
   --z-modal:   1000;
   --z-toast:   1100;
 
@@ -326,6 +328,13 @@ a { color: inherit; text-decoration: none; }
     .soft-btn { font-size: 18px; }
     .soft-chip { font-size: 16px; height: 38px; }
     .soft-input { font-size: 18px; width: 100px; height: 52px; }
+  }
+  /* телефон: фигма-кегли 24/32 в 375px не влезают вообще */
+  @media (max-width: 767px) {
+    .wizard-h { font-size: 22px; }
+    .wizard-body { font-size: 16px; }
+    .soft-btn { font-size: 16px; }
+    .soft-input { font-size: 16px; width: 88px; height: 48px; }
   }
 
   /* Этап «Фон» (Figma Wireframe 12/3/13/14/22/24) */
@@ -559,6 +568,14 @@ a { color: inherit; text-decoration: none; }
 
 @media (max-width: 768px) {
   .app-content { padding: var(--space-4); }
+  /* фигма-паддинги 40px внутри карточек на 375px съедают половину ширины;
+     классы утилитарные (p-[40px]), поэтому режем по подстроке класса */
+  .card-2[class*="p-[40px]"] { padding: 20px !important; }
+  .card-2[class*="px-[40px]"] { padding-left: 20px !important; padding-right: 20px !important; }
+  .card-2[class*="py-[40px]"] { padding-top: 24px !important; padding-bottom: 24px !important; }
+  /* строки пула: подпись ужимается с многоточием, степпер не сжимается */
+  .mini-pill { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .count-stepper { flex-shrink: 0; }
   .with-sidebar { margin-left: 0; }
   .sidebar { display: none; }
   .btn { height: 52px; padding: 0 var(--space-5); font-size: 14px; }

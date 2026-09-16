@@ -201,10 +201,10 @@ export function StageSlice() {
     <div className="flex h-full min-h-0 flex-col">
       {/* «Всего видео» неподвижен; секции скроллятся под ним */}
       <div className="relative z-[5] shrink-0">
-        <div className="relative flex h-[80px] items-center justify-between rounded-r15 border-2 border-accent-light bg-grad-soft-10 px-space-6">
+        <div className="relative flex h-[80px] items-center justify-between rounded-r15 border-2 border-accent-light bg-grad-soft-10 px-space-6 max-md:h-auto max-md:flex-wrap max-md:gap-[10px] max-md:px-space-4 max-md:py-space-3">
           <span className="wizard-h !text-[28px] max-xl:!text-[22px]">{t('wizard.pool.total')}</span>
           {/* Figma W19: кружок-индикатор лимита в 20px справа от «+» (W46 — поповер по ховеру) */}
-          <span className="relative flex items-center gap-[20px]">
+          <span className="relative flex items-center gap-[20px] max-md:flex-wrap max-md:gap-[10px]">
             {(bgRest !== 0 || subsRest !== 0 || hooksRest !== 0 || stylesRest !== 0) && (
               <button type="button" onClick={distributeEvenly} className="flex h-[34px] items-center whitespace-nowrap rounded-r10 border border-accent bg-grad-soft-20 px-[14px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125">
                 {t('wizard.pool.distributeEven')}
@@ -222,7 +222,7 @@ export function StageSlice() {
         <SectionCard title={t('wizard.pool.background')} note={restNote(bgRest, t('wizard.pool.bgNote', { count: bgTarget }))} warn={bgRest !== 0}>
           {units.map((unit) => (
             <div key={unit.key} className="flex items-center justify-between gap-space-3">
-              <span className="flex items-center gap-space-3">
+              <span className="flex min-w-0 items-center gap-space-3">
                 <MiniPill icon={unit.icon === 'tag' ? tagIcon() : photoIcon()} label={t(unit.labelKey, { name: chip(unit.name) })} />
                 {unit.noHook && <span className="rounded-r9 border border-border px-space-2 py-[2px] text-[12px] text-text-60">{t('wizard.pool.noFx')}</span>}
               </span>
@@ -232,9 +232,9 @@ export function StageSlice() {
           {colorGroup && (
             <div className="rounded-r10 bg-grad-soft-10 p-space-4">
               <MiniPill icon={strobeIcon()} label={t('wizard.pool.colorVideo', { label: chip(colorGroup.label) })} />
-              <div className="mt-space-3 flex items-center gap-space-3 pl-[25px]">
+              <div className="mt-space-3 flex flex-wrap items-center gap-space-3 pl-[25px] max-md:pl-0">
                 <span className="translate-y-px text-[15px] text-text-60">{t('wizard.pool.chooseFont')}</span>
-                <span className="flex gap-space-2">
+                <span className="flex flex-wrap gap-space-2">
                   {subtitleStyles.map((style) => {
                     const field = colorGroup.strobe ? 'strobeFont' : 'colorFont';
                     const current = colorGroup.strobe ? alloc.strobeFont : alloc.colorFont;
