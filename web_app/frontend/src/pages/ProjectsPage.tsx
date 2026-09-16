@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { usePhone } from '../lib/usePhone';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { cn } from '../lib/cn';
@@ -25,6 +26,7 @@ const gradLight = {
     `value` может быть словом («Без лимита») — тогда кегль меньше, иначе фигмовские 104 не влезают. */
 function StatCard({ label, value, to, onClick, variant }: { label: string; value: number | string; to?: string; onClick?: () => void; variant: 'primary' | 'muted' }) {
   const muted = variant === 'muted';
+  const phone = usePhone();
   const wordy = typeof value === 'string' && !/^\d+$/.test(value);
   // цвет фейда = фон карты, чтобы частицы жёстко «уходили» в него слева (эффект глубины).
   // Тянем до 80% ширины — иначе не достаёт до свирла muted-карты (он правее).
@@ -32,17 +34,19 @@ function StatCard({ label, value, to, onClick, variant }: { label: string; value
     ? 'linear-gradient(90deg, #2a1e49 0%, #2a1e49 55%, rgba(42,30,73,0) 80%)'
     : 'linear-gradient(90deg, #241a3c 0%, #241a3c 55%, rgba(36,26,60,0) 80%)';
   // «Сделать ещё» ведёт не по ссылке, а в визард: карта умеет быть и ссылкой, и кнопкой
-  const className = 'group relative flex h-[192px] w-[299px] shrink-0 flex-col overflow-hidden rounded-[15px] text-left max-md:h-[132px] max-md:w-[210px]';
-  const style = muted ? { background: '#2a1e49' } : { background: 'var(--grad-soft-20)' };
+  const className = 'group relative flex h-[192px] w-[299px] shrink-0 flex-col overflow-hidden rounded-[15px] text-left max-md:h-[112px] max-md:w-[210px]';
+  // телефон: непрозрачный фон (grad-soft-20 полупрозрачен и просвечивал линии подложки)
+  const style = muted ? { background: '#2a1e49' } : { background: phone ? '#241a3c' : 'var(--grad-soft-20)' };
   const body = (
     <>
       {/* мягкое свечение (две размытые эллипс-частицы) + свирл — точные позиции/наклоны из Figma */}
-      <img src="/assets/figma/proj-particle-a.svg" alt="" aria-hidden className="pointer-events-none absolute left-[-126px] top-[-127px] h-[454px] w-[372px] max-w-none rotate-[-18.32deg] select-none" />
-      <img src="/assets/figma/proj-particle-b.svg" alt="" aria-hidden className={`pointer-events-none absolute h-[454px] w-[372px] max-w-none rotate-[-18.32deg] select-none ${muted ? 'left-[-89px] top-[15px]' : 'left-[-139px] top-[-135px]'}`} />
+      {/* телефон: декор ×0.7 и сдвинут выше-левее, чтобы попадать в карточку 112px */}
+      <img src="/assets/figma/proj-particle-a.svg" alt="" aria-hidden className="pointer-events-none absolute left-[-126px] top-[-127px] h-[454px] w-[372px] max-w-none rotate-[-18.32deg] select-none max-md:-translate-x-[30px] max-md:-translate-y-[40px] max-md:scale-[.7]" />
+      <img src="/assets/figma/proj-particle-b.svg" alt="" aria-hidden className={`pointer-events-none absolute h-[454px] w-[372px] max-w-none rotate-[-18.32deg] select-none max-md:-translate-x-[30px] max-md:-translate-y-[40px] max-md:scale-[.7] ${muted ? 'left-[-89px] top-[15px]' : 'left-[-139px] top-[-135px]'}`} />
       {muted ? (
-        <img src="/assets/figma/proj-swirl-2.svg" alt="" aria-hidden className="pointer-events-none absolute left-[148px] top-[62px] h-[184px] w-[184px] max-w-none rotate-[-12.58deg] select-none" />
+        <img src="/assets/figma/proj-swirl-2.svg" alt="" aria-hidden className="pointer-events-none absolute left-[148px] top-[62px] h-[184px] w-[184px] max-w-none rotate-[-12.58deg] select-none max-md:-translate-x-[40px] max-md:-translate-y-[36px] max-md:scale-[.7]" />
       ) : (
-        <img src="/assets/figma/proj-swirl-1.svg" alt="" aria-hidden className="pointer-events-none absolute left-[98px] top-[76px] h-[139px] w-[174px] max-w-none rotate-[-30deg] select-none" />
+        <img src="/assets/figma/proj-swirl-1.svg" alt="" aria-hidden className="pointer-events-none absolute left-[98px] top-[76px] h-[139px] w-[174px] max-w-none rotate-[-30deg] select-none max-md:-translate-x-[30px] max-md:-translate-y-[36px] max-md:scale-[.7]" />
       )}
       {/* фейд поверх частиц (под текстом): частицы частично уходят в фон слева → глубина */}
       <div className="pointer-events-none absolute inset-y-0 left-0 right-0" style={{ background: fade }} />
@@ -51,7 +55,7 @@ function StatCard({ label, value, to, onClick, variant }: { label: string; value
         <span className="text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{label}</span>
         <FigIcon name="home-arrow.svg" h={16} className="transition-transform duration-200 group-hover:translate-x-[3px]" />
       </div>
-      <span className={cn('relative mt-[24px] px-[28px] font-[350] leading-none text-transparent max-md:mt-[8px] max-md:px-[16px]', wordy ? 'text-[44px]' : 'text-[104px]')} style={gradLight}>{value}</span>
+      <span className={cn('relative mt-[24px] px-[28px] font-[350] leading-none text-transparent max-md:mt-[4px] max-md:px-[16px]', wordy ? 'text-[44px]' : 'text-[104px]')} style={gradLight}>{value}</span>
     </>
   );
   return to
@@ -81,7 +85,7 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
   return (
     <Link
       to={`/app/projects/${project.id}`}
-      className={cn('group relative flex max-h-[358px] w-[263px] shrink-0 flex-col overflow-hidden rounded-[15px] max-md:h-[132px] max-md:w-[150px]', project.archived && 'opacity-60')}
+      className={cn('group relative flex max-h-[358px] w-[263px] shrink-0 flex-col overflow-hidden rounded-[15px] max-md:h-[112px] max-md:w-[150px]', project.archived && 'opacity-60')}
       style={{ background: 'var(--grad-soft-20)' }}
     >
       {/* обложка: отступ 14 слева/сверху, уходит за правый край (bleed 38px) и перекрыта фейдом в #281e47 */}
@@ -262,7 +266,7 @@ export function ProjectsPage() {
             </button>
           )}
         </div>
-        <div className="no-scrollbar mt-[28px] flex min-h-0 flex-1 items-stretch gap-space-5 overflow-x-auto max-md:-mx-[20px] max-md:h-[132px] max-md:gap-[10px] max-md:px-[20px]">
+        <div className="no-scrollbar mt-[28px] flex min-h-0 flex-1 items-stretch gap-space-5 overflow-x-auto max-md:-mx-[20px] max-md:h-[112px] max-md:gap-[10px] max-md:px-[20px]">
           {projects.map((project) => (
             <ProjectCard
               key={project.id}

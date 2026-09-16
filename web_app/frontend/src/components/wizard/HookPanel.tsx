@@ -347,7 +347,7 @@ export function StageHooks() {
             key={drop.time}
             type="button"
             className={cn(
-              'flex h-full flex-1 items-center justify-center rounded-r15 text-[24px] font-[350] text-text-80 transition hover:text-text max-xl:text-[17px] max-md:text-[14px]',
+              'flex h-full min-w-0 flex-1 items-center justify-center rounded-r15 text-[24px] font-[350] text-text-80 transition hover:text-text max-xl:text-[17px] max-md:px-[2px] max-md:text-[13px]',
               hooks.dropTime === normalizeDropTime(drop.time) && 'border-2 border-accent-light bg-grad-soft-20 !text-text'
             )}
             onClick={() => { setDropError(false); setCustomDrop(false); setHooks({ dropTime: normalizeDropTime(drop.time) }); }}
@@ -364,7 +364,7 @@ export function StageHooks() {
         {customDrop ? (
           <input
             autoFocus
-            className="soft-input !h-full flex-[1.4] !w-auto"
+            className="soft-input !h-full flex-[1.4] !w-auto max-md:min-w-0 max-md:flex-1 max-md:!text-[13px]"
             placeholder="00:00:00"
             defaultValue={customActive ? hooks.dropTime : ''}
             onChange={(e: ChangeEvent<HTMLInputElement>) => { e.target.value = clampDrop(e.target.value, track?.durationS); }}
@@ -819,7 +819,7 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
           <button
             type="button"
             onClick={() => setFullscreen(true)}
-            className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125"
+            className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 max-md:hidden"
           >
             <img src="/assets/figma/fx-expand.svg" width="16" height="16" alt="" aria-hidden />
             {t('common.expand')}
