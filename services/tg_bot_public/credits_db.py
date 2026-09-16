@@ -2028,12 +2028,13 @@ class CreditsDB:
         source_sql = bot_sql if selected == "bot" else site_sql if selected == "site" else f"{bot_sql} UNION ALL {site_sql}"
         # Payments live in one table regardless of where the purchase started;
         # the channel split goes by whether the payer ever touched the site.
-        if selected == "site":
-            pay_filter = "AND p.tg_id IN (SELECT tg_id FROM web_activity_log WHERE tg_id IS NOT NULL)"
-        elif selected == "bot":
-            pay_filter = "AND p.tg_id NOT IN (SELECT tg_id FROM web_activity_log WHERE tg_id IS NOT NULL)"
-        else:
-            pay_filter = ""
+        # Payments are keyed by tg_id whatever the surface; only the site view narrows
+        # them (to users who touched the site). Bot = everyone: a bot payer who also
+        # opened the site must not vanish from the bot numbers.
+        pay_filter = (
+            "AND p.tg_id IN (SELECT tg_id FROM web_activity_log WHERE tg_id IS NOT NULL)"
+            if selected == "site" else ""
+        )
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             events = await conn.fetch(source_sql + " ORDER BY created_at")
@@ -3182,7 +3183,9 @@ class CreditsDB:
         }.get(sort, "u.credits DESC, u.updated_at DESC")
         tag_clean = _norm_text(tag, max_len=64).lower()
         params: List[Any] = [int(min_credits)]
-        where = "u.credits >= $1 AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
+        # A client is someone who has paid — via the bot or a manual sale. Balance alone
+        # (free credits, partner top-ups) does not make a client.
+        where = "($1 = 0 OR u.credits >= $1) AND (EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') OR EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.tg_id = u.tg_id)) AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
         if tag_clean:
             params.append(tag_clean)
             where += f" AND EXISTS (SELECT 1 FROM user_tags ut WHERE ut.tg_id = u.tg_id AND ut.tag = ${len(params)})"
@@ -3230,7 +3233,7 @@ class CreditsDB:
         tag_clean = _norm_text(tag, max_len=64).lower()
         product_filter = _client_product_where("u.tg_id", str(product or "").strip().lower())
         params: List[Any] = [int(min_credits)]
-        where = "u.credits >= $1 AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
+        where = "($1 = 0 OR u.credits >= $1) AND (EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') OR EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.tg_id = u.tg_id)) AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
         if tag_clean:
             params.append(tag_clean)
             where += f" AND EXISTS (SELECT 1 FROM user_tags ut WHERE ut.tg_id = u.tg_id AND ut.tag = ${len(params)})"
@@ -3249,20 +3252,20 @@ class CreditsDB:
                 "COALESCE(SUM(credits), 0)::BIGINT AS credits_on_balance, "
                 "COUNT(*) FILTER (WHERE updated_at >= NOW() - INTERVAL '7 days')::BIGINT AS active_7d, "
                 "COUNT(*) FILTER (WHERE updated_at < NOW() - INTERVAL '14 days')::BIGINT AS dormant_14d "
-                "FROM users WHERE credits >= $1 "
-                "AND tg_id NOT IN (SELECT tg_id FROM admins)",
+                "FROM users u WHERE ($1 = 0 OR u.credits >= $1) AND (EXISTS (SELECT 1 FROM payments p WHERE p.tg_id = u.tg_id AND p.status = 'CONFIRMED') OR EXISTS (SELECT 1 FROM manual_payments mp WHERE mp.tg_id = u.tg_id)) "
+                "AND u.tg_id NOT IN (SELECT tg_id FROM admins)",
                 int(min_credits),
             )
             revenue_paid = await conn.fetchval(
                 "SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM payments p "
                 "WHERE p.status = 'CONFIRMED' "
-                "AND p.tg_id IN (SELECT tg_id FROM users WHERE credits >= $1) "
+                "AND p.tg_id IN (SELECT tg_id FROM users u WHERE ($1 = 0 OR u.credits >= $1)) "
                 "AND p.tg_id NOT IN (SELECT tg_id FROM admins)",
                 int(min_credits),
             )
             revenue_manual = await conn.fetchval(
                 "SELECT COALESCE(SUM(amount_rub), 0)::BIGINT FROM manual_payments mp "
-                "WHERE mp.tg_id IN (SELECT tg_id FROM users WHERE credits >= $1) "
+                "WHERE mp.tg_id IN (SELECT tg_id FROM users u WHERE ($1 = 0 OR u.credits >= $1)) "
                 "AND mp.tg_id NOT IN (SELECT tg_id FROM admins)",
                 int(min_credits),
             )
