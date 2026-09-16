@@ -243,6 +243,30 @@ def source_economics_row(r: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# Web checkout marks its orders twice: `order_id` gets a `-web-` segment
+# (billing_backend.create_checkout) and `idempotency_key` is non-empty (bot rows
+# keep it ''). Either is enough to call the order a site sale; a subscription's
+# rebills inherit the parent order's channel because they carry the same markers.
+_WEB_ORDER_PREDICATE = "(p.idempotency_key <> '' OR p.order_id LIKE '%-web-%')"
+
+
+def payment_channel_sql_filter(channel: str) -> str:
+    """Extra `AND …` clause on `payments p` for the admin channel toggle.
+
+    'site' → only orders started in the web checkout; 'bot' → everything else;
+    'all' → no filter. Filtering by whether the payer ever touched the site
+    (the previous rule) pulled a bot buyer's whole history into the site view.
+    """
+    selected = str(channel or "").strip().lower()
+    if selected == "site":
+        return "AND " + _WEB_ORDER_PREDICATE
+    if selected == "bot":
+        return "AND NOT " + _WEB_ORDER_PREDICATE
+    if selected == "all":
+        return ""
+    raise ValueError("channel must be site, bot or all")
+
+
 def _web_event_ts(value: Any) -> datetime:
     """Web analytics events carry `ts` as an ISO string (`analytics_events.ts` is TEXT).
 
@@ -2027,20 +2051,15 @@ class CreditsDB:
         )
         source_sql = bot_sql if selected == "bot" else site_sql if selected == "site" else f"{bot_sql} UNION ALL {site_sql}"
         # Payments live in one table regardless of where the purchase started;
-        # the channel split goes by whether the payer ever touched the site.
-        # Payments are keyed by tg_id whatever the surface; only the site view narrows
-        # them (to users who touched the site). Bot = everyone: a bot payer who also
-        # opened the site must not vanish from the bot numbers.
-        pay_filter = (
-            "AND p.tg_id IN (SELECT tg_id FROM web_activity_log WHERE tg_id IS NOT NULL)"
-            if selected == "site" else ""
-        )
+        # the channel split goes by the ORDER, not by the payer: a bot buyer who
+        # later opened the site must keep every bot payment on the bot side.
+        pay_filter = payment_channel_sql_filter(selected)
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             events = await conn.fetch(source_sql + " ORDER BY created_at")
             payments = await conn.fetch(
                 "SELECT 'tg:' || p.tg_id::TEXT AS identity, p.amount_rub, p.created_at "
-                "FROM payments p WHERE p.status = 'CONFIRMED' " + pay_filter + " ORDER BY p.created_at"
+                "FROM payments p WHERE UPPER(p.status) = 'CONFIRMED' " + pay_filter + " ORDER BY p.created_at"
             )
             if selected == "site":
                 users = []
