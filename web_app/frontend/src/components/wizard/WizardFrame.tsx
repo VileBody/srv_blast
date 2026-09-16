@@ -37,7 +37,7 @@ export function StageTabs() {
   // Прогресс-подложка: заполняется от старта бара до правого края активного пила
   const fillPct = ((currentIndex + 1) / tabs.length) * 100;
   return (
-    <div className="relative flex h-[60px] w-full overflow-hidden rounded-r15 bg-grad-soft-10 max-md:h-[52px]" role="tablist" aria-label={t('wizard.stagesAria')}>
+    <div className="relative flex h-[60px] w-full overflow-hidden rounded-r15 bg-grad-soft-10" role="tablist" aria-label={t('wizard.stagesAria')}>
       <span
         aria-hidden="true"
         className="pointer-events-none absolute inset-y-0 left-0 z-0 rounded-r15 transition-[width] duration-300 ease-out"
@@ -63,7 +63,7 @@ export function StageTabs() {
             className={cn(
               // min-w-0 обязателен: иначе длинный лейбл (EN «Background») раздувает свой таб
               // и ломает равные пилюли из макета (5×124)
-              'relative z-[1] flex h-full min-w-0 flex-1 items-center justify-center gap-space-2 rounded-r15 text-[24px] font-[350] text-text-80 transition disabled:cursor-default max-xl:gap-space-1 max-xl:text-[17px] max-md:gap-[4px] max-md:text-[13px]',
+              'relative z-[1] flex h-full min-w-0 flex-1 items-center justify-center gap-space-2 rounded-r15 text-[24px] font-[350] text-text-80 transition disabled:cursor-default max-xl:gap-space-1 max-xl:text-[17px]',
               current && 'border-2 border-accent-light bg-grad-soft-20 text-text',
               passed && 'cursor-pointer hover:text-text'
             )}
