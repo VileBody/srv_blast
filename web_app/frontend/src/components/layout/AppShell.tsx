@@ -66,15 +66,17 @@ function navigation(isAdmin = false) {
     : baseNav;
 }
 
-function Avatar({ name, avatarUrl }: { name?: string; avatarUrl?: string }) {
+function Avatar({ name, avatarUrl, className, onClick }: { name?: string; avatarUrl?: string; className?: string; onClick?: () => void }) {
   const { t } = useTranslation();
   return (
     <NavLink
       to="/app/profile"
+      onClick={onClick}
       className={({ isActive }) =>
         cn(
           'flex h-[60px] w-[60px] items-center justify-center overflow-hidden rounded-full border-2 border-[var(--dash-white)] bg-accent-20 text-[20px] font-bold text-text-80 transition hover:shadow-glow',
-          isActive && 'text-text shadow-glow'
+          isActive && 'text-text shadow-glow',
+          className
         )
       }
       aria-label={t('nav.profile')}
@@ -133,7 +135,7 @@ function Sidebar({ activeJobId, userName, avatarUrl, isAdmin }: { activeJobId?: 
   );
 }
 
-function MobileHeader({ onOpen }: { onOpen: () => void }) {
+function MobileHeader({ onOpen, userName, avatarUrl }: { onOpen: () => void; userName?: string; avatarUrl?: string }) {
   const { t } = useTranslation();
   return (
     /* Шапка не липнет: скроллится вместе со страницей, чтобы не съедать экран. Компактная —
@@ -143,12 +145,16 @@ function MobileHeader({ onOpen }: { onOpen: () => void }) {
         <img src="/assets/figma/logo-star.svg" width="24" height="24" alt="Blast" />
         <span className="translate-y-[1px] text-[15px] font-bold leading-none">Blast</span>
       </NavLink>
-      <button type="button" onClick={onOpen} aria-label={t('nav.openMenu')} className="flex h-[36px] w-[36px] items-center justify-center rounded-r10 bg-grad-soft-20 text-[16px] text-text-80">☰</button>
+      <span className="flex items-center gap-[8px]">
+        {/* личный кабинет: на десктопе это аватар в сайдбаре, на телефоне — тот же аватар у бургера */}
+        <Avatar name={userName} avatarUrl={avatarUrl} className="!h-[36px] !w-[36px] !text-[14px]" />
+        <button type="button" onClick={onOpen} aria-label={t('nav.openMenu')} className="flex h-[36px] w-[36px] items-center justify-center rounded-r10 bg-grad-soft-20 text-[16px] text-text-80">☰</button>
+      </span>
     </header>
   );
 }
 
-function Drawer({ open, onClose, activeJobId }: { open: boolean; onClose: () => void; activeJobId?: string }) {
+function Drawer({ open, onClose, activeJobId, userName, avatarUrl }: { open: boolean; onClose: () => void; activeJobId?: string; userName?: string; avatarUrl?: string }) {
   const { t } = useTranslation();
   if (!open) return null;
   return (
@@ -173,6 +179,14 @@ function Drawer({ open, onClose, activeJobId }: { open: boolean; onClose: () => 
             </NavLink>
           ))}
         </nav>
+        <NavLink
+          to="/app/profile"
+          onClick={onClose}
+          className={({ isActive }) => cn('mt-space-3 flex items-center gap-space-3 rounded-r12 border border-border p-space-4 text-text-60', isActive && 'border-accent-light bg-accent-20 text-text')}
+        >
+          <Avatar name={userName} avatarUrl={avatarUrl} className="!h-[28px] !w-[28px] !border !text-[12px]" />
+          {t('nav.profile')}
+        </NavLink>
         <LanguageSwitcher className="mt-space-5 w-max" />
       </aside>
     </>
@@ -234,12 +248,12 @@ export function AppShell() {
         <div className="app-frame" style={frameStyle}>
           {/* Тот же выбор аватара, что в ЛК: свой, иначе из TikTok — сайдбар отставал и показывал букву */}
           <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} isAdmin={meQuery.data?.isAdmin} />
-        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} />
+        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />
         {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
         <main className="with-sidebar min-w-0 flex-1">
           <div className="app-content">
-            <MobileHeader onOpen={() => setDrawerOpen(true)} />
+            <MobileHeader onOpen={() => setDrawerOpen(true)} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />
             {meQuery.isLoading ? (
               <Skeleton className="h-[120px]" />
             ) : meQuery.error ? (

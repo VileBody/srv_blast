@@ -115,7 +115,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
   const purchaseAllowed = agreed && (plan.kind !== 'subscription' || recurrentAgreed);
 
   return (
-    <div className="relative h-[736px] min-w-[357px] overflow-hidden rounded-r15 bg-grad-soft-20">
+    <div className="relative h-[736px] min-w-[357px] overflow-hidden rounded-r15 bg-grad-soft-20 max-md:w-[357px]">
       {/* нижний слой — шейп-логотип (глубина). Скейл от центра: transformOrigin center,
           позиция/размер из Figma. left задаётся от центра карты, чтобы фигура не «уползала». */}
       <img
@@ -407,19 +407,22 @@ export function PricingPage() {
   return (
     <div className="flex min-h-0 flex-1 flex-col md:h-[var(--app-page-h)] md:flex-none">
       <div className="card-2 relative flex min-h-0 flex-1 flex-col p-[40px]">
-        <div className="flex shrink-0 items-center gap-[20px]">
+        <div className="flex shrink-0 items-center gap-[20px] max-md:gap-[10px]">
           <button
             type="button"
             onClick={() => navigate(-1)}
             aria-label={t('common.back')}
-            className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 transition hover:brightness-125"
+            className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 transition hover:brightness-125 max-md:h-[36px] max-md:w-[36px] max-md:rounded-r10"
           >
             <FigIcon name="pd-arrow-right.svg" w={25} className="rotate-180" />
           </button>
-          <h1 className="text-[32px] font-[400] leading-none text-text">{t('pricing.title')}</h1>
+          <h1 className="text-[32px] font-[400] leading-none text-text max-md:text-[20px]">{t('pricing.title')}</h1>
         </div>
 
-        <div className="mt-[28px] grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(357px,1fr))] items-start gap-[20px] overflow-x-auto no-scrollbar">
+        {/* Телефон: карта — фигма-макет 357×736 на абсолютных координатах; переверстать
+            её нельзя без потери композиции, поэтому масштабируем целиком (zoom .8 → 286×589,
+            влезает в экран), лента со snap, следующая карта выглядывает справа. */}
+        <div className="mt-[28px] grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(357px,1fr))] items-start gap-[20px] overflow-x-auto no-scrollbar max-md:-mx-[20px] max-md:mt-[14px] max-md:flex max-md:snap-x max-md:snap-mandatory max-md:gap-[12px] max-md:px-[20px] max-md:[&>*]:shrink-0 max-md:[&>*]:snap-start max-md:[&>*]:[zoom:.8]">
           {plans.map((plan) => (
             <PlanCard
               key={plan.type}
