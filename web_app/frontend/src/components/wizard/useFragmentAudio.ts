@@ -25,11 +25,15 @@ export function usePlaybackUrl(track: SavedTrack | null | undefined): string | n
   return fresh.data?.url ?? null;
 }
 
-/** «01:02:44» → секунды (мм:сс:мс, мс — сотые). */
+/**
+ * «01:02:44» или «01:02» → секунды (мм:сс[:мс], мс — сотые и необязательны).
+ * Раньше без третьей пары визард молча не пускал дальше — «00:11» считался невалидным,
+ * и никто не понимал, что не так. Бэк (`render_job.mmss_seconds`) обе формы читает одинаково.
+ */
 export function timingToSeconds(value: string): number | null {
-  const parsed = /^(\d{2}):(\d{2}):(\d{2})$/.exec(value);
+  const parsed = /^(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
   if (!parsed) return null;
-  return Number(parsed[1]) * 60 + Number(parsed[2]) + Number(parsed[3]) / 100;
+  return Number(parsed[1]) * 60 + Number(parsed[2]) + (parsed[3] ? Number(parsed[3]) / 100 : 0);
 }
 
 /*

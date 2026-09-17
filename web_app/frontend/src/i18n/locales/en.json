@@ -413,7 +413,7 @@
       "to": "to",
       "segStart": "Segment start",
       "segEnd": "Segment end",
-      "timingHint": "Set the start and end time — minutes, seconds and ms",
+      "timingHint": "Set the start and end time — minutes and seconds, ms optional",
       "loaded": "Track uploaded",
       "loadFail": "Failed to upload track",
       "limitReached": "Track limit reached",
