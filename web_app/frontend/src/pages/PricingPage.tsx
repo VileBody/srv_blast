@@ -115,7 +115,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
   const purchaseAllowed = agreed && (plan.kind !== 'subscription' || recurrentAgreed);
 
   return (
-    <div className="relative h-[736px] min-w-[357px] overflow-hidden rounded-r15 bg-grad-soft-20 max-md:w-[357px]">
+    <div className="relative h-[736px] min-w-[357px] overflow-hidden rounded-r15 bg-grad-soft-20 max-md:h-[690px] max-md:w-[357px] max-md:[--fig-scale:1]">
       {/* нижний слой — шейп-логотип (глубина). Скейл от центра: transformOrigin center,
           позиция/размер из Figma. left задаётся от центра карты, чтобы фигура не «уползала». */}
       <img
@@ -165,22 +165,22 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
       </span>
 
       {/* бейдж тарифа 140×60 + тип 150×60 */}
-      <span className="absolute left-[28px] top-[249px] flex h-[60px] w-[140px] items-center justify-center gap-[8px] rounded-r15 bg-grad-soft-10 backdrop-blur-[25px]">
+      <span className="absolute left-[28px] top-[249px] flex h-[60px] w-[140px] items-center justify-center gap-[8px] rounded-r15 bg-grad-soft-10 backdrop-blur-[25px] max-md:top-[232px]">
         <FigIcon name={plan.logo} h={plan.logoH} className="shrink-0" />
         <span className="text-[24px] font-[400] leading-none tracking-[-0.5px] text-text">{plan.badge}</span>
       </span>
-      <span className="absolute left-[179px] top-[249px] flex h-[60px] w-[150px] items-center justify-center overflow-hidden rounded-r15">
+      <span className="absolute left-[179px] top-[249px] flex h-[60px] w-[150px] items-center justify-center overflow-hidden rounded-r15 max-md:top-[232px]">
         <FigIcon name={plan.kindAsset} w={150} className="absolute inset-0" />
-        <span className="relative text-[24px] font-[400] leading-[30px] tracking-[-0.5px] text-text-80">
+        <span className="relative text-[24px] font-[400] leading-none tracking-[-0.5px] text-text-80 max-md:!text-[24px]">
           {plan.kind === 'subscription' ? t('pricing.subscription') : t('pricing.product')}
         </span>
       </span>
 
       {/* заголовок 24 / 208 (2 строки) */}
-      <h2 className="absolute left-[28px] top-[337px] text-[24px] font-[400] leading-normal text-text" style={{ width: plan.titleW }}>{plan.title}</h2>
+      <h2 className="absolute left-[28px] top-[337px] text-[24px] font-[400] leading-normal text-text max-md:top-[306px] max-md:!text-[24px]" style={{ width: plan.titleW }}>{plan.title}</h2>
 
       {/* буллеты: шаг 42, иконка ~x=31, текст x=60 */}
-      <div className="absolute left-[28px] top-[423px] w-[301px]">
+      <div className="absolute left-[28px] top-[423px] w-[301px] max-md:top-[378px]">
         {plan.bullets.map((b, i) => (
           <span key={b.text} className="flex h-[30px] items-center" style={{ marginTop: i ? 12 : 0 }}>
             <span className="flex w-[32px] shrink-0 items-center justify-center">
@@ -203,14 +203,14 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
       {/* Тариф уже куплен: вместо согласия и цены — статус. Раньше купленный план ничем
           не отличался от остальных, и было непонятно, за что уже заплачено. */}
       {current ? (
-        <div className="absolute left-[28px] top-[560px] flex w-[calc(100%-56px)] items-start gap-[12px]">
+        <div className="absolute left-[28px] top-[560px] flex w-[calc(100%-56px)] items-start gap-[12px] max-md:top-[500px]">
           <span className="mt-[5px] flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] bg-accent-light" aria-hidden="true">
             <svg viewBox="0 0 12 10" width="11" height="9" fill="none"><path d="M1 5l3.2 3.2L11 1.4" stroke="#05010f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </span>
           <span className="text-[16px] font-[400] leading-[30px] text-text-80">{t('pricing.yourPlanNote')}</span>
         </div>
       ) : (
-      <label className={cn('absolute left-[28px] top-[560px] flex w-[calc(100%-56px)] cursor-pointer items-start gap-[12px] rounded-r10 transition', attention && 'bg-[rgba(139,111,230,.14)] shadow-[0_0_0_8px_rgba(139,111,230,.14)]')}>
+      <label className={cn('absolute left-[28px] top-[560px] flex w-[calc(100%-56px)] cursor-pointer items-start gap-[12px] rounded-r10 transition max-md:top-[500px]', attention && 'bg-[rgba(139,111,230,.14)] shadow-[0_0_0_8px_rgba(139,111,230,.14)]')}>
         <input type="checkbox" className="sr-only" checked={agreed} onChange={(e) => onAgree(e.target.checked)} />
         <span className={cn('mt-[5px] flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] border border-text transition-all', agreed && 'bg-text', attention && !agreed && 'border-accent-light shadow-[0_0_14px_rgba(139,111,230,.9)]')} aria-hidden="true">
           {agreed && (
@@ -247,7 +247,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
       )}
 
       {!current && plan.kind === 'subscription' && (
-        <label className="absolute left-[28px] top-[620px] flex w-[calc(100%-56px)] cursor-pointer items-center gap-[12px]">
+        <label className="absolute left-[28px] top-[620px] flex w-[calc(100%-56px)] cursor-pointer items-center gap-[12px] max-md:top-[566px]">
           <input type="checkbox" className="sr-only" checked={recurrentAgreed} onChange={(event) => onRecurrentAgree(event.target.checked)} />
           <span className={cn('flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] border border-text transition-all', recurrentAgreed && 'bg-text', attention && !recurrentAgreed && 'border-accent-light shadow-[0_0_14px_rgba(139,111,230,.9)]')} aria-hidden="true">
             {recurrentAgreed && (
@@ -262,8 +262,8 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
           На купленном тарифе кнопка становится статусом и не покупает повторно. */}
       {current ? (
         <span className="absolute inset-x-[28px] bottom-[28px] flex h-[60px] items-center justify-center gap-[10px] rounded-r15 bg-grad-main">
-          <FigIcon name="pr-check.svg" h={15.5} className="-translate-y-[3px] rotate-45" />
-          <span className="text-[24px] font-[400] leading-none text-transparent" style={gradLight}>{t('pricing.yourPlan')}</span>
+          <FigIcon name="pr-check.svg" h={15.5} className="-translate-y-[2px] rotate-45" />
+          <span className="-translate-y-[1px] text-[24px] font-[400] leading-none text-transparent" style={gradLight}>{t('pricing.yourPlan')}</span>
         </span>
       ) : (
       <button
@@ -297,7 +297,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
             {!purchaseAllowed && <span className="text-[14px] leading-none text-text-40">{t('pricing.agreeFirst')}</span>}
           </span>
         ) : (
-          <span className="flex translate-y-px items-center gap-[8px]">
+          <span className="flex items-center gap-[8px]">
             <span className="text-[32px] font-[400] leading-[38px] text-transparent" style={gradLight}>{plan.price}</span>
             {plan.perMonth && <span className="text-[16px] font-[400] leading-[30px] tracking-[-0.5px] text-text-80">{t('pricing.perMonth')}</span>}
           </span>
@@ -422,7 +422,7 @@ export function PricingPage() {
         {/* Телефон: карта — фигма-макет 357×736 на абсолютных координатах; переверстать
             её нельзя без потери композиции, поэтому масштабируем целиком (zoom .8 → 286×589,
             влезает в экран), лента со snap, следующая карта выглядывает справа. */}
-        <div className="mt-[28px] grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(357px,1fr))] items-start gap-[20px] overflow-x-auto no-scrollbar max-md:-mx-[20px] max-md:mt-[14px] max-md:flex max-md:snap-x max-md:snap-mandatory max-md:gap-[12px] max-md:px-[20px] max-md:[&>*]:shrink-0 max-md:[&>*]:snap-start max-md:[&>*]:[zoom:.8]">
+        <div className="mt-[28px] grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(357px,1fr))] items-start gap-[20px] overflow-x-auto no-scrollbar max-md:-mx-[20px] max-md:mt-[14px] max-md:flex max-md:snap-x max-md:snap-mandatory max-md:scroll-pl-[20px] max-md:gap-[12px] max-md:px-[20px] max-md:[&>*]:shrink-0 max-md:[&>*]:snap-start max-md:[&>*]:[zoom:.8]">
           {plans.map((plan) => (
             <PlanCard
               key={plan.type}

@@ -70,8 +70,8 @@ function Bullet({ icon, children, muted }: { icon: string; children: React.React
     ? (icon === 'pf-note.svg' ? 16 : icon === 'pf-scissors.svg' ? 12.216 : 15.5)
     : (icon === 'pf-note.svg' ? 24 : icon === 'pf-scissors.svg' ? 21 : 21.75);
   return (
-    <span className="flex h-[30px] items-center">
-      <span className={cn('flex shrink-0 items-center justify-start', muted ? 'w-[28px]' : 'w-[40px]')}>
+    <span className="flex h-[30px] items-center max-md:h-auto max-md:whitespace-nowrap">
+      <span className={cn('flex shrink-0 items-center justify-start', muted ? 'w-[28px]' : 'w-[40px] max-md:w-[22px]')}>
         <FigIcon
           name={renderedIcon}
           h={iconHeight}
@@ -82,7 +82,7 @@ function Bullet({ icon, children, muted }: { icon: string; children: React.React
           )}
         />
       </span>
-      <span className={cn('font-[400] leading-[30px]', muted ? 'text-[16px] text-text-80' : 'text-[24px] text-text')}>{children}</span>
+      <span className={cn('font-[400] leading-[30px]', muted ? 'text-[16px] text-text-80' : 'text-[24px] text-text max-md:!text-[12px] max-md:!leading-none')}>{children}</span>
     </span>
   );
 }
@@ -162,24 +162,24 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
     if (i === safeEarned) return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: CURRENT_BG, claimable: false };
     return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: '', claimable: false };
   });
-  const labelCls = 'text-[24px] font-[400] leading-none text-transparent';
+  const labelCls = 'text-[24px] font-[400] leading-none text-transparent max-md:px-[4px] max-md:text-center max-md:!text-[12px] max-md:!leading-[1.15]';
   return (
     <>
       {/* пилюли месяцев над шкалой */}
-      <div className="relative mt-[40px] grid grid-cols-3">
+      <div className="relative mt-[40px] grid grid-cols-3 max-md:mt-[16px]">
         {months.map((m, index) => (
-          <span key={index} className={cn(index > 0 && 'ml-[41px]')}>
-            <span className="inline-flex h-[35px] w-[80px] items-center justify-center rounded-r15 border border-accent bg-grad-soft-20 backdrop-blur-[15px]">
+          <span key={index} className={cn(index > 0 && 'ml-[41px] max-md:ml-[14px]')}>
+            <span className="inline-flex h-[35px] w-[80px] items-center justify-center rounded-r15 border border-accent bg-grad-soft-20 backdrop-blur-[15px] max-md:h-[28px] max-md:w-[64px] max-md:rounded-r10">
               {/* метрики Point сажают строчные буквы выше геометрического центра пила */}
-              <span className="translate-y-[1px] text-[24px] font-[400] leading-none text-transparent" style={gradSoft}>{m}</span>
+              <span className="translate-y-[1px] text-[24px] font-[400] leading-none text-transparent max-md:translate-y-0 max-md:!text-[14px]" style={gradSoft}>{m}</span>
             </span>
           </span>
         ))}
       </div>
 
       {/* шкала: текст меняется на ховере ТОЛЬКО у наведённого сегмента (group/seg) */}
-      <div className="relative mt-[25px]">
-        <div className="flex h-[60px] overflow-hidden rounded-[20px] bg-grad-soft-20">
+      <div className="relative mt-[25px] max-md:mt-[12px]">
+        <div className="flex h-[60px] overflow-hidden rounded-[20px] bg-grad-soft-20 max-md:h-[44px] max-md:rounded-r12">
           {segs.map((s, i) => {
             const content = (
               <>
@@ -207,8 +207,8 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
             );
           })}
         </div>
-        <span aria-hidden="true" className="absolute -top-[57px] bottom-0 left-1/3 w-px bg-text" />
-        <span aria-hidden="true" className="absolute -top-[57px] bottom-0 left-2/3 w-px bg-text" />
+        <span aria-hidden="true" className="absolute -top-[57px] bottom-0 left-1/3 w-px bg-text max-md:-top-[40px]" />
+        <span aria-hidden="true" className="absolute -top-[57px] bottom-0 left-2/3 w-px bg-text max-md:-top-[40px]" />
       </div>
     </>
   );
@@ -260,11 +260,11 @@ function PaidTariff({ tier, videosTotal, tracksTotal, startedAt, expiresAt, earn
   return (
     <>
       {/* состав пакета: три пункта через «|», распределены по ширине (растяжка) */}
-      <div className="mt-[28px] flex h-[60px] items-center justify-between rounded-r15 bg-grad-soft-20 px-[30px]">
+      <div className="no-scrollbar mt-[28px] flex h-[60px] items-center justify-between rounded-r15 bg-grad-soft-20 px-[30px] max-md:h-[40px] max-md:gap-[8px] max-md:overflow-x-auto max-md:px-[12px] max-md:[--fig-scale:.6]">
         <Bullet icon="pf-scissors.svg">{videosTotal === null ? t('profile.packVideosUnlimited') : t('profile.packVideos', { count: videosTotal })}</Bullet>
-        <span className="text-[24px] leading-none text-text-60">|</span>
+        <span className="text-[24px] leading-none text-text-60 max-md:!text-[12px]">|</span>
         <Bullet icon="pf-note.svg">{t('profile.packTracks', { count: tracksTotal ?? 4 })}</Bullet>
-        <span className="text-[24px] leading-none text-text-60">|</span>
+        <span className="text-[24px] leading-none text-text-60 max-md:!text-[12px]">|</span>
         <Bullet icon="pf-check.svg">{thirdPerk}</Bullet>
       </div>
 
