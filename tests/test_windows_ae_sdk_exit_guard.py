@@ -398,3 +398,18 @@ def test_modal_watcher_is_supervised_and_gates_new_work() -> None:
     create = node_main[node_main.index('def create_render(') : node_main.index('def get_render(')]
     assert "_require_render_dependencies()" in health
     assert create.index("_require_render_dependencies()") < create.index("manager.submit(payload)")
+
+
+def test_watcher_task_has_a_keep_alive_trigger() -> None:
+    """RestartCount only covers launches the scheduler itself sees fail; a
+    killed watcher ends "successfully" and stays down (verified 2026-09-17:
+    killed at 12:52:15, still down three minutes later). A one-minute
+    repetition with MultipleInstances IgnoreNew is the actual keep-alive:
+    killed 12:56:11 -> /ready 503 at 12:56:41 -> 200 again at 12:57:02."""
+    workflow = (RUNTIME_DIR / "restart_node_workflow.ps1").read_text(encoding="utf-8-sig")
+    start = workflow.index("function Register-SupervisedInteractiveTask")
+    reg = workflow[start : workflow.index("Start-ScheduledTask", start)]
+
+    assert "-RepetitionInterval (New-TimeSpan -Minutes 1)" in reg
+    assert "-MultipleInstances IgnoreNew" in reg
+    assert "-Trigger @($trigger, $keepAlive)" in reg
