@@ -867,6 +867,36 @@ class ProductionBackend:
     def playback_url(self, value: str, filename: str) -> str | None:
         return self._output_url(value, filename, attachment=False)
 
+    def image_url(self, value: str | None) -> str | None:
+        """Свежая ссылка на картинку пользователя (аватар, обложка).
+
+        В store хранится `s3://bucket/key` — стабильный адрес; подписанная ссылка
+        живёт 24 часа, поэтому её нельзя класть в профиль (раньше клали — на
+        следующий день аватар отдавал битый файл). Старые записи с https-presign
+        от нашего же endpoint разбираем и переподписываем; чужие https (TikTok)
+        и локальные `/static/...` отдаём как есть.
+        """
+        if not value:
+            return None
+        if value.startswith("/") or not (value.startswith("s3://") or value.startswith("https://")):
+            return value
+        if value.startswith("https://"):
+            endpoint = urlparse(self.config.s3_endpoint_url)
+            parsed = urlparse(value)
+            if parsed.hostname == endpoint.hostname:
+                path = parsed.path.lstrip("/")
+                if "/" not in path:
+                    return value
+                bucket, key = path.split("/", 1)
+            elif endpoint.hostname and parsed.hostname and parsed.hostname.endswith(f".{endpoint.hostname}"):
+                bucket = parsed.hostname[: -(len(endpoint.hostname) + 1)]
+                key = parsed.path.lstrip("/")
+            else:
+                return value
+        else:
+            bucket, key = value[5:].split("/", 1)
+        return self._presign(unquote(bucket), unquote(key), filename=Path(key).name, attachment=False)
+
     def _output_url(self, value: str, filename: str, *, attachment: bool) -> str | None:
         if not value:
             return None

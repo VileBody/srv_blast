@@ -675,6 +675,9 @@ async def api_me() -> dict[str, Any]:
         # если TikTok credentials отключены на production-инстансе.
         if not _tiktok_ready():
             data["tiktok"] = None
+        # аватар хранится как s3:// (или старый presign) — наружу всегда свежая подпись
+        if data.get("user", {}).get("avatarUrl"):
+            data["user"]["avatarUrl"] = _production_backend().image_url(data["user"]["avatarUrl"])
     # Экран ожидания обещает «пришлём в Telegram» — обещать это можно только когда бот
     # реально настроен И у юзера есть привязанный чат. Иначе фронт молчит про уведомления.
     data["telegramNotifications"] = bool(
@@ -700,7 +703,13 @@ async def api_me() -> dict[str, Any]:
 
 @app.get("/api/projects", tags=["projects"])
 def api_projects() -> dict[str, Any]:
-    return store.list_projects()
+    data = store.list_projects()
+    if RUNTIME.backend == "production":
+        backend = _production_backend()
+        for project in list(data.get("projects") or []) + [p for p in [data.get("activeProject")] if p]:
+            if project.get("coverUrl"):
+                project["coverUrl"] = backend.image_url(project["coverUrl"])
+    return data
 
 
 @app.post("/api/projects", tags=["projects"])
@@ -742,6 +751,8 @@ def api_project(project_id: str) -> dict[str, Any]:
                 persistence.save_job(job_id)
             if changed_jobs:
                 project = store.get_project(project_id) or project
+            if project.get("coverUrl"):
+                project["coverUrl"] = backend.image_url(project["coverUrl"])
         except Exception as exc:
             raise _production_error(exc) from exc
     return {"project": project, "mock": RUNTIME.backend == "mock"}
@@ -2210,11 +2221,12 @@ async def api_avatar(file: UploadFile = File(...)) -> dict[str, Any]:
             )
         except Exception as exc:
             raise _production_error(exc) from exc
-        store.USER["avatarUrl"] = uploaded["playback_url"]
-    else:
-        target = STATIC_DIR / "uploads" / safe_name
-        target.write_bytes(content)
-        store.USER["avatarUrl"] = f"/static/uploads/{safe_name}"
+        # стабильный адрес; подписанную ссылку выдаёт /api/me на каждый запрос (см. image_url)
+        store.USER["avatarUrl"] = uploaded["s3_url"]
+        return {"avatarUrl": uploaded["playback_url"], "mock": False}
+    target = STATIC_DIR / "uploads" / safe_name
+    target.write_bytes(content)
+    store.USER["avatarUrl"] = f"/static/uploads/{safe_name}"
     return {"avatarUrl": store.USER["avatarUrl"], "mock": RUNTIME.backend == "mock"}
 
 
@@ -2262,10 +2274,12 @@ async def api_project_cover(project_id: str, file: UploadFile = File(...)) -> di
             )
         except Exception as exc:
             raise _production_error(exc) from exc
-        project["coverUrl"] = uploaded["playback_url"]
-    else:
-        (STATIC_DIR / "uploads" / safe_name).write_bytes(content)
-        project["coverUrl"] = f"/static/uploads/{safe_name}"
+        # стабильный s3:// в store; наружу — свежая подпись (см. image_url)
+        project["coverUrl"] = uploaded["s3_url"]
+        project["coverChoice"] = "upload"
+        return {"coverUrl": uploaded["playback_url"], "mock": False}
+    (STATIC_DIR / "uploads" / safe_name).write_bytes(content)
+    project["coverUrl"] = f"/static/uploads/{safe_name}"
     project["coverChoice"] = "upload"
     return {"coverUrl": project["coverUrl"], "mock": RUNTIME.backend == "mock"}
 

@@ -44,7 +44,7 @@ export function TiktokButton({
       className={cn(
         'flex shrink-0 items-center justify-center rounded-r15 border bg-grad-soft-20 backdrop-blur-[15px] transition',
         size === 'sm' ? 'h-[34px] gap-[8px] px-[12px]' : 'h-[60px] gap-[15px]',
-        size === 'sm' ? 'w-auto' : locked ? 'w-auto min-w-[150px] px-[22px]' : 'w-[240px]',
+        size === 'sm' ? 'w-auto' : locked ? 'w-auto min-w-[150px] px-[22px]' : 'w-[240px] max-md:w-auto max-md:px-[14px]',
         locked ? 'cursor-not-allowed opacity-45' : 'hover:brightness-125',
         connected ? 'border-accent' : 'border-transparent',
         className
