@@ -115,7 +115,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
   const purchaseAllowed = agreed && (plan.kind !== 'subscription' || recurrentAgreed);
 
   return (
-    <div className="relative h-[736px] min-w-[357px] overflow-hidden rounded-r15 bg-grad-soft-20 max-md:h-[690px] max-md:w-[357px] max-md:[--fig-scale:1]">
+    <div className={cn('relative h-[736px] min-w-[357px] overflow-hidden rounded-r15 bg-grad-soft-20 max-md:w-[357px] max-md:[--fig-scale:1]', plan.perMonth && !current ? 'max-md:h-[690px]' : 'max-md:h-[652px]')}>
       {/* нижний слой — шейп-логотип (глубина). Скейл от центра: transformOrigin center,
           позиция/размер из Figma. left задаётся от центра карты, чтобы фигура не «уползала». */}
       <img

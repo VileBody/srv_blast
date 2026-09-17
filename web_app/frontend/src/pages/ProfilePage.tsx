@@ -149,7 +149,9 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
     const date = new Date(start.getFullYear(), start.getMonth() + index + 1, 1);
     return t(`profile.monthLocative.${date.getMonth()}`);
   };
-  const rewards = [t('profile.bonusTrack'), t('profile.bonusTrack'), t('profile.bonusUnlimited')];
+  // телефон: «+1 трек» и «к лимиту» — двумя строками (whitespace-pre-line в labelCls)
+  const twoLine = (s: string) => s.replace(' к лимиту', '\nк лимиту').replace(' без лимита', '\nбез лимита');
+  const rewards = [twoLine(t('profile.bonusTrack')), twoLine(t('profile.bonusTrack')), twoLine(t('profile.bonusUnlimited'))];
   const CURRENT_BG = 'bg-[linear-gradient(179deg,#6b52c4_0%,#463086_100%)]'; // чуть темнее grad-main
   /*
    * Три состояния сегмента. Раньше «Получить» была просто подписью по ховеру и ничего
@@ -162,7 +164,7 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
     if (i === safeEarned) return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: CURRENT_BG, claimable: false };
     return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: '', claimable: false };
   });
-  const labelCls = 'text-[24px] font-[400] leading-none text-transparent max-md:px-[4px] max-md:text-center max-md:!text-[12px] max-md:!leading-[1.15]';
+  const labelCls = 'text-[24px] font-[400] leading-none text-transparent max-md:whitespace-pre-line max-md:px-[4px] max-md:text-center max-md:!text-[12px] max-md:!leading-[1.15]';
   return (
     <>
       {/* пилюли месяцев над шкалой */}
