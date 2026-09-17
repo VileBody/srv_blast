@@ -106,6 +106,15 @@ function Register-SupervisedInteractiveTask(
 
     $principal = New-ScheduledTaskPrincipal -UserId $UserId -LogonType Interactive -RunLevel Highest
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $UserId
+    # RestartCount only covers launches the scheduler itself sees fail. A
+    # watcher that is killed or dies mid-loop ends "successfully" as far as
+    # it is concerned and stays down (verified 2026-09-17: killed at 12:52:15,
+    # still down 3 minutes later). A one-minute repetition with IgnoreNew is
+    # the keep-alive: a live instance is ignored, a dead one is relaunched.
+    # Verified: killed 12:56:11 -> /ready 503 at 12:56:41 -> back at 12:57:02.
+    $keepAlive = New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(15) `
+        -RepetitionInterval (New-TimeSpan -Minutes 1) `
+        -RepetitionDuration (New-TimeSpan -Days 3650)
     $action = New-ScheduledTaskAction -Execute $Execute -Argument $Arguments.Trim()
     $settings = New-ScheduledTaskSettingsSet `
         -RestartCount 999 `
@@ -118,7 +127,7 @@ function Register-SupervisedInteractiveTask(
     Register-ScheduledTask `
         -TaskName $TaskName `
         -Action $action `
-        -Trigger $trigger `
+        -Trigger @($trigger, $keepAlive) `
         -Principal $principal `
         -Settings $settings `
         -Force | Out-Null
