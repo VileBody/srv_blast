@@ -95,16 +95,16 @@ function FreeTariff() {
        себя — там блок становится обычным потоком: текст → буллеты → кнопка на всю ширину */
     <div className="relative mt-[28px] h-[220px] overflow-hidden rounded-r15 max-md:h-auto max-md:p-[18px]">
       <img src="/assets/figma/pf-promo-bg.svg" alt="" aria-hidden="true" className="pointer-events-none absolute inset-0 h-full w-full max-w-none select-none" />
-      <p className="absolute left-[28px] top-[28px] text-[24px] font-[400] leading-[29px] text-text max-md:static">{t('profile.promoTitle')}</p>
-      <p className="absolute left-[28px] top-[73px] text-[16px] font-[400] leading-[19px] text-text-80 max-md:static max-md:mt-[6px]">{t('profile.promoSubtitle')}</p>
-      <div className="absolute left-[28px] top-[104px] flex flex-col max-md:static max-md:mt-[10px]">
+      <p className="absolute left-[28px] top-[28px] text-[24px] font-[400] leading-[29px] text-text max-md:relative max-md:left-auto max-md:top-auto max-md:z-[1]">{t('profile.promoTitle')}</p>
+      <p className="absolute left-[28px] top-[73px] text-[16px] font-[400] leading-[19px] text-text-80 max-md:relative max-md:left-auto max-md:top-auto max-md:z-[1] max-md:mt-[6px]">{t('profile.promoSubtitle')}</p>
+      <div className="absolute left-[28px] top-[104px] flex flex-col max-md:relative max-md:left-auto max-md:top-auto max-md:z-[1] max-md:mt-[10px]">
         <Bullet icon="pf-note.svg" muted>{t('profile.promoTracks')}</Bullet>
         <Bullet icon="pf-scissors.svg" muted>{t('profile.promoVideos')}</Bullet>
         <Bullet icon="pf-check.svg" muted>{t('profile.promoTemplates')}</Bullet>
       </div>
       <Link
         to="/app/pricing"
-        className="group absolute bottom-[28px] right-[28px] flex h-[60px] w-[320px] items-center justify-center gap-[16px] rounded-r15 border border-accent bg-grad-soft-20 text-[24px] font-[400] leading-none text-transparent backdrop-blur-[80px] transition hover:brightness-125 max-md:static max-md:mt-[16px] max-md:w-full"
+        className="group absolute bottom-[28px] right-[28px] flex h-[60px] w-[320px] items-center justify-center gap-[16px] rounded-r15 border border-accent bg-grad-soft-20 text-[24px] font-[400] leading-none text-transparent backdrop-blur-[80px] transition hover:brightness-125 max-md:relative max-md:bottom-auto max-md:right-auto max-md:z-[1] max-md:mt-[16px] max-md:w-full"
       >
         <span className="translate-y-[2px]" style={gradSoft}>{t('profile.expandAccess')}</span>
         <FigIcon name="home-arrow.svg" h={15.464} className="transition-transform duration-150 group-hover:translate-x-[2px]" />
@@ -554,7 +554,8 @@ export function ProfilePage() {
          * Google и выход — квадраты 60×60 только с иконкой. Раньше «Выйти» была текстовой
          * кнопкой той же ширины, что и подключение TikTok, и тянула на себя внимание.
          */}
-        <div className="flex shrink-0 items-center gap-[12px]">
+        {/* телефон: кнопки всегда второй строкой — иначе на широком телефоне они вставали в ряд с аватаром и давили имя в ноль */}
+        <div className="flex shrink-0 items-center gap-[12px] max-md:basis-full max-md:gap-[8px]">
           <TiktokButton
             connected={Boolean(tiktok) || paidPreview}
             onClick={tiktok && !paidPreview ? () => setDisconnectOpen(true) : undefined}
@@ -610,7 +611,7 @@ export function ProfilePage() {
       </section>
 
       {/* «Лимиты» 1192×296 */}
-      <section className="card-2 h-[296px] shrink-0 p-[40px]">
+      <section className="card-2 h-[296px] shrink-0 p-[40px] max-md:h-auto">
         <div className="flex items-center justify-between gap-space-4">
           <h2 className="flex items-center gap-[16px] text-[32px] font-[400] leading-[38px] text-text">
             <FigIcon name="pf-limit-note.svg" h={19} />
