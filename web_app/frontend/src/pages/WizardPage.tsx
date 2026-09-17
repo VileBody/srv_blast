@@ -333,11 +333,11 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
           inputMode="numeric"
           maxLength={8}
           aria-label={t('wizard.track.segStart')}
-          placeholder="00:00:00"
+          placeholder="00:00"
           className="soft-input"
         />
         <span className="wizard-body">{t('wizard.track.to')}</span>
-        <input ref={timingToInputRef} value={timingTo} onChange={(e) => commitTiming('timingTo', clampTiming(e.target.value, track?.durationS))} inputMode="numeric" maxLength={8} aria-label={t('wizard.track.segEnd')} placeholder="00:00:00" className="soft-input" />
+        <input ref={timingToInputRef} value={timingTo} onChange={(e) => commitTiming('timingTo', clampTiming(e.target.value, track?.durationS))} inputMode="numeric" maxLength={8} aria-label={t('wizard.track.segEnd')} placeholder="00:00" className="soft-input" />
       </div>
       {/* Живая длина отрывка: перебор виден сразу, введённое не стирается */}
       <p className={cn('mt-space-5 max-w-[520px] shrink-0 text-[15px] leading-[1.5] max-md:mt-[10px] max-md:text-[13px]', overLimit || backwards ? 'text-[var(--warning)]' : 'wizard-body max-md:!text-[13px]')}>
