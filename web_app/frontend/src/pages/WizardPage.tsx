@@ -24,6 +24,7 @@ import { useToast } from '../contexts/ToastContext';
 import { cn } from '../lib/cn';
 import { useWizardStore } from '../stores/wizardStore';
 import { FigIcon } from '../components/ui/FigIcon';
+import { AUDIO_FILE_ACCEPT, isAudioFile } from '../lib/mediaFiles';
 
 /* Строгий формат тайминга мм:сс:мс — двоеточие ставится само после каждых двух цифр */
 function maskTiming(raw: string): string {
@@ -138,9 +139,17 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
   });
 
   const handleFile = (file?: File | null) => {
-    if (file) uploadMutation.mutate(file);
+    if (!file) return;
+    if (!isAudioFile(file)) {
+      push({ variant: 'error', title: t('wizard.track.audioOnly') });
+      return;
+    }
+    uploadMutation.mutate(file);
   };
-  const onUpload = (event: ChangeEvent<HTMLInputElement>) => handleFile(event.target.files?.[0]);
+  const onUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    handleFile(event.target.files?.[0]);
+    event.target.value = '';
+  };
   const onDrop = (event: DragEvent) => {
     event.preventDefault();
     setDragOver(false);
@@ -238,7 +247,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
         </span>
       </div>
 
-      <input ref={fileInputRef} className="sr-only" type="file" accept="audio/*" onChange={onUpload} />
+      <input ref={fileInputRef} className="sr-only" type="file" accept={AUDIO_FILE_ACCEPT} onChange={onUpload} />
       {!track ? (
         <div className="mt-space-6 grid gap-space-3 max-md:mt-[14px] max-md:gap-[8px]">
           <button
