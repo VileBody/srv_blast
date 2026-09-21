@@ -295,7 +295,7 @@
     "trackLabel": "Загрузи трек",
     "trackDrop": "Перетащи или загрузи MP3, WAV",
     "trackUploading": "Загружаем…",
-    "trackFormat": "Нужен аудиофайл: MP3 или WAV",
+    "trackFormat": "Нужен аудиофайл: MP3, WAV, M4A, OGG или FLAC",
     "trackFailed": "Не удалось загрузить трек",
     "trackReady": "Трек на месте — в визарде его загружать не придётся",
     "nameFromTrack": "Название подставили из имени файла — можно поправить",

@@ -3956,17 +3956,19 @@ class BlastBotApp:
         await self.credits_db.log_event(chat_id, "subscription_ok")
         # Grant initial credits after subscription (not on /start) to avoid
         # race conditions with deep-link users who never subscribe.
-        if self.settings.initial_credits > 0:
-            already_granted = await self.credits_db.has_initial_grant(chat_id)
-            if not already_granted:
-                await self.credits_db.add_credits(chat_id, self.settings.initial_credits, "initial_grant")
-                await self.credits_db.log_event(chat_id, "initial_grant", f"+{self.settings.initial_credits}")
-                # Grant the free unique-track slot alongside the video credits
-                # (guarded by the same has_initial_grant check so it fires once).
-                if self.settings.initial_track_credits > 0:
-                    await self.credits_db.add_track_credits(
-                        chat_id, self.settings.initial_track_credits, "initial_grant",
-                    )
+        if self.settings.initial_credits > 0 or self.settings.initial_track_credits > 0:
+            grant = await self.credits_db.grant_initial_credits_once(
+                chat_id,
+                self.settings.initial_credits,
+                self.settings.initial_track_credits,
+                actor="tg_bot_public",
+            )
+            if grant["applied"]:
+                await self.credits_db.log_event(
+                    chat_id,
+                    "initial_grant",
+                    f"videos=+{self.settings.initial_credits} tracks=+{self.settings.initial_track_credits}",
+                )
         await self._move_to_wait_audio(chat_id, message)
 
     async def _move_to_wait_audio(self, chat_id: int, message: Message) -> None:
