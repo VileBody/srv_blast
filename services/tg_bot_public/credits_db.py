@@ -2902,13 +2902,48 @@ class CreditsDB:
             for r in rows
         ]
 
+    async def claim_subscription_for_charge(self, sub_id: int) -> bool:
+        """Atomically claim a subscription row right before charging it.
+
+        The daily batch loop snapshots all due rows up front (`get_subscriptions_due`)
+        then charges them one by one with real network calls to T-Bank in between —
+        if a user cancels while a stale row is still queued later in that batch, the
+        charge must not go through even though the row looked 'active' at fetch time.
+        Returns False (and skips the charge) if the row is no longer 'active'
+        (cancelled, already claimed, or paused) by the time we get to it.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tag = await conn.execute(
+                "UPDATE subscriptions SET status = 'charging', updated_at = NOW() "
+                "WHERE id = $1 AND status = 'active'",
+                int(sub_id),
+            )
+            return _rowcount_from_tag(tag) > 0
+
+    async def revert_subscription_claim(self, sub_id: int) -> None:
+        """Undo `claim_subscription_for_charge` after an unexpected error.
+
+        Without this, a claimed row that fails before reaching
+        `subscription_charge_success`/`subscription_charge_failed` (e.g. a network
+        exception mid-charge) would stay stuck in status='charging' forever — invisible
+        to the daily loop, to /cancelsubscription, and to admin dashboards.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE subscriptions SET status = 'active', updated_at = NOW() "
+                "WHERE id = $1 AND status = 'charging'",
+                int(sub_id),
+            )
+
     async def subscription_charge_success(self, sub_id: int) -> None:
         """After successful charge: reset retries, push next_charge_at +30 days."""
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE subscriptions "
-                "SET next_charge_at = NOW() + INTERVAL '1 month', "
+                "SET status = 'active', next_charge_at = NOW() + INTERVAL '1 month', "
                 "    charge_retries = 0, updated_at = NOW() "
                 "WHERE id = $1",
                 int(sub_id),
@@ -2936,7 +2971,7 @@ class CreditsDB:
                 # Retry in 24 hours
                 await conn.execute(
                     "UPDATE subscriptions "
-                    "SET charge_retries = $1, next_charge_at = NOW() + INTERVAL '1 day', updated_at = NOW() "
+                    "SET status = 'active', charge_retries = $1, next_charge_at = NOW() + INTERVAL '1 day', updated_at = NOW() "
                     "WHERE id = $2",
                     retries, int(sub_id),
                 )

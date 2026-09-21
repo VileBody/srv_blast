@@ -9657,6 +9657,25 @@ class BlastBotApp:
         sub_id = sub["id"]
         bot = self._require_bot()
 
+        if not await self.credits_db.claim_subscription_for_charge(sub_id):
+            log.info("sub charge skipped, no longer active sub=%s tg_id=%s manual=%s", sub_id, tg_id, manual)
+            return False, "not active anymore (cancelled or already claimed)"
+
+        try:
+            return await self._charge_subscription_claimed(sub, manual=manual)
+        except Exception:
+            await self.credits_db.revert_subscription_claim(sub_id)
+            raise
+
+    async def _charge_subscription_claimed(self, sub: dict, *, manual: bool) -> tuple[bool, str]:
+        """Body of charge_subscription_once that runs after the row is claimed."""
+        tg_id = sub["tg_id"]
+        pkg = sub["package"]
+        rebill_id = sub["rebill_id"]
+        amount_rub = sub["amount_rub"]
+        sub_id = sub["id"]
+        bot = self._require_bot()
+
         order_id = f"{tg_id}-{pkg.replace(' ', '_')}-sub-{uuid.uuid4().hex[:8]}"
         last_utm = await self.credits_db.get_last_utm(tg_id)
         await self.credits_db.create_recurrent_payment(
