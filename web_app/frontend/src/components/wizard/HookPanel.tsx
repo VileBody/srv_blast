@@ -35,8 +35,12 @@ const OBJECTS = ['Круг', 'Квадрат', 'Ромб', 'Звезда-5', 'З
 // FX-эффекты тянутся из единого реестра effects-registry.json (source of truth):
 // добавил эффект в реестр → появляется и чип здесь, и резолв в manifestId на бэке.
 const EFFECT_HOOKS = effectsRegistry.hook.map((e) => e.label);
-const EFFECT_GLUES = effectsRegistry.glue.map((e) => e.label);
-const EFFECT_STYLES = effectsRegistry.style.map((e) => e.label);
+// «Без склейки» / «Без стилизации» — осознанный отказ, стоят первыми в ленте. На бэке
+// (effect_map.NO_GLUE_LABEL/NO_STYLE_LABEL) они НЕ подменяются склейкой/стилем с этапа фона.
+export const NO_GLUE = 'Без склейки';
+export const NO_STYLE = 'Без стилизации';
+const EFFECT_GLUES = [NO_GLUE, ...effectsRegistry.glue.map((e) => e.label)];
+const EFFECT_STYLES = [NO_STYLE, ...effectsRegistry.style.map((e) => e.label)];
 const MOTIONS = ['Свайп', 'Тап', 'Зум', 'Задержи', 'Голова'];
 const THOUGHTS = ['Панчлайн', 'Пропущенное слово', 'Эхо', 'Вопрос', 'Инверсия'];
 
@@ -59,7 +63,7 @@ const MOTION_PREVIEW_IDS: Record<string, string> = {
  * Иконки чипов из Figma. baked — SVG уже содержит фиолетовый круг 40×40;
  * inner — только глиф, круг #5f42b9 рисуем в CSS; спец-случаи (Квадрат, Вопрос) — inline.
  */
-type ChipIconDef = { src?: string; inner?: boolean; kind?: 'square' | 'question'; big?: boolean };
+type ChipIconDef = { src?: string; inner?: boolean; kind?: 'square' | 'question' | 'off'; big?: boolean };
 export const CHIP_ICONS: Record<string, ChipIconDef> = {
   // Объекты
   'Круг': { src: '/assets/figma/obj-krug.svg' },
@@ -79,7 +83,10 @@ export const CHIP_ICONS: Record<string, ChipIconDef> = {
   'Пропущенное слово': { src: '/assets/figma/thg-missing-inner.svg', inner: true },
   'Эхо': { src: '/assets/figma/thg-echo-inner.svg', inner: true },
   'Вопрос': { kind: 'question' },
-  'Инверсия': { src: '/assets/figma/thg-inversion-inner.svg', inner: true }
+  'Инверсия': { src: '/assets/figma/thg-inversion-inner.svg', inner: true },
+  // Отказ от склейки/стилизации
+  [NO_GLUE]: { kind: 'off' },
+  [NO_STYLE]: { kind: 'off' }
 };
 
 // FX-иконки (hook/glue/style) — из единого реестра: один эффект = одна запись в effects-registry.json
@@ -92,6 +99,13 @@ for (const group of ['hook', 'glue', 'style'] as const) {
 export function ChipIcon({ label }: { label: string }) {
   const def = CHIP_ICONS[label];
   if (!def) return null;
+  if (def.kind === 'off') {
+    return (
+      <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-accent" aria-hidden="true">
+        <svg viewBox="0 0 20 20" width="20" height="20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" strokeWidth="1.8" className="text-text" /><path d="M5 15 15 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="text-text" /></svg>
+      </span>
+    );
+  }
   if (def.kind === 'square') {
     return (
       <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-accent" aria-hidden="true">
