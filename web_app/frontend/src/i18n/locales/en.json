@@ -294,7 +294,7 @@
     "trackLabel": "Upload the track",
     "trackDrop": "Drag or upload MP3, WAV",
     "trackUploading": "Uploading…",
-    "trackFormat": "An audio file is required: MP3 or WAV",
+    "trackFormat": "An audio file is required: MP3, WAV, M4A, OGG or FLAC",
     "trackFailed": "Could not upload the track",
     "trackReady": "Track is in — you will not upload it again in the wizard",
     "nameFromTrack": "Name taken from the file — feel free to edit",
