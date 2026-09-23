@@ -8,7 +8,7 @@ import { LimitsIndicator } from '../ui/LimitsIndicator';
 import { BackSquareButton } from './WizardFrame';
 import { HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
-import { useGuideDismiss } from '../guidance/useGuideDismiss';
+import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 
 /** Мини-визуал первой подсказки пула: счётчик роликов растёт. */
@@ -265,11 +265,14 @@ export function StageSlice() {
   const distributeGuideTargetRef = useRef<HTMLDivElement>(null);
   const hasUnallocated = bgRest !== 0 || subsRest !== 0 || hooksRest !== 0 || stylesRest !== 0;
   // distribute объявлен первым: idle-условие total-гайда («мы ещё не ушли дальше»)
-  // на его dismissed-значение ссылается.
-  const [distributeGuideDismissed, setDistributeGuideDismissed] = useGuideDismiss('pool-distribute', hasUnallocated);
-  const [totalGuideDismissed, setTotalGuideDismissed] = useGuideDismiss('pool-total', !distributeGuideDismissed);
+  // на его dismissed-значение ссылается. visible=false у distribute: точный
+  // пререквизит «total уже закрыт» тут не собрать (totalGuideDismissed объявлен
+  // НИЖЕ) — показ отмечаем отдельно через useMarkGuideSeen после showDistributeGuide.
+  const [distributeGuideDismissed, setDistributeGuideDismissed] = useGuideDismiss('pool-distribute', hasUnallocated, false);
+  const [totalGuideDismissed, setTotalGuideDismissed] = useGuideDismiss('pool-total', !distributeGuideDismissed, true);
   const showTotalGuide = !totalGuideDismissed;
-  const showDistributeGuide = totalGuideDismissed && hasUnallocated && !distributeGuideDismissed;
+  const showDistributeGuide = totalGuideDismissed && !distributeGuideDismissed;
+  useMarkGuideSeen('pool-distribute', totalGuideDismissed);
 
   // Явный скролл к цели до собственного instant-scrollIntoView оверлея: без него
   // цель может остаться частично за пределами внешнего скролл-контейнера страницы,

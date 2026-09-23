@@ -289,7 +289,10 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan, guideVariant = 'vi
   const roundSeconds = (value: number) => Math.round(value * 10) / 10;
   const [timingGuideDismissed, setTimingGuideDismissed] = useGuideDismiss(
     'track-timing',
-    Boolean(track) && (segment === null || segment <= 0 || segment > maxSegmentSeconds)
+    Boolean(track) && (segment === null || segment <= 0 || segment > maxSegmentSeconds),
+    // visible: тайминг-подсказку показываем всем, кто долистал до трека,
+    // разово — даже если отрывок уже корректно задан (принудительный тур).
+    Boolean(track)
   );
 
   return (
@@ -414,7 +417,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan, guideVariant = 'vi
         <input ref={timingToInputRef} value={timingTo} onChange={(e) => commitTiming('timingTo', clampTiming(e.target.value, track?.durationS))} inputMode="numeric" maxLength={8} aria-label={t('wizard.track.segEnd')} placeholder="00:00" className="soft-input" />
       </div>
       <ActionGuideOverlay
-        open={Boolean(track) && (segment === null || segment <= 0 || segment > maxSegmentSeconds) && !timingGuideDismissed}
+        open={Boolean(track) && !timingGuideDismissed}
         targetRef={timingGuideTargetRef}
         title={t('wizard.track.guideTitle')}
         text={t('wizard.track.guideText', { seconds: maxSegmentSeconds })}

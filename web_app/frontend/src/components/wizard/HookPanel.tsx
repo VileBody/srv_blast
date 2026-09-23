@@ -14,7 +14,8 @@ import effectsRegistry from '../../data/effects-registry.json';
 import { CatalogMedia } from './CatalogPreview';
 import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
-import { useGuideDismiss } from '../guidance/useGuideDismiss';
+import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
+import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 
 /*
@@ -394,11 +395,18 @@ export function StageHooks() {
   const dropGuideTargetRef = useRef<HTMLDivElement>(null);
   const typeGuideTargetRef = useRef<HTMLDivElement>(null);
   // typeGuideDismissed объявлен первым: idle-условие drop-гайда («мы ещё не ушли
-  // дальше по цепочке») на него ссылается.
-  const [typeGuideDismissed, setTypeGuideDismissed] = useGuideDismiss('hook-type', Boolean(hooks.dropTime) && !hooks.kind);
-  const [dropGuideDismissed, setDropGuideDismissed] = useGuideDismiss('hook-drop', !hooks.dropTime && !typeGuideDismissed);
-  const showDropGuide = !hooks.dropTime && !dropGuideDismissed;
-  const showTypeGuide = Boolean(hooks.dropTime) && !hooks.kind && !typeGuideDismissed;
+  // дальше по цепочке») на него ссылается. visible=false у type: пререквизит
+  // «drop уже закрыт» тут не собрать (dropGuideDismissed объявлен НИЖЕ) — иначе
+  // при уже заданном dropTime (у юзера с готовой задачей) оба гайда, drop и
+  // type, всплыли бы разом — раньше их разводило только значение dropTime
+  // (пусто/не пусто), теперь оба не гейтятся задачей и без явной
+  // последовательности пересекаются. Показ отмечаем отдельно после
+  // showTypeGuide (см. ниже), когда dropGuideDismissed уже посчитан.
+  const [typeGuideDismissed, setTypeGuideDismissed] = useGuideDismiss('hook-type', Boolean(hooks.dropTime) && !hooks.kind, false);
+  const [dropGuideDismissed, setDropGuideDismissed] = useGuideDismiss('hook-drop', !hooks.dropTime && !typeGuideDismissed, true);
+  const showDropGuide = !dropGuideDismissed;
+  const showTypeGuide = Boolean(hooks.dropTime) && dropGuideDismissed && !typeGuideDismissed;
+  useMarkGuideSeen('hook-type', Boolean(hooks.dropTime) && dropGuideDismissed);
   useScrollGuideIntoView(showDropGuide, dropGuideTargetRef);
   useScrollGuideIntoView(showTypeGuide, typeGuideTargetRef);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
@@ -886,11 +894,14 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
 
   const kind = hooks.kind;
   const config = (kind && hooks.configs[kind]) || {};
-  // Третий гайд хука: тип уже выбран (StageHooks сама подсказка 2/3 к этому моменту
-  // уже спрятана условием !hooks.kind) — объясняем, что тонкая настройка и превью
-  // эффекта живут именно здесь, в рабочей зоне, а не там, где выбирали тип.
-  const [workzoneGuideDismissed, setWorkzoneGuideDismissed] = useGuideDismiss('hook-workzone', Boolean(kind));
-  const showWorkzoneGuide = Boolean(kind) && !workzoneGuideDismissed;
+  // Третий гайд хука: тип уже выбран. Раньше подсказка 2/3 (hook-type, в
+  // StageHooks) сама пряталась условием !hooks.kind — теперь она гейтится
+  // только своим dismissed, и её можно оставить открытой, выбрав тип кликом
+  // мимо кнопки подсказки, поэтому ждём его ЖИВОГО dismissed явно — иначе
+  // hook-type (левая панель) и этот гайд (правая) всплывают одновременно.
+  const typeGuideDismissed = useGuideLiveDismissed('hook-type');
+  const [workzoneGuideDismissed, setWorkzoneGuideDismissed] = useGuideDismiss('hook-workzone', Boolean(kind), Boolean(kind) && typeGuideDismissed);
+  const showWorkzoneGuide = Boolean(kind) && typeGuideDismissed && !workzoneGuideDismissed;
   useScrollGuideIntoView(showWorkzoneGuide, workzoneGuideTargetRef);
   /*
    * Смена типа хука начинает его настройку с первого шага. Без сброса переключение

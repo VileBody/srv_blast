@@ -12,7 +12,7 @@ import { CatalogMedia, SubtitleCatalogPreview } from './CatalogPreview';
 import { FigIcon } from '../ui/FigIcon';
 import { InlineError, queryDown } from '../ui/ErrorState';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
-import { useGuideDismiss } from '../guidance/useGuideDismiss';
+import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 
 /**
@@ -106,12 +106,21 @@ export function StageSubtitles() {
   // Хуки объявлены от ПОСЛЕДНЕГО шага цепочки к первому: idle-условие шага N
   // требует dismissed-значения шага N+1 («мы ещё не ушли дальше»), поэтому оно
   // должно быть уже посчитано на момент объявления хука для шага N.
-  const [stylesGuideDismissed, setStylesGuideDismissed] = useGuideDismiss('subtitles-styles', !hasStyles);
-  const [colorGuideDismissed, setColorGuideDismissed] = useGuideDismiss('subtitles-color', !hasStyles && !stylesGuideDismissed);
-  const [timelineGuideDismissed, setTimelineGuideDismissed] = useGuideDismiss('subtitles-timeline', !hasStyles && !colorGuideDismissed);
-  const showTimelineGuide = !hasStyles && !timelineGuideDismissed;
-  const showColorGuide = !hasStyles && timelineGuideDismissed && !colorGuideDismissed;
-  const showStylesGuide = !hasStyles && timelineGuideDismissed && colorGuideDismissed && !stylesGuideDismissed;
+  // Ни у одного из трёх шагов нет жёсткого пререквизита, кроме своего места в
+  // цепочке (таргеты всегда отрисованы) — visible = «предыдущие шаги уже
+  // пройдены», БЕЗ учёта того, выбран ли уже стиль: принудительный тур
+  // проходит все три по очереди, даже если стиль субтитров уже выбран.
+  // ВАЖНО: visible не может быть просто true для 2-го/3-го шага — иначе
+  // seen записался бы в момент маунта, раньше, чем юзер реально дошёл до
+  // этого шага цепочки.
+  const [stylesGuideDismissed, setStylesGuideDismissed] = useGuideDismiss('subtitles-styles', !hasStyles, false);
+  const [colorGuideDismissed, setColorGuideDismissed] = useGuideDismiss('subtitles-color', !hasStyles && !stylesGuideDismissed, false);
+  const [timelineGuideDismissed, setTimelineGuideDismissed] = useGuideDismiss('subtitles-timeline', !hasStyles && !colorGuideDismissed, true);
+  const showTimelineGuide = !timelineGuideDismissed;
+  const showColorGuide = timelineGuideDismissed && !colorGuideDismissed;
+  const showStylesGuide = timelineGuideDismissed && colorGuideDismissed && !stylesGuideDismissed;
+  useMarkGuideSeen('subtitles-color', timelineGuideDismissed);
+  useMarkGuideSeen('subtitles-styles', timelineGuideDismissed && colorGuideDismissed);
 
   useScrollGuideIntoView(showTimelineGuide, timelineGuideTargetRef);
   useScrollGuideIntoView(showColorGuide, colorGuideTargetRef);

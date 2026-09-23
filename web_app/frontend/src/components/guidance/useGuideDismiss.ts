@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { readGuideRecord, writeGuideRecord } from './guideMemory';
+import { useGuideLiveStore } from './guideLiveState';
+import { api } from '../../lib/api';
 
 const IDLE_MS = 45_000;
 const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'scroll', 'touchstart', 'wheel'] as const;
@@ -30,23 +32,57 @@ const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'scroll', 'touchstart', 'whee
  * учёта её же dismissed (его даёт вызывающая сторона: обычно тот же chain-
  * expression, что и для open, но с вычтенным «!moiDismissed» и ОБЯЗАТЕЛЬНО
  * с «и мы ещё не ушли дальше по цепочке» — иначе после простоя может вернуться
- * уже пройденный шаг вместо актуального).
+ * уже пройденный шаг вместо актуального). Это ТОЛЬКО про idle-реактивацию —
+ * «юзер завис на незавершённой задаче» — а не про то, показывается ли сейчас
+ * подсказка вообще.
+ *
+ * `visible` (опционально, дефолт = active) — отдельный сигнал «подсказку
+ * сейчас физически показали» (её HARD-prerequisite, т.е. цель вообще
+ * существует и осмысленна — например, трек загружен), БЕЗ учёта «задача уже
+ * выполнена». Нужен для принудительного разового тура: подсказку показывают
+ * ОДИН раз всем — и новым юзерам, и тем, у кого поле уже заполнено — если
+ * они физически долистали до места, где она живёт. «Показано» фиксируется
+ * по visible, а не по active: иначе у юзера с уже готовой задачей seen
+ * никогда бы не записался (active всегда false), и принудительный тур не
+ * «завершался» бы, а лез снова при каждом визите на этот шаг.
+ *
+ * ВАЖНО для цепочек (шаг N показывается только когда шаг N−1 уже закрыт):
+ * `visible` здесь вычисляется ПРИ ВЫЗОВЕ хука, а хуки цепочки объявлены в
+ * ОБРАТНОМ порядке (последний шаг первым — так его dismissed доступен для
+ * active предыдущего). Это значит на месте вызова dismissed БОЛЕЕ РАННИХ
+ * шагов ещё не существует — точное «предыдущий шаг закрыт» тут не собрать.
+ * В этом случае передавайте `visible=false` и отмечайте показ отдельно,
+ * ПОСЛЕ того как обычным способом (в конце функции, в прямом порядке)
+ * посчитан итоговый showXGuide — через `useMarkGuideSeen(id, showXGuide)`.
  */
-export function useGuideDismiss(id: string, active: boolean): [boolean, (value: boolean) => void] {
+export function useMarkGuideSeen(id: string, shown: boolean) {
+  const markedSeenRef = useRef(false);
+  useEffect(() => {
+    if (!shown || markedSeenRef.current) return;
+    markedSeenRef.current = true;
+    writeGuideRecord(id, { seen: true });
+    void api.trackEvent('wizard_guide_seen', { guideId: id }).catch(() => {});
+  }, [shown, id]);
+}
+
+export function useGuideDismiss(id: string, active: boolean, visible: boolean = active): [boolean, (value: boolean) => void] {
   const [initialRecord] = useState(() => readGuideRecord(id));
   const [dismissed, setDismissedState] = useState(initialRecord.seen ?? false);
   const idleUsedRef = useRef(initialRecord.idleUsed ?? false);
-  const markedSeenRef = useRef(false);
-
+  useMarkGuideSeen(id, visible && !dismissed);
+  // Живая трансляция для соседних компонентов, которым нужно «этот гайд уже
+  // закрыт ПРЯМО СЕЙЧАС» (не персистентно и не «когда-либо видел») — см.
+  // guideLiveState.ts. Дешёво: просто пишем в общий zustand-стор при смене.
   useEffect(() => {
-    if (!active || dismissed || markedSeenRef.current) return;
-    markedSeenRef.current = true;
-    writeGuideRecord(id, { seen: true });
-  }, [active, dismissed, id]);
+    useGuideLiveStore.getState().setDismissed(id, dismissed);
+  }, [id, dismissed]);
 
   const setDismissed = (value: boolean) => {
     setDismissedState(value);
-    if (value) writeGuideRecord(id, { seen: true });
+    if (value) {
+      writeGuideRecord(id, { seen: true });
+      void api.trackEvent('wizard_guide_dismissed', { guideId: id }).catch(() => {});
+    }
   };
 
   useEffect(() => {
@@ -58,6 +94,7 @@ export function useGuideDismiss(id: string, active: boolean): [boolean, (value: 
       timer = window.setTimeout(() => {
         idleUsedRef.current = true;
         writeGuideRecord(id, { idleUsed: true });
+        void api.trackEvent('wizard_guide_idle_reactivated', { guideId: id }).catch(() => {});
         setDismissedState(false);
       }, IDLE_MS);
     };

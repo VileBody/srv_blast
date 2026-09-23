@@ -16,7 +16,7 @@ import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useFragmentAudio } from './useFragmentAudio';
 import { SourcesModal } from './SourcesEditor';
 import { ActionGuideOverlay, type ActionGuideVariant } from '../guidance/ActionGuideOverlay';
-import { useGuideDismiss } from '../guidance/useGuideDismiss';
+import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 import { footageTypeKey, footageTypePlane, stepFootageType } from '../../data/footageTypes';
 import effectsRegistry from '../../data/effects-registry.json';
@@ -596,21 +596,27 @@ export function StageBackground({ guideGraphic = 'studio', guideVariant = 'visua
   const loading = listQuery.isLoading;
   const selected = background.mode === 'photo' ? background.photo : background.footage;
   const hasBackground = backgroundVariations(background) > 0;
-  const forceModeGuide = qaGuide === 'background-mode';
-  const forceSelectionGuide = qaGuide === 'background-sources';
   // selection-хук объявлен первым: его dismissed-значение нужно для idle-условия
   // ГАЙДА ВЫШЕ по цепочке (mode) — «эта подсказка ещё актуальна, если дальше по
   // цепочке ещё не ушли», иначе после простоя может вернуться уже пройденный шаг.
-  const [selectionGuideDismissed, setSelectionGuideDismissed] = useGuideDismiss('background-selection', !hasBackground && (!isMedia || !loading));
-  const [modeGuideDismissed, setModeGuideDismissed] = useGuideDismiss('background-mode', !hasBackground && !selectionGuideDismissed);
+  // visible=false у selection: точный пререквизит «mode уже закрыт» на этом
+  // месте не собрать (modeGuideDismissed объявлен НИЖЕ) — показ отмечаем
+  // отдельно через useMarkGuideSeen после showSelectionGuide (см. ниже).
+  const [selectionGuideDismissed, setSelectionGuideDismissed] = useGuideDismiss(
+    'background-selection',
+    !hasBackground && (!isMedia || !loading),
+    false
+  );
+  const [modeGuideDismissed, setModeGuideDismissed] = useGuideDismiss('background-mode', !hasBackground && !selectionGuideDismissed, true);
 
   useEffect(() => {
     setModeGuideDismissed(qaGuide === 'background-sources');
     setSelectionGuideDismissed(false);
   }, [qaGuide]);
 
-  const showModeGuide = (forceModeGuide || !hasBackground) && !modeGuideDismissed;
-  const showSelectionGuide = (forceSelectionGuide || !hasBackground) && modeGuideDismissed && !selectionGuideDismissed && (!isMedia || !loading);
+  const showModeGuide = !modeGuideDismissed;
+  const showSelectionGuide = modeGuideDismissed && !selectionGuideDismissed && (!isMedia || !loading);
+  useMarkGuideSeen('background-selection', modeGuideDismissed && (!isMedia || !loading));
 
   useScrollGuideIntoView(showSelectionGuide, selectionGuideTargetRef);
 

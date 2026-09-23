@@ -91,6 +91,11 @@
     "pages": "Pages",
     "wizardStages": "Wizard stages",
     "actions": "Actions",
+    "guideTour": "Wizard onboarding guides",
+    "guideTourHint": "Whether real users actually reach each guide, close it themselves, or sit through idle reactivation.",
+    "guideTourSeen": "Shown",
+    "guideTourDismissed": "Dismissed",
+    "guideTourIdle": "Idle reactivation",
     "forbidden": "Section unavailable",
     "forbiddenText": "Analytics is limited to admins.",
     "steps": {

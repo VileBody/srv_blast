@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ActionGuideOverlay, type ActionGuideVariant } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss } from '../guidance/useGuideDismiss';
+import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { cn } from '../../lib/cn';
 import { useWizardStore } from '../../stores/wizardStore';
 
@@ -33,7 +34,19 @@ export function TextPanel({ canContinue, guideVariant = 'visual', highlight, loa
   const areaRef = useRef<HTMLTextAreaElement>(null);
   const guideTargetRef = useRef<HTMLDivElement>(null);
   const [textGuideRequested, setTextGuideRequested] = useState(false);
-  const [guideDismissed, setGuideDismissed] = useGuideDismiss('text-lyrics', timingReady && (timingToComplete || textGuideRequested) && !lyrics.trim());
+  // Гайд «Трек» (track-timing, StageOne) — шаг 1 из 2 этой же страницы, этот —
+  // шаг 2. Оба хард-пререквизита (timingReady) достижимы ОДНОВРЕМЕННО, если
+  // трек уже полностью настроен, поэтому одного timingReady мало — ждём,
+  // когда шаг 1 ЗАКРОЮТ (живой сигнал, не «когда-либо видел» — иначе оба
+  // гайда всплывают разом на одном экране).
+  const trackTimingDismissed = useGuideLiveDismissed('track-timing');
+  const [guideDismissed, setGuideDismissed] = useGuideDismiss(
+    'text-lyrics',
+    timingReady && (timingToComplete || textGuideRequested) && !lyrics.trim(),
+    // visible: поле текста разлочено тем же timingReady — остальное (триггер
+    // показа/то, что текст ещё не вписан) не мешает разовому принудительному туру.
+    timingReady && trackTimingDismissed
+  );
 
   const title = !timingReady
     ? t('wizard.text.titleLocked')
@@ -81,7 +94,7 @@ export function TextPanel({ canContinue, guideVariant = 'visual', highlight, loa
       </div>
 
       <ActionGuideOverlay
-        open={timingReady && (timingToComplete || textGuideRequested) && !lyrics.trim() && !guideDismissed}
+        open={timingReady && trackTimingDismissed && !guideDismissed}
         targetRef={guideTargetRef}
         title={t('wizard.text.guideTitle')}
         text={t('wizard.text.guideText')}
