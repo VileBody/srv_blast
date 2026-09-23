@@ -11,7 +11,7 @@ import { Modal } from '../components/ui/Modal';
 import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { StatusBadge } from '../components/ui/StatusBadge';
-import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
+import { backgroundVariations, BackgroundWorkZone, StageBackground, type BackgroundGuideGraphic } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
 import { hasTrackInput, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
@@ -25,6 +25,8 @@ import { cn } from '../lib/cn';
 import { useWizardStore } from '../stores/wizardStore';
 import { FigIcon } from '../components/ui/FigIcon';
 import { AUDIO_FILE_ACCEPT, isAudioFile } from '../lib/mediaFiles';
+import { ActionGuideOverlay, type ActionGuideVariant } from '../components/guidance/ActionGuideOverlay';
+import { useGuideDismiss } from '../components/guidance/useGuideDismiss';
 
 /* Строгий формат тайминга мм:сс:мс — двоеточие ставится само после каждых двух цифр */
 function maskTiming(raw: string): string {
@@ -79,8 +81,66 @@ export function segmentSeconds(from: string, to: string): number | null {
   return a === null || b === null ? null : b - a;
 }
 
+type TrackGuideConcept = 'cut' | 'marks' | 'focus';
+
+function TrackTimingGuideVisual({ concept, seconds }: { concept: TrackGuideConcept; seconds: number }) {
+  const bars = [10, 18, 25, 14, 30, 21, 27, 12, 23, 17, 9];
+
+  if (concept === 'marks') {
+    return (
+      <div className="flex w-full flex-col items-center justify-center gap-[7px]" aria-hidden="true">
+        <span className="guide-track-piece guide-mode-delay-1 flex h-[29px] w-full items-center justify-between rounded-[8px] border border-white/15 bg-black/15 px-[8px] text-[9px] text-white/45">
+          <span>от</span><strong className="action-guide-optical-text text-[10px] font-[400] text-white">00:10</strong>
+        </span>
+        <span className="guide-track-piece guide-mode-delay-2 flex h-[18px] items-center gap-[5px] text-[8px] text-accent-light">
+          <i className="h-[12px] w-px bg-accent-light/70" /><b className="action-guide-optical-text rounded-[5px] bg-accent-light/15 px-[5px] py-[3px] font-[400]">{seconds} сек</b><i className="h-[12px] w-px bg-accent-light/70" />
+        </span>
+        <span className="guide-track-piece guide-mode-delay-3 flex h-[29px] w-full items-center justify-between rounded-[8px] border border-accent-light/40 bg-accent-light/15 px-[8px] text-[9px] text-white/45">
+          <span>до</span><strong className="action-guide-optical-text text-[10px] font-[400] text-white">00:{String(10 + seconds).padStart(2, '0')}</strong>
+        </span>
+      </div>
+    );
+  }
+
+  if (concept === 'focus') {
+    return (
+      <div className="flex w-full items-center gap-[9px]" aria-hidden="true">
+        <div className="guide-track-piece guide-mode-delay-1 relative flex h-[42px] min-w-0 flex-1 items-center justify-center gap-[3px] overflow-hidden rounded-[10px] border border-white/10 bg-black/15 px-[9px]">
+          {bars.concat([16, 22, 13]).map((height, index) => (
+            <span key={`${height}-${index}`} className="w-[3px] shrink-0 rounded-full bg-white/20" style={{ height: Math.max(7, height - 5) }} />
+          ))}
+          <span className="absolute inset-y-[5px] left-[38%] right-[20%] rounded-[6px] border border-accent-light/55 bg-accent-light/15" />
+        </div>
+        <span className="guide-track-piece guide-mode-delay-2 text-[16px] text-white/55">→</span>
+        <div className="guide-track-piece guide-mode-delay-3 flex h-[42px] w-[82px] shrink-0 flex-col items-center justify-center rounded-[10px] border border-accent-light/55 bg-accent-light/15 shadow-[0_8px_18px_rgba(5,1,15,.28)]">
+          <span className="action-guide-optical-text text-[12px] font-[400] text-white">{seconds} сек</span>
+          <span className="mt-[3px] text-[7px] text-white/45">готовый отрывок</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="guide-track-piece guide-mode-delay-1 flex w-full items-center justify-center gap-[9px]" aria-hidden="true">
+      <span className="flex h-[38px] w-[58px] shrink-0 items-center justify-center whitespace-nowrap rounded-[8px] bg-white/[0.1] text-[15px] font-[400] leading-none text-white"><span className="action-guide-optical-text action-guide-timing-text">00:10</span></span>
+      <span className="relative h-[4px] min-w-0 flex-1 rounded-full bg-white/25">
+        {/* Заливка растягивается/сжимается синхронно с правым хендлом (scaleX от
+            левого края, те же тайминги) — иначе хендл гуляет сам по себе, а полоса
+            стоит как приклеенная. */}
+        <span className="guide-track-fill-move absolute inset-y-0 left-0 right-[24%] origin-left rounded-full bg-accent-light" />
+        {/* Левая палочка (начало отрывка) статична — двигаем только правую (конец),
+            иначе непонятно, что именно тянут: две одновременные анимации спорят
+            за внимание. Ход теперь в обе стороны и покрупнее (было еле видно). */}
+        <span className="absolute left-0 top-1/2 h-[14px] w-[2px] -translate-y-1/2 bg-white" />
+        <span className="guide-track-handle-right absolute right-[24%] top-1/2 h-[14px] w-[2px] bg-white" />
+      </span>
+      <span className="flex h-[38px] w-[58px] shrink-0 items-center justify-center whitespace-nowrap rounded-[8px] bg-white/[0.1] text-[15px] font-[400] leading-none text-white"><span className="action-guide-optical-text action-guide-timing-text">00:{String(10 + seconds).padStart(2, '0')}</span></span>
+    </div>
+  );
+}
+
 /* Этап «Трек» по Figma Wireframe 7–8: вводные трека + тайминг отрывка */
-function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: number | null; maxSegmentSeconds: number; paidPlan: boolean }) {
+function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan, guideVariant = 'visual', guideConcept = 'cut' }: { creditsLeft: number | null; maxSegmentSeconds: number; paidPlan: boolean; guideVariant?: ActionGuideVariant; guideConcept?: TrackGuideConcept }) {
   const { t } = useTranslation();
   const { push } = useToast();
   const track = useWizardStore((state) => state.track);
@@ -93,6 +153,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
   const reset = useWizardStore((state) => state.reset);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const timingToInputRef = useRef<HTMLInputElement>(null);
+  const timingGuideTargetRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   // Трек из черновика / прошлого батча: blob-ссылки нет, играем по свежей presigned-ссылке
@@ -226,6 +287,10 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
   const overLimit = segment !== null && segment > maxSegmentSeconds;
   const backwards = segment !== null && segment <= 0;
   const roundSeconds = (value: number) => Math.round(value * 10) / 10;
+  const [timingGuideDismissed, setTimingGuideDismissed] = useGuideDismiss(
+    'track-timing',
+    Boolean(track) && (segment === null || segment <= 0 || segment > maxSegmentSeconds)
+  );
 
   return (
     <div className="flex min-h-full flex-col">
@@ -317,7 +382,7 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
         </span>
       </div>
       {/* Акцентная обводка с момента загрузки трека и дальше — пройденный/активный этап */}
-      <div className={cn('mt-space-5 flex h-[190px] min-h-[190px] w-full shrink-0 items-center justify-center gap-space-4 px-space-5 max-md:mt-[12px] max-md:h-[84px] max-md:min-h-0 max-md:gap-[8px] max-md:px-[10px]', track ? 'dash-panel' : 'dash-panel-white', (overLimit || backwards) && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
+      <div ref={timingGuideTargetRef} className={cn('mt-space-5 flex h-[190px] min-h-[190px] w-full shrink-0 items-center justify-center gap-space-4 px-space-5 max-md:mt-[12px] max-md:h-[84px] max-md:min-h-0 max-md:gap-[8px] max-md:px-[10px]', track ? 'dash-panel' : 'dash-panel-white', (overLimit || backwards) && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
         <button
           type="button"
           aria-label={playing ? t('wizard.track.pause') : t('wizard.track.play')}
@@ -348,6 +413,18 @@ function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: n
         <span className="wizard-body">{t('wizard.track.to')}</span>
         <input ref={timingToInputRef} value={timingTo} onChange={(e) => commitTiming('timingTo', clampTiming(e.target.value, track?.durationS))} inputMode="numeric" maxLength={8} aria-label={t('wizard.track.segEnd')} placeholder="00:00" className="soft-input" />
       </div>
+      <ActionGuideOverlay
+        open={Boolean(track) && (segment === null || segment <= 0 || segment > maxSegmentSeconds) && !timingGuideDismissed}
+        targetRef={timingGuideTargetRef}
+        title={t('wizard.track.guideTitle')}
+        text={t('wizard.track.guideText', { seconds: maxSegmentSeconds })}
+        dismissLabel={t('wizard.track.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 1, total: 2 })}
+        onDismiss={() => setTimingGuideDismissed(true)}
+        variant={guideVariant}
+        shell={guideConcept === 'marks' ? 'track-reverse' : guideConcept === 'focus' ? 'track-wide' : 'track-top'}
+        visual={<TrackTimingGuideVisual concept={guideConcept} seconds={maxSegmentSeconds} />}
+      />
       {/* Живая длина отрывка: перебор виден сразу, введённое не стирается */}
       <p className={cn('mt-space-5 max-w-[520px] shrink-0 text-[15px] leading-[1.5] max-md:mt-[10px] max-md:text-[13px]', overLimit || backwards ? 'text-[var(--warning)]' : 'wizard-body max-md:!text-[13px]')}>
         {backwards
@@ -386,6 +463,16 @@ export function WizardPage() {
   const wizardSessionQuery = useQuery({ queryKey: ['wizard-session'], queryFn: api.wizardSession });
   const restoredServerDraft = useRef(false);
   const qaStage = import.meta.env.DEV ? Number(params.get('qaStage') || 0) : 0;
+  const qaGuide = import.meta.env.DEV ? params.get('qaGuide') : null;
+  const qaGuideVariant = import.meta.env.DEV && ['minimal', 'balanced', 'visual'].includes(params.get('guideStyle') || '')
+    ? params.get('guideStyle') as ActionGuideVariant
+    : 'visual';
+  const qaGuideGraphic = import.meta.env.DEV && ['map', 'pairs', 'stack', 'studio'].includes(params.get('guideGraphic') || '')
+    ? params.get('guideGraphic') as BackgroundGuideGraphic
+    : 'studio';
+  const qaTrackGuideConcept = import.meta.env.DEV && ['cut', 'marks', 'focus'].includes(params.get('trackConcept') || '')
+    ? params.get('trackConcept') as TrackGuideConcept
+    : 'cut';
   useEffect(() => {
     if (qaStage < 1 || qaStage > 5) return;
     // Explicit development-only visual fixture: every Figma stage is directly auditable
@@ -394,28 +481,46 @@ export function WizardPage() {
       id: 'qa-track', userId: 'user_1', s3Key: 'qa/track.mp3', filename: 'Название трека.mp3',
       durationS: 204, createdAt: '2026-07-15T00:00:00Z', expiresAt: '2026-07-22T00:00:00Z'
     });
-    state.setField('lyrics', 'Я знаю — этот город не уснёт\nПока музыка ведёт нас вперёд');
-    state.setField('timingFrom', '00:10:00');
-    state.setField('timingTo', '00:22:00');
-    state.setBackground({ mode: 'footage', footage: ['Ночной город', 'Неон'], photo: ['Крупный план'], color: '#8b6fe6', strobe: false, glue: 'Щелчок' });
-    state.setHooks({ dropTime: '00:15:00', kind: 'warmup', config: { sound: 'Звук' } });
-    state.setHooks({ kind: 'object', config: { object: 'Квадрат' } });
-    state.setHooks({ kind: 'effects', config: { effectHook: 'Молния', effectGlue: 'Щелчок', effectStyle: 'Глитч' } });
-    state.setHooks({ kind: 'motion', config: { motion: 'Зум' } });
-    state.setHooks({ kind: 'thought', config: { thought: 'Мысль' } });
-    state.setHooks({ kind: 'effects' });
-    state.setSubtitles({ color: '#f6f5fd', pool: ['Brat', 'Jakson', 'Impulse'] });
-    state.setAllocation({
-      total: 5,
-      background: { 'footage:Ночной город': 2, 'footage:Неон': 1, 'photo:Крупный план': 1 },
-      subtitles: { Brat: 2, Jakson: 1, Impulse: 1 },
-      hooks: { sound: 1, object: 1, effects: 1, motion: 1, thought: 1 },
-      seeded: true
-    });
+    state.setField('lyrics', qaGuide === 'text' ? '' : 'Я знаю — этот город не уснёт\nПока музыка ведёт нас вперёд');
+    state.setField('timingFrom', qaGuide === 'timing' ? '' : '00:10:00');
+    state.setField('timingTo', qaGuide === 'timing' ? '' : '00:22:00');
+    state.setBackground((qaStage <= 2 && Boolean(qaGuide)) || qaGuide?.startsWith('background-')
+      ? { mode: 'footage', footage: [], photo: [], color: undefined, sourceVideos: [], strobe: false, glue: 'Щелчок' }
+      : { mode: 'footage', footage: ['Ночной город', 'Неон'], photo: ['Крупный план'], color: '#8b6fe6', strobe: false, glue: 'Щелчок' });
+    if (qaGuide === 'hooks-drop') {
+      state.setHooks({ dropTime: '' });
+    } else if (qaGuide === 'hooks-type') {
+      state.setHooks({ dropTime: '00:15:00' });
+    } else {
+      state.setHooks({ dropTime: '00:15:00', kind: 'warmup', config: { sound: 'Звук' } });
+      state.setHooks({ kind: 'object', config: { object: 'Квадрат' } });
+      state.setHooks({ kind: 'effects', config: { effectHook: 'Молния', effectGlue: 'Щелчок', effectStyle: 'Глитч' } });
+      state.setHooks({ kind: 'motion', config: { motion: 'Зум' } });
+      state.setHooks({ kind: 'thought', config: { thought: 'Мысль' } });
+      state.setHooks({ kind: 'effects' });
+    }
+    state.setSubtitles({ color: '#f6f5fd', pool: qaGuide === 'subs-style' ? [] : ['Brat', 'Jakson', 'Impulse'] });
+    state.setAllocation(qaGuide === 'pool-total'
+      ? { total: 1, background: { 'footage:Ночной город': 1 }, subtitles: { Brat: 1 }, hooks: {}, seeded: false }
+      : qaGuide === 'pool-distribute'
+        ? {
+          total: 5,
+          background: { 'footage:Ночной город': 1, 'footage:Неон': 1, 'photo:Крупный план': 1 },
+          subtitles: { Brat: 1, Jakson: 1, Impulse: 1 },
+          hooks: { sound: 1, object: 1, effects: 1, motion: 1, thought: 1 },
+          seeded: true
+        }
+        : {
+          total: 5,
+          background: { 'footage:Ночной город': 2, 'footage:Неон': 1, 'photo:Крупный план': 1 },
+          subtitles: { Brat: 2, Jakson: 1, Impulse: 1 },
+          hooks: { sound: 1, object: 1, effects: 1, motion: 1, thought: 1 },
+          seeded: true
+        });
     setStage(qaStage);
     // qaStage is the only trigger: store changes above must not re-run this fixture.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qaStage]);
+  }, [qaGuide, qaStage]);
 
   useEffect(() => {
     const session = wizardSessionQuery.data?.session;
@@ -529,6 +634,7 @@ export function WizardPage() {
     && timingToSeconds(state.timingFrom) !== null
     && timingToSeconds(state.timingTo) !== null
     && !segmentInvalid;
+  const timingToComplete = /^\d{2}:\d{2}:\d{2}$/.test(state.timingTo);
   const dropSeconds = dropToSeconds(state.hooks.dropTime);
   const clipFromSeconds = timingToSeconds(state.timingFrom);
   const clipToSeconds = timingToSeconds(state.timingTo);
@@ -559,13 +665,13 @@ export function WizardPage() {
 
   // «Продолжить» подсвечивается только при непустом выборе; кликабельность — отдельно
   const ready = useMemo(() => {
-    if (stage === 1) return trackReady && timingReady && !segmentInvalid;
+    if (stage === 1) return trackReady && timingReady && !segmentInvalid && state.lyrics.trim().length > 0;
     if (stage === 2) return backgroundVariations(state.background) > 0;
     if (stage === 3) return configuredHookCount > 0 && (!configuredHooksNeedDrop || dropReady);
     if (stage === 4) return state.subtitles.pool.length > 0;
     if (stage === 5) return allocBalanced && trackReady;
     return false;
-  }, [allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.subtitles.pool, timingReady, trackReady]);
+  }, [allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.lyrics, state.subtitles.pool, timingReady, trackReady]);
 
   const canContinue = useMemo(() => {
     return ready;
@@ -671,8 +777,8 @@ export function WizardPage() {
             <Skeleton className="h-[420px]" />
           ) : (
             <>
-              {stage === 1 && <StageOne creditsLeft={creditsLeft} maxSegmentSeconds={maxSegmentSeconds} paidPlan={paidPlan} />}
-              {stage === 2 && <StageBackground />}
+              {stage === 1 && <StageOne creditsLeft={creditsLeft} maxSegmentSeconds={maxSegmentSeconds} paidPlan={paidPlan} guideVariant={qaGuideVariant} guideConcept={qaTrackGuideConcept} />}
+              {stage === 2 && <StageBackground guideGraphic={qaGuideGraphic} guideVariant={qaGuideVariant} qaGuide={qaGuide} />}
               {stage === 3 && <StageHooks />}
               {stage === 4 && <StageSubtitles />}
               {stage === 5 && <StageSlice />}
@@ -683,9 +789,11 @@ export function WizardPage() {
       {stage === 1 ? (
         <TextPanel
           canContinue={canContinue}
+          guideVariant={qaGuideVariant}
           highlight={timingReady}
           // поле текста открывается только после тайминга: текст относится к отрывку
           timingReady={timingReady}
+          timingToComplete={timingToComplete}
           loading={busy}
           onNext={next}
         />

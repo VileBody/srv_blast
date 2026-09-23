@@ -1,5 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ActionGuideOverlay, type ActionGuideVariant } from '../guidance/ActionGuideOverlay';
+import { useGuideDismiss } from '../guidance/useGuideDismiss';
 import { cn } from '../../lib/cn';
 import { useWizardStore } from '../../stores/wizardStore';
 
@@ -14,23 +16,24 @@ import { useWizardStore } from '../../stores/wizardStore';
  * отрывку, и вводить его раньше бессмысленно. Смена тайминга очищает текст (см. StageOne) —
  * рассинхрон строк и звука для lyric-video недопустим.
  */
-export function TextPanel({ canContinue, highlight, loading, timingReady, onNext }: {
+export function TextPanel({ canContinue, guideVariant = 'visual', highlight, loading, timingReady, timingToComplete, onNext }: {
   canContinue: boolean;
+  guideVariant?: ActionGuideVariant;
   highlight?: boolean;
   loading?: boolean;
   /** тайминг «от/до» заполнен — до этого поле текста закрыто */
   timingReady: boolean;
+  /** Во втором тайминге заполнены миллисекунды: можно автоматически показать следующий гайд. */
+  timingToComplete: boolean;
   onNext: () => void;
 }) {
   const { t } = useTranslation();
   const lyrics = useWizardStore((state) => state.lyrics);
   const setField = useWizardStore((state) => state.setField);
   const areaRef = useRef<HTMLTextAreaElement>(null);
-
-  // как только отрывок задан — сразу ставим курсор в поле, чтобы не искать, куда писать
-  useEffect(() => {
-    if (timingReady && !lyrics.trim()) areaRef.current?.focus();
-  }, [timingReady, lyrics]);
+  const guideTargetRef = useRef<HTMLDivElement>(null);
+  const [textGuideRequested, setTextGuideRequested] = useState(false);
+  const [guideDismissed, setGuideDismissed] = useGuideDismiss('text-lyrics', timingReady && (timingToComplete || textGuideRequested) && !lyrics.trim());
 
   const title = !timingReady
     ? t('wizard.text.titleLocked')
@@ -46,7 +49,7 @@ export function TextPanel({ canContinue, highlight, loading, timingReady, onNext
       </h2>
 
       {/* телефон: поле растёт вместе с текстом (rows), а не скроллится внутри узкой рамки */}
-      <div className={cn('relative min-h-0 flex-1 overflow-hidden', highlight ? 'dash-panel' : 'dash-panel-white')}>
+      <div ref={guideTargetRef} className={cn('relative min-h-0 flex-1 overflow-hidden', highlight ? 'dash-panel' : 'dash-panel-white')}>
         {!timingReady ? (
           // Заблокировано: объясняем, чего ждём, а не показываем мёртвое поле
           <div className="flex h-full flex-col items-center justify-center gap-space-4 p-space-5 text-center">
@@ -61,6 +64,7 @@ export function TextPanel({ canContinue, highlight, loading, timingReady, onNext
               ref={areaRef}
               value={lyrics}
               onChange={(event) => setField('lyrics', event.target.value)}
+              onFocus={() => setTextGuideRequested(true)}
               placeholder={t('wizard.text.placeholder')}
               spellCheck={false}
               rows={Math.max(4, lyrics.split('\n').length + 1)}
@@ -75,6 +79,30 @@ export function TextPanel({ canContinue, highlight, loading, timingReady, onNext
           </>
         )}
       </div>
+
+      <ActionGuideOverlay
+        open={timingReady && (timingToComplete || textGuideRequested) && !lyrics.trim() && !guideDismissed}
+        targetRef={guideTargetRef}
+        title={t('wizard.text.guideTitle')}
+        text={t('wizard.text.guideText')}
+        dismissLabel={t('wizard.text.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 2, total: 2 })}
+        onDismiss={() => setGuideDismissed(true)}
+        variant={guideVariant}
+        shell="track-top"
+        visual={(
+          <div className="flex w-full flex-col gap-[8px]" aria-hidden="true">
+            <span className="h-[5px] w-[88%] rounded-full bg-text-60" />
+            <span className="flex items-center gap-[5px]">
+              <span className="h-[5px] w-[66%] rounded-full bg-accent-light" />
+              {/* Классический мигающий текстовый курсор — недвусмысленно читается
+                  как «сюда печатают», в отличие от статичной палочки. */}
+              <span className="guide-cursor-blink h-[18px] w-[2px] rounded-full bg-text" />
+            </span>
+            <span className="h-[5px] w-[48%] rounded-full bg-text-40" />
+          </div>
+        )}
+      />
 
       {timingReady && (
         /* телефон: подсказка/счётчик строк — текстом под рамкой, а не пилюлей поверх поля */
