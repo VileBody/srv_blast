@@ -56,7 +56,7 @@ export function ActionGuideOverlay({
   const [target, setTarget] = useState<TargetBox | null>(null);
   const [cardHeight, setCardHeight] = useState(CARD_ESTIMATED_HEIGHT);
   const cardRef = useRef<HTMLElement>(null);
-  const highlightRef = useRef<HTMLDivElement>(null);
+  const dimRef = useRef<HTMLDivElement>(null);
   // Скроллим к цели только один раз за время жизни этого гайда (первое
   // открытие). Реактивация после 45с простоя больше НЕ скроллит: цель и так
   // почти всегда в зоне видимости, а принудительный скролл посреди того, как
@@ -92,14 +92,14 @@ export function ActionGuideOverlay({
       element.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'nearest' });
     });
     hasScrolledRef.current = true;
-    // Обводка красится НАПРЯМУЮ в DOM через ref, в обход React state — иначе каждый
-    // кадр скролла идёт через setState → commit → paint, и рамка на 1-2 кадра отстаёт
-    // от реального контента (виден дребезг). Это ровно тот паттерн, который прямым
-    // текстом запрещён в taste-skill: «rAF-цикл, трогающий React state» — используем
-    // state только для карточки (ей point-perfect трекинг не нужен), а обводку красим
-    // императивно на КАЖДОМ кадре измерения.
-    const paintHighlight = (t: TargetBox) => {
-      const el = highlightRef.current;
+    // Вырез красится НАПРЯМУЮ в DOM через ref, в обход React state — иначе каждый
+    // кадр скролла идёт через setState → commit → paint, и вырез на 1-2 кадра
+    // отстаёт от реального контента (виден дребезг). Это ровно тот паттерн, который
+    // прямым текстом запрещён в taste-skill: «rAF-цикл, трогающий React state» —
+    // используем state только для карточки (ей point-perfect трекинг не нужен), а
+    // вырез красим императивно на КАЖДОМ кадре измерения.
+    const paintDim = (t: TargetBox) => {
+      const el = dimRef.current;
       if (!el) return;
       const pixelScale = t.scale * (window.devicePixelRatio || 1);
       const snap = (value: number) => Math.round(value * pixelScale) / pixelScale;
@@ -161,7 +161,7 @@ export function ActionGuideOverlay({
           height: Math.max(0, bottom - top),
           scale
         };
-        paintHighlight(nextTarget);
+        paintDim(nextTarget);
         setTarget((previous) => previous
           && previous.top === nextTarget.top
           && previous.right === nextTarget.right
@@ -242,10 +242,10 @@ export function ActionGuideOverlay({
   const isVisual = variant === 'visual';
   const pixelScale = target.scale * (window.devicePixelRatio || 1);
   const snapToPixel = (value: number) => Math.round(value * pixelScale) / pixelScale;
-  const highlightTop = snapToPixel((target.top - TARGET_GAP) / target.scale);
-  const highlightLeft = snapToPixel((target.left - TARGET_GAP) / target.scale);
-  const highlightWidth = snapToPixel((target.width + TARGET_GAP * 2) / target.scale);
-  const highlightHeight = snapToPixel((target.height + TARGET_GAP * 2) / target.scale);
+  const dimTop = snapToPixel((target.top - TARGET_GAP) / target.scale);
+  const dimLeft = snapToPixel((target.left - TARGET_GAP) / target.scale);
+  const dimWidth = snapToPixel((target.width + TARGET_GAP * 2) / target.scale);
+  const dimHeight = snapToPixel((target.height + TARGET_GAP * 2) / target.scale);
   const content = (
     <>
       <h3 className={cn(
@@ -275,14 +275,18 @@ export function ActionGuideOverlay({
 
   return createPortal(
     <div className="pointer-events-none fixed inset-0 z-guidance" aria-live="polite">
+      {/* Дим на весь экран, КРОМЕ целевой зоны — trick через огромный spread
+          box-shadow: тень «заливает» всё вокруг элемента, а сам элемент
+          (ровно по размеру цели) остаётся прозрачным. Без рамки/обводки —
+          только контраст света и тени, без явного контура вокруг зоны. */}
       <div
-        ref={highlightRef}
+        ref={dimRef}
         aria-hidden="true"
-        className="absolute left-0 top-0 rounded-r20 border-2 border-accent-light shadow-[0_0_0_9999px_rgba(5,1,15,0.72),0_0_34px_rgba(139,111,230,0.72)] will-change-transform"
+        className="absolute left-0 top-0 rounded-r20 shadow-[0_0_0_9999px_rgba(5,1,15,0.72)] will-change-transform"
         style={{
-          width: highlightWidth,
-          height: highlightHeight,
-          transform: `translate3d(${highlightLeft}px, ${highlightTop}px, 0)`
+          width: dimWidth,
+          height: dimHeight,
+          transform: `translate3d(${dimLeft}px, ${dimTop}px, 0)`
         }}
       />
 
