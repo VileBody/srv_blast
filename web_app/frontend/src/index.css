@@ -7,6 +7,247 @@
   50% { transform: translate3d(18%, 0, 0) scaleX(1.08); opacity: .68; }
 }
 
+@keyframes action-guide-enter {
+  from { transform: translate3d(0, 8px, 0) scale(.985); opacity: 0; }
+  to   { transform: translate3d(0, 0, 0) scale(1); opacity: 1; }
+}
+
+.action-guide-enter {
+  animation: action-guide-enter var(--t-slow) both;
+  transform-origin: 50% 100%;
+}
+
+.action-guide-optical-text {
+  display: inline-block;
+  transform: translateY(3px);
+}
+
+.action-guide-creative-progress {
+  transform: translateY(1px);
+}
+
+.action-guide-optical-text.action-guide-creative-button-text {
+  transform: translateY(1px);
+}
+
+.action-guide-optical-text.action-guide-timing-text {
+  transform: translateY(3px);
+}
+
+@keyframes guide-mode-reveal {
+  from { opacity: 0; transform: translateX(-5px) scale(.97); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes guide-mode-frame-reveal {
+  from { opacity: 0; transform: translateY(8px) scale(.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.guide-mode-reveal,
+.guide-mode-frame,
+.guide-track-piece {
+  animation-duration: 280ms;
+  animation-fill-mode: both;
+  animation-timing-function: cubic-bezier(.16, 1, .3, 1);
+}
+
+.guide-mode-reveal { animation-name: guide-mode-reveal; }
+.guide-mode-frame { animation-name: guide-mode-frame-reveal; }
+.guide-track-piece { animation-name: guide-mode-frame-reveal; }
+.guide-mode-delay-1 { animation-delay: 80ms; }
+.guide-mode-delay-2 { animation-delay: 240ms; }
+.guide-mode-delay-3 { animation-delay: 400ms; }
+.guide-mode-delay-4 { animation-delay: 560ms; }
+.guide-mode-delay-5 { animation-delay: 720ms; }
+.guide-mode-delay-6 { animation-delay: 850ms; }
+.guide-mode-delay-7 { animation-delay: 980ms; }
+
+/*
+ * Гайд-анимации: только transform/opacity (никаких flex-basis/width/box-shadow-циклов —
+ * layout- и paint-свойства дёргают рефлоу на бесконечном лупе). Изгиб — тот же спринг-подобный
+ * cubic-bezier(.16,1,.3,1), что уже стоит на guide-mode-reveal и что taste-skill прямо называет
+ * дефолтом для «Fluid CSS» (MOTION 4-7) — единая «пружинка» по всем гайдам.
+ */
+
+/*
+ * Гайд «Подгони субтитры»: слово «Я» всегда одето в пилюлю (не голый текст) и ТОЛЬКО
+ * едет по X — без морфинга. Один раз за цикл она вспыхивает акцентным цветом и гаснет
+ * (имитация «тапнул — выбрал слово»). Слово «Знаю» стоит на месте, но его пилюля
+ * РАСТЁТ (scaleX от левого края — показываем «длина увеличивается», не наоборот)
+ * с обратным контрскейлом на подписи внутри, чтобы текст не плющило.
+ */
+@keyframes guide-fit-drag { 0%, 4% { transform: translateX(0); } 14%, 20% { transform: translateX(7px); } 30%, 100% { transform: translateX(0); } }
+@keyframes guide-fit-select { 0%, 32% { opacity: 0; } 40%, 52% { opacity: 1; } 60%, 100% { opacity: 0; } }
+@keyframes guide-fit-grow { 0%, 56% { transform: scaleX(1); } 72%, 86% { transform: scaleX(1.18); } 100% { transform: scaleX(1); } }
+@keyframes guide-fit-grow-label { 0%, 56% { transform: scaleX(1); } 72%, 86% { transform: scaleX(.847); } 100% { transform: scaleX(1); } }
+.guide-fit-drag { animation: guide-fit-drag 4.2s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-fit-select { animation: guide-fit-select 4.2s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-fit-grow { transform-origin: left center; animation: guide-fit-grow 4.2s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-fit-grow-label { display: inline-block; transform-origin: left center; animation: guide-fit-grow-label 4.2s cubic-bezier(.16, 1, .3, 1) infinite; }
+
+/* Гайд «Выбери тип хука»: центральный пил крутит ТРИ иконки кросс-фейдом. Один
+   кейфрейм-«вспышка» + отрицательный animation-delay на каждой (−1/3 и −2/3 периода)
+   — три идентичных цикла со сдвигом по фазе, без дублирования кейфреймов. Ровно треть
+   цикла (33%) держит каждая иконка — стаггер в -1.5s (=1/3 от 4.5s) тайлится без
+   зазоров и без вспышки «все погасли», в отличие от hold-окна короче трети. */
+@keyframes guide-hook-icon-cycle {
+  0% { opacity: 1; }
+  27% { opacity: 1; }
+  33% { opacity: 0; }
+  94% { opacity: 0; }
+  100% { opacity: 1; }
+}
+.guide-hook-icon-a, .guide-hook-icon-b, .guide-hook-icon-c {
+  animation: guide-hook-icon-cycle 4.5s cubic-bezier(.16, 1, .3, 1) infinite;
+}
+.guide-hook-icon-b { animation-delay: -1.5s; }
+.guide-hook-icon-c { animation-delay: -3s; }
+
+/*
+ * Гайд «Сколько видео сделать»: полный цикл степпера — жмём «+» дважды (4→5→6),
+ * потом «−» дважды (6→5→4), луп. Три цифры-слоя кросс-фейдятся по расписанию,
+ * кнопки проседают строго в момент своего «нажатия». «5» встречается дважды за
+ * цикл (на подъёме и на спуске) — два непересекающихся окна видимости в одном
+ * keyframe, это ок, не нужно двух копий цифры.
+ */
+/* Цифра и «нажатие» кнопки делят РОВНО одни и те же процентные границы
+   (10/14, 35/39, 60/64, 85/89) — не «около одного момента», а буквально одни
+   числа в обоих кейфреймах, иначе на глаз всегда читается небольшой лаг. */
+@keyframes guide-pool-digit-4 { 0%, 10% { opacity: 1; } 14%, 85% { opacity: 0; } 89%, 100% { opacity: 1; } }
+@keyframes guide-pool-digit-5 { 0%, 10% { opacity: 0; } 14%, 35% { opacity: 1; } 39%, 60% { opacity: 0; } 64%, 85% { opacity: 1; } 89%, 100% { opacity: 0; } }
+@keyframes guide-pool-digit-6 { 0%, 35% { opacity: 0; } 39%, 60% { opacity: 1; } 64%, 100% { opacity: 0; } }
+/* translateY(1px) запечён в тот же transform, что и press-scale (глиф «+»/«−»
+   тоже текст на Point — тот же оптический сдвиг, что и везде в гайдах; отдельный
+   inline-transform на этом элементе всё равно затёрло бы бегущей анимацией). */
+@keyframes guide-pool-plus-press {
+  0%, 9%    { transform: translateY(1px) scale(1); }
+  11%       { transform: translateY(1px) scale(.78); }
+  14%, 34%  { transform: translateY(1px) scale(1); }
+  36%       { transform: translateY(1px) scale(.78); }
+  39%, 100% { transform: translateY(1px) scale(1); }
+}
+@keyframes guide-pool-minus-press {
+  0%, 59%   { transform: translateY(1px) scale(1); }
+  61%       { transform: translateY(1px) scale(.78); }
+  64%, 84%  { transform: translateY(1px) scale(1); }
+  86%       { transform: translateY(1px) scale(.78); }
+  89%, 100% { transform: translateY(1px) scale(1); }
+}
+.guide-pool-digit-4 { animation: guide-pool-digit-4 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-pool-digit-5 { animation: guide-pool-digit-5 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-pool-digit-6 { animation: guide-pool-digit-6 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-pool-plus { animation: guide-pool-plus-press 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-pool-minus { animation: guide-pool-minus-press 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+
+/* Гайд «Собери пул фонов»: три ролика крутятся каруселью по кругу (не стрелка!) —
+   центр уезжает влево и мельчает, правый вырастает в центр, левый встаёт на место
+   правого. Один кейфрейм в АБСОЛЮТНЫХ координатах (все три спозиционированы поверх
+   друг друга через left:50%/top:50%) + стаггер −1/3 периода на каждом — общий приём
+   с кросс-фейдом иконок хука, но по transform вместо opacity. */
+@keyframes guide-carousel {
+  0%, 5%   { transform: translate(calc(-50% - 34px), -50%) scale(.72); opacity: .6; z-index: 1; }
+  28%, 38% { transform: translate(calc(-50% + 34px), -50%) scale(.72); opacity: .6; z-index: 1; }
+  61%, 71% { transform: translate(-50%, -50%) scale(1.08); opacity: 1; z-index: 2; }
+  94%, 100%{ transform: translate(calc(-50% - 34px), -50%) scale(.72); opacity: .6; z-index: 1; }
+}
+.guide-carousel { animation: guide-carousel 4.5s cubic-bezier(.16, 1, .3, 1) infinite; }
+
+/* Общий «дышащий» акцент масштабом — клипы фона, галочка, построчный пульс в
+   «Распредели видео» (через animation-delay-стаггер на вызывающей стороне). */
+@keyframes guide-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+.guide-pulse { animation: guide-pulse 2.2s cubic-bezier(.16, 1, .3, 1) infinite; }
+
+/* Гайд «Выбери отрывок» (трек) и гайд «Выбери момент дропа» (хук, переиспользует
+   тот же язык): один тик-хендл на шкале ездит туда-обратно — двигаем только
+   ЕГО (не оба конца сразу, иначе непонятно, за что тянут). Y-центрирование
+   запечено в тот же transform (класс заменяет статичную -translate-y-1/2,
+   чтобы не воевать за свойство с анимацией). Ход в ОБЕ стороны (влево и
+   вправо от исходной точки) и покрупнее — раньше дёргался только вправо на
+   4px и был еле заметен. */
+@keyframes guide-track-handle-right { 0%, 10% { transform: translateX(0) translateY(-50%); } 35% { transform: translateX(-9px) translateY(-50%); } 65% { transform: translateX(9px) translateY(-50%); } 90%, 100% { transform: translateX(0) translateY(-50%); } }
+.guide-track-handle-right { animation: guide-track-handle-right 2.8s cubic-bezier(.16, 1, .3, 1) infinite; }
+
+/* Заливка отрывка (фиолетовая полоса) должна «тянуться» вместе с правым
+   хендлом, а не стоять на месте, пока хендл гуляет туда-сюда сам по себе.
+   Левый край заливки закреплён на 0, поэтому растягиваем/сжимаем от него
+   (transform-origin: left) через scaleX — те же тайминги/изгиб, что у
+   хендла, чтобы граница заливки визуально совпадала с ним в каждый момент. */
+@keyframes guide-track-fill-move { 0%, 10% { transform: scaleX(1); } 35% { transform: scaleX(.945); } 65% { transform: scaleX(1.055); } 90%, 100% { transform: scaleX(1); } }
+.guide-track-fill-move { animation: guide-track-fill-move 2.8s cubic-bezier(.16, 1, .3, 1) infinite; }
+
+/* Гайд «Выбери момент дропа»: сам пил «drop» — это и есть ручка (вместо
+   отдельной палочки + подписи над ней), поэтому дёргается сам пил. Базовое
+   позиционирование (центрирование по X/Y на шкале) запечено в те же кадры,
+   что и nudge, чтобы не воевать за transform с центрирующими translate. */
+@keyframes guide-track-drop-pill { 0%, 15% { transform: translate(-50%, -50%); } 50%, 65% { transform: translate(calc(-50% + 4px), -50%); } 100% { transform: translate(-50%, -50%); } }
+.guide-track-drop-pill { animation: guide-track-drop-pill 2.6s cubic-bezier(.16, 1, .3, 1) infinite; }
+
+/* Гайд «Добавь текст отрывка»: классический мигающий текстовый курсор — жёсткое
+   вкл/выкл (steps(1)), не плавный fade, иначе не читается как курсор. */
+@keyframes guide-cursor-blink { 0%, 45% { opacity: 1; } 50%, 95% { opacity: 0; } 100% { opacity: 1; } }
+.guide-cursor-blink { animation: guide-cursor-blink 1.1s steps(1) infinite; }
+
+/* Гайд «Выбери тип хука»: шейк центрального пила синхронно с каждой сменой
+   иконки (три раза за 4.5s-цикл кросс-фейда, окна те же 27-33/60-66/93-99%,
+   что и переход между иконками) — затухающие колебания rotate+scale, спринг-логика
+   без библиотеки физики (в taste-skill готового «shake»-рецепта нет, ближайшее —
+   принцип spring physics для перманентных микро-интеракций, взял его за основу). */
+@keyframes guide-hook-shake {
+  0%, 24%   { transform: rotate(0deg) scale(1); }
+  27%       { transform: rotate(-7deg) scale(1.04); }
+  30%       { transform: rotate(6deg) scale(1.03); }
+  33%       { transform: rotate(-3deg) scale(1.015); }
+  36%, 57%  { transform: rotate(0deg) scale(1); }
+  60%       { transform: rotate(-7deg) scale(1.04); }
+  63%       { transform: rotate(6deg) scale(1.03); }
+  66%       { transform: rotate(-3deg) scale(1.015); }
+  69%, 90%  { transform: rotate(0deg) scale(1); }
+  93%       { transform: rotate(-7deg) scale(1.04); }
+  96%       { transform: rotate(6deg) scale(1.03); }
+  99%       { transform: rotate(-3deg) scale(1.015); }
+  100%      { transform: rotate(0deg) scale(1); }
+}
+.guide-hook-shake { animation: guide-hook-shake 4.5s cubic-bezier(.16, 1, .3, 1) infinite; }
+
+/*
+ * Гайд «Выбери тип фона»: включение пилов запечатано в ДВА слоя на каждом —
+ * дефолтный (дашед-рамка, приглушённый) и «принятый» (сплошной фиолетовый),
+ * кросс-фейдятся между собой, а не просто фейдится один слой поверх статичной
+ * дашед-рамки — раньше рамка оставалась видна и под «включённым» состоянием.
+ * Раздельные, далеко разнесённые задержки (не соседние guide-mode-delay-N) —
+ * чтобы «сначала один, потом другой» реально читалось, а не сливалось в одно.
+ */
+@keyframes guide-mode-off-fade { 0%, 4% { opacity: 1; } 30%, 100% { opacity: 0; } }
+@keyframes guide-mode-on-fade { 0%, 4% { opacity: 0; } 30%, 100% { opacity: 1; } }
+.guide-mode-off-fade { animation: guide-mode-off-fade 320ms cubic-bezier(.16, 1, .3, 1) both; }
+.guide-mode-on-fade { animation: guide-mode-on-fade 320ms cubic-bezier(.16, 1, .3, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .action-guide-enter,
+  .guide-mode-reveal, .guide-mode-frame, .guide-track-piece,
+  .guide-fit-drag, .guide-fit-select, .guide-fit-grow, .guide-fit-grow-label,
+  .guide-hook-icon-a, .guide-hook-icon-b, .guide-hook-icon-c, .guide-hook-shake,
+  .guide-pool-digit-4, .guide-pool-digit-5, .guide-pool-digit-6,
+  .guide-pool-plus, .guide-pool-minus,
+  .guide-carousel, .guide-pulse,
+  .guide-track-handle-right, .guide-track-drop-pill, .guide-track-fill-move, .guide-cursor-blink,
+  .guide-mode-off-fade, .guide-mode-on-fade { animation: none; }
+  .action-guide-enter, .guide-mode-reveal, .guide-mode-frame, .guide-track-piece { opacity: 1; transform: none; }
+  .guide-hook-icon-a { opacity: 1; }
+  .guide-hook-icon-b, .guide-hook-icon-c { opacity: 0; }
+  .guide-pool-digit-4 { opacity: 1; }
+  .guide-pool-digit-5, .guide-pool-digit-6 { opacity: 0; }
+  .guide-carousel:nth-child(2) { transform: translate(-50%, -50%) scale(1.08); z-index: 2; }
+  .guide-carousel:nth-child(1), .guide-carousel:nth-child(3) { transform: translate(-50%, -50%) scale(.72); opacity: .6; }
+  .guide-track-handle-right { transform: translateY(-50%); }
+  .guide-track-drop-pill { transform: translate(-50%, -50%); }
+  .guide-track-fill-move { transform: scaleX(1); }
+  .guide-cursor-blink { opacity: 1; }
+  .guide-mode-off-fade { opacity: 0; }
+  .guide-mode-on-fade { opacity: 1; }
+}
+
 .batch-loading-stripes {
   left: -20%;
   right: -20%;
@@ -43,6 +284,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .batch-loading-stripes { animation: none; }
+  .action-guide-enter { animation: none; }
+  .guide-mode-reveal,
+  .guide-mode-frame,
+  .guide-track-piece { animation: none; }
   /* без движения полоса всё равно остаётся залитой — смысл «без предела» не теряется */
   .limit-unlimited { animation: none; }
 }
@@ -134,6 +379,7 @@
      затемнением — видно сквозь дым, любой тап закрывал его вместо перехода */
   --z-drawer:  950;
   --z-modal:   1000;
+  --z-guidance: 1050;
   --z-toast:   1100;
 
   --plain-white: #ffffff;

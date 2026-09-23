@@ -1072,6 +1072,64 @@ class CreditsDB:
             )
             return row is not None
 
+    async def grant_initial_credits_once(
+        self,
+        tg_id: int,
+        credits: int,
+        track_credits: int,
+        *,
+        actor: str = "",
+    ) -> Dict[str, Any]:
+        """Grant the shared bot/web trial exactly once.
+
+        The user row is locked before checking the ledger. This keeps a web
+        login and Telegram onboarding from both granting the same trial when
+        they happen concurrently.
+        """
+        video_amount = max(0, int(credits))
+        track_amount = max(0, int(track_credits))
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "INSERT INTO users (tg_id, username) VALUES ($1, '') ON CONFLICT (tg_id) DO NOTHING",
+                    int(tg_id),
+                )
+                before = await conn.fetchrow(
+                    "SELECT credits, track_credits FROM users WHERE tg_id = $1 FOR UPDATE",
+                    int(tg_id),
+                )
+                already = await conn.fetchval(
+                    "SELECT 1 FROM transactions WHERE tg_id = $1 AND reason = 'initial_grant' LIMIT 1",
+                    int(tg_id),
+                )
+                if already is not None:
+                    return {
+                        "applied": False,
+                        "credits": int(before["credits"] or 0),
+                        "track_credits": int(before["track_credits"] or 0),
+                    }
+                after = await conn.fetchrow(
+                    "UPDATE users SET credits = credits + $1, track_credits = track_credits + $2, "
+                    "updated_at = NOW() WHERE tg_id = $3 RETURNING credits, track_credits",
+                    video_amount,
+                    track_amount,
+                    int(tg_id),
+                )
+                await conn.execute(
+                    "INSERT INTO transactions (tg_id, amount, reason, admin_note, actor) "
+                    "VALUES ($1, $2, 'initial_grant', $3, $4)",
+                    int(tg_id),
+                    video_amount,
+                    f"track_credits=+{track_amount}",
+                    _norm_text(actor, max_len=64),
+                )
+                return {
+                    "applied": True,
+                    "credits": int(after["credits"] or 0),
+                    "track_credits": int(after["track_credits"] or 0),
+                }
+
     async def get_balance(self, tg_id: int) -> int:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:

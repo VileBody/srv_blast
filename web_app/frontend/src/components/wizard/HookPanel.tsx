@@ -13,6 +13,10 @@ import { HookConfig, HookKind, HOOK_LABELS, hookComplete, hookPills, useWizardSt
 import effectsRegistry from '../../data/effects-registry.json';
 import { CatalogMedia } from './CatalogPreview';
 import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
+import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
+import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
+import { useGuideLiveDismissed } from '../guidance/guideLiveState';
+import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 
 /*
  * Этап «Хук» (Figma W18 → W24/32 → W25/34 → W26/28/29/30 → W27 → W31):
@@ -291,6 +295,94 @@ function clampDrop(value: string, durationS?: number): string {
   return `${mm}:${ss}`;
 }
 
+/** Мини-визуал первой подсказки хука: тайминг дропа — точка на дорожке. */
+/**
+ * Переиспользует визуальный язык самой первой подсказки (тайминг отрывка на треке):
+ * два тайминг-пила + тонкая шкала. Волну убрал — не читалась. Здесь не диапазон,
+ * а ОДНА точка (момент дропа) — вместо отдельной палочки+подписи сам пил «drop»
+ * сидит прямо на шкале и служит ручкой: он ближе к началу и он же дёргается
+ * (тот же принцип, что и в тайминге трека: анимируем ровно то, что тянут).
+ */
+function HookDropGuideVisual() {
+  return (
+    <div className="flex w-full items-center justify-center gap-[9px]" aria-hidden="true">
+      <span className="flex h-[38px] w-[58px] shrink-0 items-center justify-center whitespace-nowrap rounded-[8px] bg-white/[0.1] text-[15px] font-[400] leading-none text-white">
+        <span className="action-guide-optical-text action-guide-timing-text">00:14</span>
+      </span>
+      <span className="relative h-[4px] min-w-0 flex-1 rounded-full bg-white/25">
+        <span className="guide-track-drop-pill action-guide-optical-text absolute left-[26%] top-1/2 whitespace-nowrap rounded-[5px] bg-accent-light px-[7px] py-[3px] text-[8px] font-[400] text-white">drop</span>
+      </span>
+      <span className="flex h-[38px] w-[58px] shrink-0 items-center justify-center whitespace-nowrap rounded-[8px] bg-white/[0.1] text-[15px] font-[400] leading-none text-white">
+        <span className="action-guide-optical-text action-guide-timing-text">00:20</span>
+      </span>
+    </div>
+  );
+}
+
+/** Мини-визуал третьей подсказки хука: превью слева, «настройки» строчками справа. */
+/** Точь-в-точь композиция SubtitleStyleGuideVisual (3 карточки, средняя выбрана),
+ * только вместо иконки «T» — иконка стиля: и там, и там про выбор варианта из ряда. */
+function HookWorkzoneGuideVisual() {
+  // Три РАЗНЫЕ иконки — ровно то, что перечислено в тексте подсказки (склейка/стиль/превью),
+  // а не одна и та же картинка трижды.
+  const icons = ['/assets/figma/combo-transition.svg', '/assets/figma/combo-style.svg', '/assets/figma/btn-play.svg'];
+  return (
+    <div className="grid w-full grid-cols-3 gap-[7px]" aria-hidden="true">
+      {icons.map((src, index) => (
+        <span
+          key={src}
+          className={cn(
+            'guide-mode-reveal relative flex h-[46px] items-center justify-center overflow-hidden rounded-[8px] bg-gradient-to-b from-[#42335e] to-[#181126]',
+            index === 0 ? 'guide-mode-delay-1' : index === 1 ? 'guide-mode-delay-2' : 'guide-mode-delay-3',
+            index === 1 && 'ring-2 ring-inset ring-accent-light'
+          )}
+        >
+          <img src={src} width="18" height="18" alt="" className="opacity-90" />
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Мини-визуал «Выбери тип хука»: центральный пил — сплошной (не полупрозрачный,
+ * иначе боковые пилы под ним просвечивают) и крутит ТРИ иконки кросс-фейдом
+ * (guide-hook-icon-a/b/c, один кадр-keyframe + отрицательные animation-delay —
+ * без дублирования кейфреймов), показывая, что слот подставляет РАЗНЫЕ типы хука.
+ */
+function HookTypeGuideVisual() {
+  return (
+    <div className="flex w-full items-center justify-center" aria-hidden="true">
+      <span className="guide-mode-reveal guide-mode-delay-1 relative z-[1] mr-[-14px] flex h-[52px] w-[44px] shrink-0 items-center justify-center rounded-[11px] bg-white/[0.06] opacity-55">
+        <SvgMaskIcon src="/assets/figma/hook-sound.svg" style={{ width: 12, height: 14, color: 'rgba(255,255,255,.7)' }} />
+      </span>
+      {/*
+        Три слоя, каждый со своим transform-заданием (иначе бегущая анимация просто
+        затирает предыдущую на том же свойстве):
+        1) внешний — только позиционирование в ряду + одноразовое появление;
+        2) средний — ВИДИМЫЙ пил (фон/тень/рамка) — это он трясётся, не иконка;
+        3) внутренний слой иконок — только opacity-кроссфейд, transform не трогает.
+      */}
+      <span className="guide-mode-reveal guide-mode-delay-2 relative z-[2] flex h-[66px] w-[60px] shrink-0 items-center justify-center">
+        <span className="guide-hook-shake relative flex h-full w-full items-center justify-center overflow-hidden rounded-[14px] bg-[#6850b7] shadow-[0_10px_22px_rgba(5,1,15,.4),inset_0_0_0_1.5px_var(--accent-light)]">
+          <span className="guide-hook-icon-a absolute inset-0 flex items-center justify-center">
+            <SvgMaskIcon src="/assets/figma/icon-bolt.svg" style={{ width: 15, height: 18, color: '#fff' }} />
+          </span>
+          <span className="guide-hook-icon-b absolute inset-0 flex items-center justify-center">
+            <SvgMaskIcon src="/assets/figma/hook-object.svg" style={{ width: 20, height: 20, color: '#fff' }} />
+          </span>
+          <span className="guide-hook-icon-c absolute inset-0 flex items-center justify-center">
+            <SvgMaskIcon src="/assets/figma/hook-effects.svg" style={{ width: 20, height: 20, color: '#fff' }} />
+          </span>
+        </span>
+      </span>
+      <span className="guide-mode-reveal guide-mode-delay-3 relative z-[1] ml-[-14px] flex h-[52px] w-[44px] shrink-0 items-center justify-center rounded-[11px] bg-white/[0.06] opacity-55">
+        <SvgMaskIcon src="/assets/figma/hook-thought.svg" style={{ width: 12, height: 13, color: 'rgba(255,255,255,.7)' }} />
+      </span>
+    </div>
+  );
+}
+
 export function StageHooks() {
   const { t } = useTranslation();
   const chip = useChip();
@@ -300,6 +392,23 @@ export function StageHooks() {
   const track = useWizardStore((state) => state.track);
   const timingFrom = useWizardStore((state) => state.timingFrom);
   const timingTo = useWizardStore((state) => state.timingTo);
+  const dropGuideTargetRef = useRef<HTMLDivElement>(null);
+  const typeGuideTargetRef = useRef<HTMLDivElement>(null);
+  // typeGuideDismissed объявлен первым: idle-условие drop-гайда («мы ещё не ушли
+  // дальше по цепочке») на него ссылается. visible=false у type: пререквизит
+  // «drop уже закрыт» тут не собрать (dropGuideDismissed объявлен НИЖЕ) — иначе
+  // при уже заданном dropTime (у юзера с готовой задачей) оба гайда, drop и
+  // type, всплыли бы разом — раньше их разводило только значение dropTime
+  // (пусто/не пусто), теперь оба не гейтятся задачей и без явной
+  // последовательности пересекаются. Показ отмечаем отдельно после
+  // showTypeGuide (см. ниже), когда dropGuideDismissed уже посчитан.
+  const [typeGuideDismissed, setTypeGuideDismissed] = useGuideDismiss('hook-type', Boolean(hooks.dropTime) && !hooks.kind, false);
+  const [dropGuideDismissed, setDropGuideDismissed] = useGuideDismiss('hook-drop', !hooks.dropTime && !typeGuideDismissed, true);
+  const showDropGuide = !dropGuideDismissed;
+  const showTypeGuide = Boolean(hooks.dropTime) && dropGuideDismissed && !typeGuideDismissed;
+  useMarkGuideSeen('hook-type', Boolean(hooks.dropTime) && dropGuideDismissed);
+  useScrollGuideIntoView(showDropGuide, dropGuideTargetRef);
+  useScrollGuideIntoView(showTypeGuide, typeGuideTargetRef);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
   // Окно отрывка — часть ключа: выбрал другой кусок трека → другие кандидаты дропа.
   // Сохранённый режим тайминга может быть старым, поэтому готовность определяют сами
@@ -358,7 +467,7 @@ export function StageHooks() {
       )}
 
       {/* Тайминг дропа (Figma 606:217): панель 620×60, активный чип — пил во всю высоту */}
-      <div className="mt-[20px] flex h-[60px] shrink-0 items-stretch rounded-r15 bg-grad-soft-10 max-md:mt-[12px] max-md:h-[48px]">
+      <div ref={dropGuideTargetRef} className="mt-[20px] flex h-[60px] shrink-0 items-stretch rounded-r15 bg-grad-soft-10 max-md:mt-[12px] max-md:h-[48px]">
         {dropsLoading && [0, 1, 2].map((index) => (
           <span key={index} className="flex h-full flex-1 items-center justify-center" aria-hidden="true">
             <span className="h-[26px] w-[92px] animate-pulse rounded-[8px] bg-accent-20" />
@@ -392,9 +501,18 @@ export function StageHooks() {
             onChange={(e: ChangeEvent<HTMLInputElement>) => { e.target.value = clampDrop(e.target.value, track?.durationS); }}
             onBlur={(e) => {
               const value = clampDrop(e.target.value, track?.durationS);
+              // Пустое поле — осознанный сброс дропа (стереть и начать заново), а не опечатка:
+              // раньше пустое значение просто игнорировалось и старый дроп молча оставался
+              // в сторе — стереть тайминг из интерфейса было нечем.
+              if (!value) {
+                setDropError(false);
+                setHooks({ dropTime: '' });
+                setCustomDrop(false);
+                return;
+              }
               const seconds = dropToSeconds(value);
               const valid = seconds !== null && clipFromS !== null && clipToS !== null && seconds >= clipFromS && seconds <= clipToS;
-              setDropError(Boolean(value) && !valid);
+              setDropError(!valid);
               if (valid) setHooks({ dropTime: value });
               setCustomDrop(false);
             }}
@@ -416,10 +534,23 @@ export function StageHooks() {
 
       {(dropError || storedDropOutside) && <p className="mt-[8px] shrink-0 text-[14px] leading-[1.3] text-[var(--warning)]">{t('wizard.fx.dropOutsideClip')}</p>}
 
+      <ActionGuideOverlay
+        open={showDropGuide}
+        targetRef={dropGuideTargetRef}
+        title={t('wizard.fx.guideDropTitle')}
+        text={t('wizard.fx.guideDropText')}
+        dismissLabel={t('wizard.fx.guideNext')}
+        progressLabel={t('wizard.guideProgress', { current: 1, total: 3 })}
+        onDismiss={() => setDropGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<HookDropGuideVisual />}
+      />
+
       <p className="wizard-body mt-[28px] shrink-0 max-md:mt-[16px]">{t('wizard.fx.chooseType')}</p>
 
       {/* Список типов: строки 620×80, скролл уходит под градиентные фейды (Figma Rectangle 771/772) */}
-      <div className="relative mt-[12px] min-h-0 flex-1 max-md:mt-[8px]">
+      <div ref={typeGuideTargetRef} className="relative mt-[12px] min-h-0 flex-1 max-md:mt-[8px]">
         <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px] max-md:gap-[10px] max-md:py-0" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
           {HOOK_TYPES.map((item) => {
             const active = hooks.kind === item.kind;
@@ -470,6 +601,19 @@ export function StageHooks() {
           })}
         </div>
       </div>
+
+      <ActionGuideOverlay
+        open={showTypeGuide}
+        targetRef={typeGuideTargetRef}
+        title={t('wizard.fx.guideTypeTitle')}
+        text={t('wizard.fx.guideTypeText')}
+        dismissLabel={t('wizard.fx.guideNext')}
+        progressLabel={t('wizard.guideProgress', { current: 2, total: 3 })}
+        onDismiss={() => setTypeGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<HookTypeGuideVisual />}
+      />
     </div>
   );
 }
@@ -746,9 +890,19 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const pillsScroll = useDragScroll();
   const [step, setStep] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  const workzoneGuideTargetRef = useRef<HTMLDivElement>(null);
 
   const kind = hooks.kind;
   const config = (kind && hooks.configs[kind]) || {};
+  // Третий гайд хука: тип уже выбран. Раньше подсказка 2/3 (hook-type, в
+  // StageHooks) сама пряталась условием !hooks.kind — теперь она гейтится
+  // только своим dismissed, и её можно оставить открытой, выбрав тип кликом
+  // мимо кнопки подсказки, поэтому ждём его ЖИВОГО dismissed явно — иначе
+  // hook-type (левая панель) и этот гайд (правая) всплывают одновременно.
+  const typeGuideDismissed = useGuideLiveDismissed('hook-type');
+  const [workzoneGuideDismissed, setWorkzoneGuideDismissed] = useGuideDismiss('hook-workzone', Boolean(kind), Boolean(kind) && typeGuideDismissed);
+  const showWorkzoneGuide = Boolean(kind) && typeGuideDismissed && !workzoneGuideDismissed;
+  useScrollGuideIntoView(showWorkzoneGuide, workzoneGuideTargetRef);
   /*
    * Смена типа хука начинает его настройку с первого шага. Без сброса переключение
    * с недонастроенных «Эффектов» на «Звук» открывало бы сразу шаг «стиль».
@@ -834,7 +988,7 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
           onNext={onNext}
         />
       )}
-      <div className="card-2 flex min-h-0 flex-1 flex-col gap-space-5 px-space-6 py-space-6 max-lg:px-space-5">
+      <div ref={workzoneGuideTargetRef} className="card-2 flex min-h-0 flex-1 flex-col gap-space-5 px-space-6 py-space-6 max-lg:px-space-5">
         {/* Figma W41: разворот в фуллскрин — в правом верхнем углу FX-зоны */}
         <div className="flex shrink-0 items-center justify-between gap-space-3">
           <h2 className="wizard-h whitespace-nowrap">{t('wizard.workZone')}</h2>
@@ -862,6 +1016,19 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
 
         {settings}
       </div>
+
+      <ActionGuideOverlay
+        open={showWorkzoneGuide}
+        targetRef={workzoneGuideTargetRef}
+        title={t('wizard.fx.guideWorkzoneTitle')}
+        text={t('wizard.fx.guideWorkzoneText')}
+        dismissLabel={t('wizard.fx.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 3, total: 3 })}
+        onDismiss={() => setWorkzoneGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<HookWorkzoneGuideVisual />}
+      />
 
       <PillsFooter
         pills={pills.map((pill) => ({

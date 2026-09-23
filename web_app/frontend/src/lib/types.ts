@@ -414,6 +414,11 @@ export interface WebProductMetrics {
   pages: Array<{ route: string; events: number; users: number }>;
   wizardStages: Array<{ stage: string; events: number; users: number }>;
   actions: Array<{ name: string; events: number; users: number }>;
+  guideTour: {
+    seen: Array<{ guideId: string; events: number; users: number }>;
+    dismissed: Array<{ guideId: string; events: number; users: number }>;
+    idleReactivated: Array<{ guideId: string; events: number; users: number }>;
+  };
 }
 
 export interface AnalyticsResponse {

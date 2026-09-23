@@ -1,4 +1,4 @@
-import React, { ReactNode, useEffect, useMemo, useState } from 'react';
+import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { usePhone } from '../../lib/usePhone';
 import { cn } from '../../lib/cn';
@@ -7,6 +7,68 @@ import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { LimitsIndicator } from '../ui/LimitsIndicator';
 import { BackSquareButton } from './WizardFrame';
 import { HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
+import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
+import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
+import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
+
+/** Мини-визуал первой подсказки пула: счётчик роликов растёт. */
+/**
+ * Мини-визуал «Сколько видео сделать»: один пил-степпер (как в реальном UI), «+»
+ * проседает под «нажатием», а цифра листается вверх новым значением — показываем
+ * ДЕЙСТВИЕ (жми +, счётчик растёт), а не абстрактное сравнение двух чисел.
+ */
+/**
+ * Мини-визуал «Сколько видео сделать»: полный цикл степпера — «+» дважды (4→5→6),
+ * потом «−» дважды (6→5→4), луп. Три цифры кросс-фейдятся по расписанию (guide-pool-digit-4/5/6),
+ * кнопки проседают ровно в момент своего «нажатия» (guide-pool-plus/-minus).
+ * Цифры и +/− — белые (были в цвет текста/приглушённые, плохо читались);
+ * весь текст опущен на 1px — тот же приём, что и в остальных гайдах.
+ */
+function PoolTotalGuideVisual() {
+  return (
+    <div className="guide-track-piece guide-mode-delay-1 flex w-full items-center justify-center" aria-hidden="true">
+      <span className="flex h-[38px] items-center gap-[10px] rounded-r15 bg-accent-20 px-[14px] text-[15px] leading-none text-white shadow-[inset_0_0_0_1px_var(--accent-light)]">
+        <span className="guide-pool-minus flex h-[22px] w-[22px] items-center justify-center rounded-[7px] bg-white/10 text-white">−</span>
+        <span className="relative h-[18px] w-[14px] overflow-hidden">
+          <strong className="guide-pool-digit-4 absolute inset-0 flex items-center justify-center font-[400] leading-none text-white" style={{ transform: 'translateY(1px)' }}>4</strong>
+          <strong className="guide-pool-digit-5 absolute inset-0 flex items-center justify-center font-[400] leading-none text-white" style={{ transform: 'translateY(1px)' }}>5</strong>
+          <strong className="guide-pool-digit-6 absolute inset-0 flex items-center justify-center font-[400] leading-none text-white" style={{ transform: 'translateY(1px)' }}>6</strong>
+        </span>
+        <span className="guide-pool-plus flex h-[22px] w-[22px] items-center justify-center rounded-[7px] bg-accent-light text-white">+</span>
+      </span>
+    </div>
+  );
+}
+
+/** Мини-визуал второй подсказки пула: распределение по группам. */
+function PoolDistributeGuideVisual() {
+  const rows = ['Фон', 'Субтитры', 'Хук'];
+  return (
+    <div className="flex w-full flex-col gap-[6px]" aria-hidden="true">
+      {rows.map((label, index) => (
+        <span
+          key={label}
+          className={cn(
+            'guide-mode-reveal flex h-[22px] items-center justify-between rounded-[7px] bg-white/[0.05] px-[8px] text-[9px] leading-none text-white/70',
+            index === 0 ? 'guide-mode-delay-1' : index === 1 ? 'guide-mode-delay-2' : 'guide-mode-delay-3'
+          )}
+        >
+          <span className="truncate leading-none" style={{ transform: 'translateY(1px)' }}>{label}</span>
+          {/* Пульс идёт по очереди строка за строкой (задержка = index) — читается как
+              «каждая группа получает свою долю», а не как случайное мигание. Цифра и
+              +/− — белые (в цвет акцента читались плохо); 1px-сдвиг — на вложенном
+              спане, отдельно от пульса: бегущая анимация transform иначе затёрла бы
+              статичный translateY, заданный на том же элементе. */}
+          <span className="guide-pulse flex items-center gap-[4px] rounded-[5px] bg-accent-20 px-[5px] py-[1px]" style={{ animationDelay: `${index * 0.7}s` }}>
+            <span className="flex items-center gap-[4px] leading-none text-white" style={{ transform: 'translateY(1px)' }}>
+              <span>−</span><b className="leading-none">2</b><span>+</span>
+            </span>
+          </span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 /*
  * Этап «Пул» (Figma W19 → W33): «Всего видео» закреплён сверху, секции скроллятся
@@ -199,10 +261,30 @@ export function StageSlice() {
     return [base, tail].filter(Boolean).join(' · ');
   };
 
+  const totalGuideTargetRef = useRef<HTMLDivElement>(null);
+  const distributeGuideTargetRef = useRef<HTMLDivElement>(null);
+  const hasUnallocated = bgRest !== 0 || subsRest !== 0 || hooksRest !== 0 || stylesRest !== 0;
+  // distribute объявлен первым: idle-условие total-гайда («мы ещё не ушли дальше»)
+  // на его dismissed-значение ссылается. visible=false у distribute: точный
+  // пререквизит «total уже закрыт» тут не собрать (totalGuideDismissed объявлен
+  // НИЖЕ) — показ отмечаем отдельно через useMarkGuideSeen после showDistributeGuide.
+  const [distributeGuideDismissed, setDistributeGuideDismissed] = useGuideDismiss('pool-distribute', hasUnallocated, false);
+  const [totalGuideDismissed, setTotalGuideDismissed] = useGuideDismiss('pool-total', !distributeGuideDismissed, true);
+  const showTotalGuide = !totalGuideDismissed;
+  const showDistributeGuide = totalGuideDismissed && !distributeGuideDismissed;
+  useMarkGuideSeen('pool-distribute', totalGuideDismissed);
+
+  // Явный скролл к цели до собственного instant-scrollIntoView оверлея: без него
+  // цель может остаться частично за пределами внешнего скролл-контейнера страницы,
+  // и рамка-обводка (она аккуратно клипуется по видимым границам предков) кажется
+  // «обрезанной» — хотя технически это верное поведение для частично видимой цели.
+  useScrollGuideIntoView(showTotalGuide, totalGuideTargetRef);
+  useScrollGuideIntoView(showDistributeGuide, distributeGuideTargetRef);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* «Всего видео» неподвижен; секции скроллятся под ним */}
-      <div className="relative z-[5] shrink-0">
+      <div ref={totalGuideTargetRef} className="relative z-[5] shrink-0">
         <div className="relative flex h-[80px] items-center justify-between rounded-r15 border-2 border-accent-light bg-grad-soft-10 px-space-6 max-md:h-auto max-md:flex-wrap max-md:gap-x-[10px] max-md:gap-y-[8px] max-md:px-space-4 max-md:py-[10px]">
           <span className="wizard-h !text-[28px] max-xl:!text-[22px] max-md:!text-[18px]">{t('wizard.pool.total')}</span>
           {/* Figma W19: кружок-индикатор лимита в 20px справа от «+» (W46 — поповер по ховеру).
@@ -222,8 +304,21 @@ export function StageSlice() {
         </div>
       </div>
 
+      <ActionGuideOverlay
+        open={showTotalGuide}
+        targetRef={totalGuideTargetRef}
+        title={t('wizard.pool.guideTotalTitle')}
+        text={t('wizard.pool.guideTotalText')}
+        dismissLabel={t('wizard.pool.guideNext')}
+        progressLabel={t('wizard.guideProgress', { current: 1, total: 2 })}
+        onDismiss={() => setTotalGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<PoolTotalGuideVisual />}
+      />
+
       {/* Скролл секций с постоянными фейдами сверху/снизу — как на списке типов хука */}
-      <div className="relative mt-space-5 min-h-0 flex-1">
+      <div ref={distributeGuideTargetRef} className="relative mt-space-5 min-h-0 flex-1">
         <div className="no-scrollbar flex h-full flex-col gap-space-5 overflow-y-auto py-[12px]" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)' }}>
         <SectionCard title={t('wizard.pool.background')} note={restNote(bgRest, t('wizard.pool.bgNote', { count: bgTarget }))} warn={bgRest !== 0}>
           {units.map((unit) => (
@@ -298,6 +393,19 @@ export function StageSlice() {
         )}
         </div>
       </div>
+
+      <ActionGuideOverlay
+        open={showDistributeGuide}
+        targetRef={distributeGuideTargetRef}
+        title={t('wizard.pool.guideDistributeTitle')}
+        text={t('wizard.pool.guideDistributeText')}
+        dismissLabel={t('wizard.pool.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 2, total: 2 })}
+        onDismiss={() => setDistributeGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<PoolDistributeGuideVisual />}
+      />
     </div>
   );
 }

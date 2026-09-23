@@ -1001,6 +1001,14 @@ _BASE_HEAD = """
   .seg a:hover { color: var(--text); text-decoration: none; }
   .seg .on { background: var(--text); color: var(--bg); font-weight: 600; }
 
+  /* Form-safe segmented switch (video credits / unique tracks). */
+  .credit-switch { display: inline-flex; width: fit-content; background: var(--surface-2); border-radius: 999px; padding: 3px; gap: 2px; }
+  .credit-switch label { cursor: pointer; margin: 0; }
+  .credit-switch input { position: absolute; opacity: 0; pointer-events: none; }
+  .credit-switch span { display: block; padding: 7px 15px 5px; border-radius: 999px; color: var(--text-50); font-size: .9em; line-height: 1.3; }
+  .credit-switch input:checked + span { background: var(--text); color: var(--bg); font-weight: 600; }
+  .credit-switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+
   /* Stat tiles (legacy KPI cards) */
   .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 0.5rem 0 1rem; }
   .stat-tile { background: var(--surface-2); border: 0; border-radius: 14px; padding: 1rem 1.2rem; }
@@ -2950,6 +2958,7 @@ def build_app(
         user = await credits_db.get_user(tg_id)
         if not user:
             raise HTTPException(404, "User not found")
+        track_balance = await credits_db.get_track_balance(tg_id)
         uname = f"@{user['username']}" if user["username"] else str(tg_id)
 
         # Current stage from Redis
@@ -3135,8 +3144,9 @@ def build_app(
                 </div>
               </div>
             </div>
-            <div class="pm-kpis" style="grid-template-columns: repeat(4, minmax(120px, auto)); gap: 12px 26px">
-              <div class="pm-kpi"><div class="l">Баланс</div><div class="v acc" style="font-size:1.7em">{user['credits']}</div><div class="s">кредитов</div></div>
+            <div class="pm-kpis" style="grid-template-columns: repeat(5, minmax(105px, auto)); gap: 12px 22px">
+              <div class="pm-kpi"><div class="l">Видео</div><div class="v acc" style="font-size:1.7em">{user['credits']}</div><div class="s">кредитов</div></div>
+              <div class="pm-kpi"><div class="l">Треки</div><div class="v acc" style="font-size:1.7em">{track_balance}</div><div class="s">новых треков</div></div>
               <div class="pm-kpi"><div class="l">Роликов</div><div class="v" style="font-size:1.7em">{metrics['gens_done']}</div><div class="s">за 30 дн — {metrics['gens_done_30d']}</div></div>
               <div class="pm-kpi"><div class="l">Выручка</div><div class="v" style="font-size:1.7em">{f"{metrics['revenue_rub']:,}".replace(",", " ")} ₽</div><div class="s">бот {f"{metrics.get('revenue_bot', 0):,}".replace(",", " ")} · вручную {f"{metrics.get('revenue_manual', 0):,}".replace(",", " ")}</div></div>
               <div class="pm-kpi"><div class="l">Оплат</div><div class="v" style="font-size:1.7em">{metrics['paid_orders']}</div><div class="s">последний ролик {metrics['last_gen_at'] or '—'}</div></div>
@@ -3210,11 +3220,15 @@ def build_app(
               </form>
             </div>
             <div class="pm-panel" style="gap:10px">
-              <div class="ph"><b>Начислить кредиты</b></div>
+              <div class="ph"><b>Изменить лимит</b><span>видео или треки</span></div>
               <form method="post" action="/admin/users/{tg_id}/credits" class="stack" style="gap:8px">
+                <div class="credit-switch" role="radiogroup" aria-label="Тип лимита">
+                  <label><input type="radio" name="credit_kind" value="video" checked><span>Видео</span></label>
+                  <label><input type="radio" name="credit_kind" value="track"><span>Треки</span></label>
+                </div>
                 <div class="row"><input type="number" name="amount" value="0" min="-1000" max="10000" style="width:110px"><input type="text" name="reason" placeholder="причина" style="flex:1;min-width:120px"></div>
                 <div class="row"><input type="text" name="order_id" placeholder="заказ (необязательно)" style="flex:1;min-width:120px"><input type="text" name="note" placeholder="заметка" style="flex:1;min-width:120px"></div>
-                <button type="submit" class="btn-secondary" style="align-self:flex-start">Начислить</button>
+                <button type="submit" class="btn-secondary" style="align-self:flex-start">Применить</button>
               </form>
             </div>
             <div class="pm-panel" style="gap:10px">
@@ -3233,6 +3247,7 @@ def build_app(
     @app.post("/admin/users/{tg_id}/credits")
     async def user_add_credits(
         tg_id: int,
+        credit_kind: str = Form(...),
         amount: int = Form(...),
         reason: str = Form("admin_panel"),
         order_id: str = Form(""),
@@ -3241,14 +3256,34 @@ def build_app(
     ) -> RedirectResponse:
         note_parts = [str(note or "").strip(), f"via panel by {_user}"]
         merged_note = " | ".join(part for part in note_parts if part)
-        await credits_db.add_credits(
-            tg_id,
-            amount,
-            reason,
-            admin_note=merged_note,
-            actor=_user,
-            order_id=str(order_id or "").strip(),
-        )
+        order_id_clean = str(order_id or "").strip()
+        if credit_kind == "video":
+            await credits_db.add_credits(
+                tg_id,
+                amount,
+                reason,
+                admin_note=merged_note,
+                actor=_user,
+                order_id=order_id_clean,
+            )
+        elif credit_kind == "track":
+            track_note_parts = [merged_note]
+            if order_id_clean:
+                track_note_parts.append(f"order {order_id_clean}")
+            await credits_db.add_track_credits(
+                tg_id,
+                amount,
+                reason,
+                admin_note=" | ".join(part for part in track_note_parts if part),
+            )
+            await credits_db.audit_log(
+                _user,
+                "user_track_credits",
+                str(tg_id),
+                f"amount={amount} reason={reason} order_id={order_id_clean}",
+            )
+        else:
+            raise HTTPException(422, "credit_kind must be 'video' or 'track'")
         return RedirectResponse(f"/admin/users/{tg_id}", status_code=303)
 
     # ── Activate package (external payment) ───────────────────────────

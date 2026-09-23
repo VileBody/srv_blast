@@ -66,6 +66,9 @@ _PAYMENT_PLAN = {
     "50": "IMPULSE", "импульс": "IMPULSE",
 }
 
+TRIAL_VIDEO_CREDITS = 5
+TRIAL_TRACK_CREDITS = 1
+
 
 def _iso(value: Any) -> str | None:
     if value is None:
@@ -214,7 +217,18 @@ class BillingBackend:
         return await self._db.sync_web_activity(events)
 
     async def ensure_user(self, tg_id: int, username: str = "") -> None:
-        await self._db.ensure_user(int(tg_id), username)
+        tg_id = int(tg_id)
+        await self._db.ensure_user(tg_id, username)
+        # Web-only registrations do not pass through the Telegram bot's
+        # subscription onboarding, which used to leave the advertised trial
+        # at 0/0. The shared ledger marker repairs existing affected accounts
+        # and makes repeated /api/me snapshots harmless.
+        await self._db.grant_initial_credits_once(
+            tg_id,
+            TRIAL_VIDEO_CREDITS,
+            TRIAL_TRACK_CREDITS,
+            actor="blast_web",
+        )
 
     async def snapshot(self, tg_id: int) -> dict[str, Any]:
         tg_id = int(tg_id)
@@ -236,8 +250,8 @@ class BillingBackend:
         latest_sub = await self._latest_subscription(tg_id)
 
         if tier == "TRIAL":
-            total = 5
-            tracks_total = 1
+            total = TRIAL_VIDEO_CREDITS
+            tracks_total = TRIAL_TRACK_CREDITS
             plan_kind = "trial"
             billing_status = "trial"
             started_at = None
@@ -301,6 +315,7 @@ class BillingBackend:
         }
 
     async def can_upload_track(self, tg_id: int, audio_hash: str) -> bool:
+        await self.ensure_user(int(tg_id))
         if await self._db.has_track_hash(int(tg_id), audio_hash):
             return True
         if await self._db.is_track_unlimited(int(tg_id)):
