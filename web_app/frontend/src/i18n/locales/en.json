@@ -294,7 +294,7 @@
     "trackLabel": "Upload the track",
     "trackDrop": "Drag or upload MP3, WAV",
     "trackUploading": "Uploading…",
-    "trackFormat": "An audio file is required: MP3 or WAV",
+    "trackFormat": "An audio file is required: MP3, WAV, M4A, OGG or FLAC",
     "trackFailed": "Could not upload the track",
     "trackReady": "Track is in — you will not upload it again in the wizard",
     "nameFromTrack": "Name taken from the file — feel free to edit",
@@ -416,6 +416,7 @@
       "timingHint": "Set the start and end time — minutes and seconds, ms optional",
       "loaded": "Track uploaded",
       "loadFail": "Failed to upload track",
+      "audioOnly": "Only audio files are allowed here: MP3, WAV, M4A, OGG or FLAC",
       "limitReached": "Track limit reached",
       "limitCta": "Upgrade plan",
       "nameFallback": "Track name",
@@ -623,6 +624,7 @@
       "qrPending": "QR appears once the backend issues an upload link",
       "uploaded": "Source uploaded",
       "uploadFail": "Could not upload source",
+      "videoOnly": "Only video files are allowed here",
       "close": "Close",
       "rules": "{{format}} video, 1–600 seconds. Up to 200 MB per file, 50 files / 2 GB per account.",
       "qrAlt": "Phone upload QR",
@@ -667,7 +669,9 @@
       "drop": "Drop or upload a file",
       "back": "Choose another format",
       "processing": "Processing…",
-      "tooLarge": "File exceeds 200 MB"
+      "tooLarge": "File exceeds 200 MB",
+      "audioOnly": "Choose an audio file for the Audio option",
+      "videoOnly": "Choose a video file for the Video option"
     }
   },
   "chip": {

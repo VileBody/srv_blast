@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, durationLabel } from '../../lib/api';
+import { AUDIO_FILE_ACCEPT, isAudioFile } from '../../lib/mediaFiles';
 import type { SavedTrack } from '../../lib/types';
 import { useToast } from '../../contexts/ToastContext';
 import { useWizardStore } from '../../stores/wizardStore';
@@ -174,6 +175,26 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
     acceptCover(event.dataTransfer.files?.[0]);
   };
 
+  const acceptTrack = (file?: File) => {
+    if (!file) return;
+    if (!isAudioFile(file)) {
+      push({ variant: 'error', title: t('projectModal.trackFormat') });
+      return;
+    }
+    trackMutation.mutate(file);
+  };
+
+  const onTrackInput = (event: ChangeEvent<HTMLInputElement>) => {
+    acceptTrack(event.target.files?.[0]);
+    // Даёт повторно выбрать тот же файл после ошибки загрузки.
+    event.target.value = '';
+  };
+
+  const onTrackDrop = (event: DragEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    acceptTrack(event.dataTransfer.files?.[0]);
+  };
+
   if (!open) return null;
   const busy = createMutation.isPending;
 
@@ -203,17 +224,9 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
           <input
             ref={trackInputRef}
             type="file"
-            accept="audio/*"
+            accept={AUDIO_FILE_ACCEPT}
             className="sr-only"
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (!file) return;
-              if (!file.type.startsWith('audio/')) {
-                push({ variant: 'error', title: t('projectModal.trackFormat') });
-                return;
-              }
-              trackMutation.mutate(file);
-            }}
+            onChange={onTrackInput}
           />
           {track ? (
             /* Проверка «тот ли файл»: прослушать, увидеть длительность, заменить одним кликом */
@@ -249,6 +262,8 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
               type="button"
               disabled={busy || trackMutation.isPending}
               onClick={() => trackInputRef.current?.click()}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={onTrackDrop}
               className="dash-panel mt-[16px] flex h-[86px] w-full items-center justify-center gap-[16px] px-[20px] transition hover:brightness-125 disabled:opacity-60"
             >
               <span className="text-[16px] font-[350] leading-[19px] text-text-80">
