@@ -25,6 +25,9 @@ class OpenRouterSettings:
 
 
 class OpenRouterClient:
+    _provider_name = "openrouter"
+    _settings_name = "OpenRouterSettings"
+
     def __init__(
         self,
         settings: OpenRouterSettings,
@@ -32,7 +35,7 @@ class OpenRouterClient:
         logger: Optional[logging.Logger] = None,
         request_func: Optional[Callable[..., httpx.Response]] = None,
     ):
-        self._logger = logger or logging.getLogger("mlcore.openrouter_client")
+        self._logger = logger or logging.getLogger(f"mlcore.{self._provider_name}_client")
         self._api_key = (settings.api_key or "").strip()
         self._model = (settings.model or "").strip()
         self._temperature = float(settings.temperature)
@@ -41,17 +44,17 @@ class OpenRouterClient:
         self._request_func = request_func or httpx.post
 
         if not self._api_key:
-            raise RuntimeError("OpenRouterSettings.api_key is empty")
+            raise RuntimeError(f"{self._settings_name}.api_key is empty")
         if not self._model:
-            raise RuntimeError("OpenRouterSettings.model is empty")
+            raise RuntimeError(f"{self._settings_name}.model is empty")
         if not self._base_url:
-            raise RuntimeError("OpenRouterSettings.base_url is empty")
+            raise RuntimeError(f"{self._settings_name}.base_url is empty")
 
     def _audio_format(self, p: Path) -> str:
         ext = p.suffix.lower().lstrip(".")
         if ext in {"mp3", "wav", "m4a", "aac", "flac", "ogg"}:
             return ext
-        raise RuntimeError(f"openrouter_unsupported_audio_format: {p.name}")
+        raise RuntimeError(f"{self._provider_name}_unsupported_audio_format: {p.name}")
 
     def _audio_part(self, p: Path) -> Dict[str, Any]:
         raw = p.read_bytes()
@@ -67,11 +70,11 @@ class OpenRouterClient:
     def _extract_text(self, obj: Dict[str, Any]) -> str:
         choices = obj.get("choices")
         if not isinstance(choices, list) or not choices:
-            raise RuntimeError(f"openrouter_bad_response_no_choices: {obj!r}")
+            raise RuntimeError(f"{self._provider_name}_bad_response_no_choices: {obj!r}")
 
         message = choices[0].get("message")
         if not isinstance(message, dict):
-            raise RuntimeError(f"openrouter_bad_response_no_message: {obj!r}")
+            raise RuntimeError(f"{self._provider_name}_bad_response_no_message: {obj!r}")
 
         content = message.get("content")
         if isinstance(content, str):
@@ -84,7 +87,7 @@ class OpenRouterClient:
             text = "".join(pieces).strip()
             if text:
                 return text
-        raise RuntimeError(f"openrouter_bad_response_no_text_content: {obj!r}")
+        raise RuntimeError(f"{self._provider_name}_bad_response_no_text_content: {obj!r}")
 
     def _strip_json_fence(self, text: str) -> str:
         s = (text or "").strip()
@@ -113,9 +116,9 @@ class OpenRouterClient:
                 timeout=self._timeout_s,
             )
         except httpx.TimeoutException as e:
-            raise RuntimeError(f"openrouter_timeout: {e!r}") from e
+            raise RuntimeError(f"{self._provider_name}_timeout: {e!r}") from e
         except httpx.TransportError as e:
-            raise RuntimeError(f"openrouter_transport_error: {e!r}") from e
+            raise RuntimeError(f"{self._provider_name}_transport_error: {e!r}") from e
 
         if int(resp.status_code) >= 400:
             body = ""
@@ -124,7 +127,7 @@ class OpenRouterClient:
             except Exception:  # noqa: BLE001
                 body = "<unreadable>"
             raise RuntimeError(
-                f"openrouter_http_error status={resp.status_code} body={body[:2000]!r}"
+                f"{self._provider_name}_http_error status={resp.status_code} body={body[:2000]!r}"
             )
 
         try:
@@ -136,7 +139,7 @@ class OpenRouterClient:
             except Exception:  # noqa: BLE001
                 text = "<unreadable>"
             raise RuntimeError(
-                f"openrouter_bad_json_response err={e!r} text_head={text[:2000]!r}"
+                f"{self._provider_name}_bad_json_response err={e!r} text_head={text[:2000]!r}"
             ) from e
 
     def _messages(
@@ -188,7 +191,7 @@ class OpenRouterClient:
         audio_paths: Optional[List[Path]],
         raw_response_path: Optional[Path],
     ) -> str:
-        payload = {
+        payload: Dict[str, Any] = {
             "model": self._model,
             "temperature": self._temperature,
             "messages": self._messages(
@@ -197,16 +200,25 @@ class OpenRouterClient:
                 audio_paths=audio_paths,
             ),
             "response_format": self._response_format(schema_model=schema_model),
-            "provider": self._provider_payload(),
         }
-        self._logger.info("openrouter_call model=%s timeout_s=%s", self._model, self._timeout_s)
+        provider_payload = self._provider_payload()
+        if provider_payload:
+            payload["provider"] = provider_payload
+        self._logger.info(
+            "%s_call model=%s timeout_s=%s",
+            self._provider_name,
+            self._model,
+            self._timeout_s,
+        )
         obj = self._post_chat_completion(payload)
         text = self._extract_text(obj)
 
         if raw_response_path is not None:
             raw_response_path.parent.mkdir(parents=True, exist_ok=True)
             raw_response_path.write_text(text, encoding="utf-8")
-            self._logger.info("openrouter_raw_saved path=%s", str(raw_response_path))
+            self._logger.info(
+                "%s_raw_saved path=%s", self._provider_name, str(raw_response_path)
+            )
 
         return text
 
@@ -233,7 +245,7 @@ class OpenRouterClient:
             return BlocksTokensPayload.model_validate(data)
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(
-                "openrouter_tokens_schema_validation_failed "
+                f"{self._provider_name}_tokens_schema_validation_failed "
                 f"err={e!r} text_head={text[:8000]!r}"
             ) from e
 
@@ -258,6 +270,6 @@ class OpenRouterClient:
             return schema_model.model_validate(data)
         except Exception as e:  # noqa: BLE001
             raise RuntimeError(
-                "openrouter_schema_validation_failed "
+                f"{self._provider_name}_schema_validation_failed "
                 f"schema={schema_model.__name__} err={e!r} text_head={text[:8000]!r}"
             ) from e

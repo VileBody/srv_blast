@@ -11,10 +11,12 @@ T = TypeVar("T")
 
 PROVIDER_MODE_GEMINI = "gemini"
 PROVIDER_MODE_OPENROUTER = "openrouter"
+PROVIDER_MODE_SOSANA = "sosana"
 PROVIDER_MODE_HEDGED = "hedged"
 _ALLOWED_PROVIDER_MODES = {
     PROVIDER_MODE_GEMINI,
     PROVIDER_MODE_OPENROUTER,
+    PROVIDER_MODE_SOSANA,
     PROVIDER_MODE_HEDGED,
 }
 
@@ -25,7 +27,7 @@ def normalize_provider_mode(raw: str) -> str:
         return PROVIDER_MODE_GEMINI
     if mode not in _ALLOWED_PROVIDER_MODES:
         raise RuntimeError(
-            "LLM_PROVIDER_MODE must be one of: gemini | openrouter | hedged"
+            "LLM_PROVIDER_MODE must be one of: gemini | openrouter | sosana | hedged"
         )
     return mode
 
@@ -50,7 +52,7 @@ def run_routed_call(
     stage: str,
     hedge_delay_s: float,
     gemini_call: Callable[[], T],
-    openrouter_call: Callable[[], T],
+    compatible_call: Callable[[], T],
     logger: Optional[logging.Logger] = None,
 ) -> RoutedCallResult[T]:
     mode_norm = normalize_provider_mode(mode)
@@ -62,9 +64,14 @@ def run_routed_call(
         return RoutedCallResult(provider=PROVIDER_MODE_GEMINI, value=val)
 
     if mode_norm == PROVIDER_MODE_OPENROUTER:
-        val = openrouter_call()
+        val = compatible_call()
         log.info("llm_routed_winner stage=%s provider=openrouter mode=openrouter", stage)
         return RoutedCallResult(provider=PROVIDER_MODE_OPENROUTER, value=val)
+
+    if mode_norm == PROVIDER_MODE_SOSANA:
+        val = compatible_call()
+        log.info("llm_routed_winner stage=%s provider=sosana mode=sosana", stage)
+        return RoutedCallResult(provider=PROVIDER_MODE_SOSANA, value=val)
 
     delay = float(hedge_delay_s)
     if delay < 0:
@@ -97,7 +104,7 @@ def run_routed_call(
                 done, _ = wait(set(active), timeout=timeout, return_when=FIRST_COMPLETED)
 
                 if not done and not started_openrouter:
-                    futures[PROVIDER_MODE_OPENROUTER] = ex.submit(openrouter_call)
+                    futures[PROVIDER_MODE_OPENROUTER] = ex.submit(compatible_call)
                     started_openrouter = True
                     log.info("llm_hedge_secondary_started stage=%s delay_s=%s", stage, delay)
                     continue
@@ -121,7 +128,7 @@ def run_routed_call(
                 except Exception as e:  # noqa: BLE001
                     errors[provider] = e
                     if provider == PROVIDER_MODE_GEMINI and not started_openrouter:
-                        futures[PROVIDER_MODE_OPENROUTER] = ex.submit(openrouter_call)
+                        futures[PROVIDER_MODE_OPENROUTER] = ex.submit(compatible_call)
                         started_openrouter = True
                         log.info(
                             "llm_hedge_secondary_started stage=%s reason=primary_failed",
