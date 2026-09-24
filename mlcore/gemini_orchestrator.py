@@ -518,6 +518,8 @@ def _make_sosana_client(
             temperature=temperature,
             timeout_s=timeout_s,
             base_url=base_url,
+            trust_env=(os.environ.get("SOSANA_TRUST_ENV") or "0").strip().lower()
+            in {"1", "true", "yes", "on"},
         ),
         logger=logger,
     )

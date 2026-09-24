@@ -16,6 +16,11 @@ class SosanaSettings:
     temperature: float = 0.0
     timeout_s: float = 120.0
     base_url: str = "https://api.sosana.art/api"
+    trust_env: bool = False
+
+
+def _post_without_environment_proxy(url: str, **kwargs: object) -> httpx.Response:
+    return httpx.request("POST", url, trust_env=False, **kwargs)
 
 
 class SosanaClient(OpenRouterClient):
@@ -40,7 +45,10 @@ class SosanaClient(OpenRouterClient):
                 base_url=settings.base_url,
             ),
             logger=logger,
-            request_func=request_func,
+            request_func=(
+                request_func
+                or (httpx.post if settings.trust_env else _post_without_environment_proxy)
+            ),
         )
 
     def _provider_payload(self) -> dict[str, object]:
