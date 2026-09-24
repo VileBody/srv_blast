@@ -41,9 +41,11 @@ from mlcore.llm_router import (
     PROVIDER_MODE_GEMINI,
     PROVIDER_MODE_HEDGED,
     PROVIDER_MODE_OPENROUTER,
+    PROVIDER_MODE_SOSANA,
     normalize_provider_mode,
 )
 from mlcore.openrouter_client import OpenRouterClient, OpenRouterSettings
+from mlcore.sosana_client import SosanaClient, SosanaSettings
 from mlcore.alignment.client import AlignmentServiceError, request_local_alignment
 from mlcore.footage_picker import (
     FootageIntervalPickerDiagnostics,
@@ -495,6 +497,27 @@ def _make_openrouter_client(
             model=model,
             temperature=temperature,
             timeout_s=timeout_s,
+        ),
+        logger=logger,
+    )
+
+
+def _make_sosana_client(
+    *,
+    api_key: str,
+    model: str,
+    temperature: float,
+    timeout_s: float,
+    base_url: str,
+    logger: logging.Logger,
+) -> SosanaClient:
+    return SosanaClient(
+        SosanaSettings(
+            api_key=api_key,
+            model=model,
+            temperature=temperature,
+            timeout_s=timeout_s,
+            base_url=base_url,
         ),
         logger=logger,
     )
@@ -2609,9 +2632,34 @@ def build_all_via_gemini_one_call(
         raise RuntimeError(
             "Missing OPENROUTER_API_KEY in env for LLM_PROVIDER_MODE=openrouter|hedged"
         )
+    sosana_api_key = (os.environ.get("SOSANA_API_KEY") or "").strip()
+    sosana_base_url = (
+        os.environ.get("SOSANA_BASE_URL") or "https://api.sosana.art/api"
+    ).strip()
+    sosana_timeout_s = _float_env("SOSANA_TIMEOUT_S", timeout_s)
+    sosana_model_stage1 = ""
+    sosana_model_stage1_asr = ""
+    sosana_model_stage1_scenario = ""
+    sosana_model_subtitles = ""
+    sosana_model_footage = ""
+    if provider_mode == PROVIDER_MODE_SOSANA:
+        if not sosana_api_key:
+            raise RuntimeError(
+                "Missing SOSANA_API_KEY in env for LLM_PROVIDER_MODE=sosana"
+            )
+        sosana_model_stage1 = _require_model("SOSANA_MODEL_STAGE1")
+        sosana_model_stage1_asr = (
+            os.environ.get("SOSANA_MODEL_STAGE1_ASR") or sosana_model_stage1
+        ).strip()
+        sosana_model_stage1_scenario = (
+            os.environ.get("SOSANA_MODEL_STAGE1_SCENARIO") or sosana_model_stage1
+        ).strip()
+        sosana_model_subtitles = _require_model("SOSANA_MODEL_SUBTITLES")
+        sosana_model_footage = _require_model("SOSANA_MODEL_FOOTAGE")
 
     logger.info(
         "llm_provider_config mode=%s hedge_delay_s=%s gemini_timeout_s=%s openrouter_timeout_s=%s "
+        "sosana_timeout_s=%s "
         "timing_mode=%s fast_start_seconds=%.3f gemini_max_output_tokens=%s "
         "gemini_max_thinking_tokens=%s gemini_fallback_model=%s llm_worker_type=%s "
         "vertex_sdk_mix=%s vertex_location=%s stage1_alignment_backend=%s",
@@ -2619,6 +2667,7 @@ def build_all_via_gemini_one_call(
         hedge_delay_s,
         timeout_s,
         openrouter_timeout_s,
+        sosana_timeout_s,
         timing_mode,
         fast_start_seconds,
         str(max_output_tokens),
@@ -2801,6 +2850,64 @@ def build_all_via_gemini_one_call(
             timeout_s=openrouter_timeout_s,
             logger=logger,
         )
+    elif provider_mode == PROVIDER_MODE_SOSANA:
+        if not use_local_alignment:
+            openrouter_stage1_asr = _make_sosana_client(
+                api_key=sosana_api_key,
+                model=sosana_model_stage1_asr,
+                temperature=temperature,
+                timeout_s=sosana_timeout_s,
+                base_url=sosana_base_url,
+                logger=logger,
+            )
+            openrouter_stage1_forced = _make_sosana_client(
+                api_key=sosana_api_key,
+                model=sosana_model_stage1_asr,
+                temperature=0.0,
+                timeout_s=sosana_timeout_s,
+                base_url=sosana_base_url,
+                logger=logger,
+            )
+        openrouter_stage1_scenario = _make_sosana_client(
+            api_key=sosana_api_key,
+            model=sosana_model_stage1_scenario,
+            temperature=temperature,
+            timeout_s=sosana_timeout_s,
+            base_url=sosana_base_url,
+            logger=logger,
+        )
+        openrouter_subtitles = _make_sosana_client(
+            api_key=sosana_api_key,
+            model=sosana_model_subtitles,
+            temperature=temperature,
+            timeout_s=sosana_timeout_s,
+            base_url=sosana_base_url,
+            logger=logger,
+        )
+        openrouter_subtitles_single_step = _make_sosana_client(
+            api_key=sosana_api_key,
+            model=sosana_model_subtitles,
+            temperature=temperature,
+            timeout_s=sosana_timeout_s,
+            base_url=sosana_base_url,
+            logger=logger,
+        )
+        openrouter_footage = _make_sosana_client(
+            api_key=sosana_api_key,
+            model=sosana_model_footage,
+            temperature=temperature,
+            timeout_s=sosana_timeout_s,
+            base_url=sosana_base_url,
+            logger=logger,
+        )
+        openrouter_timing = _make_sosana_client(
+            api_key=sosana_api_key,
+            model=sosana_model_stage1,
+            temperature=temperature,
+            timeout_s=sosana_timeout_s,
+            base_url=sosana_base_url,
+            logger=logger,
+        )
 
     inv_path = Path(
         os.environ.get("FOOTAGE_INVENTORY_JSON", str(ROOT / "data" / "footage_inventory.json"))
@@ -2932,7 +3039,11 @@ def build_all_via_gemini_one_call(
         (
             str(os.environ.get("ALIGNMENT_MODEL_REVISION") or "").strip()
             if use_local_alignment
-            else model_stage1_asr
+            else (
+                sosana_model_stage1_asr
+                if provider_mode == PROVIDER_MODE_SOSANA
+                else model_stage1_asr
+            )
         ),
         len(forced_reference_words),
         dropped_structural_tags,
@@ -3502,7 +3613,14 @@ def build_all_via_gemini_one_call(
 
     if stage1 is None and use_stage1b_scenario:
         _emit(progress_cb, "llm_stage1b_scenario")
-        logger.info("stage1b_start model=%s", model_stage1_scenario)
+        logger.info(
+            "stage1b_start model=%s",
+            (
+                sosana_model_stage1_scenario
+                if provider_mode == PROVIDER_MODE_SOSANA
+                else model_stage1_scenario
+            ),
+        )
         logger.info(
             "stage1b_fragment_branch enabled=%s target_fragment_chars=%d",
             fragment_branch_on,
@@ -3696,11 +3814,18 @@ def build_all_via_gemini_one_call(
         if subtitles_mode in SUBTITLES_MODE_JSX_5TH
         else SubtitlesPlannerFactory.create(subtitles_mode)
     )
-    subtitles_model_effective = (
-        _SCENES_3RD_SINGLE_STEP_MODEL
-        if subtitles_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP
-        else model_subtitles
-    )
+    if provider_mode == PROVIDER_MODE_SOSANA:
+        subtitles_model_effective = sosana_model_subtitles
+        footage_model_effective = sosana_model_footage
+        timing_model_effective = sosana_model_stage1
+    else:
+        subtitles_model_effective = (
+            _SCENES_3RD_SINGLE_STEP_MODEL
+            if subtitles_mode == SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP
+            else model_subtitles
+        )
+        footage_model_effective = model_footage
+        timing_model_effective = model_stage1_base
     subtitles_schema_name = (
         "jsx_passthrough"
         if subtitles_planner is None
@@ -3709,8 +3834,8 @@ def build_all_via_gemini_one_call(
     logger.info(
         "stage2_start subtitles_model=%s footage_style_model=%s timing_model=%s timing_mode=%s style_groups=%d subtitles_mode=%s subtitles_schema=%s",
         subtitles_model_effective,
-        model_footage,
-        model_stage1_base,
+        footage_model_effective,
+        timing_model_effective,
         timing_mode,
         len(style_groups),
         subtitles_mode,

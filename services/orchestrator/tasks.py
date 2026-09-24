@@ -56,6 +56,7 @@ from services.generation_runtime.store import resume_state_checksum
 from core.llm_worker_types import (
     LLM_WORKER_TYPE_HYBRID,
     LLM_WORKER_TYPE_OPENROUTER,
+    LLM_WORKER_TYPE_SOSANA,
     LLM_WORKER_TYPE_SDK,
     LLM_WORKER_TYPE_VERTEX_SDK_MIX,
     normalize_llm_worker_type,
@@ -202,6 +203,7 @@ def _job_queue_from_request(req: Dict[str, Any], *, key: str, default: str) -> s
 
 _LLM_PROVIDER_MODE_GEMINI = "gemini"
 _LLM_PROVIDER_MODE_OPENROUTER = "openrouter"
+_LLM_PROVIDER_MODE_SOSANA = "sosana"
 _LLM_PROVIDER_MODE_HEDGED = "hedged"
 
 
@@ -211,6 +213,8 @@ def _provider_mode_for_worker_type(worker_type: str) -> str:
         return _LLM_PROVIDER_MODE_GEMINI
     if wt == LLM_WORKER_TYPE_OPENROUTER:
         return _LLM_PROVIDER_MODE_OPENROUTER
+    if wt == LLM_WORKER_TYPE_SOSANA:
+        return _LLM_PROVIDER_MODE_SOSANA
     if wt == LLM_WORKER_TYPE_HYBRID:
         return _LLM_PROVIDER_MODE_HEDGED
     raise RuntimeError(f"unsupported llm_worker_type: {worker_type!r}")
@@ -939,6 +943,33 @@ def _maybe_retry_gemini_transport_disconnect(self: Any, store: JobStore, text: s
     raise self.retry(countdown=backoff, exc=RuntimeError("gemini_transport_disconnect"))
 
 
+def _looks_like_sosana_transient(text: str) -> bool:
+    if not text:
+        return False
+    lo = text.lower()
+    if "sosana_timeout" in lo or "sosana_transport_error" in lo:
+        return True
+    if "sosana_http_error" not in lo:
+        return False
+    return any(f"status={code}" in lo for code in (429, 500, 502, 503, 504, 524))
+
+
+def _maybe_retry_sosana_transient(self: Any, text: str, *, phase: str) -> None:
+    if not _looks_like_sosana_transient(text):
+        return
+    attempt = int(getattr(self.request, "retries", 0)) + 1
+    backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
+    log.warning(
+        "sosana_transient_retry phase=%s attempt=%d/%d backoff_s=%.1f err=%s",
+        phase,
+        attempt,
+        int(getattr(self, "max_retries", 0) or 0),
+        backoff,
+        text[:800],
+    )
+    raise self.retry(countdown=backoff, exc=RuntimeError("sosana_transient"))
+
+
 def _looks_like_openrouter_timeout(text: str) -> bool:
     if not text:
         return False
@@ -1049,6 +1080,10 @@ def _looks_like_llm_schema_validation_error(text: str) -> bool:
     if "openrouter_schema_validation_failed" in lo:
         return True
     if "openrouter_tokens_schema_validation_failed" in lo:
+        return True
+    if "sosana_schema_validation_failed" in lo:
+        return True
+    if "sosana_tokens_schema_validation_failed" in lo:
         return True
     if "stage1 scenario validation failed" in lo:
         return True
@@ -2322,6 +2357,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 log.warning("resume_state_partial_persist_failed job=%s err=%r", job_id, persist_exc)
             text = _exc_text(e)
             _maybe_retry_gemini_transport_disconnect(self, store, text, phase="build_all")
+            _maybe_retry_sosana_transient(self, text, phase="build_all")
             if _looks_like_gemini_internal_500(text):
                 attempt = int(getattr(self.request, "retries", 0)) + 1
                 backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -2404,6 +2440,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
 
     def _maybe_retry_transient(blob: str) -> None:
         _maybe_retry_gemini_transport_disconnect(self, store, blob, phase="build_subprocess")
+        _maybe_retry_sosana_transient(self, blob, phase="build_subprocess")
         if _looks_like_gemini_internal_500(blob):
             attempt = int(getattr(self.request, "retries", 0)) + 1
             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -2516,6 +2553,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                             log.warning("resume_state_retry_partial_persist_failed job=%s err=%r", job_id, persist_exc)
                         text = _exc_text(e)
                         _maybe_retry_gemini_transport_disconnect(self, store, text, phase="stage2_subtitles_retry")
+                        _maybe_retry_sosana_transient(self, text, phase="stage2_subtitles_retry")
                         if _looks_like_gemini_internal_500(text):
                             attempt = int(getattr(self.request, "retries", 0)) + 1
                             backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
@@ -3149,6 +3187,7 @@ _JOB_ID_FIRST_ARG_TASKS = frozenset({
     "orchestrator.build_job",
     "orchestrator.build_job_sdk",
     "orchestrator.build_job_openrouter",
+    "orchestrator.build_job_sosana",
     "orchestrator.build_job_hybrid",
     "orchestrator.build_job_vertex_sdk_mix",
 })
@@ -3208,6 +3247,11 @@ def build_job_sdk(self, job_id: str) -> Dict[str, Any]:
 @celery_app.task(name="orchestrator.build_job_openrouter", bind=True, max_retries=8)
 def build_job_openrouter(self, job_id: str) -> Dict[str, Any]:
     return _build_job_impl(self, job_id, worker_type="openrouter")
+
+
+@celery_app.task(name="orchestrator.build_job_sosana", bind=True, max_retries=8)
+def build_job_sosana(self, job_id: str) -> Dict[str, Any]:
+    return _build_job_impl(self, job_id, worker_type="sosana")
 
 
 @celery_app.task(name="orchestrator.build_job_hybrid", bind=True, max_retries=8)
