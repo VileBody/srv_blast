@@ -957,17 +957,36 @@ def _looks_like_sosana_transient(text: str) -> bool:
 def _maybe_retry_sosana_transient(self: Any, text: str, *, phase: str) -> None:
     if not _looks_like_sosana_transient(text):
         return
-    attempt = int(getattr(self.request, "retries", 0)) + 1
+    retries = int(getattr(self.request, "retries", 0))
+    task_max_retries = max(0, int(getattr(self, "max_retries", 0) or 0))
+    configured_max_retries = _non_negative_int_env("SOSANA_MAX_RETRIES", 3)
+    max_retries = min(task_max_retries, configured_max_retries)
+    if retries >= max_retries:
+        log.error(
+            "sosana_transient_retries_exhausted phase=%s retries=%d/%d err=%s",
+            phase,
+            retries,
+            max_retries,
+            text[:800],
+        )
+        raise RuntimeError(
+            f"sosana_transient_retries_exhausted retries={retries}/{max_retries}"
+        )
+    attempt = retries + 1
     backoff = _retry_backoff_s(attempt=attempt, base_s=10.0, cap_s=300.0)
     log.warning(
         "sosana_transient_retry phase=%s attempt=%d/%d backoff_s=%.1f err=%s",
         phase,
         attempt,
-        int(getattr(self, "max_retries", 0) or 0),
+        max_retries,
         backoff,
         text[:800],
     )
-    raise self.retry(countdown=backoff, exc=RuntimeError("sosana_transient"))
+    raise self.retry(
+        countdown=backoff,
+        exc=RuntimeError("sosana_transient"),
+        max_retries=max_retries,
+    )
 
 
 def _looks_like_openrouter_timeout(text: str) -> bool:
