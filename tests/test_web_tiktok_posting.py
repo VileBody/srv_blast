@@ -147,3 +147,22 @@ def test_empty_allowlist_closes_the_integration_and_star_opens_it(
     assert not _load_config(monkeypatch, "").allows("user_1", "owner@blast808.com", 1)
     # состояние после одобрения заявки — открыть всем можно только явной звёздочкой
     assert _load_config(monkeypatch, "*").allows("whoever", None, None)
+
+
+@pytest.mark.parametrize(
+    ("size", "expected"),
+    [
+        (3_000_000, (3_000_000, 1)),          # меньше 5 МБ — одним чанком целиком
+        (7_000_000, (7_000_000, 1)),          # от 5 до 10 МБ — тоже один чанк
+        (10_000_000, (10_000_000, 1)),
+        (23_456_789, (10_000_000, 2)),        # остаток уходит в последний чанк, а не в третий
+        (30_000_000, (10_000_000, 3)),
+    ],
+)
+def test_file_upload_chunk_count_rounds_down(monkeypatch: pytest.MonkeyPatch, size: int, expected: tuple[int, int]) -> None:
+    module = _module(monkeypatch)
+    chunk_size, total = module.chunk_plan(size)
+    assert (chunk_size, total) == expected
+    # последний чанк забирает остаток и не превышает лимит TikTok в 128 МБ
+    last = size - chunk_size * (total - 1)
+    assert chunk_size <= last <= 128_000_000
