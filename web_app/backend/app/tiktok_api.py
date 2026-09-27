@@ -17,7 +17,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import math
 import secrets
 import urllib.error
 import urllib.parse
@@ -222,14 +221,28 @@ def init_direct_post_pull(access_token: str, post_info: dict[str, Any], video_ur
     })
 
 
+def chunk_plan(size: int) -> tuple[int, int]:
+    """(chunk_size, total_chunk_count) для FILE_UPLOAD по Media Transfer Guide TikTok.
+
+    Число чанков — округление ВНИЗ: остаток уходит в последний чанк (ему можно быть
+    больше chunk_size, до 128 МБ). С округлением вверх ролик 23 МБ при чанке 10 МБ
+    заявлялся тремя чанками вместо двух, и TikTok отвечал «The total chunk count is
+    invalid» — публикация падала на любом ролике больше 10 МБ. Файл меньше 5 МБ
+    уходит одним чанком целиком.
+    """
+    if size < 5_000_000:
+        return size, 1
+    chunk_size = min(10_000_000, size)
+    return chunk_size, max(1, size // chunk_size)
+
+
 def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_path: str | Path) -> dict[str, Any]:
     """Initialize FILE_UPLOAD and stream the already-rendered MP4 unchanged."""
     path = Path(video_path)
     size = path.stat().st_size
     if size <= 0:
         raise ValueError("Video file is empty")
-    chunk_size = size if size < 5_000_000 else min(10_000_000, size)
-    total_chunks = max(1, math.ceil(size / chunk_size))
+    chunk_size, total_chunks = chunk_plan(size)
     data = _json_request(DIRECT_POST_INIT_URL, access_token, {
         "post_info": post_info,
         "source_info": {
