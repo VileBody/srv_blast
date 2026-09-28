@@ -60,6 +60,22 @@ export interface AsrWord {
 
 export type AsrStatus = 'IDLE' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 
+/** Визуальные параметры текста поверх выбранного стиля субтитров. */
+export interface SubtitleTextSettings {
+  font: 'Point-SemiBold' | 'Point-ExtraBold' | 'Montserrat-Bold' | 'Arial-Bold' | 'Impact' | 'Georgia-Bold' | 'Trebuchet-Bold' | 'Courier-Bold';
+  size: 'small' | 'medium' | 'large';
+  height: 'compact' | 'normal' | 'tall';
+  shadow: 'none' | 'soft' | 'strong';
+  outline: 'none' | 'thin' | 'thick';
+  outlineColor: string;
+  position: 'left' | 'center' | 'right';
+}
+
+export const DEFAULT_SUBTITLE_TEXT_SETTINGS: SubtitleTextSettings = {
+  font: 'Point-SemiBold', size: 'medium', height: 'normal',
+  shadow: 'soft', outline: 'thin', outlineColor: '#000000', position: 'center'
+};
+
 /**
  * Примерка субтитров: ASR отрывка запускается сразу после шага «Трек», к шагу «Текст»
  * слова лежат на таймлайне и их можно подвинуть / пометить фокусными.
@@ -130,6 +146,7 @@ export interface WizardStateData {
   subtitles: {
     color: string;
     pool: string[];
+    text: SubtitleTextSettings;
   };
   /** Этап «Пул»: распределение вариаций (Figma W19/W33) */
   allocation: {
@@ -291,7 +308,7 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   reachedIndex: 0,
   background: { mode: 'footage', footage: [], footageType: DEFAULT_FOOTAGE_TYPE, uploads: [], sourceVideos: [], photo: [], photoEffects: false, photoStyle: undefined, color: undefined, strobe: false, glue: undefined },
   hooks: { dropTime: undefined, kind: undefined, configs: {} },
-  subtitles: { color: '#f6f5fd', pool: [] },
+  subtitles: { color: '#f6f5fd', pool: [], text: { ...DEFAULT_SUBTITLE_TEXT_SETTINGS } },
   allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, styles: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
   asr: emptyAsr(),
   final: { subtitleColor: '#ffffff', accentColor: '#8b6fe6', videosToGenerate: 1, idempotencyKey: crypto.randomUUID() }
@@ -437,7 +454,10 @@ export const useWizardStore = create<WizardStore>()(
             return merged;
           })(),
           hooks: migrateHooks({ ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) }),
-          subtitles: { ...fresh.subtitles, ...((raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {}) },
+          subtitles: (() => {
+            const saved = (raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {};
+            return { ...fresh.subtitles, ...saved, text: { ...DEFAULT_SUBTITLE_TEXT_SETTINGS, ...(saved.text ?? {}) } };
+          })(),
           allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },
           asr: (() => {
             const saved = raw.asr as Partial<AsrPreviewState> | null | undefined;
@@ -480,14 +500,18 @@ export const useWizardStore = create<WizardStore>()(
     }),
     {
       name: 'blast-wizard-v4',
-      version: 3,
-      migrate: (raw: any) => {
+      version: 6,
+      migrate: (raw: any, version: number) => {
         const background = { ...raw.background };
         if (!background.sourceVideos?.length && background.uploads?.length) background.sourceVideos = [{
           id: 'source-video-legacy', format: background.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...background.uploads]
         }];
         background.sourceVideos ??= [];
-        return { ...raw, background, hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {},
+        const text = { ...DEFAULT_SUBTITLE_TEXT_SETTINGS, ...(raw.subtitles?.text ?? {}) };
+        // #8b6fe6 was the UI default before outline color became user-editable;
+        // migrate that former default once, without replacing other chosen colors.
+        if (version < 6 && text.outlineColor?.toLowerCase() === '#8b6fe6') text.outlineColor = DEFAULT_SUBTITLE_TEXT_SETTINGS.outlineColor;
+        return { ...raw, background, subtitles: { color: raw.subtitles?.color ?? '#f6f5fd', pool: raw.subtitles?.pool ?? [], ...raw.subtitles, text }, hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {},
           hooks: Object.fromEntries(Object.entries(raw.allocation?.hooks ?? {}).map(([key, value]) => [key === 'sound' ? 'warmup' : key, value])) } };
       },
       partialize: (state) => ({
