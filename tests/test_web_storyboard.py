@@ -200,3 +200,41 @@ def test_storyboard_needs_a_clip_window(client) -> None:
     tc, _main = client
     r = tc.post("/api/wizard/storyboard/cuts", json={"clipFrom": "", "clipTo": ""})
     assert r.status_code == 422
+
+
+# ── сквозная проверка: темп склеек с таймлайна доходит до запроса в оркестратор ──
+
+def test_pace_cuts_reach_the_orchestrator_request(monkeypatch) -> None:
+    """stageData в той форме, в какой её шлёт фронт → build_render_job →
+    _request_payload: склейки выбранного темпа («чаще») приходят в footage_plan
+    ровно того видео, у которого фон — этот вайб."""
+    module = _module(monkeypatch)
+    sb = importlib.import_module("app.storyboard")
+    render_job = importlib.import_module("app.render_job")
+    cuts = sb.mock_cuts(start=10.0, end=20.0, drop=None)["cuts"]["dense"]
+    assert len(cuts) > len(sb.mock_cuts(start=10.0, end=20.0, drop=None)["cuts"]["auto"])
+    picked = sb.mock_pick(vibes=[{"id": "neon", "name": "Неон", "previewUrl": "u"}], start=10.0, end=20.0,
+                          cuts=cuts, videos=[{"index": 2, "group": "Неон", "seedKey": "s"}])["videos"][0]
+    stage_data = {
+        "track": {"id": "t1", "s3Key": "s3://raw-audio/raw/track.mp3", "filename": "t.mp3"},
+        "lyrics": "текст", "fragment": "текст",
+        "timing": {"from": "00:10", "to": "00:20"},
+        "background": {"mode": "footage", "footage": ["Ночной город", "Неон"], "photo": [], "uploads": []},
+        "hooks": {"configs": {}},
+        "subtitles": {"color": "#ffffff", "pool": ["Impulse"]},
+        "allocation": {"total": 2, "background": {"footage:Ночной город": 1, "footage:Неон": 1},
+                       "subtitles": {"Impulse": 2}, "hooks": {}, "styles": {}},
+        "timeline": {"pace": "dense", "cuts": cuts},
+        "storyboard": {"key": "k", "videos": [{"index": 2, "group": "Неон", "plan": picked["plan"]}]},
+        "final": {"accentColor": "#8b6fe6"},
+    }
+    job = render_job.build_render_job("b1", "p1", "u1", stage_data, 2)
+    first, second = job["variations"]
+    assert "footagePlan" not in first["background"]            # «Ночной город»: раскадровки нет
+    assert second["background"]["footagePlan"]["switch_points_abs"] == cuts
+
+    backend = _backend(module, _config(module))
+    web_job = {"id": "web-job", "projectId": "p1", "stageData": stage_data, "renderJob": job}
+    payload = backend._request_payload(job=web_job, variation=second, index=2, total=2, master_id=None)
+    assert payload["footage_plan"]["switch_points_abs"] == cuts
+    assert [c["in_point"] for c in payload["footage_plan"]["clips"]] == [10.0, *cuts]
