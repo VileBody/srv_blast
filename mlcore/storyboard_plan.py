@@ -20,14 +20,15 @@ Pace. The timeline offers «реже / авто / чаще». «Авто» is th
 they are still snapped to the same measured beats of this track.
 
 No-fallback: a plan whose window does not cover the job window, or that names a
-clip the inventory does not have, is an explicit error — never a silent re-pick.
+clip outside the slot's pool, too short for its shot or excluded by the operator
+blacklist, is an explicit error — never a silent re-pick.
 A job window narrower than the plan (subtitle phrase-snapping) only trims the
 edge shots; see ``validate_plan``.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from mlcore import footage_picker as fp
 from mlcore.models.footage_plan import FootageClipPick, FootageSelectionPayload
@@ -171,6 +172,16 @@ def compute_cuts(
 
 # ── bucket + picks ─────────────────────────────────────────────────────────────
 
+def slot_pool(subgroups: Sequence[Any], assets: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """The clips one exact slot may use, by file_name: the same raw pool the picker
+    builds per rotation subgroup. Both the storyboard and the render's plan check
+    use it, so a pinned clip is valid in one exactly when it is valid in the other."""
+    pool: List[Dict[str, Any]] = []
+    for subgroup in subgroups:
+        pool.extend(fp._build_raw_pool(subgroup, assets))
+    return {str(it.get("file_name") or ""): it for it in fp._dedupe_assets_by_file_name(pool)}
+
+
 @dataclass
 class BucketContext:
     """Everything the picker needs about one exact slot (theme, tags_group)."""
@@ -178,10 +189,19 @@ class BucketContext:
     style_pick: Any                     # FootageStylePickPayload
     assets: List[Dict[str, Any]]        # inventory mapped to style metadata
     cooldown_by_name: Optional[Dict[str, float]] = None
+    # operator blacklist (FOOTAGE_BLACKLIST_PATH / FOOTAGE_EXCLUDE_FILE_NAMES_JSON)
+    excluded: FrozenSet[str] = frozenset()
+    _pool: Optional[Dict[str, Dict[str, Any]]] = field(default=None, repr=False)
 
     @property
     def by_name(self) -> Dict[str, Dict[str, Any]]:
         return {str(a.get("file_name") or ""): a for a in self.assets}
+
+    @property
+    def pool(self) -> Dict[str, Dict[str, Any]]:
+        if self._pool is None:
+            self._pool = slot_pool(self.rotation.subgroups, self.assets)
+        return self._pool
 
 
 def resolve_bucket(
@@ -192,6 +212,7 @@ def resolve_bucket(
     seed_key: str,
     total_assets: Optional[int] = None,
     cooldown_by_name: Optional[Dict[str, float]] = None,
+    excluded_file_names: Iterable[str] = (),
 ) -> BucketContext:
     from mlcore.footage_style_resolver import resolve_style_rotation
 
@@ -206,7 +227,13 @@ def resolve_bucket(
         seed_key=seed_key,
         total_assets=total_assets if total_assets is not None else len(mapped_assets),
     )
-    return BucketContext(rotation=rotation, style_pick=style_pick, assets=mapped_assets, cooldown_by_name=cooldown_by_name)
+    return BucketContext(
+        rotation=rotation,
+        style_pick=style_pick,
+        assets=mapped_assets,
+        cooldown_by_name=cooldown_by_name,
+        excluded=frozenset(str(n) for n in excluded_file_names if str(n)),
+    )
 
 
 @dataclass
@@ -236,12 +263,17 @@ def _pinned_clip(clip: FootageClipPick, file_name: str) -> FootageClipPick:
     )
 
 
-def _check_pin(ctx: BucketContext, file_name: str, *, interval_len: float) -> None:
-    asset = ctx.by_name.get(file_name)
+def _check_clip(pool: Mapping[str, Dict[str, Any]], excluded: Iterable[str], file_name: str, *,
+                interval_len: float, what: str) -> None:
+    """One rule for a user-chosen clip, in the storyboard and in the render alike:
+    it is in this slot's pool, it is not blacklisted, it covers its shot."""
+    asset = pool.get(file_name)
     if asset is None:
-        raise StoryboardPlanError(f"pinned clip {file_name!r} is not in this bucket's inventory")
+        raise StoryboardPlanError(f"{what} {file_name!r} is not in the inventory of this slot")
+    if file_name in set(excluded):
+        raise StoryboardPlanError(f"{what} {file_name!r} is blacklisted")
     if not fp._fits_interval(asset, interval_len=interval_len):
-        raise StoryboardPlanError(f"pinned clip {file_name!r} is shorter than its {interval_len:.2f}s shot")
+        raise StoryboardPlanError(f"{what} {file_name!r} is shorter than its {interval_len:.2f}s shot")
 
 
 def pick_batch(
@@ -264,8 +296,8 @@ def pick_batch(
             if not (0 <= idx < len(intervals)):
                 raise StoryboardPlanError(f"pin index {idx} outside {len(intervals)} shots")
             a, b = intervals[idx]
-            _check_pin(ctx, name, interval_len=b - a)
-        exclude = set(used) | set(video.pins.values())
+            _check_clip(ctx.pool, ctx.excluded, name, interval_len=b - a, what="pinned clip")
+        exclude = set(used) | set(video.pins.values()) | set(ctx.excluded)
         selection, _diag = fp.pick_footage_clips_by_intervals_deterministic(
             style_pick=ctx.style_pick,
             assets=ctx.assets,
@@ -316,13 +348,10 @@ def alternatives(
     if not (0 <= interval_idx < len(intervals)):
         raise StoryboardPlanError(f"shot index {interval_idx} outside {len(intervals)} shots")
     a, b = intervals[interval_idx]
-    excluded = {str(x) for x in exclude_file_names}
-    pool: List[Dict[str, Any]] = []
-    for subgroup in ctx.rotation.subgroups:
-        pool.extend(fp._build_raw_pool(subgroup, ctx.assets))
+    excluded = {str(x) for x in exclude_file_names} | set(ctx.excluded)
     pool = [
-        it for it in fp._dedupe_assets_by_file_name(pool)
-        if str(it.get("file_name") or "") not in excluded and fp._fits_interval(it, interval_len=b - a)
+        it for name, it in ctx.pool.items()
+        if name not in excluded and fp._fits_interval(it, interval_len=b - a)
     ]
     scores = {str(it.get("file_name")): float(it.get(fp._SELECTION_RANK_SCORE_KEY) or 0.0) for it in pool}
     ordered = fp._deterministic_file_name_order(
@@ -376,7 +405,8 @@ def validate_plan(
     *,
     clip_start_abs: float,
     clip_end_abs: float,
-    known_file_names: Iterable[str],
+    pool_by_name: Mapping[str, Dict[str, Any]],
+    excluded_file_names: Iterable[str] = (),
 ) -> Tuple[List[float], FootageSelectionPayload]:
     """Check a pinned plan against the job it is applied to. Returns the switch
     points and the footage selection to use.
@@ -387,6 +417,10 @@ def validate_plan(
     (same frames, deterministic) and nothing inside changes. A job window that
     reaches OUTSIDE the plan would show footage the user never saw — that is an
     explicit error.
+
+    The plan comes from the browser, so every clip is re-checked here with the
+    storyboard's own rule (``_check_clip``): it belongs to this slot's pool
+    (``slot_pool``), it is not blacklisted, and it is long enough for its shot.
     """
     if not isinstance(plan, dict) or int(plan.get("version") or 0) != 1:
         raise StoryboardPlanError("footage_plan: unsupported or missing version")
@@ -405,15 +439,14 @@ def validate_plan(
         raise StoryboardPlanError(
             f"footage_plan has {len(selection.clips)} clips for {len(plan_intervals)} shots"
         )
-    known = set(known_file_names)
+    excluded = {str(n) for n in excluded_file_names}
     for i, (clip, (a, b)) in enumerate(zip(selection.clips, plan_intervals)):
         if abs(clip.in_point - a) > _WINDOW_TOL_SEC or abs(clip.out_point - b) > _WINDOW_TOL_SEC:
             raise StoryboardPlanError(
                 f"footage_plan clip {i} spans {clip.in_point:.3f}..{clip.out_point:.3f}, "
                 f"shot is {a:.3f}..{b:.3f}"
             )
-        if clip.file_name not in known:
-            raise StoryboardPlanError(f"footage_plan clip {i} {clip.file_name!r} is not in the inventory")
+        _check_clip(pool_by_name, excluded, clip.file_name, interval_len=b - a, what=f"footage_plan clip {i}")
 
     # Trim to the job window (a no-op when the windows are equal).
     points = [p for p in plan_points if js + _WINDOW_TOL_SEC < p < je - _WINDOW_TOL_SEC]

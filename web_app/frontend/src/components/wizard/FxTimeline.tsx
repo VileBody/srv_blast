@@ -4,7 +4,7 @@ import { api } from '../../lib/api';
 import effectsRegistry from '../../data/effects-registry.json';
 import { HookConfig, HookKind, TimelinePace, TimelineStyleRange, useWizardStore } from '../../stores/wizardStore';
 import { EFFECT_HOOKS, EffectPreview, MOTIONS, NO_GLUE, OBJECTS, THOUGHTS, previewIdFor } from './HookPanel';
-import { PACES, useRecipeCuts } from './storyboardData';
+import { PACES, dropOrphanStyleLabels, useRecipeCuts } from './storyboardData';
 import { usePlaybackUrl } from './useFragmentAudio';
 import { Trans, useTranslation } from 'react-i18next';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
@@ -294,6 +294,7 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
   const background = useWizardStore((s) => s.background);
   const hooks = useWizardStore((s) => s.hooks);
   const setHooks = useWizardStore((s) => s.setHooks);
+  const clearHook = useWizardStore((s) => s.clearHook);
   const timeline = useWizardStore((s) => s.timeline);
   const setTimeline = useWizardStore((s) => s.setTimeline);
   const asr = useWizardStore((s) => s.asr);
@@ -475,6 +476,9 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
     if (!current.includes(label)) setHooks({ config: { effectStyles: [...current, label], effectStyle: label } });
   };
   const addStyle = (label: string, frame: number, lanePref: 0 | 1 = 0) => {
+    // Стили — часть настройки хука (или «Без хука»): без неё стилю негде жить, и
+    // на дорожке он висел бы, не попадая в рендер.
+    if (!kind) { say('Сначала выбери хук или «Без хука» на шаге FX — стили живут в его настройке'); return; }
     for (const lane of [lanePref, (1 - lanePref) as 0 | 1]) {
       if (styleFree(lane, frame, frame + 1)) {
         remember();
@@ -500,9 +504,16 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
     if (!cat?.key || !hooksOn) return;
     if (drop === null) { say('Сначала выбери дроп на шаге FX — хук встаёт на него'); return; }
     const prev = activeHookLabel && activeHookLabel !== item.label ? activeHookLabel : null;
-    setHooks({ kind: cat.kind, config: { [cat.key]: item.label } as Partial<HookConfig> });
+    const sameKind = kind === cat.kind;
+    // Переходы и стили рецепта переезжают к новому хуку: без них он неполный и не
+    // попал бы в пул. Хук другого типа не стирается — на шаге FX их может быть
+    // несколько (у каждого своя доля роликов), поэтому говорим об этом прямо.
+    const carry: Partial<HookConfig> = sameKind ? {} : { effectGlue: config.effectGlue, effectStyle: config.effectStyle, effectStyles: config.effectStyles };
+    setHooks({ kind: cat.kind, config: { ...carry, [cat.key]: item.label } as Partial<HookConfig> });
     setSel({ type: 'hook' });
-    say(prev ? `Хук заменён: ${prev} → ${item.label}. Хук всегда один и стоит на дропе` : `${item.label} встал на дроп ${tc(drop)}`);
+    say(!prev ? `${item.label} встал на дроп ${tc(drop)}`
+      : sameKind ? `Хук заменён: ${prev} → ${item.label}`
+        : `${item.label} встал на дроп. «${prev}» остаётся в пуле — снять его можно на шаге FX`);
   };
   const addFromLib = useCallback((item: LibItem) => {
     if (item.kind === 'hook') return addHook(item);
@@ -512,8 +523,16 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
   }, [sel, styles, timeline.transitions, cuts, kind, config, drop, hooksOn]);
   const del = () => {
     if (!sel) return;
-    if (sel.type === 'hook' && kind) { setHooks({ kind: undefined }); say('Хук снят — вернуть можно из библиотеки'); }
-    else if (sel.type === 'style') { remember(); setStyles(styles.filter((s) => s.uid !== sel.uid)); }
+    if (sel.type === 'hook' && kind && kind !== 'none') {
+      // Снять = убрать хук из пула совсем (не только из вида таймлайна). Переходы и
+      // стили рецепта остаются — ролик становится «Без хука».
+      const none = hooks.configs.none ?? {};
+      const keepStyles = [...new Set([...(none.effectStyles ?? []), ...(config.effectStyles ?? (config.effectStyle ? [config.effectStyle] : []))])];
+      clearHook(kind);
+      setHooks({ kind: 'none', config: { effectGlue: none.effectGlue ?? config.effectGlue, effectStyles: keepStyles, effectStyle: keepStyles[keepStyles.length - 1] } });
+      say('Хук снят — переходы и стили остались, ролик идёт «Без хука»');
+    }
+    else if (sel.type === 'style') { remember(); const next = styles.filter((s) => s.uid !== sel.uid); dropOrphanStyleLabels(styles, next); setStyles(next); }
     else if (sel.type === 'cut') setTransition(sel.i, NO_GLUE);
     else return;
     setSel(null);

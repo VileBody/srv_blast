@@ -324,7 +324,8 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         })
 
     # Раскадровка «Пула»: закреплённые склейки+клипы по видео (см. storyboard.py).
-    storyboard_plans.attach_to_variations(variations, stage_data.get("storyboard"), _segment(stage_data.get("timing")))
+    storyboard_plans.attach_to_variations(variations, stage_data.get("storyboard"), _segment(stage_data.get("timing")),
+                                          stage_data.get("timeline"))
 
     return {
         "schema": SCHEMA,

@@ -1332,7 +1332,8 @@ async def api_storyboard_cuts(payload: StoryboardCutsPayload) -> dict[str, Any]:
     start, end = _storyboard_window(payload.clipFrom, payload.clipTo)
     drop = effect_map.parse_mmssms(payload.dropTime) if payload.dropTime else None
     if drop is not None and not (start <= drop <= end):
-        drop = None  # дроп из другого отрывка — склейки строим без него
+        # Дроп из другого отрывка: без него склейки разошлись бы с тем, что увидит рендер.
+        raise HTTPException(status_code=422, detail="Дроп вне отрывка — выбери дроп заново на шаге FX")
     if RUNTIME.backend != "production":
         return {"status": "COMPLETED", "clipStart": start, "clipEnd": end, **storyboard_svc.mock_cuts(start=start, end=end, drop=drop), "mock": True}
     track = store.saved_track(str(payload.trackId or "")) or {}

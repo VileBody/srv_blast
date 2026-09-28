@@ -1645,6 +1645,25 @@ def _poll_started_at_from_state(st: Any) -> float:
     return time.time()
 
 
+def footage_plan_env_value(req: Dict[str, Any]) -> Optional[str]:
+    """FOOTAGE_PLAN_JSON for a job, or None without a plan. A pinned storyboard
+    only makes sense on library footage of one exact slot; anything else is an
+    explicit failure, never a silently ignored plan."""
+    footage_plan = req.get("footage_plan")
+    if not footage_plan:
+        return None
+    from .schemas import FootagePlan
+
+    plan = FootagePlan.model_validate(footage_plan).model_dump()
+    if req.get("custom_footage_sources"):
+        raise RuntimeError("footage_plan cannot be combined with custom_footage_sources")
+    if req.get("bg_mode", "footage") != "footage":
+        raise RuntimeError("footage_plan requires bg_mode=footage")
+    if not (str(req.get("rotation_theme") or "").strip() and str(req.get("rotation_tags_group") or "").strip()):
+        raise RuntimeError("footage_plan requires an exact slot (rotation_theme + rotation_tags_group)")
+    return json.dumps(plan)
+
+
 def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, Any]:
     if get_runtime_mode() != MODE_PROD:
         raise RuntimeError("Celery build_job is allowed only in MODE=prod")
@@ -2187,17 +2206,9 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     # Pinned storyboard: cuts + clips the user approved in the web «Пул». The
     # build renders it verbatim (mlcore.storyboard_plan.validate_plan); it only
     # makes sense on library footage of one exact slot.
-    footage_plan = req.get("footage_plan")
-    if footage_plan:
-        from .schemas import FootagePlan
-        plan = FootagePlan.model_validate(footage_plan).model_dump()
-        if custom_sources:
-            raise RuntimeError("footage_plan cannot be combined with custom_footage_sources")
-        if req.get("bg_mode", "footage") != "footage":
-            raise RuntimeError("footage_plan requires bg_mode=footage")
-        if not (str(req.get("rotation_theme") or "").strip() and str(req.get("rotation_tags_group") or "").strip()):
-            raise RuntimeError("footage_plan requires an exact slot (rotation_theme + rotation_tags_group)")
-        env["FOOTAGE_PLAN_JSON"] = json.dumps(plan)
+    _footage_plan_json = footage_plan_env_value(req)
+    if _footage_plan_json is not None:
+        env["FOOTAGE_PLAN_JSON"] = _footage_plan_json
     _f6_video_raw = req.get("f6_video_url")
     if _f6_video_raw is not None and str(_f6_video_raw).strip():
         _f6_video = str(_f6_video_raw).strip()

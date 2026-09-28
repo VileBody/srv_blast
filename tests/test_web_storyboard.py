@@ -75,10 +75,13 @@ def _entry(index: int, group: str, start=10.0, end=20.0) -> dict[str, Any]:
                                                       "switch_points_abs": [], "clips": [{"file_name": "a.mp4"}]}}
 
 
+TL = {"cuts": []}
+
+
 def test_attach_puts_each_plan_on_its_variation(monkeypatch) -> None:
     sb = _sb(monkeypatch)
     variations = [_variation(1, "Неон"), _variation(2, "Ночной город")]
-    sb.attach_to_variations(variations, {"videos": [_entry(2, "Ночной город")]}, {"from": 10.0, "to": 20.0})
+    sb.attach_to_variations(variations, {"videos": [_entry(2, "Ночной город")]}, {"from": 10.0, "to": 20.0}, TL)
     assert "footagePlan" not in variations[0]["background"]
     assert variations[1]["background"]["footagePlan"]["clips"][0]["file_name"] == "a.mp4"
 
@@ -86,19 +89,31 @@ def test_attach_puts_each_plan_on_its_variation(monkeypatch) -> None:
 def test_attach_refuses_a_plan_for_another_background(monkeypatch) -> None:
     sb = _sb(monkeypatch)
     with pytest.raises(sb.StoryboardError, match="фон"):
-        sb.attach_to_variations([_variation(1, "Неон")], {"videos": [_entry(1, "Ночной город")]}, {"from": 10.0, "to": 20.0})
+        sb.attach_to_variations([_variation(1, "Неон")], {"videos": [_entry(1, "Ночной город")]}, {"from": 10.0, "to": 20.0}, TL)
 
 
 def test_attach_refuses_a_plan_for_another_window(monkeypatch) -> None:
     sb = _sb(monkeypatch)
     with pytest.raises(sb.StoryboardError, match="отрывка"):
-        sb.attach_to_variations([_variation(1, "Неон")], {"videos": [_entry(1, "Неон", start=11.0)]}, {"from": 10.0, "to": 20.0})
+        sb.attach_to_variations([_variation(1, "Неон")], {"videos": [_entry(1, "Неон", start=11.0)]}, {"from": 10.0, "to": 20.0}, TL)
 
 
 def test_attach_refuses_a_video_missing_from_the_batch(monkeypatch) -> None:
     sb = _sb(monkeypatch)
     with pytest.raises(sb.StoryboardError, match="видео 3"):
-        sb.attach_to_variations([_variation(1, "Неон")], {"videos": [_entry(3, "Неон")]}, {"from": 10.0, "to": 20.0})
+        sb.attach_to_variations([_variation(1, "Неон")], {"videos": [_entry(3, "Неон")]}, {"from": 10.0, "to": 20.0}, TL)
+
+
+def test_attach_refuses_a_plan_for_other_cuts(monkeypatch) -> None:
+    """Склейки на таймлайне поменялись, а новая раскадровка ещё не пришла:
+    старые склейки не должны молча уйти в рендер."""
+    sb = _sb(monkeypatch)
+    with pytest.raises(sb.StoryboardError, match="Склейки"):
+        sb.attach_to_variations([_variation(1, "Неон")], {"videos": [_entry(1, "Неон")]},
+                                {"from": 10.0, "to": 20.0}, {"cuts": [14.0]})
+    with pytest.raises(sb.StoryboardError, match="Склейки"):
+        sb.attach_to_variations([_variation(1, "Неон")], {"videos": [_entry(1, "Неон")]},
+                                {"from": 10.0, "to": 20.0}, None)
 
 
 # ── production ────────────────────────────────────────────────────────────────
@@ -173,6 +188,12 @@ def test_storyboard_endpoints_mock_flow(client) -> None:
         "exclude": [c["fileName"] for c in video["clips"]], "limit": 5})
     alts = [c["fileName"] for c in r.json()["candidates"]]
     assert len(alts) == 5 and not set(alts) & {c["fileName"] for c in video["clips"]}
+
+
+def test_drop_outside_the_fragment_is_an_explicit_error(client) -> None:
+    tc, _main = client
+    r = tc.post("/api/wizard/storyboard/cuts", json={"clipFrom": "00:10", "clipTo": "00:25", "dropTime": "00:40:000"})
+    assert r.status_code == 422 and "Дроп" in r.json()["detail"]
 
 
 def test_storyboard_needs_a_clip_window(client) -> None:

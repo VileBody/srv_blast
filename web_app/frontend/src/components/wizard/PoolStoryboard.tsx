@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import type { StoryboardCandidate, StoryboardPickedVideo } from '../../lib/types';
-import { StoryboardVideo, useWizardStore } from '../../stores/wizardStore';
+import { emptyStoryboard, StoryboardVideo, useWizardStore } from '../../stores/wizardStore';
 import { seedKeyFor, useRecipeCuts } from './storyboardData';
 import { usePlaybackUrl } from './useFragmentAudio';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
@@ -80,9 +80,14 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
   const key = JSON.stringify([timingFrom, timingTo, cuts, footageSlots.map((s) => [s.index, s.group])]);
   const [status, setStatus] = useState<{ loading: boolean; error: string | null }>({ loading: false, error: null });
 
-  /* ── подбор на весь батч, когда поменялись окно, склейки или раскладка вайбов ── */
+  /* ── подбор на весь батч, когда поменялись окно, склейки или раскладка вайбов ──
+        Раскадровка под старые вводные сразу выбрасывается: иначе, пока идёт новый
+        подбор (или если он упал, или вайбов не осталось), в рендер ушли бы старые
+        склейки и клипы — или генерацию заблокировала бы «устаревшая раскадровка». ── */
   useEffect(() => {
-    if (!cuts || !footageSlots.length || storyboard.key === key) return undefined;
+    if (storyboard.key === key) return undefined;
+    if (Object.keys(storyboard.videos).length) setStoryboard(emptyStoryboard());
+    if (!cuts || !footageSlots.length) { setStatus({ loading: false, error: null }); return undefined; }
     let cancelled = false;
     setStatus({ loading: true, error: null });
     api.storyboardPick({

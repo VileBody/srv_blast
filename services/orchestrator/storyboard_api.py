@@ -19,6 +19,8 @@ import json
 import logging
 import os
 import tempfile
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -29,6 +31,14 @@ from mlcore import storyboard_plan as sp
 log = logging.getLogger("orchestrator.storyboard")
 
 PREVIEW_URL_TTL_S = int(os.environ.get("STORYBOARD_PREVIEW_URL_TTL_S") or 6 * 3600)
+# The mapped picker pool is the same for every slot and every request. Hydrating
+# it means reading the whole video registry from Postgres and re-mapping the tag
+# snapshot, so it is kept in-process for a short while: each «Заменить кадр»,
+# shuffle or cut drag must not cost a full-table read. A registry change shows
+# up in the storyboard after at most this TTL; the render hydrates on its own.
+POOL_CACHE_TTL_S = float(os.environ.get("STORYBOARD_POOL_CACHE_TTL_S") or 120)
+_POOL_LOCK = threading.Lock()
+_POOL_CACHE: Dict[str, Any] = {}
 
 
 @dataclass
@@ -49,45 +59,66 @@ def _parse_s3(url: str) -> tuple[str, str]:
     return p.netloc, p.path.lstrip("/")
 
 
+def _load_pool() -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]], int]:
+    """(mapped picker assets, raw inventory rows by name, inventory size), hydrated
+    from the registry exactly like a build and cached for ``POOL_CACHE_TTL_S``.
+
+    The lock serialises hydration inside this process, and the per-thread cache
+    key keeps the registry tmp files of concurrent API processes apart — with one
+    shared key two requests wrote and renamed the same tmp files."""
+    with _POOL_LOCK:
+        hit = _POOL_CACHE.get("pool")
+        if hit is not None and time.monotonic() - hit[0] < POOL_CACHE_TTL_S:
+            return hit[1]
+        from mlcore.footage_picker import (
+            load_footage_style_metadata_rows,
+            load_picker_assets_from_inventory,
+            map_inventory_assets_with_style_metadata,
+            merge_footage_style_metadata_rows,
+        )
+
+        from .tasks import _ensure_video_picker_artifacts_from_registry
+
+        root = _repo_root()
+        inv_raw = str(os.environ.get("FOOTAGE_INVENTORY_JSON") or os.environ.get("FOOTAGE_INVENTORY_OUT") or "data/footage_inventory.json").strip()
+        snap_raw = str(os.environ.get("FOOTAGE_TAGS_SNAPSHOT_PATH") or "data/footage_tags_snapshot.json").strip()
+        _ensure_video_picker_artifacts_from_registry(
+            repo_root=root, inventory_path=inv_raw, snapshot_path=snap_raw,
+            cache_key=f"storyboard-{os.getpid()}-{threading.get_ident()}",
+        )
+        inv_path = Path(inv_raw) if Path(inv_raw).is_absolute() else root / inv_raw
+        snap_path = Path(snap_raw) if Path(snap_raw).is_absolute() else root / snap_raw
+        inv = json.loads(inv_path.read_text(encoding="utf-8"))
+        raw_by_name = {
+            str(a.get("file_name") or ""): a for a in (inv.get("assets") or []) if isinstance(a, dict)
+        }
+        picker_assets = load_picker_assets_from_inventory(inv)
+        index = merge_footage_style_metadata_rows(load_footage_style_metadata_rows(db_paths=[snap_path]))
+        mapped, _unmapped = map_inventory_assets_with_style_metadata(
+            assets=picker_assets, metadata_index=index, require_metadata=True,
+        )
+        value = (mapped, raw_by_name, len(picker_assets))
+        _POOL_CACHE["pool"] = (time.monotonic(), value)
+        return value
+
+
 def load_bucket(*, theme: str, tags_group: str, seed_key: str) -> LoadedBucket:
-    """Hydrate the video picker pool exactly like a build and resolve one slot."""
+    """Hydrate the video picker pool exactly like a build and resolve one slot.
+    The cooldown ledger and the operator blacklist are read fresh on every call."""
     if theme == "collection":
         raise sp.StoryboardPlanError("storyboard is not available for collections yet")
-    from mlcore.footage_picker import (
-        load_footage_style_metadata_rows,
-        load_picker_assets_from_inventory,
-        map_inventory_assets_with_style_metadata,
-        merge_footage_style_metadata_rows,
-    )
-    from mlcore.gemini_orchestrator import _load_footage_cooldown
+    from mlcore.gemini_orchestrator import _load_footage_cooldown, load_footage_exclude_file_names
 
-    from .tasks import _ensure_video_picker_artifacts_from_registry
-
-    root = _repo_root()
-    inv_raw = str(os.environ.get("FOOTAGE_INVENTORY_JSON") or os.environ.get("FOOTAGE_INVENTORY_OUT") or "data/footage_inventory.json").strip()
-    snap_raw = str(os.environ.get("FOOTAGE_TAGS_SNAPSHOT_PATH") or "data/footage_tags_snapshot.json").strip()
-    _ensure_video_picker_artifacts_from_registry(
-        repo_root=root, inventory_path=inv_raw, snapshot_path=snap_raw, cache_key="storyboard",
-    )
-    inv_path = Path(inv_raw) if Path(inv_raw).is_absolute() else root / inv_raw
-    snap_path = Path(snap_raw) if Path(snap_raw).is_absolute() else root / snap_raw
-    inv = json.loads(inv_path.read_text(encoding="utf-8"))
-    raw_by_name = {
-        str(a.get("file_name") or ""): a for a in (inv.get("assets") or []) if isinstance(a, dict)
-    }
-    picker_assets = load_picker_assets_from_inventory(inv)
-    index = merge_footage_style_metadata_rows(load_footage_style_metadata_rows(db_paths=[snap_path]))
-    mapped, _unmapped = map_inventory_assets_with_style_metadata(
-        assets=picker_assets, metadata_index=index, require_metadata=True,
-    )
+    mapped, raw_by_name, total = _load_pool()
     cooldown = _load_footage_cooldown(f"{theme}:{tags_group}", mapped, logger=log)
     ctx = sp.resolve_bucket(
         theme=theme,
         tags_group=tags_group,
         mapped_assets=mapped,
         seed_key=seed_key,
-        total_assets=len(picker_assets),
+        total_assets=total,
         cooldown_by_name=cooldown,
+        excluded_file_names=load_footage_exclude_file_names(logger=log),
     )
     return LoadedBucket(ctx=ctx, raw_by_name=raw_by_name)
 

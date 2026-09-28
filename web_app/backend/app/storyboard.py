@@ -154,15 +154,16 @@ def clip_view(clip: dict[str, Any]) -> dict[str, Any]:
 # ── render ────────────────────────────────────────────────────────────────────
 
 def attach_to_variations(variations: list[dict[str, Any]], storyboard: dict[str, Any] | None,
-                         segment: dict[str, float] | None) -> None:
+                         segment: dict[str, float] | None, timeline: dict[str, Any] | None = None) -> None:
     """Приклеить закреплённые планы к вариациям рендера.
 
-    Раскадровка собирается на «Пуле» по той же раскладке вариаций. Если с тех пор
-    поменялись окно или фон конкретного видео, план описывал бы другое видео —
-    это явная ошибка, а не тихий перебор клипов.
+    Раскадровка собирается на «Пуле» по той же раскладке вариаций и по склейкам
+    рецепта таймлайна. Если с тех пор поменялись окно, склейки или фон конкретного
+    видео, план описывал бы другое видео — это явная ошибка, а не тихий перебор клипов.
     """
     if not storyboard:
         return
+    recipe_cuts = (timeline or {}).get("cuts")
     entries = storyboard.get("videos") or []
     if not isinstance(entries, list):
         raise StoryboardError("Раскадровка повреждена — соберите исходники заново")
@@ -184,4 +185,7 @@ def attach_to_variations(variations: list[dict[str, Any]], storyboard: dict[str,
         if segment is None or abs(float(plan.get("clip_start_abs", -1)) - segment["from"]) > 1e-3 \
                 or abs(float(plan.get("clip_end_abs", -1)) - segment["to"]) > 1e-3:
             raise StoryboardError("Раскадровка собрана для другого отрывка — соберите исходники заново")
+        plan_cuts = [float(p) for p in plan.get("switch_points_abs") or []]
+        if not isinstance(recipe_cuts, list) or len(recipe_cuts) != len(plan_cuts)                 or any(abs(float(a) - b) > 1e-3 for a, b in zip(recipe_cuts, plan_cuts)):
+            raise StoryboardError("Склейки на таймлайне поменялись — дождитесь новой раскадровки на шаге «Пул»")
         bg["footagePlan"] = plan

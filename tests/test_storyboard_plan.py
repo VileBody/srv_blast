@@ -165,7 +165,7 @@ def _plan(ctx):
 def test_plan_round_trips_through_validation():
     ctx = _ctx(20)
     plan = _plan(ctx)
-    points, sel = sp.validate_plan(plan, clip_start_abs=10.0, clip_end_abs=20.0, known_file_names=ctx.by_name)
+    points, sel = sp.validate_plan(plan, clip_start_abs=10.0, clip_end_abs=20.0, pool_by_name=ctx.pool)
     assert points == [12.0, 15.0, 17.5]
     assert [c.file_name for c in sel.clips] == [c["file_name"] for c in plan["clips"]]
 
@@ -175,7 +175,7 @@ def test_narrower_job_window_trims_only_the_edge_shots():
     trimmed with the same frames on screen, inner shots stay untouched."""
     ctx = _ctx(20)
     plan = _plan(ctx)
-    points, sel = sp.validate_plan(plan, clip_start_abs=11.0, clip_end_abs=19.0, known_file_names=ctx.by_name)
+    points, sel = sp.validate_plan(plan, clip_start_abs=11.0, clip_end_abs=19.0, pool_by_name=ctx.pool)
     assert points == [12.0, 15.0, 17.5]
     first, last = sel.clips[0], sel.clips[-1]
     assert (first.in_point, first.out_point) == (11.0, 12.0)
@@ -187,14 +187,14 @@ def test_narrower_job_window_trims_only_the_edge_shots():
 
 def test_trim_that_removes_a_whole_shot_drops_its_cut():
     ctx = _ctx(20)
-    points, sel = sp.validate_plan(_plan(ctx), clip_start_abs=12.5, clip_end_abs=20.0, known_file_names=ctx.by_name)
+    points, sel = sp.validate_plan(_plan(ctx), clip_start_abs=12.5, clip_end_abs=20.0, pool_by_name=ctx.pool)
     assert points == [15.0, 17.5] and len(sel.clips) == 3
 
 
 def test_job_window_wider_than_the_plan_is_rejected():
     ctx = _ctx(20)
     with pytest.raises(sp.StoryboardPlanError, match="cover"):
-        sp.validate_plan(_plan(ctx), clip_start_abs=9.0, clip_end_abs=20.0, known_file_names=ctx.by_name)
+        sp.validate_plan(_plan(ctx), clip_start_abs=9.0, clip_end_abs=20.0, pool_by_name=ctx.pool)
 
 
 def test_plan_with_unknown_clip_is_rejected():
@@ -202,7 +202,7 @@ def test_plan_with_unknown_clip_is_rejected():
     plan = _plan(ctx)
     plan["clips"][0]["file_name"] = "gone.mp4"
     with pytest.raises(sp.StoryboardPlanError, match="inventory"):
-        sp.validate_plan(plan, clip_start_abs=10.0, clip_end_abs=20.0, known_file_names=ctx.by_name)
+        sp.validate_plan(plan, clip_start_abs=10.0, clip_end_abs=20.0, pool_by_name=ctx.pool)
 
 
 def test_plan_whose_clips_do_not_match_its_cuts_is_rejected():
@@ -210,4 +210,47 @@ def test_plan_whose_clips_do_not_match_its_cuts_is_rejected():
     plan = _plan(ctx)
     plan["switch_points_abs"] = [12.0, 16.0, 17.5]
     with pytest.raises(sp.StoryboardPlanError, match="spans"):
-        sp.validate_plan(plan, clip_start_abs=10.0, clip_end_abs=20.0, known_file_names=ctx.by_name)
+        sp.validate_plan(plan, clip_start_abs=10.0, clip_end_abs=20.0, pool_by_name=ctx.pool)
+
+
+# ── operator blacklist + the plan comes from the browser ──────────────────────
+
+def test_blacklisted_clips_are_never_picked_or_offered():
+    ctx = sp.resolve_bucket(theme=THEME, tags_group=GROUP, mapped_assets=_assets(12), seed_key="batch-1",
+                            excluded_file_names=["3000.mp4", "3001.mp4"])
+    picks = sp.pick_batch(ctx, clip_start_abs=0.0, clip_end_abs=10.0, switch_points_abs=CUTS,
+                          videos=[sp.VideoRequest(seed_key="v0")])
+    assert not {"3000.mp4", "3001.mp4"} & {c.file_name for c in picks[0].selection.clips}
+    alts = sp.alternatives(ctx, clip_start_abs=0.0, clip_end_abs=10.0, switch_points_abs=CUTS,
+                           interval_idx=0, seed_key="v0", limit=50)
+    assert alts and not {"3000.mp4", "3001.mp4"} & set(alts)
+    with pytest.raises(sp.StoryboardPlanError, match="blacklisted"):
+        sp.pick_batch(ctx, clip_start_abs=0.0, clip_end_abs=10.0, switch_points_abs=CUTS,
+                      videos=[sp.VideoRequest(seed_key="v0", pins={0: "3000.mp4"})])
+
+
+def test_plan_with_a_blacklisted_clip_is_rejected():
+    ctx = _ctx(20)
+    plan = _plan(ctx)
+    with pytest.raises(sp.StoryboardPlanError, match="blacklisted"):
+        sp.validate_plan(plan, clip_start_abs=10.0, clip_end_abs=20.0, pool_by_name=ctx.pool,
+                         excluded_file_names=[plan["clips"][1]["file_name"]])
+
+
+def test_plan_with_a_clip_shorter_than_its_shot_is_rejected():
+    ctx = _ctx(20)
+    plan = _plan(ctx)
+    ctx.pool[plan["clips"][1]["file_name"]]["duration_sec"] = 1.0  # shot 2 is 3 s
+    with pytest.raises(sp.StoryboardPlanError, match="shorter"):
+        sp.validate_plan(plan, clip_start_abs=10.0, clip_end_abs=20.0, pool_by_name=ctx.pool)
+
+
+def test_plan_with_a_clip_from_another_slot_is_rejected():
+    """In the inventory but outside this slot's pool (another vibe) — the render
+    must not take it just because the browser sent it."""
+    ctx = _ctx(20)
+    plan = _plan(ctx)
+    pool = dict(ctx.pool)
+    pool.pop(plan["clips"][0]["file_name"])
+    with pytest.raises(sp.StoryboardPlanError, match="inventory of this slot"):
+        sp.validate_plan(plan, clip_start_abs=10.0, clip_end_abs=20.0, pool_by_name=pool)
