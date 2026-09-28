@@ -15,6 +15,9 @@ import { PillsFooter } from './WizardFrame';
 import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useFragmentAudio } from './useFragmentAudio';
 import { SourcesModal } from './SourcesEditor';
+import { ActionGuideOverlay, type ActionGuideVariant } from '../guidance/ActionGuideOverlay';
+import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
+import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 import { footageTypeKey, footageTypePlane, stepFootageType } from '../../data/footageTypes';
 import effectsRegistry from '../../data/effects-registry.json';
 import { BackgroundMode, backgroundPills, backgroundVariations, useWizardStore } from '../../stores/wizardStore';
@@ -31,6 +34,233 @@ export { backgroundVariations };
 
 const ACCENT = 'var(--accent-light)';
 const WHITE80 = 'var(--text-80)';
+
+export type BackgroundGuideGraphic = 'map' | 'pairs' | 'stack' | 'studio';
+
+const GUIDE_TONES = [
+  'from-[#8b6fe6] to-[#342553]',
+  'from-[#42627b] to-[#172331]',
+  'from-[#8a526d] to-[#2a1823]'
+];
+
+function GuideFrame({ index, selected, landscape = false, large = false }: { index: number; selected?: boolean; landscape?: boolean; large?: boolean }) {
+  return (
+    <span className={cn(
+      'relative block overflow-hidden rounded-[7px] bg-gradient-to-b',
+      landscape ? 'h-[25px] w-[40px]' : large ? 'h-[60px] w-[36px]' : 'h-[50px] w-[30px]',
+      GUIDE_TONES[index % GUIDE_TONES.length],
+      selected && 'ring-2 ring-inset ring-accent-light'
+    )}>
+      <span className="absolute inset-x-[5px] bottom-[6px] h-[2px] rounded-full bg-white/35" />
+      {selected && <span className="absolute right-[4px] top-[4px] h-[5px] w-[5px] rounded-full bg-accent-light" />}
+    </span>
+  );
+}
+
+function BackgroundModeGuideVisual({ variant }: { variant: BackgroundGuideGraphic }) {
+  if (variant === 'studio') {
+    // Без стрелки (она никого не убеждала). Отступ между рядом иконок и контейнером
+    // роликов равен отступу МЕЖДУ иконками — единая сетка, не два случайных числа.
+    // Раскадровка одноразовая (guide-mode-frame/-delay-N, не луп): все три пила стартуют
+    // выключенными, первые два включаются по очереди, ролики проявляются вместе с ними.
+    const icons = [
+      { src: '/assets/figma/icon-tag.svg', tag: true },
+      { src: '/assets/figma/icon-photo.svg', tag: false },
+      { src: '/assets/figma/icon-colorwheel.svg', tag: false }
+    ];
+    // Тайминги: у каждого пила ДВА слоя (дашед-«выключен» / сплошной-«включён»),
+    // кросс-фейдятся — дашед реально исчезает, а не остаётся торчать под сплошным.
+    // Иконки разнесены на 600ms (не соседние delay-N — то было слишком быстро и
+    // читалось как «сразу оба фиолетовые»), ролики стартуют вместе со ВТОРОЙ иконкой.
+    const iconDelays = [150, 750];
+    return (
+      <div className="mx-auto flex w-full max-w-[190px] flex-col items-center gap-[10px] overflow-hidden" aria-hidden="true">
+        <span className="grid w-full grid-cols-3 gap-[10px]">
+          {icons.map((icon, index) => (
+            <span key={icon.src} className="relative flex h-[32px] items-center justify-center overflow-hidden rounded-[8px]">
+              <span className="absolute inset-0 rounded-[8px] border border-dashed border-white/20 bg-white/[0.03]" style={index < 2 ? { animation: `guide-mode-off-fade 320ms cubic-bezier(.16,1,.3,1) ${iconDelays[index]}ms both` } : undefined} />
+              {index < 2 && (
+                <span className="absolute inset-0 rounded-[8px] bg-[#6850b7] ring-1 ring-inset ring-white/30" style={{ animation: `guide-mode-on-fade 320ms cubic-bezier(.16,1,.3,1) ${iconDelays[index]}ms both` }} />
+              )}
+              <span className="relative z-[1]">
+                {icon.tag ? <TagIcon color="rgba(255,255,255,.92)" size={13} /> : <SvgMaskIcon src={icon.src} style={{ width: 13, height: 13, color: 'rgba(255,255,255,.92)' }} />}
+              </span>
+            </span>
+          ))}
+        </span>
+        <span className="relative h-[68px] w-full overflow-hidden rounded-[10px] border border-white/25 bg-black/15">
+          <span className="absolute left-1/2 top-[19px] h-[60px] w-[74px] -translate-x-1/2">
+            <span className="guide-mode-frame absolute left-0 top-[4px] scale-[1.15] opacity-45" style={{ animationDelay: '760ms' }}><GuideFrame index={2} /></span>
+            <span className="guide-mode-frame absolute left-[18px] top-[2px] scale-[1.15] opacity-75" style={{ animationDelay: '880ms' }}><GuideFrame index={1} /></span>
+            {/* Реюз once-реавила и infinite-пульса на одном transform дерётся за свойство —
+                вложенный span даёт каждому своё: снаружи разовое появление, внутри вечное дыхание. */}
+            <span className="guide-mode-frame absolute left-[36px] top-0 scale-[1.15]" style={{ animationDelay: '1000ms' }}><span className="guide-pulse"><GuideFrame index={0} selected /></span></span>
+          </span>
+        </span>
+      </div>
+    );
+  }
+
+  if (variant === 'pairs') {
+    return (
+      <div className="grid w-full min-w-0 grid-cols-[104px_18px_minmax(0,1fr)] items-center gap-[8px] overflow-hidden" aria-hidden="true">
+        <span className="flex min-w-0 flex-col gap-[5px]">
+          {['Футажи', 'Фото'].map((label, index) => (
+            <span key={label} className={cn('guide-mode-reveal flex h-[26px] min-w-0 items-center gap-[6px] rounded-[7px] bg-[#6850b7] px-[7px] text-[9px] text-white', index === 0 ? 'guide-mode-delay-1' : 'guide-mode-delay-2')}>
+              {index === 0 ? (
+                <TagIcon color="rgba(255,255,255,0.92)" size={13} />
+              ) : (
+                <SvgMaskIcon src="/assets/figma/icon-photo.svg" style={{ width: 13, height: 12, color: 'rgba(255,255,255,0.92)' }} />
+              )}
+              <span className="action-guide-optical-text truncate">{label}</span>
+            </span>
+          ))}
+        </span>
+        <span className="guide-mode-reveal guide-mode-delay-3 flex items-center justify-center">
+          <img src="/assets/figma/pd-arrow-right.svg" alt="" className="h-[10px] w-[18px]" />
+        </span>
+        <span className="guide-mode-reveal guide-mode-delay-4 relative h-[57px] w-full min-w-0 overflow-hidden rounded-[9px] border border-white/70 bg-black/15">
+          <span className="guide-mode-frame guide-mode-delay-5 absolute left-[7px] top-[4px] opacity-50"><GuideFrame index={2} large /></span>
+          <span className="guide-mode-frame guide-mode-delay-6 absolute left-[22px] top-[3px] opacity-75"><GuideFrame index={1} large /></span>
+          <span className="guide-mode-frame guide-mode-delay-7 absolute left-[37px] top-[2px]"><GuideFrame index={0} selected large /></span>
+        </span>
+      </div>
+    );
+  }
+
+  if (variant === 'stack') {
+    return (
+      <div className="grid w-full min-w-0 grid-cols-[82px_18px_82px] items-center justify-center gap-[8px] overflow-hidden" aria-hidden="true">
+        <span className="flex h-[64px] flex-col gap-[4px] rounded-[9px] border border-white/30 bg-black/15 p-[6px]">
+          {['Футажи', 'Фото', 'Цвет'].map((label, index) => (
+            <span key={label} className={cn('flex h-[14px] min-w-0 items-center gap-[5px] rounded-[5px] px-[5px] text-[7px] text-white', index < 2 ? 'bg-[#6850b7] ring-1 ring-inset ring-white/25' : 'border border-dashed border-white/20 bg-white/[0.03] text-white/45')}>
+              {index === 0 ? <TagIcon color="currentColor" size={9} /> : <SvgMaskIcon src={index === 1 ? '/assets/figma/icon-photo.svg' : '/assets/figma/icon-colorwheel.svg'} style={{ width: 9, height: 9, color: 'currentColor' }} />}
+              <span className="action-guide-optical-text truncate">{label}</span>
+            </span>
+          ))}
+        </span>
+        <img src="/assets/figma/pd-arrow-right.svg" alt="" className="h-[10px] w-[18px] opacity-85" />
+        <span className="relative h-[64px] overflow-hidden rounded-[9px] border border-white/30 bg-black/15">
+          <span className="absolute left-[8px] top-[8px] opacity-45"><GuideFrame index={2} /></span>
+          <span className="absolute left-[24px] top-[6px] opacity-75"><GuideFrame index={1} /></span>
+          <span className="absolute left-[40px] top-[4px]"><GuideFrame index={0} selected /></span>
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid w-full min-w-0 grid-cols-[86px_18px_86px] items-center justify-center gap-[8px] overflow-hidden" aria-hidden="true">
+      <span className="relative h-[64px] overflow-hidden rounded-[9px] border border-white/30 bg-black/15">
+        <span className="absolute left-[9px] top-[8px] flex h-[22px] w-[50px] items-center gap-[5px] rounded-[6px] bg-[#6850b7] px-[6px] text-[7px] text-white ring-1 ring-inset ring-white/25"><TagIcon color="currentColor" size={9} /><span className="action-guide-optical-text">Футажи</span></span>
+        <span className="absolute left-[25px] top-[25px] flex h-[22px] w-[50px] items-center gap-[5px] rounded-[6px] bg-[#6850b7] px-[6px] text-[7px] text-white shadow-[0_5px_12px_rgba(5,1,15,.32)] ring-1 ring-inset ring-white/25"><SvgMaskIcon src="/assets/figma/icon-photo.svg" style={{ width: 9, height: 9, color: 'currentColor' }} /><span className="action-guide-optical-text">Фото</span></span>
+        <span className="absolute bottom-[5px] left-[10px] h-[12px] w-[12px] rounded-[4px] border border-dashed border-white/20" />
+      </span>
+      <img src="/assets/figma/pd-arrow-right.svg" alt="" className="h-[10px] w-[18px] opacity-85" />
+      <span className="grid h-[64px] grid-cols-[1fr_1fr] gap-[5px] overflow-hidden rounded-[9px] border border-white/30 bg-black/15 p-[6px]">
+        <span className={cn('col-span-2 h-[20px] rounded-[6px] bg-gradient-to-r ring-1 ring-inset ring-white/35', GUIDE_TONES[1])} />
+        <span className={cn('h-[30px] rounded-[6px] bg-gradient-to-b ring-1 ring-inset ring-white/35', GUIDE_TONES[0])} />
+        <span className={cn('h-[30px] rounded-[6px] bg-gradient-to-b ring-1 ring-inset ring-white/35', GUIDE_TONES[2])} />
+      </span>
+    </div>
+  );
+}
+
+function BackgroundPoolGuideVisual({ variant }: { variant: BackgroundGuideGraphic }) {
+  if (variant === 'studio') {
+    return (
+      <div className="mx-auto flex w-full max-w-[100px] flex-col items-center gap-[7px] overflow-visible" aria-hidden="true">
+        {/* Галочка — по центру чипа, не в углу (правка ревью: сбоку читалась плохо). */}
+        <span className="flex h-[33px] w-[88px] items-center justify-center gap-[5px] rounded-[9px] border border-white/25 bg-black/15 px-[7px] py-[6px]">
+          <span className={cn('guide-pulse relative flex h-[19px] w-[28px] items-center justify-center rounded-[6px] bg-gradient-to-br ring-1 ring-inset ring-white/45', GUIDE_TONES[2])}>
+            <span className="text-[9px] leading-none text-white">✓</span>
+          </span>
+          <span className="h-[19px] w-[28px] rounded-[6px] border border-dashed border-white/25 bg-white/[0.03]" />
+        </span>
+        {/* Карусель роликов, без стрелки: три пила крутятся по кругу — центр уезжает
+            влево-и-мельчает, правый вырастает в центр, левый встаёт на место правого.
+            Один кейфрейм на всех трёх (guide-carousel), фаза сдвинута на треть периода
+            через отрицательный animation-delay — тот же приём, что у кросс-фейда иконок хука. */}
+        <div className="relative flex h-[58px] w-full items-center justify-center" aria-hidden="true">
+          {GUIDE_TONES.map((tone, index) => (
+            <span
+              key={index}
+              className={cn('guide-carousel absolute left-1/2 top-1/2 flex h-[46px] w-[32px] items-center justify-center overflow-hidden rounded-[7px] bg-gradient-to-b shadow-[0_8px_16px_rgba(5,1,15,.4)] ring-1 ring-inset ring-white/50', tone)}
+              style={{ animationDelay: `${index * -1.5}s` }}
+            >
+              <img src="/assets/figma/btn-play.svg" alt="" className="h-[11px] w-[11px]" />
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (variant === 'pairs') {
+    return (
+      <div className="grid w-full min-w-0 grid-cols-3 gap-[9px] overflow-hidden px-[2px]" aria-hidden="true">
+        {GUIDE_TONES.map((tone, index) => (
+          <span key={index} className="flex min-w-0 flex-col items-center">
+            <span className={cn('h-[18px] w-full rounded-[6px] bg-gradient-to-r ring-1 ring-inset ring-white/35', tone)} />
+            <img src="/assets/figma/pd-arrow-right.svg" alt="" className="my-[3px] h-[8px] w-[12px] rotate-90 opacity-80" />
+            <span className={cn('relative flex h-[47px] w-[31px] items-center justify-center overflow-hidden rounded-[7px] bg-gradient-to-b ring-1 ring-inset ring-white/55', tone)}>
+              <img src="/assets/figma/btn-play.svg" alt="" className="h-[14px] w-[14px]" />
+              <span className="action-guide-optical-text absolute bottom-[3px] text-[7px] text-white/80">0{index + 1}</span>
+            </span>
+          </span>
+        ))}
+      </div>
+    );
+  }
+
+  if (variant === 'stack') {
+    return (
+      <div className="grid min-h-[82px] w-full min-w-0 grid-cols-[78px_20px_90px] items-center justify-center gap-[8px]" aria-hidden="true">
+        <span className="flex h-[72px] items-center justify-center gap-[4px] rounded-[9px] border border-white/30 bg-black/15 px-[7px]">
+          {[0, 1, 2, 3].map((index) => index < 3 ? (
+            <span key={index} className={cn('relative h-[52px] w-[13px] shrink-0 rounded-[5px] bg-gradient-to-b ring-1 ring-inset ring-white/45', GUIDE_TONES[index])}>
+              <span className="action-guide-optical-text absolute left-1/2 top-[2px] -translate-x-1/2 text-[6px] text-white">✓</span>
+              <span className="absolute inset-x-[3px] bottom-[5px] h-px rounded-full bg-white/35" />
+            </span>
+          ) : (
+            <span key={index} className="relative h-[52px] w-[13px] shrink-0 rounded-[5px] border border-dashed border-white/30 bg-white/[0.03]">
+              <span className="absolute inset-x-[3px] bottom-[5px] h-px rounded-full bg-white/10" />
+            </span>
+          ))}
+        </span>
+        <img src="/assets/figma/pd-arrow-right.svg" alt="" className="h-[10px] w-[20px] opacity-85" />
+        <span className="relative h-[82px] min-w-0 overflow-visible">
+          {GUIDE_TONES.map((tone, index) => (
+            <span key={index} className={cn('absolute top-[10px] flex h-[58px] w-[36px] items-center justify-center overflow-hidden rounded-[8px] bg-gradient-to-b shadow-[0_7px_12px_rgba(5,1,15,.38)] ring-1 ring-inset ring-white/50', tone)} style={{ left: 4 + index * 25, transform: `rotate(${(index - 1) * 4}deg)` }}>
+              <img src="/assets/figma/btn-play.svg" alt="" className="h-[14px] w-[14px]" />
+              <span className="action-guide-optical-text absolute bottom-[4px] text-[7px] text-white/80">0{index + 1}</span>
+            </span>
+          ))}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex w-full min-w-0 flex-col gap-[7px] overflow-hidden px-[2px]" aria-hidden="true">
+      <span className="grid grid-cols-[repeat(3,1fr)] gap-[7px]">
+        {GUIDE_TONES.map((tone, index) => <span key={index} className={cn('h-[22px] rounded-[6px] bg-gradient-to-r ring-1 ring-inset ring-white/35', tone)} />)}
+      </span>
+      <span className="relative h-[10px]">
+        <span className="absolute inset-x-[14%] top-0 h-px bg-white/25" />
+        {GUIDE_TONES.map((_, index) => <img key={index} src="/assets/figma/pd-arrow-right.svg" alt="" className="absolute top-[-1px] h-[8px] w-[11px] rotate-90 opacity-70" style={{ left: `${14 + index * 36}%` }} />)}
+      </span>
+      <span className="grid grid-cols-3 gap-[7px] rounded-[9px] border border-white/35 bg-black/15 p-[5px]">
+        {GUIDE_TONES.map((tone, index) => (
+          <span key={index} className={cn('relative flex h-[39px] min-w-0 items-center justify-center overflow-hidden rounded-[6px] bg-gradient-to-b', tone)}>
+            <img src="/assets/figma/btn-play.svg" alt="" className="h-[13px] w-[13px]" />
+            <span className="action-guide-optical-text absolute bottom-[2px] text-[7px] text-white/80">ролик {index + 1}</span>
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
 
 /** Типы склеек (Figma W22) — для строба и стилизации фото */
 export const GLUE_TYPES = effectsRegistry.glue
@@ -318,7 +548,7 @@ function ColorRow({ value, onPick }: { value?: string; onPick: (hex?: string) =>
   );
 }
 
-export function StageBackground() {
+export function StageBackground({ guideGraphic = 'studio', guideVariant = 'visual', qaGuide }: { guideGraphic?: BackgroundGuideGraphic; guideVariant?: ActionGuideVariant; qaGuide?: string | null }) {
   const { t } = useTranslation();
   const chip = useChip();
   const { push } = useToast();
@@ -346,6 +576,8 @@ export function StageBackground() {
   const cardsScroll = useDragScroll();
   const gluesScroll = useDragScroll();
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const modeGuideTargetRef = useRef<HTMLDivElement>(null);
+  const selectionGuideTargetRef = useRef<HTMLDivElement>(null);
 
   /*
    * Фото-карточки жили фиксированными 348×261, пока футажи тянулись во всю высоту ряда:
@@ -363,6 +595,30 @@ export function StageBackground() {
   const list = background.mode === 'photo' ? photosQuery.data?.photos : vibesQuery.data?.vibes;
   const loading = listQuery.isLoading;
   const selected = background.mode === 'photo' ? background.photo : background.footage;
+  const hasBackground = backgroundVariations(background) > 0;
+  // selection-хук объявлен первым: его dismissed-значение нужно для idle-условия
+  // ГАЙДА ВЫШЕ по цепочке (mode) — «эта подсказка ещё актуальна, если дальше по
+  // цепочке ещё не ушли», иначе после простоя может вернуться уже пройденный шаг.
+  // visible=false у selection: точный пререквизит «mode уже закрыт» на этом
+  // месте не собрать (modeGuideDismissed объявлен НИЖЕ) — показ отмечаем
+  // отдельно через useMarkGuideSeen после showSelectionGuide (см. ниже).
+  const [selectionGuideDismissed, setSelectionGuideDismissed] = useGuideDismiss(
+    'background-selection',
+    !hasBackground && (!isMedia || !loading),
+    false
+  );
+  const [modeGuideDismissed, setModeGuideDismissed] = useGuideDismiss('background-mode', !hasBackground && !selectionGuideDismissed, true);
+
+  useEffect(() => {
+    setModeGuideDismissed(qaGuide === 'background-sources');
+    setSelectionGuideDismissed(false);
+  }, [qaGuide]);
+
+  const showModeGuide = !modeGuideDismissed;
+  const showSelectionGuide = modeGuideDismissed && !selectionGuideDismissed && (!isMedia || !loading);
+  useMarkGuideSeen('background-selection', modeGuideDismissed && (!isMedia || !loading));
+
+  useScrollGuideIntoView(showSelectionGuide, selectionGuideTargetRef);
 
   const format = background.mode === 'photo' ? '4:3' : background.footageType === 'cine16x9' && background.mode === 'footage' ? '16:9' : '9:16';
   const pickVibe = (name: string) => {
@@ -397,9 +653,22 @@ export function StageBackground() {
         )}
       </div>
 
-      <div className="mt-[20px] max-md:mt-[14px]">
+      <div ref={modeGuideTargetRef} className="mt-[20px] max-md:mt-[14px]">
         <ModeSwitch />
       </div>
+
+      <ActionGuideOverlay
+        open={showModeGuide}
+        targetRef={modeGuideTargetRef}
+        title={t('wizard.bg.guideModeTitle')}
+        text={t('wizard.bg.guideModeText')}
+        dismissLabel={t('wizard.bg.guideNext')}
+        progressLabel={t('wizard.guideProgress', { current: 1, total: 2 })}
+        onDismiss={() => setModeGuideDismissed(true)}
+        variant={guideVariant}
+        shell="track-top"
+        visual={<BackgroundModeGuideVisual variant={guideGraphic} />}
+      />
 
       <SourcesModal
         open={sourcesOpen}
@@ -435,7 +704,7 @@ export function StageBackground() {
               <InlineError error={listQuery.error} offline={listQuery.fetchStatus === 'paused'} onRetry={() => listQuery.refetch()} retrying={listQuery.isFetching} />
             </div>
           ) : (
-            <div className="relative mt-[12px] min-h-[253px] flex-1 max-md:mt-[8px] max-md:h-[200px] max-md:min-h-0 max-md:flex-none">
+            <div ref={selectionGuideTargetRef} className="relative mt-[12px] min-h-[253px] flex-1 max-md:mt-[8px] max-md:h-[200px] max-md:min-h-0 max-md:flex-none">
               <span className="scroll-fade-l" />
               <span className="scroll-fade-r" />
               <div
@@ -457,7 +726,7 @@ export function StageBackground() {
             </div>
           )
         ) : (
-          <div className="mt-[28px] flex flex-col gap-[40px]">
+          <div ref={selectionGuideTargetRef} className="mt-[28px] flex flex-col gap-[40px]">
             <div className="px-[40px]">
               <ColorRow value={background.color} onPick={(hex) => setBackground({ color: hex })} />
             </div>
@@ -496,6 +765,25 @@ export function StageBackground() {
           </div>
         )}
       </div>
+
+      <ActionGuideOverlay
+        open={showSelectionGuide}
+        targetRef={selectionGuideTargetRef}
+        title={background.mode === 'color' ? t('wizard.bg.guideColorTitle') : t('wizard.bg.guidePoolTitle')}
+        text={background.mode === 'color' ? t('wizard.bg.guideColorText') : t('wizard.bg.guidePoolText')}
+        dismissLabel={t('wizard.bg.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 2, total: 2 })}
+        onDismiss={() => setSelectionGuideDismissed(true)}
+        variant={guideVariant}
+        shell="track-top"
+        visual={background.mode === 'color' ? (
+          <div className="flex w-full items-center gap-[8px]" aria-hidden="true">
+            <span className="h-[34px] w-[34px] shrink-0 rounded-r9 bg-[#f6f5fd]" />
+            <span className="h-[34px] w-[34px] shrink-0 rounded-r9 bg-[#05010f] ring-1 ring-text-20" />
+            <span className="h-[34px] flex-1 rounded-r9" style={{ background: HUE_GRADIENT }} />
+          </div>
+        ) : <BackgroundPoolGuideVisual variant={guideGraphic} />}
+      />
     </div>
   );
 }

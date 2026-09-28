@@ -101,11 +101,13 @@ def _workers(
     sdk: LLMWorkerControl,
     openrouter: LLMWorkerControl,
     hybrid: LLMWorkerControl,
+    sosana: LLMWorkerControl | None = None,
     vertex_sdk_mix: LLMWorkerControl | None = None,
 ) -> dict[str, LLMWorkerControl]:
     return {
         "sdk": sdk,
         "openrouter": openrouter,
+        "sosana": sosana or LLMWorkerControl(enabled=False, weight=0, max_inflight=1),
         "hybrid": hybrid,
         "vertex_sdk_mix": vertex_sdk_mix or LLMWorkerControl(enabled=False, weight=0, max_inflight=1),
     }
@@ -190,6 +192,26 @@ def test_choose_worker_type_skips_exhausted_type_by_max_inflight() -> None:
 
     selected = choose_worker_type(store)
     assert selected.worker_type == "openrouter"
+
+
+def test_choose_worker_type_can_select_sosana_explicitly() -> None:
+    store = _FakeStore()
+    set_config(
+        store,
+        LLMWorkersConfigPayload(
+            workers=_workers(
+                sdk=LLMWorkerControl(enabled=False, weight=0, max_inflight=1),
+                openrouter=LLMWorkerControl(enabled=False, weight=0, max_inflight=1),
+                sosana=LLMWorkerControl(enabled=True, weight=1, max_inflight=2),
+                hybrid=LLMWorkerControl(enabled=False, weight=0, max_inflight=1),
+            )
+        ),
+    )
+
+    selected = choose_worker_type(store, requested="sosana")
+
+    assert selected.worker_type == "sosana"
+    assert int(store.r.get("test:llm_workers:inflight:sosana:v1") or 0) == 1
 
 
 def test_choose_worker_type_requested_disabled_or_exhausted_raises() -> None:

@@ -39,7 +39,7 @@ BLOCK_EVENT = "bot_blocked"
 # чтобы новые пользовательские события не выпадали молча.
 SYSTEM_EVENTS = frozenset({
     BLOCK_EVENT, "reminder_sent", "sales_pitch", "keep_in_touch", "referral_sent",
-    "initial_grant", "credits_reserved", "track_credits_granted",
+    "initial_grant", "credits_reserved", "track_credits_granted", "track_credits_removed",
     "subscription_charged", "subscription_charge_failed",
     "processing_timeout_recovered", "referral_timeout_recovered", "audio_recovered",
     "generation_done", "generation_failed", "generation_completed",

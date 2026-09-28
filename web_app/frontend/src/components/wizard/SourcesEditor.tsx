@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '../../lib/api';
 import { cn } from '../../lib/cn';
+import { isVideoFile, VIDEO_FILE_ACCEPT } from '../../lib/mediaFiles';
 import type { UserSource } from '../../lib/types';
 import { useWizardStore } from '../../stores/wizardStore';
 import type { SourceVideoPlan } from '../../stores/wizardStore';
@@ -101,6 +102,10 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
     if (!projectId || busy) return;
     const picked = Array.from(files ?? []);
     if (!picked.length) return;
+    if (picked.some(file => !isVideoFile(file))) {
+      setError(t('wizard.sources.videoOnly'));
+      return;
+    }
     const rows: QueueRow[] = picked.map(file => ({ id: crypto.randomUUID(), name: file.name, percent: 0, state: 'uploading' }));
     setQueue(current => [...current, ...rows]);
     setBusy(true); setError('');
@@ -174,7 +179,7 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
           </div>
 
           {tab === 'pc' ? <>
-            <input ref={input} type="file" accept="video/mp4,video/quicktime,video/webm" multiple className="sr-only" disabled={busy} onChange={e => { void upload(e.target.files); e.target.value = ''; }} />
+            <input ref={input} type="file" accept={VIDEO_FILE_ACCEPT} multiple className="sr-only" disabled={busy} onChange={e => { void upload(e.target.files); e.target.value = ''; }} />
             <button type="button" disabled={busy || !projectId}
               className="flex min-h-[220px] w-full flex-1 flex-col items-center justify-center gap-[14px] rounded-r15 border-2 border-dashed border-accent-light bg-grad-soft-10 px-[24px] py-[28px] text-center transition hover:brightness-110 disabled:opacity-60"
               onClick={() => input.current?.click()}

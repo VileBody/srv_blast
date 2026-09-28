@@ -84,6 +84,12 @@ def map_hook(label: str | None) -> str | None:
     return HOOK_MAP.get(label) if label else None
 
 
+# Явный отказ юзера (первые пилы в рабочей зоне хука). В отличие от пустого значения
+# НЕ откатывается на склейку/стиль этапа фона — ролик идёт без них.
+NO_GLUE_LABEL = "Без склейки"
+NO_STYLE_LABEL = "Без стилизации"
+
+
 def map_glue(label: str | None) -> str | None:
     return GLUE_MAP.get(label) if label else None
 

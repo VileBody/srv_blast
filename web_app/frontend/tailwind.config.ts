@@ -61,6 +61,7 @@ export default {
         drawer: 'var(--z-drawer)',
         overlay: 'var(--z-overlay)',
         modal: 'var(--z-modal)',
+        guidance: 'var(--z-guidance)',
         toast: 'var(--z-toast)'
       },
       boxShadow: {

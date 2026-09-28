@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from mlcore.gemini_client import GeminiClient
 from mlcore.llm_router import (
+    PROVIDER_MODE_SOSANA,
     RoutedCallResult,
     run_routed_call,
 )
@@ -101,6 +102,12 @@ def _provider_raw_path(raw_response_path: Optional[Path], *, provider: str) -> O
     return raw_response_path.with_name(f"{raw_response_path.stem}_{provider}{raw_response_path.suffix}")
 
 
+def _compatible_provider_name(provider_mode: str) -> str:
+    if (provider_mode or "").strip().lower() == PROVIDER_MODE_SOSANA:
+        return PROVIDER_MODE_SOSANA
+    return "openrouter"
+
+
 def _sync_canonical_raw_path(
     *,
     raw_response_path: Optional[Path],
@@ -131,7 +138,7 @@ def _run_routed(
         stage=stage_name,
         hedge_delay_s=float(hedge_delay_s),
         gemini_call=gemini_call,
-        openrouter_call=openrouter_call,
+        compatible_call=openrouter_call,
         logger=logger,
     )
 
@@ -299,13 +306,17 @@ def call_stage1_asr_once(
 
     def _openrouter_call() -> Stage1AsrPayload:
         if openrouter_client is None:
-            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
+            raise RuntimeError(
+                f"OpenAI-compatible client is required for provider mode={provider_mode!r}"
+            )
         out = openrouter_client.generate_structured(
             schema_model=Stage1AsrPayload,
             prompt=user_prompt,
             audio_paths=audio_upload_paths,
             system_instruction=system_instruction,
-            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
+            raw_response_path=_provider_raw_path(
+                raw_response_path, provider=_compatible_provider_name(provider_mode)
+            ),
         )
         return Stage1AsrPayload.model_validate(out)
 
@@ -366,13 +377,17 @@ def call_stage1_forced_alignment_once(
 
     def _openrouter_call() -> Stage1ForcedAlignmentPayload:
         if openrouter_client is None:
-            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
+            raise RuntimeError(
+                f"OpenAI-compatible client is required for provider mode={provider_mode!r}"
+            )
         out = openrouter_client.generate_structured(
             schema_model=Stage1ForcedAlignmentPayload,
             prompt=user_prompt,
             audio_paths=audio_upload_paths,
             system_instruction=system_instruction,
-            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
+            raw_response_path=_provider_raw_path(
+                raw_response_path, provider=_compatible_provider_name(provider_mode)
+            ),
         )
         return Stage1ForcedAlignmentPayload.model_validate(out)
 
@@ -433,13 +448,17 @@ def call_stage1_scenario_once(
 
     def _openrouter_call() -> Stage1ScenarioPayload:
         if openrouter_client is None:
-            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
+            raise RuntimeError(
+                f"OpenAI-compatible client is required for provider mode={provider_mode!r}"
+            )
         out = openrouter_client.generate_structured(
             schema_model=Stage1ScenarioPayload,
             prompt=user_prompt,
             audio_paths=audio_upload_paths,
             system_instruction=system_instruction,
-            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
+            raw_response_path=_provider_raw_path(
+                raw_response_path, provider=_compatible_provider_name(provider_mode)
+            ),
         )
         return Stage1ScenarioPayload.model_validate(out)
 
@@ -499,12 +518,16 @@ def call_subtitles_plan_once(
 
     def _openrouter_call() -> BlocksTokensPayload:
         if openrouter_client is None:
-            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
+            raise RuntimeError(
+                f"OpenAI-compatible client is required for provider mode={provider_mode!r}"
+            )
         out = openrouter_client.generate_tokens_structured(
             prompt=user_prompt,
             audio_paths=audio_upload_paths,
             system_instruction=system_instruction,
-            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
+            raw_response_path=_provider_raw_path(
+                raw_response_path, provider=_compatible_provider_name(provider_mode)
+            ),
         )
         return BlocksTokensPayload.model_validate(out)
 
@@ -585,13 +608,17 @@ def call_subtitles_plan_model_once(
 
     def _openrouter_call() -> S:
         if openrouter_client is None:
-            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
+            raise RuntimeError(
+                f"OpenAI-compatible client is required for provider mode={provider_mode!r}"
+            )
         out = openrouter_client.generate_structured(
             schema_model=schema_model,
             prompt=user_prompt,
             audio_paths=audio_upload_paths,
             system_instruction=system_instruction,
-            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
+            raw_response_path=_provider_raw_path(
+                raw_response_path, provider=_compatible_provider_name(provider_mode)
+            ),
         )
         return schema_model.model_validate(out.model_dump(mode="json"))
 
@@ -691,13 +718,17 @@ def call_timing_analysis_once(
 
     def _openrouter_call() -> Stage2TimingAnalysisPayload:
         if openrouter_client is None:
-            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
+            raise RuntimeError(
+                f"OpenAI-compatible client is required for provider mode={provider_mode!r}"
+            )
         out = openrouter_client.generate_structured(
             schema_model=Stage2TimingAnalysisPayload,
             prompt=user_prompt,
             audio_paths=audio_upload_paths,
             system_instruction=system_instruction,
-            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
+            raw_response_path=_provider_raw_path(
+                raw_response_path, provider=_compatible_provider_name(provider_mode)
+            ),
         )
         return Stage2TimingAnalysisPayload.model_validate(out)
 
@@ -758,13 +789,17 @@ def call_timing_cuts_once(
 
     def _openrouter_call() -> Stage2TimingCutsPayload:
         if openrouter_client is None:
-            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
+            raise RuntimeError(
+                f"OpenAI-compatible client is required for provider mode={provider_mode!r}"
+            )
         out = openrouter_client.generate_structured(
             schema_model=Stage2TimingCutsPayload,
             prompt=user_prompt,
             audio_paths=audio_upload_paths,
             system_instruction=system_instruction,
-            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
+            raw_response_path=_provider_raw_path(
+                raw_response_path, provider=_compatible_provider_name(provider_mode)
+            ),
         )
         return Stage2TimingCutsPayload.model_validate(out)
 
@@ -879,17 +914,21 @@ def call_footage_style_once(
 
     def _openrouter_call() -> BaseModel:
         if openrouter_client is None:
-            raise RuntimeError("OpenRouter client is required for provider mode with openrouter")
+            raise RuntimeError(
+                f"OpenAI-compatible client is required for provider mode={provider_mode!r}"
+            )
         if extra_file_paths:
             raise RuntimeError(
-                "OpenRouter path for call_footage_style_once does not support extra_file_paths"
+                "OpenAI-compatible path for call_footage_style_once does not support extra_file_paths"
             )
         out = openrouter_client.generate_structured(
             schema_model=schema_model,
             prompt=user_prompt,
             audio_paths=audio_upload_paths,
             system_instruction=system_instruction,
-            raw_response_path=_provider_raw_path(raw_response_path, provider="openrouter"),
+            raw_response_path=_provider_raw_path(
+                raw_response_path, provider=_compatible_provider_name(provider_mode)
+            ),
         )
         return schema_model.model_validate(out)
 

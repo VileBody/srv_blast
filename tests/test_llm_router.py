@@ -21,7 +21,7 @@ def test_hedged_gemini_wins_before_delay_and_openrouter_not_started() -> None:
         stage="unit",
         hedge_delay_s=0.2,
         gemini_call=_gemini,
-        openrouter_call=_openrouter,
+        compatible_call=_openrouter,
     )
     assert out.provider == "gemini"
     assert out.value == "gemini-ok"
@@ -42,7 +42,7 @@ def test_hedged_openrouter_wins_after_delay() -> None:
         stage="unit",
         hedge_delay_s=0.05,
         gemini_call=_gemini,
-        openrouter_call=_openrouter,
+        compatible_call=_openrouter,
     )
     elapsed = time.monotonic() - t0
     assert out.provider == "openrouter"
@@ -62,7 +62,7 @@ def test_hedged_first_failure_second_success() -> None:
         stage="unit",
         hedge_delay_s=1.0,
         gemini_call=_gemini,
-        openrouter_call=_openrouter,
+        compatible_call=_openrouter,
     )
     assert out.provider == "openrouter"
     assert out.value == "openrouter-ok"
@@ -81,7 +81,7 @@ def test_hedged_both_fail_reports_both_errors() -> None:
             stage="unit",
             hedge_delay_s=0.01,
             gemini_call=_gemini,
-            openrouter_call=_openrouter,
+            compatible_call=_openrouter,
         )
         assert False, "expected failure"
     except RuntimeError as e:
@@ -89,3 +89,23 @@ def test_hedged_both_fail_reports_both_errors() -> None:
         assert "llm_hedged_all_failed" in msg
         assert "gemini" in msg
         assert "openrouter" in msg
+
+
+def test_sosana_mode_calls_only_compatible_provider() -> None:
+    state = {"gemini_called": 0}
+
+    def _gemini() -> str:
+        state["gemini_called"] += 1
+        return "gemini-ok"
+
+    out = run_routed_call(
+        mode="sosana",
+        stage="unit",
+        hedge_delay_s=0,
+        gemini_call=_gemini,
+        compatible_call=lambda: "sosana-ok",
+    )
+
+    assert out.provider == "sosana"
+    assert out.value == "sosana-ok"
+    assert state["gemini_called"] == 0

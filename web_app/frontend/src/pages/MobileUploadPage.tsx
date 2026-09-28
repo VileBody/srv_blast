@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { isVideoFile, VIDEO_FILE_ACCEPT } from '../lib/mediaFiles';
 
 type UploadInfo = { format: string; remaining: number };
 type UploadRow = { name: string; percent: number; state: 'uploading' | 'done' | 'error' };
@@ -43,6 +44,10 @@ export function MobileUploadPage() {
    */
   const pick = async (files: FileList | null) => {
     const queue = Array.from(files ?? []); if (!queue.length || busy) return;
+    if (queue.some(file => !isVideoFile(file))) {
+      setError(t('wizard.sources.videoOnly'));
+      return;
+    }
     setBusy(true); setError('');
     const start = rows.length;
     setRows(current => [...current, ...queue.map(file => ({ name: file.name, percent: 0, state: 'uploading' as const }))]);
@@ -63,7 +68,7 @@ export function MobileUploadPage() {
     <div className="mx-auto flex max-w-lg flex-col gap-5">
       <div><h1 className="text-[30px] leading-tight">{t('wizard.sources.title')}</h1>{info && <p className="mt-3 text-[15px] leading-6 text-text-60">{t('wizard.sources.rules', { format: info.format })}</p>}</div>
       {info && <>
-        <input ref={input} type="file" accept="video/*" multiple disabled={busy || info.remaining <= 0} className="sr-only" onChange={e => { void pick(e.target.files); e.target.value = ''; }} />
+        <input ref={input} type="file" accept={VIDEO_FILE_ACCEPT} multiple disabled={busy || info.remaining <= 0} className="sr-only" onChange={e => { void pick(e.target.files); e.target.value = ''; }} />
         <button type="button" disabled={busy || info.remaining <= 0} onClick={() => input.current?.click()} className="flex min-h-36 flex-col items-center justify-center gap-3 rounded-r15 border-2 border-dashed border-accent-light bg-grad-soft-10 px-6 text-center disabled:opacity-50">
           <span className="flex h-12 w-12 items-center justify-center rounded-r15 bg-text text-[28px] leading-none text-accent">+</span>
           <span>{busy ? t('wizard.warmup.processing') : t('wizard.sources.drop')}</span>

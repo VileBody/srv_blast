@@ -52,6 +52,9 @@ CLIENT_EVENTS = {
     "guide_opened",
     "guide_downloaded",
     "publish_flow_opened",
+    "wizard_guide_seen",
+    "wizard_guide_dismissed",
+    "wizard_guide_idle_reactivated",
 }
 
 # Browser payloads must stay both useful and privacy-safe. Unknown fields are
@@ -69,6 +72,14 @@ CLIENT_EVENT_PROPS: dict[str, set[str]] = {
     "guide_opened": set(),
     "guide_downloaded": set(),
     "publish_flow_opened": {"videos"},
+    # Онбординг-подсказки визарда (Track/Background/Subtitles/Hooks/Pool):
+    # seen — гайд физически показали (первый раз ИЛИ принудительный разовый
+    # тур для юзеров с уже выполненной задачей); dismissed — закрыли явным
+    # кликом; idle_reactivated — сработала 45с-страховка на незавершённой
+    # задаче. guideId — стабильный id вида "track-timing", "hook-drop" и т.д.
+    "wizard_guide_seen": {"guideId"},
+    "wizard_guide_dismissed": {"guideId"},
+    "wizard_guide_idle_reactivated": {"guideId"},
 }
 
 MAX_EVENTS = 50_000  # верхняя граница буфера в памяти, чтобы мок не съел RAM
@@ -388,11 +399,20 @@ def web_product_metrics(days: int = 30) -> dict[str, Any]:
     actions.sort(key=lambda row: (row["users"], row["events"]), reverse=True)
     wizard_stages = rows_for("wizard_stage_view", "stage")
     wizard_stages.sort(key=lambda row: int(row["stage"]) if str(row["stage"]).isdigit() else 999)
+    # По гайду видно, глухо это или нет: сколько юзеров реально ДОШЛИ до каждой
+    # подсказки (seen), закрыли её явным кликом (dismissed) или досидели до
+    # idle-реактивации (idle_reactivated) — без этого гайды были бы чёрным ящиком.
+    guide_tour = {
+        "seen": rows_for("wizard_guide_seen", "guideId"),
+        "dismissed": rows_for("wizard_guide_dismissed", "guideId"),
+        "idleReactivated": rows_for("wizard_guide_idle_reactivated", "guideId"),
+    }
     return {
         "attribution": attribution,
         "pages": rows_for("page_view", "route"),
         "wizardStages": wizard_stages,
         "actions": actions,
+        "guideTour": guide_tour,
     }
 
 

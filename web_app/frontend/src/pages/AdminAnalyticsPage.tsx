@@ -251,6 +251,30 @@ export function AdminAnalyticsPage() {
         </div>
       </section>
 
+      {/* Онбординг-гайды визарда: без этого блока не видно, доходят ли подсказки
+          до реальных юзеров вообще, или это глухой чёрный ящик. */}
+      <section className="card-2 shrink-0 p-[40px]">
+        <h2 className="text-[24px] font-[350] leading-none text-text">{t('admin.guideTour')}</h2>
+        <p className="mt-[8px] text-[14px] leading-[19px] text-text-60">{t('admin.guideTourHint')}</p>
+        <div className="mt-[24px] grid gap-[16px] lg:grid-cols-3">
+          <ActivityTable
+            title={t('admin.guideTourSeen')}
+            rows={(web?.guideTour.seen ?? []).map((row) => ({ key: row.guideId, events: row.events, users: row.users }))}
+            label={(key) => key}
+          />
+          <ActivityTable
+            title={t('admin.guideTourDismissed')}
+            rows={(web?.guideTour.dismissed ?? []).map((row) => ({ key: row.guideId, events: row.events, users: row.users }))}
+            label={(key) => key}
+          />
+          <ActivityTable
+            title={t('admin.guideTourIdle')}
+            rows={(web?.guideTour.idleReactivated ?? []).map((row) => ({ key: row.guideId, events: row.events, users: row.users }))}
+            label={(key) => key}
+          />
+        </div>
+      </section>
+
       {/* Выкладка: главный вопрос продукта — доходит ли сгенерированное до площадки */}
       <section className="card-2 shrink-0 p-[40px]">
         <h2 className="text-[24px] font-[350] leading-none text-text">{t('delivery.title')}</h2>

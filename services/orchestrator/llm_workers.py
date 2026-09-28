@@ -10,6 +10,7 @@ from core.llm_worker_types import (
     LLM_WORKER_TYPES,
     LLM_WORKER_TYPE_HYBRID,
     LLM_WORKER_TYPE_OPENROUTER,
+    LLM_WORKER_TYPE_SOSANA,
     LLM_WORKER_TYPE_SDK,
     LLM_WORKER_TYPE_VERTEX_SDK_MIX,
     normalize_llm_worker_type,
@@ -94,6 +95,11 @@ def _default_config() -> Dict[str, LLMWorkerControl]:
             enabled=_bool_env("LLM_WORKER_OPENROUTER_ENABLED", False),
             weight=_int_env("LLM_WORKER_OPENROUTER_WEIGHT", 1, min_value=0),
             max_inflight=_int_env("LLM_WORKER_OPENROUTER_MAX_INFLIGHT", 4, min_value=1),
+        ),
+        LLM_WORKER_TYPE_SOSANA: LLMWorkerControl(
+            enabled=_bool_env("LLM_WORKER_SOSANA_ENABLED", False),
+            weight=_int_env("LLM_WORKER_SOSANA_WEIGHT", 1, min_value=0),
+            max_inflight=_int_env("LLM_WORKER_SOSANA_MAX_INFLIGHT", 4, min_value=1),
         ),
         LLM_WORKER_TYPE_HYBRID: LLMWorkerControl(
             enabled=_bool_env("LLM_WORKER_HYBRID_ENABLED", False),

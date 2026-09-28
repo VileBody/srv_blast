@@ -1,4 +1,4 @@
-import { PointerEvent as ReactPointerEvent, useRef, useState } from 'react';
+import { PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
@@ -11,6 +11,62 @@ import { SubtitleTimeline } from './SubtitleTimeline';
 import { CatalogMedia, SubtitleCatalogPreview } from './CatalogPreview';
 import { FigIcon } from '../ui/FigIcon';
 import { InlineError, queryDown } from '../ui/ErrorState';
+import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
+import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
+import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
+
+/**
+ * Мини-визуал подгонки субтитров: два отдельных слова-пилюли, каждое показывает
+ * СВОЮ механику — не общий шов между ними.
+ * Слово A («Я»): всегда одето в пилюлю, едет ТОЛЬКО по X (без морфинга) — тянешь
+ * слово по дорожке — а затем сама пилюля на миг вспыхивает акцентным цветом и
+ * гаснет («тапнул — выбрал»). Слово B («знаю») стоит на месте, но его пилюля
+ * растёт вширь (scaleX от левого края, с обратным контрскейлом подписи внутри,
+ * чтобы текст не плющило) — «длина слова увеличивается».
+ */
+function SubtitleFitGuideVisual() {
+  return (
+    <div className="flex w-full items-center justify-center gap-[10px]" aria-hidden="true">
+      <span className="guide-fit-drag relative flex h-[32px] w-[52px] shrink-0 items-center justify-center overflow-hidden rounded-[7px] bg-white/15 text-[11px] leading-none text-white">
+        <span className="guide-fit-select absolute inset-0 rounded-[7px] bg-accent-light" aria-hidden="true" />
+        <span className="relative z-[1]">Я</span>
+      </span>
+      <span className="guide-fit-grow flex h-[32px] w-[66px] shrink-0 items-center justify-center overflow-hidden rounded-[7px] bg-white/15 text-[11px] leading-none text-white/70">
+        <span className="guide-fit-grow-label">знаю</span>
+      </span>
+    </div>
+  );
+}
+
+/** Мини-визуал первой подсказки субтитров: свотч + цветовая шкала, как в самой панели. */
+function SubtitleColorGuideVisual() {
+  return (
+    <div className="flex w-full items-center gap-[8px]" aria-hidden="true">
+      <span className="guide-track-piece guide-mode-delay-1 h-[34px] w-[34px] shrink-0 rounded-r9 bg-[#f6f5fd] shadow-[0_0_0_2px_var(--accent-light)]" />
+      <span className="guide-track-piece guide-mode-delay-2 h-[34px] flex-1 rounded-r9" style={{ background: 'linear-gradient(90deg,#ff5c5c,#ffd15c,#5cff8f,#5ccbff,#a55cff,#ff5cc9)' }} />
+    </div>
+  );
+}
+
+/** Мини-визуал второй подсказки субтитров: карточки стилей, одна выбрана. */
+function SubtitleStyleGuideVisual() {
+  return (
+    <div className="grid w-full grid-cols-3 gap-[7px]" aria-hidden="true">
+      {[0, 1, 2].map((index) => (
+        <span
+          key={index}
+          className={cn(
+            'guide-mode-reveal relative flex h-[46px] items-center justify-center overflow-hidden rounded-[8px] bg-gradient-to-b from-[#42335e] to-[#181126]',
+            index === 0 ? 'guide-mode-delay-1' : index === 1 ? 'guide-mode-delay-2' : 'guide-mode-delay-3',
+            index === 1 && 'ring-2 ring-inset ring-accent-light'
+          )}
+        >
+          <em className="font-bold italic text-[16px] leading-none text-white/85">T</em>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 /*
  * Этап «Текст» (Figma W16 → 17 → 23): стили субтитров включаются/выключаются
@@ -43,6 +99,32 @@ export function StageSubtitles() {
   const cardsScroll = useDragScroll();
   const barRef = useRef<HTMLDivElement>(null);
   const [huePct, setHuePct] = useState(50);
+  const timelineGuideTargetRef = useRef<HTMLDivElement>(null);
+  const colorGuideTargetRef = useRef<HTMLDivElement>(null);
+  const stylesGuideTargetRef = useRef<HTMLDivElement>(null);
+  const hasStyles = subtitles.pool.length > 0;
+  // Хуки объявлены от ПОСЛЕДНЕГО шага цепочки к первому: idle-условие шага N
+  // требует dismissed-значения шага N+1 («мы ещё не ушли дальше»), поэтому оно
+  // должно быть уже посчитано на момент объявления хука для шага N.
+  // Ни у одного из трёх шагов нет жёсткого пререквизита, кроме своего места в
+  // цепочке (таргеты всегда отрисованы) — visible = «предыдущие шаги уже
+  // пройдены», БЕЗ учёта того, выбран ли уже стиль: принудительный тур
+  // проходит все три по очереди, даже если стиль субтитров уже выбран.
+  // ВАЖНО: visible не может быть просто true для 2-го/3-го шага — иначе
+  // seen записался бы в момент маунта, раньше, чем юзер реально дошёл до
+  // этого шага цепочки.
+  const [stylesGuideDismissed, setStylesGuideDismissed] = useGuideDismiss('subtitles-styles', !hasStyles, false);
+  const [colorGuideDismissed, setColorGuideDismissed] = useGuideDismiss('subtitles-color', !hasStyles && !stylesGuideDismissed, false);
+  const [timelineGuideDismissed, setTimelineGuideDismissed] = useGuideDismiss('subtitles-timeline', !hasStyles && !colorGuideDismissed, true);
+  const showTimelineGuide = !timelineGuideDismissed;
+  const showColorGuide = timelineGuideDismissed && !colorGuideDismissed;
+  const showStylesGuide = timelineGuideDismissed && colorGuideDismissed && !stylesGuideDismissed;
+  useMarkGuideSeen('subtitles-color', timelineGuideDismissed);
+  useMarkGuideSeen('subtitles-styles', timelineGuideDismissed && colorGuideDismissed);
+
+  useScrollGuideIntoView(showTimelineGuide, timelineGuideTargetRef);
+  useScrollGuideIntoView(showColorGuide, colorGuideTargetRef);
+  useScrollGuideIntoView(showStylesGuide, stylesGuideTargetRef);
 
   const pickFromBar = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!barRef.current) return;
@@ -77,11 +159,26 @@ export function StageSubtitles() {
       </h2>
 
       {/* Примерка: как ASR разложил слова по треку — подвинуть/пометить фокус ДО выбора стиля */}
-      <SubtitleTimeline />
+      <div ref={timelineGuideTargetRef}>
+        <SubtitleTimeline />
+      </div>
+
+      <ActionGuideOverlay
+        open={showTimelineGuide}
+        targetRef={timelineGuideTargetRef}
+        title={t('wizard.subs.guideFitTitle')}
+        text={t('wizard.subs.guideFitText')}
+        dismissLabel={t('wizard.subs.guideNext')}
+        progressLabel={t('wizard.guideProgress', { current: 1, total: 3 })}
+        onDismiss={() => setTimelineGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<SubtitleFitGuideVisual />}
+      />
 
       {/* Белый свотч — дефолт; обводка на нём = включён белый. Клик возвращает белый. */}
       {/* Цвет: одинаковый отступ от проверки субтитров сверху и до типов снизу */}
-      <div className="mt-[40px] flex items-center gap-[28px] max-md:mt-[16px] max-md:gap-[12px]">
+      <div ref={colorGuideTargetRef} className="mt-[40px] flex items-center gap-[28px] max-md:mt-[16px] max-md:gap-[12px]">
         <button
           type="button"
           aria-label={t('wizard.subs.whiteColor')}
@@ -102,7 +199,20 @@ export function StageSubtitles() {
         </div>
       </div>
 
-      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px] max-md:mt-[16px] max-md:min-h-0 max-md:flex-none max-md:pb-[14px] max-md:pt-[14px]">
+      <ActionGuideOverlay
+        open={showColorGuide}
+        targetRef={colorGuideTargetRef}
+        title={t('wizard.subs.guideColorTitle')}
+        text={t('wizard.subs.guideColorText')}
+        dismissLabel={t('wizard.subs.guideNext')}
+        progressLabel={t('wizard.guideProgress', { current: 2, total: 3 })}
+        onDismiss={() => setColorGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<SubtitleColorGuideVisual />}
+      />
+
+      <div ref={stylesGuideTargetRef} className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px] max-md:mt-[16px] max-md:min-h-0 max-md:flex-none max-md:pb-[14px] max-md:pt-[14px]">
         <div className="px-[40px] max-md:px-[14px]">
           <span className="wizard-body">{t('wizard.subs.chooseType')}</span>
         </div>
@@ -137,6 +247,19 @@ export function StageSubtitles() {
           </div>
         )}
       </div>
+
+      <ActionGuideOverlay
+        open={showStylesGuide}
+        targetRef={stylesGuideTargetRef}
+        title={t('wizard.subs.guideStyleTitle')}
+        text={t('wizard.subs.guideStyleText')}
+        dismissLabel={t('wizard.subs.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 3, total: 3 })}
+        onDismiss={() => setStylesGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<SubtitleStyleGuideVisual />}
+      />
     </div>
   );
 }

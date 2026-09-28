@@ -2,6 +2,7 @@ import { DragEvent, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '../../lib/api';
 import { useWizardStore } from '../../stores/wizardStore';
+import { AUDIO_FILE_ACCEPT, isAudioFile, isVideoFile, VIDEO_FILE_ACCEPT } from '../../lib/mediaFiles';
 
 type WarmupKind = 'audio' | 'video';
 
@@ -39,6 +40,10 @@ export function WarmupInput() {
 
   const upload = async (file?: File) => {
     if (!file || !selectedKind) return;
+    if (video ? !isVideoFile(file) : !isAudioFile(file)) {
+      setError(t(video ? 'wizard.warmup.videoOnly' : 'wizard.warmup.audioOnly'));
+      return;
+    }
     if (file.size > 200 * 1024 * 1024) { setError(t('wizard.warmup.tooLarge')); return; }
     setBusy(true);
     setError('');
@@ -81,7 +86,7 @@ export function WarmupInput() {
         <span className="rounded-r10 bg-grad-soft-20 px-3 py-2 text-[15px] text-text-80">{t(`wizard.warmup.${selectedKind}`)}</span>
         <button type="button" disabled={busy} className="text-[14px] text-text-60 underline underline-offset-4 transition hover:text-text disabled:opacity-40" onClick={goBack}>{t('wizard.warmup.back')}</button>
       </div>
-      <input ref={input} className="sr-only" type="file" accept={video ? 'video/mp4,video/quicktime,video/webm' : 'audio/*'} disabled={busy}
+      <input ref={input} className="sr-only" type="file" accept={video ? VIDEO_FILE_ACCEPT : AUDIO_FILE_ACCEPT} disabled={busy}
         onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void upload(file); }} />
       <button type="button" className="dash-panel-r10 flex min-h-[58px] items-center justify-center truncate px-3 py-2 text-sm transition hover:brightness-125" disabled={busy}
         onClick={() => input.current?.click()} onDragOver={event => event.preventDefault()} onDrop={onDrop}>

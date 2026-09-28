@@ -3956,17 +3956,19 @@ class BlastBotApp:
         await self.credits_db.log_event(chat_id, "subscription_ok")
         # Grant initial credits after subscription (not on /start) to avoid
         # race conditions with deep-link users who never subscribe.
-        if self.settings.initial_credits > 0:
-            already_granted = await self.credits_db.has_initial_grant(chat_id)
-            if not already_granted:
-                await self.credits_db.add_credits(chat_id, self.settings.initial_credits, "initial_grant")
-                await self.credits_db.log_event(chat_id, "initial_grant", f"+{self.settings.initial_credits}")
-                # Grant the free unique-track slot alongside the video credits
-                # (guarded by the same has_initial_grant check so it fires once).
-                if self.settings.initial_track_credits > 0:
-                    await self.credits_db.add_track_credits(
-                        chat_id, self.settings.initial_track_credits, "initial_grant",
-                    )
+        if self.settings.initial_credits > 0 or self.settings.initial_track_credits > 0:
+            grant = await self.credits_db.grant_initial_credits_once(
+                chat_id,
+                self.settings.initial_credits,
+                self.settings.initial_track_credits,
+                actor="tg_bot_public",
+            )
+            if grant["applied"]:
+                await self.credits_db.log_event(
+                    chat_id,
+                    "initial_grant",
+                    f"videos=+{self.settings.initial_credits} tracks=+{self.settings.initial_track_credits}",
+                )
         await self._move_to_wait_audio(chat_id, message)
 
     async def _move_to_wait_audio(self, chat_id: int, message: Message) -> None:
@@ -8377,7 +8379,17 @@ class BlastBotApp:
     async def _show_subscription_confirm(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_SUBSCRIPTION_CONFIRM
         await self.store.set(st)
+        renewal_note = ""
+        active_sub = await self.credits_db.get_active_subscription(st.chat_id)
+        if active_sub and active_sub.get("next_charge_at"):
+            renewal_note = (
+                "У тебя уже есть подписка — следующее списание "
+                f"{active_sub['next_charge_at'].strftime('%d.%m.%Y')}. "
+                "Новая оплата продлит её на месяц: ролики и треки начислятся сразу, "
+                "а следующее списание сдвинется на месяц вперёд.\n\n"
+            )
         await message.answer(
+            renewal_note +
             "Подписка на Бласт — 1 990₽/мес.\n\n"
             "Списание 1 990₽ каждый месяц, доступно уже в этом месяце:\n"
             "— 100 роликов в разных стилях\n"
@@ -9551,6 +9563,7 @@ class BlastBotApp:
                                 # payment row by now) or, if that notification was lost, from
                                 # GetCardList by CustomerKey (= tg_id).
                                 is_recurrent = pay.get("is_recurrent", False)
+                                sub_line = ""
                                 if is_recurrent and self.tbank:
                                     try:
                                         fresh = await self.credits_db.get_payment(order_id)
@@ -9559,14 +9572,10 @@ class BlastBotApp:
                                             rebill_id = await self.tbank.find_rebill_id(str(tg_id))
                                         if rebill_id:
                                             await self.credits_db.update_rebill_id(order_id, rebill_id)
-                                            if not await self.credits_db.get_active_subscription(tg_id):
-                                                await self.credits_db.create_subscription(
-                                                    tg_id, pkg, rebill_id, pay["amount_rub"],
-                                                )
-                                                await self.credits_db.log_event(
-                                                    tg_id, "subscription_created", f"{pkg} rebill=***{rebill_id[-6:]}",
-                                                )
-                                                log.info("subscription created order=%s rebill=***%s", order_id, rebill_id[-6:])
+                                            applied = await self.credits_db.apply_subscription_purchase(order_id, rebill_id)
+                                            sub_line = await self._log_subscription_purchase(
+                                                tg_id, pkg, order_id, rebill_id, applied,
+                                            )
                                         else:
                                             log.error(
                                                 "recurrent payment confirmed with no RebillId (webhook + GetCardList) "
@@ -9600,6 +9609,7 @@ class BlastBotApp:
                                         f"Начислено кредитов: {credits_to_add}\n"
                                         f"Баланс: {bal}\n"
                                         f"Доступно уникальных треков: {track_bal}\n\n"
+                                        f"{sub_line}"
                                         "Отправь трек, чтобы начать генерацию.",
                                         reply_markup=_kb(["Отправить трек"]),
                                     )
@@ -9641,6 +9651,26 @@ class BlastBotApp:
     _SUB_LOOP_HEARTBEAT_KEY = "tg_bot_public:sub_charge_loop:last_tick"
     _SUB_LOOP_STATS_KEY = "tg_bot_public:sub_charge_loop:last_stats"
 
+    async def _log_subscription_purchase(
+        self, tg_id: int, pkg: str, order_id: str, rebill_id: str, applied: dict,
+    ) -> str:
+        """Log the outcome of apply_subscription_purchase; return a line for the user."""
+        action = applied.get("action")
+        masked = f"***{rebill_id[-6:]}"
+        next_at = applied.get("next_charge_at")
+        next_str = next_at.strftime("%d.%m.%Y") if next_at else ""
+        if action == "created":
+            await self.credits_db.log_event(tg_id, "subscription_created", f"{pkg} rebill={masked}")
+            log.info("subscription created order=%s rebill=%s next=%s", order_id, masked, next_str)
+            return ""
+        if action == "extended":
+            await self.credits_db.log_event(
+                tg_id, "subscription_extended", f"{pkg} order={order_id} next={next_str}",
+            )
+            log.info("subscription extended order=%s sub=%s next=%s", order_id, applied.get("sub_id"), next_str)
+            return f"Подписка продлена: следующее списание — {next_str}.\n\n"
+        return ""
+
     async def charge_subscription_once(self, sub: dict, *, manual: bool = False) -> tuple[bool, str]:
         """Run a single Charge for one subscription row.
 
@@ -9681,6 +9711,9 @@ class BlastBotApp:
         await self.credits_db.create_recurrent_payment(
             order_id, tg_id, amount_rub, pkg, utm=last_utm,
         )
+        # The loop moves next_charge_at itself (subscription_charge_success);
+        # the webhook for this order must not treat it as a new purchase.
+        await self.credits_db.mark_subscription_rebill_order(order_id)
         desc = f"Подписка «{pkg}» — ежемесячное списание"
         if manual:
             desc = f"Подписка «{pkg}» — ручное списание (admin)"

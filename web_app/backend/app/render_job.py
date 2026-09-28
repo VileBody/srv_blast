@@ -78,19 +78,22 @@ def _resolve_hook(kind: str | None, cfg: dict[str, Any], bg_glue_id: str | None,
     вариаций), поэтому cfg.effectGlue/effectStyle читаем при любом kind, а не только у
     «Эффектов». Фолбэк — склейка/стиль, заданные на этапе фона.
     """
+    no_glue = cfg.get("effectGlue") == em.NO_GLUE_LABEL
+    no_style = cfg.get("effectStyle") == em.NO_STYLE_LABEL
     resolved = {
         "hook": None,
-        "transition": em.map_glue(cfg.get("effectGlue")) or bg_glue_id,
-        "extra": em.map_style(cfg.get("effectStyle")) or bg_style_id,
+        # «Без склейки»/«Без стилизации» — явный отказ: фолбэк на фон не применяем.
+        "transition": None if no_glue else (em.map_glue(cfg.get("effectGlue")) or bg_glue_id),
+        "extra": None if no_style else (em.map_style(cfg.get("effectStyle")) or bg_style_id),
         # id приёма «Мысли» (F5). Раньше выбор уезжал сырым RU-лейблом внутри hook.config
         # и на стороне воркера ни во что не резолвился.
         "device": None,
         # грейд на весь ролик вместо «до дропа» (manifest: effect_extra_full)
         # У «Без хука» нет дропа: выбранная стилизация относится ко всему ролику.
         # Сохранённый effectStyleFull из другого типа хука здесь не меняет семантику.
-        "extraFull": (kind == "none" and bool(cfg.get("effectStyle")))
+        "extraFull": not no_style and ((kind == "none" and bool(cfg.get("effectStyle")))
         or (kind != "none" and bool(cfg.get("effectStyleFull")))
-        or em.style_is_full_window(cfg.get("effectStyle")),
+        or em.style_is_full_window(cfg.get("effectStyle"))),
         "hookExtend": None,
     }
     family_script = None

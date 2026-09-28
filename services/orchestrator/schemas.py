@@ -8,7 +8,7 @@ from core.llm_worker_types import LLM_WORKER_TYPE_SDK
 from core.subtitles_mode import SUBTITLES_MODE_LEGACY_BLOCKS, SubtitlesMode
 
 
-LLMWorkerTypeLiteral = Literal["sdk", "openrouter", "hybrid", "vertex_sdk_mix"]
+LLMWorkerTypeLiteral = Literal["sdk", "openrouter", "sosana", "hybrid", "vertex_sdk_mix"]
 RenderEngineLiteral = Literal["ae", "rust-gen"]
 
 

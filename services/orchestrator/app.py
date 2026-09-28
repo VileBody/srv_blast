@@ -80,6 +80,7 @@ from .tasks import (
     build_job,
     build_job_hybrid,
     build_job_openrouter,
+    build_job_sosana,
     build_job_sdk,
     build_job_vertex_sdk_mix,
 )
@@ -622,6 +623,7 @@ def create_app() -> FastAPI:
             "": build_job,
             "sdk": build_job_sdk,
             "openrouter": build_job_openrouter,
+            "sosana": build_job_sosana,
             "hybrid": build_job_hybrid,
             "vertex_sdk_mix": build_job_vertex_sdk_mix,
         }
