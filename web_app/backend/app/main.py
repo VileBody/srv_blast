@@ -2074,8 +2074,10 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     except tiktok_api.TikTokApiError as exc:
         raise HTTPException(status_code=exc.status or 502, detail={"code": exc.code, "message": str(exc)}) from exc
     publish_id = result.get("publish_id")
-    video.update({"tiktokPublishId": publish_id, "tiktokStatus": "PROCESSING_UPLOAD"})
-    return {"ok": True, "status": "PROCESSING_UPLOAD", "publishId": publish_id, "mock": False}
+    transfer = {"host": result.get("upload_host"), "chunks": result.get("transfer") or []}
+    logger.info("tiktok file upload %s: %s", publish_id, transfer)
+    video.update({"tiktokPublishId": publish_id, "tiktokStatus": "PROCESSING_UPLOAD", "tiktokTransfer": transfer})
+    return {"ok": True, "status": "PROCESSING_UPLOAD", "publishId": publish_id, "transfer": transfer, "mock": False}
 
 
 @app.get("/api/tiktok/post/{publish_id}", tags=["tiktok"])
