@@ -949,7 +949,26 @@
     "publishNowHint": "TikTok posts the video immediately — scheduled publishing is not available yet.",
     "hashtagBase": "music,newmusic,fyp,foryou,newrelease,artist",
     "soon": "Soon",
-    "soonHint": "TikTok connection is not open yet — it turns on once TikTok review is passed."
+    "soonHint": "TikTok connection is not open yet — it turns on once TikTok review is passed.",
+    "phaseSending": "Sending to TikTok",
+    "phaseProcessing": "TikTok is processing",
+    "secondsShort": "s",
+    "phaseStep": "Step {{step}} of {{total}}",
+    "phaseSendingHint": "our server is transferring the video file to TikTok",
+    "phaseProcessingHint": "TikTok is checking the video — usually up to a couple of minutes",
+    "failReason": {
+      "internal": "TikTok couldn't process the video on its side. Please try again in a minute.",
+      "unaudited_client_can_only_post_to_private_accounts": "Until TikTok approves Blast, you can only post to a private account. Turn on “Private account” in TikTok settings.",
+      "spam_risk_too_many_posts": "TikTok limited the number of posts per day. Please try again later.",
+      "spam_risk_user_banned_from_posting": "TikTok has temporarily blocked this account from posting.",
+      "reached_active_user_cap": "The daily limit for posting through apps is reached. Please try again tomorrow.",
+      "file_format_check_failed": "TikTok didn't accept the file format.",
+      "duration_check_failed": "TikTok didn't accept the video duration.",
+      "picture_size_check_failed": "TikTok didn't accept the frame size.",
+      "frame_rate_check_failed": "TikTok didn't accept the frame rate.",
+      "auth_removed": "TikTok access was revoked — please reconnect the account.",
+      "other": "TikTok rejected the video: {{reason}}"
+    }
   },
   "profile": {
     "update": "Update",

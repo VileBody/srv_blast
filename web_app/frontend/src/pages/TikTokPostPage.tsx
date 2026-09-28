@@ -2,7 +2,7 @@ import { PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import { isVideoPosted, type VideoFrame, type VideoVersion } from '../lib/types';
 import { cn } from '../lib/cn';
 import { FullscreenZone } from '../components/ui/FullscreenZone';
@@ -269,6 +269,14 @@ export function TikTokPostPage() {
   const [rights, setRights] = useState(Boolean(qaPost && qaPost !== 'empty'));
   const [postError, setPostError] = useState('');
   /*
+   * Реальный ход публикации по шагам, а не бесконечная «Загрузка»: 1 — наш сервер передаёт
+   * файл в TikTok (запрос /api/tiktok/post), 2 — TikTok обрабатывает ролик (статус из
+   * publish/status/fetch), 3 — опубликовано. Секундомер показывает, что процесс живой.
+   */
+  const [progress, setProgress] = useState<{ step: 1 | 2 | 3; startedAt: number } | null>(null);
+  const [clock, setClock] = useState(() => Date.now());
+  const [previewPlaying, setPreviewPlaying] = useState(false);
+  /*
    * 4.1: описание для каждого ролика батча писалось с нуля — на батче 5+ это главный тормоз.
    * Галка переносит описание, приватность и тумблеры на следующий ролик; подтверждение прав
    * НЕ переносим — по гайдлайнам TikTok его надо подтверждать на каждую публикацию.
@@ -421,10 +429,28 @@ export function TikTokPostPage() {
     return <FullscreenZone responsiveScale onCollapse={() => navigate(`/app/projects/${id}`)} left={connect} right={preview} />;
   }
 
+  useEffect(() => {
+    if (!progress || progress.step === 3) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [progress]);
+
+  /** Ошибка TikTok человеческими словами: код из fail_reason или из ответа нашего API. */
+  const explainFailure = (error: unknown): string => {
+    const detail = error instanceof ApiError ? (error.detail as { detail?: { code?: string } | string })?.detail : undefined;
+    const code = typeof detail === 'object' && detail?.code ? detail.code : error instanceof Error ? error.message : '';
+    const known = code ? t(`tiktok.failReason.${code}`, { defaultValue: '' }) : '';
+    if (known) return known;
+    return code ? t('tiktok.failReason.other', { reason: code }) : t('tiktok.postError');
+  };
+
   const submit = async () => {
     if (!valid || stage !== 'draft') return;
     setStage('uploading');
     setPostError('');
+    setProgress({ step: 1, startedAt: Date.now() });
+    setClock(Date.now());
+    videoRef.current?.pause();
     try {
       const initialized = await api.postTiktok({
         projectId: id,
@@ -444,8 +470,10 @@ export function TikTokPostPage() {
         rights
       });
       if (initialized.status !== 'PUBLISH_COMPLETE') {
+        setProgress({ step: 2, startedAt: Date.now() });
         let complete = false;
-        for (let attempt = 0; attempt < 40; attempt += 1) {
+        // обработка у TikTok идёт от десятков секунд до нескольких минут — ждём до 5 минут
+        for (let attempt = 0; attempt < 200; attempt += 1) {
           await new Promise((resolve) => window.setTimeout(resolve, 1500));
           const current = await api.tiktokPostStatus(initialized.publishId);
           if (current.status === 'PUBLISH_COMPLETE') {
@@ -456,12 +484,14 @@ export function TikTokPostPage() {
         }
         if (!complete) throw new Error(t('tiktok.postError'));
       }
+      setProgress({ step: 3, startedAt: Date.now() });
       setStage('posted');
       // без этого «выложено N из M» и пропуск уже выложенных считались по устаревшему проекту
       queryClient.invalidateQueries({ queryKey: ['project', id] });
     } catch (error) {
       setStage('draft');
-      setPostError(error instanceof Error ? error.message : t('tiktok.postError'));
+      setProgress(null);
+      setPostError(explainFailure(error));
     }
   };
 
@@ -481,6 +511,8 @@ export function TikTokPostPage() {
     }
     setIndex(next);
     setStage('draft');
+    setProgress(null);
+    setPreviewPlaying(false);
     setShowNext(false);
     setCoverFrame(0);
     setTagsOpen(false);
@@ -683,19 +715,49 @@ export function TikTokPostPage() {
     </div>
   );
 
+  const previewSrc = video?.playbackUrl ?? video?.downloadUrl ?? undefined;
+
   const right = (
     <div className="flex h-full flex-col">
       <div className="group relative h-[600px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10">
-        {video?.thumbnailUrl && <img src={video.thumbnailUrl} alt="" className="h-full w-full object-cover" />}
+        {/*
+          Настоящий ролик, а не картинка: раньше здесь стояла только обложка из thumbnailUrl
+          (у рендеров её нет) и кнопка Play, которая ничего не запускала, а videoRef висел
+          ни на чём — поэтому и выбранный кадр обложки не уходил в TikTok (таймкод был 0).
+        */}
+        {previewSrc ? (
+          <video
+            key={video?.id}
+            ref={videoRef}
+            src={previewSrc}
+            poster={video?.thumbnailUrl ?? framesQuery.data?.frames?.[coverFrame ?? 0]?.url ?? undefined}
+            playsInline
+            preload="metadata"
+            onLoadedMetadata={(event) => {
+              if (coverFrame === null || !Number.isFinite(event.currentTarget.duration)) return;
+              event.currentTarget.currentTime = Math.min(event.currentTarget.duration - 0.05, (event.currentTarget.duration * coverFrame) / (COVER_FRAME_COUNT - 1));
+            }}
+            onPlay={() => setPreviewPlaying(true)}
+            onPause={() => setPreviewPlaying(false)}
+            onEnded={() => setPreviewPlaying(false)}
+            onClick={(event) => { if (!event.currentTarget.paused) event.currentTarget.pause(); }}
+            className="h-full w-full cursor-pointer object-cover"
+          />
+        ) : video?.thumbnailUrl ? <img src={video.thumbnailUrl} alt="" className="h-full w-full object-cover" /> : null}
 
-        {stage !== 'posted' && (
-          <span className="absolute left-1/2 top-1/2 flex h-[60px] w-[60px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-[rgba(5,1,15,0.6)]">
+        {stage !== 'posted' && previewSrc && !previewPlaying && (
+          <button
+            type="button"
+            aria-label={t('common.play')}
+            onClick={() => { void videoRef.current?.play(); }}
+            className="absolute left-1/2 top-1/2 flex h-[60px] w-[60px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-[rgba(5,1,15,0.6)] transition hover:bg-[rgba(5,1,15,0.8)]"
+          >
             <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="#f6f5fd" /></svg>
-          </span>
+          </button>
         )}
 
         {/* W52: «Выбери обложку» → W54: «Обложка выбрана»; 293×60 r15, отступы 40 */}
-        {stage === 'draft' && (
+        {stage === 'draft' && !previewPlaying && (
           <div className="absolute inset-x-[40px] bottom-[40px]">
             <CoverPicker src={video?.downloadUrl} poster={video?.thumbnailUrl} frames={framesQuery.data?.frames} value={coverFrame} onChange={setCoverFrame} />
           </div>
@@ -733,11 +795,25 @@ export function TikTokPostPage() {
             aria-describedby={missing.length ? 'publish-missing' : undefined}
             title={missing.length ? `${t('tiktok.needTitle')} ${missing.join(', ')}` : undefined}
             className={cn(
-              'mt-[12px] flex h-[60px] shrink-0 items-center justify-center gap-[12px] rounded-r15 bg-grad-soft-20 text-[24px] font-[350] leading-none text-text-80 transition',
+              'relative mt-[12px] flex h-[60px] shrink-0 items-center justify-center gap-[12px] overflow-hidden rounded-r15 bg-grad-soft-20 text-[24px] font-[350] leading-none text-text-80 transition',
               stage === 'draft' && valid && 'border border-accent-light hover:text-text',
               stage === 'draft' && !valid && 'cursor-not-allowed'
             )}
           >
+            {stage === 'uploading' && progress && (
+              // три сегмента по реальным шагам: пройденные залиты, текущий пульсирует
+              <span aria-hidden="true" className="absolute inset-x-[14px] bottom-[8px] flex gap-[6px]">
+                {[1, 2, 3].map((step) => (
+                  <span
+                    key={step}
+                    className={cn(
+                      'h-[4px] flex-1 rounded-full',
+                      step < progress.step ? 'bg-accent-light' : step === progress.step ? 'animate-pulse bg-accent-light/70' : 'bg-[rgba(246,245,253,0.12)]'
+                    )}
+                  />
+                ))}
+              </span>
+            )}
             <img
               src={stage === 'draft' ? '/assets/figma/tt-publish-arrow.svg' : stage === 'uploading' ? '/assets/figma/tt-uploading.svg' : '/assets/figma/tt-posted.svg'}
               width="30"
@@ -745,8 +821,19 @@ export function TikTokPostPage() {
               alt=""
               aria-hidden
             />
-            {stage === 'draft' ? t('tiktok.publish') : stage === 'uploading' ? t('tiktok.uploading') : t('tiktok.posted')}
+            {stage === 'draft'
+              ? t('tiktok.publish')
+              : stage === 'uploading'
+                ? progress
+                  ? `${progress.step === 1 ? t('tiktok.phaseSending') : t('tiktok.phaseProcessing')} · ${Math.max(0, Math.round((clock - progress.startedAt) / 1000))} ${t('tiktok.secondsShort')}`
+                  : t('tiktok.uploading')
+                : t('tiktok.posted')}
           </button>
+          {stage === 'uploading' && progress && (
+            <p className="mt-[8px] shrink-0 text-center text-[13px] leading-[17px] text-text-60">
+              {t('tiktok.phaseStep', { step: progress.step, total: 3 })} · {progress.step === 1 ? t('tiktok.phaseSendingHint') : t('tiktok.phaseProcessingHint')}
+            </p>
+          )}
           <p className="mt-[8px] shrink-0 text-center text-[12px] leading-[16px] text-text-60">
             {t('tiktok.musicConsent')}{' '}
             <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer" className="text-accent-light underline decoration-accent-light/50 underline-offset-2 hover:text-text">
