@@ -255,6 +255,7 @@ def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_pa
     upload_url = data.get("upload_url")
     if not upload_url:
         raise TikTokApiError("missing_upload_url", "TikTok did not return an upload URL")
+    transfer: list[dict[str, Any]] = []
     with path.open("rb") as source:
         offset = 0
         for index in range(total_chunks):
@@ -267,9 +268,19 @@ def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_pa
                 "Content-Length": str(len(body)),
                 "Content-Range": f"bytes {offset}-{end}/{size}",
             })
-            with urllib.request.urlopen(req, timeout=90):
-                pass
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                # TikTok отвечает 206 на промежуточные чанки и 201 на последний. Ответы
+                # сохраняем: без них «FAILED / internal» после загрузки не отличить от
+                # сбоя на нашей стороне.
+                transfer.append({
+                    "chunk": index + 1,
+                    "range": f"{offset}-{end}/{size}",
+                    "status": resp.status,
+                    "body": resp.read(300).decode("utf-8", "replace"),
+                })
             offset = end + 1
+    data["transfer"] = transfer
+    data["upload_host"] = urllib.parse.urlparse(upload_url).hostname
     return data
 
 
