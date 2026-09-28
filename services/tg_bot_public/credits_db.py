@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -311,6 +312,16 @@ def earned_subscription_bonuses(
         0,
         min(3, completed_subscription_months(started_at, now), int(paid_periods) - 1),
     )
+
+
+# Rebill orders created by the charge loop (app.charge_subscription_once):
+# "<tg_id>-<package>-sub-<hex8>". Purchase orders from the bot are
+# "<tg_id>-<package>-sub<hex8>" (no dash) and web ones carry "-web-".
+_REBILL_ORDER_RE = re.compile(r"-sub-[0-9a-f]{8}$")
+
+
+def _is_rebill_order_id(order_id: str) -> bool:
+    return bool(_REBILL_ORDER_RE.search(str(order_id or "")))
 
 
 def _rowcount_from_tag(tag: str) -> int:
@@ -729,6 +740,32 @@ class CreditsDB:
             ")"
         )
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_tracks_tg_id ON user_tracks(tg_id)")
+
+        # Ledger for unique-track quota changes (admin +/-, manual activation).
+        # Separate from `transactions` on purpose: every revenue/usage report
+        # SUMs transactions.amount as video credits, and track rows there
+        # would silently inflate them.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS track_transactions ("
+            "id BIGSERIAL PRIMARY KEY,"
+            "tg_id BIGINT NOT NULL,"
+            "amount INTEGER NOT NULL,"
+            "reason TEXT NOT NULL DEFAULT '',"
+            "admin_note TEXT NOT NULL DEFAULT '',"
+            "actor TEXT NOT NULL DEFAULT '',"
+            "context_order_id TEXT NOT NULL DEFAULT '',"
+            "created_at TIMESTAMP NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_track_tx_tg_id ON track_transactions(tg_id)")
+
+        # Repeat subscription purchases: the order that started a subscription
+        # is stored on it, and every recurrent payment is marked once it has
+        # been applied (created / extended the subscription, or it is a rebill
+        # that the charge loop already accounts for). Makes webhook + poll
+        # replays of the same order a no-op instead of a second extension.
+        await conn.execute("ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS source_order_id TEXT NOT NULL DEFAULT ''")
+        await conn.execute("ALTER TABLE payments ADD COLUMN IF NOT EXISTS subscription_applied_at TIMESTAMP")
 
         # Post-generation survey — one row per user, answers merged into a JSONB
         # map keyed by question id. Kept out of `users` because it is pure
@@ -1376,8 +1413,15 @@ class CreditsDB:
         amount: int,
         reason: str,
         admin_note: str = "",
+        *,
+        actor: str = "",
+        order_id: str = "",
     ) -> int:
-        """Top up the unique-track quota (mirrors add_credits, but for track_credits)."""
+        """Change the unique-track quota — same contract as add_credits.
+
+        Negative amounts are allowed (admin removal) and clamp at zero; the
+        ledger row records the delta that was actually applied.
+        """
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -1385,15 +1429,52 @@ class CreditsDB:
                     "INSERT INTO users (tg_id, username) VALUES ($1, '') ON CONFLICT (tg_id) DO NOTHING",
                     int(tg_id),
                 )
-                row = await conn.fetchrow(
-                    "UPDATE users SET track_credits = track_credits + $1, updated_at = NOW() "
-                    "WHERE tg_id = $2 RETURNING track_credits",
-                    int(amount),
+                before = int(await conn.fetchval(
+                    "SELECT track_credits FROM users WHERE tg_id = $1 FOR UPDATE",
+                    int(tg_id),
+                ) or 0)
+                after = max(0, before + int(amount))
+                applied_delta = after - before
+                await conn.execute(
+                    "UPDATE users SET track_credits = $1, updated_at = NOW() WHERE tg_id = $2",
+                    after,
                     int(tg_id),
                 )
-                after = int(row["track_credits"]) if row else 0
-        await self.log_event(tg_id, "track_credits_granted", f"{reason}: +{int(amount)} ({admin_note})".strip(": ()"))
+                await conn.execute(
+                    "INSERT INTO track_transactions (tg_id, amount, reason, admin_note, actor, context_order_id) "
+                    "VALUES ($1, $2, $3, $4, $5, $6)",
+                    int(tg_id),
+                    applied_delta,
+                    str(reason or ""),
+                    str(admin_note or ""),
+                    _norm_text(actor, max_len=64),
+                    _norm_text(order_id, max_len=128),
+                )
+        event = "track_credits_granted" if applied_delta >= 0 else "track_credits_removed"
+        await self.log_event(tg_id, event, f"{reason}: {applied_delta:+d} ({admin_note})".strip(": ()"))
         return after
+
+    async def get_track_transactions(self, tg_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, amount, reason, admin_note, actor, context_order_id, created_at "
+                "FROM track_transactions WHERE tg_id = $1 ORDER BY created_at DESC, id DESC LIMIT $2",
+                int(tg_id),
+                int(limit),
+            )
+        return [
+            {
+                "id": int(r["id"]),
+                "amount": int(r["amount"]),
+                "reason": str(r["reason"] or ""),
+                "admin_note": str(r["admin_note"] or ""),
+                "actor": str(r["actor"] or ""),
+                "order_id": str(r["context_order_id"] or ""),
+                "created_at": _fmt_ts(r["created_at"]),
+            }
+            for r in rows
+        ]
 
     async def consume_track_slot(self, tg_id: int, audio_hash: str) -> str:
         """Atomically resolve a track upload against the user's unique-track quota.
@@ -2883,10 +2964,142 @@ class CreditsDB:
 
     # ── Subscriptions ────────────────────────────────────────────────
 
+    async def apply_subscription_purchase(self, order_id: str, rebill_id: str) -> Dict[str, Any]:
+        """Apply one CONFIRMED recurrent purchase to the user's subscription.
+
+        - no active subscription → create one (a cancelled one whose paid
+          period has not ended yet hands its remaining time over);
+        - active subscription → extend it: the next charge moves one month
+          past the current one, so a second purchase in the same period is
+          never followed by a rebill on the old date;
+        - the order that started the subscription, or a rebill order, or an
+          order already applied → no-op.
+
+        Idempotent per order (payments.subscription_applied_at), so the
+        webhook, its replays and the poll loop can all call it safely.
+        Returns {"action": created|extended|skipped, "sub_id", "next_charge_at"}.
+        """
+        clean_order_id = _norm_text(order_id, max_len=128)
+        clean_rebill = str(rebill_id or "").strip()
+        if not clean_order_id or not clean_rebill:
+            raise ValueError("order id and rebill id are required")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                payment = await conn.fetchrow(
+                    "SELECT order_id, tg_id, package, amount_rub, status, is_recurrent, "
+                    "subscription_applied_at, created_at FROM payments WHERE order_id = $1",
+                    clean_order_id,
+                )
+                if payment is None:
+                    raise ValueError(f"unknown payment order: {clean_order_id}")
+                tg_id = int(payment["tg_id"])
+                # One user at a time: two different purchase orders confirmed
+                # concurrently must not both see "no subscription" and insert two.
+                await conn.execute("SELECT pg_advisory_xact_lock(hashtext('subscription:' || $1))", str(tg_id))
+                payment = await conn.fetchrow(
+                    "SELECT order_id, tg_id, package, amount_rub, status, is_recurrent, "
+                    "subscription_applied_at, created_at FROM payments WHERE order_id = $1 FOR UPDATE",
+                    clean_order_id,
+                )
+
+                def _skipped(sub: Any = None) -> Dict[str, Any]:
+                    return {
+                        "action": "skipped",
+                        "sub_id": int(sub["id"]) if sub else None,
+                        "next_charge_at": sub["next_charge_at"] if sub else None,
+                    }
+
+                if str(payment["status"] or "").strip().upper() != "CONFIRMED" or not payment["is_recurrent"]:
+                    return _skipped()
+                if payment["subscription_applied_at"] is not None:
+                    return _skipped()
+
+                async def _mark_applied() -> None:
+                    await conn.execute(
+                        "UPDATE payments SET subscription_applied_at = NOW() WHERE order_id = $1",
+                        clean_order_id,
+                    )
+
+                if _is_rebill_order_id(clean_order_id):
+                    await _mark_applied()
+                    return _skipped()
+
+                active = await conn.fetchrow(
+                    "SELECT id, next_charge_at, created_at, source_order_id FROM subscriptions "
+                    "WHERE tg_id = $1 AND status IN ('active', 'charging') ORDER BY id DESC LIMIT 1 FOR UPDATE",
+                    tg_id,
+                )
+                package = str(payment["package"] or "")
+                amount_rub = int(payment["amount_rub"] or 0)
+
+                if active is not None:
+                    source = str(active["source_order_id"] or "")
+                    # Subscriptions created before source_order_id existed:
+                    # the order that started them was placed before the row.
+                    started_by_this_order = (
+                        source == clean_order_id
+                        or (not source and payment["created_at"] <= active["created_at"])
+                    )
+                    if started_by_this_order:
+                        await _mark_applied()
+                        return _skipped(active)
+                    row = await conn.fetchrow(
+                        "UPDATE subscriptions SET "
+                        "next_charge_at = GREATEST(next_charge_at, NOW()) + INTERVAL '1 month', "
+                        "rebill_id = $1, package = $2, amount_rub = $3, charge_retries = 0, updated_at = NOW() "
+                        "WHERE id = $4 RETURNING id, next_charge_at",
+                        clean_rebill,
+                        package,
+                        amount_rub,
+                        int(active["id"]),
+                    )
+                    await _mark_applied()
+                    return {"action": "extended", "sub_id": int(row["id"]), "next_charge_at": row["next_charge_at"]}
+
+                # Cancelled but still inside the paid period: the new
+                # subscription starts where the old paid time ends.
+                paid_until = await conn.fetchval(
+                    "SELECT MAX(next_charge_at) FROM subscriptions "
+                    "WHERE tg_id = $1 AND status = 'cancelled' AND next_charge_at > NOW()",
+                    tg_id,
+                )
+                row = await conn.fetchrow(
+                    "INSERT INTO subscriptions (tg_id, package, rebill_id, amount_rub, source_order_id, next_charge_at) "
+                    "VALUES ($1, $2, $3, $4, $5, GREATEST(COALESCE($6::timestamp, NOW()), NOW()) + INTERVAL '1 month') "
+                    "RETURNING id, next_charge_at",
+                    tg_id,
+                    package,
+                    clean_rebill,
+                    amount_rub,
+                    clean_order_id,
+                    paid_until,
+                )
+                await _mark_applied()
+                return {"action": "created", "sub_id": int(row["id"]), "next_charge_at": row["next_charge_at"]}
+
+    async def mark_subscription_rebill_order(self, order_id: str) -> None:
+        """Flag a rebill order so apply_subscription_purchase never extends on it.
+
+        The charge loop advances next_charge_at itself; the webhook for the
+        same order must not add a second month on top.
+        """
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE payments SET subscription_applied_at = NOW() "
+                "WHERE order_id = $1 AND subscription_applied_at IS NULL",
+                _norm_text(order_id, max_len=128),
+            )
+
     async def create_subscription(
-        self, tg_id: int, package: str, rebill_id: str, amount_rub: int,
+        self, tg_id: int, package: str, rebill_id: str, amount_rub: int, *, source_order_id: str = "",
     ) -> None:
-        """Create an active subscription after first recurrent payment."""
+        """Create an active subscription after first recurrent payment.
+
+        Admin recovery path (the purchase is already known to be the first
+        one); the payment flow goes through apply_subscription_purchase.
+        """
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             async with conn.transaction():
@@ -2903,13 +3116,20 @@ class CreditsDB:
                         int(tg_id),
                     )
                 await conn.execute(
-                    "INSERT INTO subscriptions (tg_id, package, rebill_id, amount_rub) "
-                    "VALUES ($1, $2, $3, $4)",
+                    "INSERT INTO subscriptions (tg_id, package, rebill_id, amount_rub, source_order_id) "
+                    "VALUES ($1, $2, $3, $4, $5)",
                     int(tg_id),
                     str(package or ""),
                     str(rebill_id),
                     int(amount_rub),
+                    _norm_text(source_order_id, max_len=128),
                 )
+                if source_order_id:
+                    await conn.execute(
+                        "UPDATE payments SET subscription_applied_at = NOW() "
+                        "WHERE order_id = $1 AND subscription_applied_at IS NULL",
+                        _norm_text(source_order_id, max_len=128),
+                    )
 
     async def get_active_subscription(self, tg_id: int) -> Optional[Dict[str, Any]]:
         """Get the active subscription for a user, if any."""
@@ -2961,12 +3181,17 @@ class CreditsDB:
         ]
 
     async def subscription_charge_success(self, sub_id: int) -> None:
-        """After successful charge: reset retries, push next_charge_at +30 days."""
+        """After successful charge: reset retries, push next_charge_at one month.
+
+        Counts from the later of "now" and the current due date, so an early
+        manual charge (admin) or a purchase that already extended the period
+        adds a month instead of pulling the next charge closer.
+        """
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             await conn.execute(
                 "UPDATE subscriptions "
-                "SET next_charge_at = NOW() + INTERVAL '1 month', "
+                "SET next_charge_at = GREATEST(next_charge_at, NOW()) + INTERVAL '1 month', "
                 "    charge_retries = 0, updated_at = NOW() "
                 "WHERE id = $1",
                 int(sub_id),

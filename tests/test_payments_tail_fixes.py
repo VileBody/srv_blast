@@ -231,6 +231,19 @@ class _FakeCreditsDBNotify:
             return dict(self.active_subscription)
         return None
 
+    async def apply_subscription_purchase(self, order_id: str, rebill_id: str) -> dict[str, Any]:
+        # Mirrors CreditsDB: idempotent per order; create when none is active.
+        applied = self.__dict__.setdefault("applied_orders", set())
+        if order_id in applied:
+            return {"action": "skipped", "sub_id": None, "next_charge_at": None}
+        applied.add(order_id)
+        if self.active_subscription:
+            return {"action": "extended", "sub_id": self.active_subscription["id"], "next_charge_at": None}
+        await self.create_subscription(
+            int(self.payment["tg_id"]), str(self.payment["package"]), str(rebill_id), int(self.payment["amount_rub"]),
+        )
+        return {"action": "created", "sub_id": self.active_subscription["id"], "next_charge_at": None}
+
     async def get_balance(self, tg_id: int) -> int:
         return 5
 
@@ -348,7 +361,9 @@ class _FakeCreditsDBSubscriptions:
             return dict(self.active_subscription)
         return None
 
-    async def create_subscription(self, tg_id: int, package: str, rebill_id: str, amount_rub: int) -> None:
+    async def create_subscription(
+        self, tg_id: int, package: str, rebill_id: str, amount_rub: int, *, source_order_id: str = "",
+    ) -> None:
         self.created_subscriptions.append((int(tg_id), str(package), str(rebill_id), int(amount_rub)))
         self.active_subscription = {
             "id": len(self.created_subscriptions),
