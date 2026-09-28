@@ -61,7 +61,7 @@ def test_admin_can_add_track_credits_without_touching_video_balance() -> None:
     assert db.track_calls == [
         (
             (777, 2, "support"),
-            {"admin_note": "manual correction | via panel by admin | order order-42"},
+            {"admin_note": "manual correction | via panel by admin", "actor": "admin", "order_id": "order-42"},
         )
     ]
     assert db.audit_calls == [

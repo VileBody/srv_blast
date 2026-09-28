@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
-import type { PackageType } from '../lib/types';
+import { isSubscriptionPlan, type PackageType } from '../lib/types';
 import { cn } from '../lib/cn';
 import { LEGAL_LINKS } from '../lib/legal';
 import { useToast } from '../contexts/ToastContext';
@@ -346,7 +346,11 @@ export function PricingPage() {
   // какой тариф уже куплен: TRIAL — «бесплатный», его на этой странице нет
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
   const subscription = meQuery.data?.subscription;
-  const currentTier = subscription && subscription.isActive && subscription.tier !== 'TRIAL' ? subscription.tier : null;
+  // Отменённая или неоплаченная подписка — не «ваш тариф»: иначе после отмены Бласт уже
+  // никогда не купить заново (tier берётся из последней оплаты и сам не сбрасывается).
+  // Повторная покупка поверх ещё оплаченного периода продлевает его на бэке, а не задваивает.
+  const subscriptionLapsed = Boolean(subscription && isSubscriptionPlan(subscription) && subscription.billingStatus && subscription.billingStatus !== 'active');
+  const currentTier = subscription && subscription.isActive && subscription.tier !== 'TRIAL' && !subscriptionLapsed ? subscription.tier : null;
   const orderMutation = useMutation({
     mutationFn: (packageType: PackageType) => api.createOrder({
       packageType,
