@@ -970,7 +970,26 @@
     "publishNowHint": "TikTok выкладывает ролик сразу — отложенной публикации у нас пока нет.",
     "hashtagBase": "музыка,новыйтрек,рек,рекомендации,новинки,артист",
     "soon": "Скоро",
-    "soonHint": "Подключение TikTok ещё не открыто — включим, когда пройдём ревью TikTok."
+    "soonHint": "Подключение TikTok ещё не открыто — включим, когда пройдём ревью TikTok.",
+    "phaseSending": "Отправляем в TikTok",
+    "phaseProcessing": "TikTok обрабатывает",
+    "secondsShort": "с",
+    "phaseStep": "Шаг {{step}} из {{total}}",
+    "phaseSendingHint": "наш сервер передаёт файл ролика в TikTok",
+    "phaseProcessingHint": "TikTok проверяет ролик — обычно это до пары минут",
+    "failReason": {
+      "internal": "TikTok не смог обработать ролик на своей стороне. Попробуйте ещё раз через минуту.",
+      "unaudited_client_can_only_post_to_private_accounts": "Пока TikTok не одобрил Blast, публиковать можно только в приватный аккаунт. Включите «Частный аккаунт» в настройках TikTok.",
+      "spam_risk_too_many_posts": "TikTok ограничил число публикаций за день. Попробуйте позже.",
+      "spam_risk_user_banned_from_posting": "TikTok временно запретил этому аккаунту публиковать ролики.",
+      "reached_active_user_cap": "Достигнут дневной лимит публикаций через приложения. Попробуйте завтра.",
+      "file_format_check_failed": "TikTok не принял формат файла.",
+      "duration_check_failed": "TikTok не принял длительность ролика.",
+      "picture_size_check_failed": "TikTok не принял размер кадра.",
+      "frame_rate_check_failed": "TikTok не принял частоту кадров.",
+      "auth_removed": "Доступ к TikTok отозван — подключите аккаунт заново.",
+      "other": "TikTok отклонил ролик: {{reason}}"
+    }
   },
   "profile": {
     "update": "Обновить",
