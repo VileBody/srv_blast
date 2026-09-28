@@ -67,7 +67,7 @@ function StatCard({ icon, title, value, unit, trend }: {
   icon: string;
   title: string;
   value: string;
-  unit: string;
+  unit?: string;
   trend?: string;
 }) {
   return (
@@ -81,7 +81,7 @@ function StatCard({ icon, title, value, unit, trend }: {
           равны. items-baseline + leading-none раньше уводили глиф вверх, к заголовку. */}
       <span className="absolute inset-x-[28px] bottom-0 top-[72px] flex items-center gap-[12px] max-md:inset-x-[14px] max-md:top-[40px] max-md:items-baseline max-md:gap-[8px]">
         <span className="text-[96px] font-[350] leading-[0.86] text-transparent max-md:text-[52px] max-md:leading-none" style={gradLight}>{value}</span>
-        <span className="translate-y-[18px] text-[24px] font-[350] leading-none text-transparent max-md:translate-y-0" style={gradLight}>{unit}</span>
+        {unit && <span className="translate-y-[18px] text-[24px] font-[350] leading-none text-transparent max-md:translate-y-0" style={gradLight}>{unit}</span>}
       </span>
     </div>
   );
@@ -388,6 +388,7 @@ export function StatsPage() {
   // по отдельности, и ждать, пока созреют все, незачем.
   const enough = Boolean(analysis?.enoughData) || previewData;
 
+  // До тысячи число выводится как есть и БЕЗ «k»: иначе 800 просмотров читались как 800 тысяч.
   const fmtViews = (n: number) => (n >= 1000 ? (n / 1000).toFixed(n >= 10_000 ? 0 : 1).replace(/\.0$/, '') : String(n));
 
   /* Статистика целиком строится на /api/me + /api/projects: если они не пришли,
@@ -461,7 +462,7 @@ export function StatsPage() {
         </div>
 
         <div className="mt-[28px] flex flex-col gap-[20px] lg:flex-row max-md:mt-[16px] max-md:gap-[10px]">
-          <StatCard icon="st-views.svg" title={t('stats.viewsTitle')} value={previewData ? '122' : tiktok ? fmtViews(views) : '—'} unit={t('stats.thousand')} trend={previewData ? '37.8%' : tiktok ? trend(views, previousViews) : undefined} />
+          <StatCard icon="st-views.svg" title={t('stats.viewsTitle')} value={previewData ? '122' : tiktok ? fmtViews(views) : '—'} unit={previewData || views >= 1000 ? t('stats.thousand') : undefined} trend={previewData ? '37.8%' : tiktok ? trend(views, previousViews) : undefined} />
           <StatCard icon="st-engagement.png" title={t('stats.engagement')} value={previewData ? '3.6' : tiktok ? engagement.toFixed(engagement >= 10 ? 0 : 1) : '—'} unit="%" trend={previewData ? '1.8%' : undefined} />
           {/* «Опубликовано» — только реально выложенное. Без подключённого TikTok показываем
               прочерк, а не число сгенерированных: генерация ≠ публикация, и подстановка
