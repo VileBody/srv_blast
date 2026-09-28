@@ -8,6 +8,9 @@ import type {
   AnalyticsResponse,
   Subscription,
   SavedTrack,
+  StoryboardCandidate,
+  StoryboardCutsResponse,
+  StoryboardPickedVideo,
   UserSource,
   TiktokVideo,
   ContentIteration,
@@ -271,6 +274,14 @@ export const api = {
   // plane — план подбора (vibes 9:16 / cine16x9 / films). Без него степпер типов
   // футажей листался, а список примеров не менялся.
   /** Примерка субтитров (ASR отрывка): запуск — идемпотентен по трек+окно+текст */
+  // Раскадровка: склейки по темпу трека и реальные исходники вайба — тот же
+  // детерминированный подбор, что делает рендер (оркестратор /storyboard/*).
+  storyboardCuts: (payload: { trackId: string; clipFrom: string; clipTo: string; dropTime?: string }) =>
+    request<StoryboardCutsResponse>('/api/wizard/storyboard/cuts', { method: 'POST', body: JSON.stringify(payload) }),
+  storyboardPick: (payload: { clipFrom: string; clipTo: string; cuts: number[]; videos: { index: number; group: string; seedKey: string; pins?: Record<number, string> }[] }) =>
+    request<{ videos: StoryboardPickedVideo[]; mock?: boolean }>('/api/wizard/storyboard/pick', { method: 'POST', body: JSON.stringify(payload) }),
+  storyboardAlternatives: (payload: { clipFrom: string; clipTo: string; cuts: number[]; group: string; shot: number; seedKey: string; exclude: string[]; limit?: number }) =>
+    request<{ candidates: StoryboardCandidate[]; mock?: boolean }>('/api/wizard/storyboard/alternatives', { method: 'POST', body: JSON.stringify(payload) }),
   asrStart: (payload: { clipFrom: string; clipTo: string; fragment: string; lyrics: string; trackId: string }) =>
     request<{ asr: AsrPreviewResponse; mock?: boolean }>('/api/wizard/asr/start', { method: 'POST', body: JSON.stringify(payload) }),
   asrState: (key: string) =>

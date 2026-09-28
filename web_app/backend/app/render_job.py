@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import effect_map as em
+from . import storyboard as storyboard_plans
 
 SCHEMA = "blast.render_job/1"
 OUTPUT_DEFAULT = {
@@ -321,6 +322,9 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
                           "style": branding.get("style")},
             "sound": {"userSound": (cfg.get("sound") if v_kind in {"sound", "warmup"} else None)},
         })
+
+    # Раскадровка «Пула»: закреплённые склейки+клипы по видео (см. storyboard.py).
+    storyboard_plans.attach_to_variations(variations, stage_data.get("storyboard"), _segment(stage_data.get("timing")))
 
     return {
         "schema": SCHEMA,

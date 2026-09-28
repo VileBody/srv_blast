@@ -4573,6 +4573,35 @@ def build_all_via_gemini_one_call(
 
     timing_analysis_payload: Stage2TimingAnalysisPayload | None = None
     timing_cuts_payload: Stage2TimingCutsPayload | None = None
+    # Pinned storyboard (web «Пул»): the user approved these exact cuts and
+    # clips. Use them verbatim instead of generating cuts and picking clips —
+    # a re-pick would not reproduce the preview (the picker's cooldown moves
+    # with every render). Mismatch with this job is an explicit failure.
+    plan_selection: Optional[FootageSelectionPayload] = None
+    _footage_plan_raw = (os.environ.get("FOOTAGE_PLAN_JSON") or "").strip()
+    if _footage_plan_raw:
+        from mlcore.storyboard_plan import validate_plan
+
+        _plan_points, plan_selection = validate_plan(
+            json.loads(_footage_plan_raw),
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+            known_file_names=[str(a.get("file_name") or "") for a in picker_assets],
+        )
+        _plan_dur = float(clip_end_abs) - float(clip_start_abs)
+        switch_payload = SwitchTimingPayload.model_validate(
+            {
+                "clip_start_abs": clip_start_abs,
+                "clip_end_abs": clip_end_abs,
+                "fast_start_seconds": min(float(fast_start_seconds), max(0.0, _plan_dur)),
+                "bpm": float(bpm) if bpm else None,
+                "switch_points_abs": _plan_points,
+            }
+        )
+        logger.info(
+            "footage_plan_pinned shots=%d window=%.3f..%.3f (cuts+picks from storyboard)",
+            len(plan_selection.clips), float(clip_start_abs), float(clip_end_abs),
+        )
     if switch_payload is None:
         # hook_aware: generate footage cut timings DETERMINISTICALLY from the
         # measured onsets (kick-driven, rhythm-locked) — no Stage2 timing LLM
@@ -4875,6 +4904,13 @@ def build_all_via_gemini_one_call(
             _bg_mode_picker,
             len(footage_payload.clips),
             placeholder_name,
+        )
+    elif plan_selection is not None:
+        footage_payload = plan_selection
+        _record_footage_usage(
+            _usage_bucket_id,
+            [str(c.file_name) for c in plan_selection.clips],
+            logger=logger,
         )
     else:
         footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(

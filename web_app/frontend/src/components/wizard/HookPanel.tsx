@@ -1,5 +1,5 @@
 import { WarmupInput } from './WarmupInput';
-import { ChangeEvent, Fragment, useEffect, useRef, useState } from 'react';
+import { ChangeEvent, Fragment, lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useChip } from '../../i18n/useChip';
@@ -7,7 +7,6 @@ import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { ArrowRight, useDragScroll } from './BackgroundPanel';
-import { FullscreenZone } from '../ui/FullscreenZone';
 import { PillsFooter } from './WizardFrame';
 import { HookConfig, HookKind, HOOK_LABELS, hookComplete, hookPills, useWizardStore } from '../../stores/wizardStore';
 import effectsRegistry from '../../data/effects-registry.json';
@@ -17,6 +16,10 @@ import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
+import { TimelineButtonGuideVisual, useFxTimelineOpen, useTimelineGuideAvailable } from './timelineGuides';
+
+// Таймлайн сам берёт каталоги эффектов отсюда — статический импорт дал бы цикл модулей.
+const FxTimeline = lazy(() => import('./FxTimeline').then((m) => ({ default: m.FxTimeline })));
 
 /*
  * Этап «Хук» (Figma W18 → W24/32 → W25/34 → W26/28/29/30 → W27 → W31):
@@ -35,18 +38,18 @@ const HOOK_TYPES: { kind: HookKind; icon: string; iconW: number; iconH: number; 
 ];
 
 // Точные списки из Figma (W34/W28/W29/W30/W27/W31)
-const OBJECTS = ['Круг', 'Квадрат', 'Ромб', 'Звезда-5', 'Звезда-10'];
+export const OBJECTS = ['Круг', 'Квадрат', 'Ромб', 'Звезда-5', 'Звезда-10'];
 // FX-эффекты тянутся из единого реестра effects-registry.json (source of truth):
 // добавил эффект в реестр → появляется и чип здесь, и резолв в manifestId на бэке.
-const EFFECT_HOOKS = effectsRegistry.hook.map((e) => e.label);
+export const EFFECT_HOOKS = effectsRegistry.hook.map((e) => e.label);
 // «Без склейки» / «Без стилизации» — осознанный отказ, стоят первыми в ленте. На бэке
 // (effect_map.NO_GLUE_LABEL/NO_STYLE_LABEL) они НЕ подменяются склейкой/стилем с этапа фона.
 export const NO_GLUE = 'Без склейки';
 export const NO_STYLE = 'Без стилизации';
-const EFFECT_GLUES = [NO_GLUE, ...effectsRegistry.glue.map((e) => e.label)];
-const EFFECT_STYLES = [NO_STYLE, ...effectsRegistry.style.map((e) => e.label)];
-const MOTIONS = ['Свайп', 'Тап', 'Зум', 'Задержи', 'Голова'];
-const THOUGHTS = ['Панчлайн', 'Пропущенное слово', 'Эхо', 'Вопрос', 'Инверсия'];
+export const EFFECT_GLUES = [NO_GLUE, ...effectsRegistry.glue.map((e) => e.label)];
+export const EFFECT_STYLES = [NO_STYLE, ...effectsRegistry.style.map((e) => e.label)];
+export const MOTIONS = ['Свайп', 'Тап', 'Зум', 'Задержи', 'Голова'];
+export const THOUGHTS = ['Панчлайн', 'Пропущенное слово', 'Эхо', 'Вопрос', 'Инверсия'];
 
 const OBJECT_PREVIEW_IDS: Record<string, string> = {
   'Круг': 'shape__elipse',
@@ -256,7 +259,7 @@ export function hookSteps(kind: HookKind): HookStep[] {
 }
 
 /** Stable S3 catalog id for the exact option edited at this step. */
-function previewIdFor(key: keyof HookConfig, value?: string): string | undefined {
+export function previewIdFor(key: keyof HookConfig, value?: string): string | undefined {
   if (!value) return undefined;
   if (key === 'object') return OBJECT_PREVIEW_IDS[value];
   if (key === 'motion') return MOTION_PREVIEW_IDS[value];
@@ -404,8 +407,11 @@ export function StageHooks() {
   // showTypeGuide (см. ниже), когда dropGuideDismissed уже посчитан.
   const [typeGuideDismissed, setTypeGuideDismissed] = useGuideDismiss('hook-type', Boolean(hooks.dropTime) && !hooks.kind, false);
   const [dropGuideDismissed, setDropGuideDismissed] = useGuideDismiss('hook-drop', !hooks.dropTime && !typeGuideDismissed, true);
-  const showDropGuide = !dropGuideDismissed;
-  const showTypeGuide = Boolean(hooks.dropTime) && dropGuideDismissed && !typeGuideDismissed;
+  const fxTimelineOpen = useFxTimelineOpen((state) => state.open);
+  const showDropGuide = !dropGuideDismissed && !fxTimelineOpen;
+  // Четвёртый шаг (кнопка «Таймлайн») есть только там, где есть сама кнопка.
+  const hookGuideTotal = useTimelineGuideAvailable() ? 4 : 3;
+  const showTypeGuide = Boolean(hooks.dropTime) && dropGuideDismissed && !typeGuideDismissed && !fxTimelineOpen;
   useMarkGuideSeen('hook-type', Boolean(hooks.dropTime) && dropGuideDismissed);
   useScrollGuideIntoView(showDropGuide, dropGuideTargetRef);
   useScrollGuideIntoView(showTypeGuide, typeGuideTargetRef);
@@ -540,7 +546,7 @@ export function StageHooks() {
         title={t('wizard.fx.guideDropTitle')}
         text={t('wizard.fx.guideDropText')}
         dismissLabel={t('wizard.fx.guideNext')}
-        progressLabel={t('wizard.guideProgress', { current: 1, total: 3 })}
+        progressLabel={t('wizard.guideProgress', { current: 1, total: hookGuideTotal })}
         onDismiss={() => setDropGuideDismissed(true)}
         variant="visual"
         shell="track-top"
@@ -608,7 +614,7 @@ export function StageHooks() {
         title={t('wizard.fx.guideTypeTitle')}
         text={t('wizard.fx.guideTypeText')}
         dismissLabel={t('wizard.fx.guideNext')}
-        progressLabel={t('wizard.guideProgress', { current: 2, total: 3 })}
+        progressLabel={t('wizard.guideProgress', { current: 2, total: hookGuideTotal })}
         onDismiss={() => setTypeGuideDismissed(true)}
         variant="visual"
         shell="track-top"
@@ -710,176 +716,11 @@ function nextFreeKind(hooks: { configs: Partial<Record<HookKind, HookConfig>> },
  * Геометрия: контейнеры 390×160 и 390×175 (шаг 195), плеер 373×665 + «Продолжить» 373×60.
  */
 /** The selected hook/shape/motion sample is already rendered and stored in S3. */
-function EffectPreview({ previewId }: { previewId?: string }) {
+export function EffectPreview({ previewId }: { previewId?: string }) {
   const query = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews });
   if (!previewId || query.isLoading) return null;
   const effect = query.data?.previews.find(item => item.id === previewId);
   return <CatalogMedia url={effect?.previewUrl} className="absolute inset-0 h-full w-full" />;
-}
-
-function HooksFullscreen({
-  onCollapse,
-  canContinue,
-  onNext
-}: {
-  onCollapse: () => void;
-  canContinue: boolean;
-  onNext: () => void;
-}) {
-  const { t } = useTranslation();
-  const chip = useChip();
-  const hooks = useWizardStore((state) => state.hooks);
-  const setHooks = useWizardStore((state) => state.setHooks);
-  const [step, setStep] = useState(0);
-  const pillsScroll = useDragScroll();
-  const [pillsFade, setPillsFade] = useState({ left: false, right: false });
-
-  const kind = hooks.kind ?? 'effects';
-  const config = hooks.configs[kind] || {};
-  const pills = hookPills(hooks);
-  const nextKind = nextFreeKind(hooks, kind);
-  const syncPillFades = () => {
-    const el = pillsScroll.ref.current;
-    if (!el) return;
-    setPillsFade({ left: el.scrollLeft > 4, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4 });
-  };
-
-  useEffect(() => {
-    syncPillFades();
-    const el = pillsScroll.ref.current;
-    if (!el) return;
-    const observer = new ResizeObserver(syncPillFades);
-    observer.observe(el);
-    return () => observer.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pills.length]);
-  // Маска ленты пилюль: пилюли тают в прозрачность у краёв (в тон любого фона).
-  const pillsMask = `linear-gradient(to right, transparent 0px, #000 ${pillsFade.left ? 24 : 0}px, #000 calc(100% - ${pillsFade.right ? 24 : 0}px), transparent 100%)`;
-
-  /* Контейнер 390×175: заголовок с отступом, лента на всю ширину (фейды у краёв контейнера, а не ленты) */
-  const section = (title: string, index: number, options: string[], key: keyof HookConfig) => (
-    <div className={cn('h-[175px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10 py-[28px]', step === index && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
-      <div className="flex items-center justify-between gap-[8px] px-[28px]">
-        <p className="wizard-body min-w-0 truncate leading-[29px]">{title}</p>
-        {key === 'effectStyle' && kind !== 'none' && <StyleScopeToggle config={config} onPick={(full) => { setHooks({ config: { effectStyleFull: full } }); setStep(index); }} />}
-        {key === 'effectHook' && config.effectHook === 'Слоу-шаттер' && <SlowShutterExtendToggle config={config} onPick={(value) => { setHooks({ config: { effectHookExtend: value } }); setStep(index); }} />}
-      </div>
-      <div className="mt-[28px]">
-        <ChipRow
-          options={options}
-          value={config[key] as string | undefined}
-          values={key === 'effectStyle' ? selectedStyles(config) : undefined}
-          edgePad={28}
-          onPick={(option) => { setHooks({ config: key === 'effectStyle' ? toggleStyle(config, option) : { [key]: option } }); setStep(index); }}
-        />
-      </div>
-    </div>
-  );
-
-  /*
-   * Шаги те же, что и в обычной рабочей зоне (hookSteps) — просто здесь ширина позволяет
-   * показать все три сразу, а не по одному. Общее определение и есть страховка от того,
-   * что режимы снова разъедутся по составу настроек.
-   * Для «Звука» первый шаг — не список, а загрузка/прослушивание своего файла.
-   */
-  const steps = hookSteps(kind);
-  const currentDef = steps[Math.min(step, steps.length - 1)];
-  const previewId = configuredPreviewId(kind, config, currentDef);
-
-  /** Стрелки плеера листают варианты ВНУТРИ активной группы, не переключая группы. */
-  const cycleVariant = (delta: number) => {
-    if (!currentDef || currentDef.options.length === 0) return;
-    const current = config[currentDef.key] as string | undefined;
-    const index = current ? currentDef.options.indexOf(current) : -1;
-    const nextIndex = index < 0
-      ? (delta > 0 ? 0 : currentDef.options.length - 1)
-      : (index + delta + currentDef.options.length) % currentDef.options.length;
-    const option = currentDef.options[nextIndex];
-    setHooks({ config: currentDef.key === 'effectStyle' ? toggleStyle(config, option) : { [currentDef.key]: option } });
-  };
-
-  const left = (
-    <div className="flex h-full flex-col gap-[20px]">
-      {/* «Набор эффектов»: бывший футер — пилюли 60px + «+» добавляет следующий тип хука */}
-      <div className="h-[160px] shrink-0 rounded-r15 bg-grad-soft-10 p-[28px]">
-        <p className="wizard-body leading-[29px]">{t('wizard.fx.set')}</p>
-        <div className="mt-[20px] flex min-w-0 items-center gap-[12px]">
-          <div className="relative min-w-0 flex-1">
-            <div
-              ref={pillsScroll.ref}
-              onScroll={syncPillFades}
-              className="no-scrollbar flex min-w-0 cursor-grab items-center gap-[12px] overflow-x-auto select-none active:cursor-grabbing"
-              style={{ maskImage: pillsMask, WebkitMaskImage: pillsMask }}
-              {...pillsScroll.handlers}
-            >
-            {pills.map((pill) => (
-              <button
-                key={pill.kind}
-                type="button"
-                onClick={() => { if (!pillsScroll.moved()) { setHooks({ kind: pill.kind }); setStep(0); } }}
-                className={cn('flex h-[60px] shrink-0 items-center gap-[10px] rounded-r15 bg-grad-soft-20 px-[20px] text-[24px] font-[350] leading-none text-text-80 transition', kind === pill.kind && 'text-text shadow-[inset_0_0_0_2px_var(--accent-light)]')}
-              >
-                <SvgMaskIcon src="/assets/figma/icon-bolt.svg" style={{ width: 12, height: 18, color: 'var(--accent-light)' }} />
-                {chip(pill.label)}
-              </button>
-            ))}
-            </div>
-          </div>
-          <button
-            type="button"
-            aria-label={t('wizard.fx.add')}
-            disabled={!nextKind}
-            onClick={() => { if (nextKind) { setHooks({ kind: nextKind }); setStep(0); } }}
-            className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-r15 bg-text text-accent transition hover:opacity-90 disabled:cursor-default"
-          >
-            <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true">
-              <path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      {steps.map((definition, index) => kind === 'warmup' && index === 0 ? (
-        <div key={definition.key} className={cn('min-h-[175px] shrink-0 rounded-r15 bg-grad-soft-10 p-[28px]', step === 0 && 'shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
-          <WarmupInput />
-        </div>
-      ) : <Fragment key={definition.key}>{section(t(definition.title), index, definition.options, definition.key)}</Fragment>)}
-    </div>
-  );
-
-  const right = (
-    <div className="flex h-full flex-col">
-      <div className="group relative h-[665px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10">
-        <EffectPreview previewId={previewId} />
-        <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
-        {/* стрелки: пролистывание вариантов активной группы (Figma 746:1412) */}
-        <button type="button" aria-label={t('wizard.fx.prevStep')} disabled={!currentDef} onClick={() => cycleVariant(-1)} className="absolute left-[25px] top-1/2 z-[4] -translate-y-1/2 text-text opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-30">
-          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        </button>
-        <button type="button" aria-label={t('wizard.fx.nextStep')} disabled={!currentDef} onClick={() => cycleVariant(1)} className="absolute right-[25px] top-1/2 z-[4] -translate-y-1/2 text-text opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-30">
-          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" aria-hidden="true"><path d="M9.5 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        </button>
-
-        <span className="absolute left-1/2 top-1/2 z-[4] flex h-[60px] w-[60px] -translate-x-1/2 -translate-y-1/2 items-center justify-center gap-[6px] rounded-full bg-[rgba(5,1,15,0.6)] opacity-0 transition-opacity group-hover:opacity-100">
-          <span className="h-[20px] w-[5px] rounded-[2px] bg-text" />
-          <span className="h-[20px] w-[5px] rounded-[2px] bg-text" />
-        </span>
-
-      </div>
-
-      <button
-        type="button"
-        onClick={() => { onCollapse(); onNext(); }}
-        disabled={!canContinue}
-        className={cn('mt-[20px] flex h-[60px] shrink-0 items-center justify-center gap-[16px] rounded-r15 bg-grad-soft-20 text-[24px] font-[350] leading-none text-text-80 transition', canContinue && 'border border-accent-light hover:text-text')}
-      >
-        {t('wizard.continue')}
-        <ArrowRight />
-      </button>
-    </div>
-  );
-
-  return <FullscreenZone onCollapse={onCollapse} left={left} right={right} />;
 }
 
 export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: { ready: boolean; canContinue: boolean; loading?: boolean; onBack: () => void; onNext: () => void }) {
@@ -889,7 +730,10 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const setHooks = useWizardStore((state) => state.setHooks);
   const pillsScroll = useDragScroll();
   const [step, setStep] = useState(0);
-  const [fullscreen, setFullscreen] = useState(false);
+  const timelineOpen = useFxTimelineOpen((state) => state.open);
+  const setTimelineOpen = useFxTimelineOpen((state) => state.setOpen);
+  // Уход с шага FX с открытым таймлайном не должен оставить флаг «открыт» висеть.
+  useEffect(() => () => setTimelineOpen(false), [setTimelineOpen]);
   const workzoneGuideTargetRef = useRef<HTMLDivElement>(null);
 
   const kind = hooks.kind;
@@ -900,9 +744,16 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   // мимо кнопки подсказки, поэтому ждём его ЖИВОГО dismissed явно — иначе
   // hook-type (левая панель) и этот гайд (правая) всплывают одновременно.
   const typeGuideDismissed = useGuideLiveDismissed('hook-type');
-  const [workzoneGuideDismissed, setWorkzoneGuideDismissed] = useGuideDismiss('hook-workzone', Boolean(kind), Boolean(kind) && typeGuideDismissed);
-  const showWorkzoneGuide = Boolean(kind) && typeGuideDismissed && !workzoneGuideDismissed;
+  const [workzoneGuideDismissed, setWorkzoneGuideDismissed] = useGuideDismiss('hook-workzone', Boolean(kind), Boolean(kind) && typeGuideDismissed && !timelineOpen);
+  const showWorkzoneGuide = Boolean(kind) && typeGuideDismissed && !workzoneGuideDismissed && !timelineOpen;
   useScrollGuideIntoView(showWorkzoneGuide, workzoneGuideTargetRef);
+  // Шаг 4: кнопка «Таймлайн» — после рабочей зоны. Подсказка информационная (действия,
+  // которое она ждёт, нет), поэтому без idle-реактивации; показ отмечаем по факту.
+  const timelineGuideAvailable = useTimelineGuideAvailable();
+  const timelineGuideTargetRef = useRef<HTMLButtonElement>(null);
+  const [timelineGuideDismissed, setTimelineGuideDismissed] = useGuideDismiss('hook-timeline', false);
+  const showTimelineGuide = timelineGuideAvailable && Boolean(kind) && workzoneGuideDismissed && !timelineGuideDismissed && !timelineOpen;
+  useMarkGuideSeen('hook-timeline', showTimelineGuide);
   /*
    * Смена типа хука начинает его настройку с первого шага. Без сброса переключение
    * с недонастроенных «Эффектов» на «Звук» открывало бы сразу шаг «стиль».
@@ -981,26 +832,22 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
 
   return (
     <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
-      {fullscreen && (
-        <HooksFullscreen
-          onCollapse={() => setFullscreen(false)}
-          canContinue={canContinue}
-          onNext={onNext}
-        />
-      )}
+      {timelineOpen && <Suspense fallback={null}><FxTimeline onClose={() => setTimelineOpen(false)} /></Suspense>}
       <div ref={workzoneGuideTargetRef} className="card-2 flex min-h-0 flex-1 flex-col gap-space-5 px-space-6 py-space-6 max-lg:px-space-5">
-        {/* Figma W41: разворот в фуллскрин — в правом верхнем углу FX-зоны */}
+        {/* На месте прежнего «Развернуть» — таймлайн: полноэкранный рецепт ролика (склейки
+            по темпу трека, переходы на стыках, хук на дропе, стили по кадрам). */}
         <div className="flex shrink-0 items-center justify-between gap-space-3">
           <h2 className="wizard-h whitespace-nowrap">{t('wizard.workZone')}</h2>
           {/* Была голая иконка 20×20 без подложки — её просто не замечали. Теперь это
               обычная кнопка с обводкой и подписью: видно, что тут есть широкий режим. */}
           <button
+            ref={timelineGuideTargetRef}
             type="button"
-            onClick={() => setFullscreen(true)}
+            onClick={() => { if (showWorkzoneGuide) setWorkzoneGuideDismissed(true); setTimelineGuideDismissed(true); setTimelineOpen(true); }}
             className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 max-md:hidden"
           >
-            <img src="/assets/figma/fx-expand.svg" width="16" height="16" alt="" aria-hidden />
-            {t('common.expand')}
+            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true"><path d="M2 5h16M2 10h16M2 15h16M6 3v4m5 1v4m4 1v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+            <span className="translate-y-px">{t('wizard.fx.timeline')}</span>
           </button>
         </div>
 
@@ -1022,12 +869,25 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
         targetRef={workzoneGuideTargetRef}
         title={t('wizard.fx.guideWorkzoneTitle')}
         text={t('wizard.fx.guideWorkzoneText')}
-        dismissLabel={t('wizard.fx.guideDismiss')}
-        progressLabel={t('wizard.guideProgress', { current: 3, total: 3 })}
+        dismissLabel={timelineGuideAvailable ? t('wizard.fx.guideNext') : t('wizard.fx.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 3, total: timelineGuideAvailable ? 4 : 3 })}
         onDismiss={() => setWorkzoneGuideDismissed(true)}
         variant="visual"
         shell="track-top"
         visual={<HookWorkzoneGuideVisual />}
+      />
+
+      <ActionGuideOverlay
+        open={showTimelineGuide}
+        targetRef={timelineGuideTargetRef}
+        title={t('wizard.fx.guideTimelineTitle')}
+        text={t('wizard.fx.guideTimelineText')}
+        dismissLabel={t('wizard.fx.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 4, total: 4 })}
+        onDismiss={() => setTimelineGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<TimelineButtonGuideVisual />}
       />
 
       <PillsFooter

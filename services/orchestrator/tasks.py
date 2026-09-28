@@ -124,6 +124,7 @@ _LLM_ENV_KEYS = (
     "F1_SOUND_TEXT",
     "F6_VIDEO_URL",
     "CUSTOM_FOOTAGE_SOURCES_JSON",
+    "FOOTAGE_PLAN_JSON",
     "F6_VIDEO_WIDTH",
     "F6_VIDEO_HEIGHT",
     "F6_VIDEO_DURATION",
@@ -2183,6 +2184,20 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
         if req.get("bg_mode", "footage") != "footage":
             raise RuntimeError("custom footage requires bg_mode=footage")
         env["CUSTOM_FOOTAGE_SOURCES_JSON"] = json.dumps(checked)
+    # Pinned storyboard: cuts + clips the user approved in the web «Пул». The
+    # build renders it verbatim (mlcore.storyboard_plan.validate_plan); it only
+    # makes sense on library footage of one exact slot.
+    footage_plan = req.get("footage_plan")
+    if footage_plan:
+        from .schemas import FootagePlan
+        plan = FootagePlan.model_validate(footage_plan).model_dump()
+        if custom_sources:
+            raise RuntimeError("footage_plan cannot be combined with custom_footage_sources")
+        if req.get("bg_mode", "footage") != "footage":
+            raise RuntimeError("footage_plan requires bg_mode=footage")
+        if not (str(req.get("rotation_theme") or "").strip() and str(req.get("rotation_tags_group") or "").strip()):
+            raise RuntimeError("footage_plan requires an exact slot (rotation_theme + rotation_tags_group)")
+        env["FOOTAGE_PLAN_JSON"] = json.dumps(plan)
     _f6_video_raw = req.get("f6_video_url")
     if _f6_video_raw is not None and str(_f6_video_raw).strip():
         _f6_video = str(_f6_video_raw).strip()

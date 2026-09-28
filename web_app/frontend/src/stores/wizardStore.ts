@@ -82,6 +82,65 @@ export interface AsrPreviewState {
   workingEnd: number | null;
 }
 
+/** Частота склеек: «авто» — ровно разбиение рендера по темпу трека, остальные — от той же сетки битов. */
+export type TimelinePace = 'sparse' | 'auto' | 'dense';
+
+export interface TimelineStyleRange {
+  uid: number;
+  /** подпись стилизации из effects-registry (как в hooks.configs.effectStyles) */
+  style: string;
+  lane: 0 | 1;
+  /** диапазон кадров [a, b) — стиль всегда лежит по границам склеек */
+  a: number;
+  b: number;
+}
+
+/** Рецепт ролика с таймлайна FX: общий для всех видео батча. */
+export interface TimelineRecipe {
+  /** вводные, под которые посчитаны склейки (трек + окно + дроп) */
+  key: string;
+  pace: TimelinePace;
+  /** абсолютные секунды трека; null — склейки ещё не пришли с бэка */
+  cuts: number[] | null;
+  /** склейки двигали руками: смена вводных или темпа их пересчитает */
+  edited: boolean;
+  /** индекс склейки → подпись перехода из effects-registry */
+  transitions: Record<number, string>;
+  styles: TimelineStyleRange[];
+}
+
+export interface StoryboardClip {
+  fileName: string;
+  inPoint: number;
+  outPoint: number;
+  previewUrl: string | null;
+  previewOffset: number;
+  tags: string[];
+}
+
+/** Одно видео батча в раскадровке «Пула»: реальные клипы по склейкам рецепта. */
+export interface StoryboardVideo {
+  index: number;
+  group: string;
+  seedKey: string;
+  clips: StoryboardClip[];
+  /** кадры, где вайбу не хватило свежих клипов и клип повторяется из другого видео */
+  repeats: number[];
+  /** кадр → закреплённый клип (замена руками) */
+  pins: Record<number, string>;
+  /** закреплённый план — уходит в рендер как footage_plan */
+  plan: Record<string, unknown>;
+}
+
+export interface StoryboardState {
+  /** вводные подбора: окно + склейки + раскладка вайбов по видео */
+  key: string;
+  videos: Record<number, StoryboardVideo>;
+}
+
+export const emptyTimeline = (): TimelineRecipe => ({ key: '', pace: 'auto', cuts: null, edited: false, transitions: {}, styles: [] });
+export const emptyStoryboard = (): StoryboardState => ({ key: '', videos: {} });
+
 export interface WizardStateData {
   projectId?: string | null;
   track?: SavedTrack | null;
@@ -143,6 +202,8 @@ export interface WizardStateData {
     seeded: boolean;
   };
   asr: AsrPreviewState;
+  timeline: TimelineRecipe;
+  storyboard: StoryboardState;
   final: {
     subtitleColor: string;
     accentColor: string;
@@ -245,6 +306,9 @@ interface WizardStore extends WizardStateData {
   toggleAsrFocus: (index: number) => void;
   /** вернуть слова из ASR как есть */
   resetAsrEdits: () => void;
+  setTimeline: (patch: Partial<TimelineRecipe>) => void;
+  setStoryboard: (next: StoryboardState) => void;
+  setStoryboardVideo: (video: StoryboardVideo) => void;
   reset: (projectId?: string | null) => void;
   /** Новый батч по тому же треку: сбрасывает только выбор, вводные трека остаются. */
   newBatch: (projectId?: string | null) => void;
@@ -294,6 +358,8 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   subtitles: { color: '#f6f5fd', pool: [] },
   allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, styles: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
   asr: emptyAsr(),
+  timeline: emptyTimeline(),
+  storyboard: emptyStoryboard(),
   final: { subtitleColor: '#ffffff', accentColor: '#8b6fe6', videosToGenerate: 1, idempotencyKey: crypto.randomUUID() }
 });
 
@@ -383,6 +449,9 @@ export const useWizardStore = create<WizardStore>()(
         return { subtitles: { ...state.subtitles, pool } };
       }),
       setAllocation: (patch) => set((state) => ({ allocation: { ...state.allocation, ...patch } })),
+      setTimeline: (patch) => set((state) => ({ timeline: { ...state.timeline, ...patch } })),
+      setStoryboard: (next) => set({ storyboard: next }),
+      setStoryboardVideo: (video) => set((state) => ({ storyboard: { ...state.storyboard, videos: { ...state.storyboard.videos, [video.index]: video } } })),
       reset: (projectId) => set({ ...initialData(projectId), stage: 1 }),
       newBatch: (projectId) => set((state) => {
         // Трек/текст/тайминг — это вводные проекта, а не батча: переспрашивать их незачем.
@@ -439,6 +508,7 @@ export const useWizardStore = create<WizardStore>()(
           hooks: migrateHooks({ ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) }),
           subtitles: { ...fresh.subtitles, ...((raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {}) },
           allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },
+          timeline: { ...fresh.timeline, ...((raw.timeline as Partial<TimelineRecipe>) ?? {}) },
           asr: (() => {
             const saved = raw.asr as Partial<AsrPreviewState> | null | undefined;
             if (!saved || !saved.jobId || !Array.isArray(saved.words)) return fresh.asr;
@@ -474,6 +544,15 @@ export const useWizardStore = create<WizardStore>()(
           asr: state.asr.jobId
             ? { key: state.asr.key, jobId: state.asr.jobId, edited: state.asr.edited, words: state.asr.words }
             : null,
+          timeline: state.timeline,
+          // Раскадровка «Пула»: бэк приклеит план каждого видео к его вариации и
+          // сверит фон и окно — устаревшая раскадровка = явная ошибка, а не тихий перебор.
+          storyboard: Object.keys(state.storyboard.videos).length
+            ? {
+              key: state.storyboard.key,
+              videos: Object.values(state.storyboard.videos).map((video) => ({ index: video.index, group: video.group, plan: video.plan }))
+            }
+            : null,
           final: state.final
         };
       }
@@ -487,7 +566,7 @@ export const useWizardStore = create<WizardStore>()(
           id: 'source-video-legacy', format: background.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...background.uploads]
         }];
         background.sourceVideos ??= [];
-        return { ...raw, background, hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {},
+        return { ...raw, background, timeline: { ...emptyTimeline(), ...(raw.timeline ?? {}) }, storyboard: raw.storyboard ?? emptyStoryboard(), hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {},
           hooks: Object.fromEntries(Object.entries(raw.allocation?.hooks ?? {}).map(([key, value]) => [key === 'sound' ? 'warmup' : key, value])) } };
       },
       partialize: (state) => ({
@@ -504,6 +583,8 @@ export const useWizardStore = create<WizardStore>()(
         subtitles: state.subtitles,
         allocation: state.allocation,
         asr: state.asr,
+        timeline: state.timeline,
+        storyboard: state.storyboard,
         final: state.final,
         stage: state.stage,
         reachedIndex: state.reachedIndex

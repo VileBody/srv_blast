@@ -53,6 +53,9 @@ from .schemas import (
     FetchExternalVideoRequest,
     FetchExternalVideoResponse,
     HookAnalyzeRequest,
+    StoryboardAlternativesRequest,
+    StoryboardCutsRequest,
+    StoryboardPickRequest,
     HookAnalyzeResponse,
     JobState,
     JobsBatchRequest,
@@ -1045,6 +1048,64 @@ def create_app() -> FastAPI:
             for c in (result.drop_candidates or [])[:3]
         ]
         return HookAnalyzeResponse(bpm=float(result.bpm), drop_candidates=cands)
+
+    # ==========================================================
+    # Storyboard (web FX timeline + «Пул»): the render's own deterministic cuts
+    # and clip picks, shown before generation and sent back as a pinned
+    # footage_plan. Read-only, nothing is enqueued. See storyboard_api.py.
+    # ==========================================================
+    def _storyboard_call(name: str, fn):
+        from mlcore.storyboard_plan import StoryboardPlanError
+
+        try:
+            return fn()
+        except (StoryboardPlanError, RuntimeError, ValueError) as e:
+            # plan/picker refusals are actionable for the user (bucket too small,
+            # pinned clip too short, window mismatch) — say so verbatim.
+            raise HTTPException(status_code=422, detail=f"storyboard {name}: {e}")
+        except Exception as e:
+            log.exception("storyboard %s failed", name)
+            raise HTTPException(status_code=500, detail=f"storyboard {name} failed: {e}")
+
+    @app.post("/storyboard/cuts")
+    def storyboard_cuts(req: StoryboardCutsRequest) -> Dict[str, Any]:
+        from .storyboard_api import StoryboardService
+
+        return _storyboard_call("cuts", lambda: StoryboardService().cuts(
+            audio_s3_url=req.audio_s3_url,
+            clip_start_abs=float(req.clip_start_sec),
+            clip_end_abs=float(req.clip_end_sec),
+            user_drop_t=req.user_drop_t,
+        ))
+
+    @app.post("/storyboard/pick")
+    def storyboard_pick(req: StoryboardPickRequest) -> Dict[str, Any]:
+        from .storyboard_api import StoryboardService
+
+        return _storyboard_call("pick", lambda: StoryboardService().pick(
+            theme=req.rotation_theme,
+            tags_group=req.rotation_tags_group,
+            clip_start_abs=float(req.clip_start_abs),
+            clip_end_abs=float(req.clip_end_abs),
+            switch_points_abs=[float(p) for p in req.switch_points_abs],
+            videos=[v.model_dump() for v in req.videos],
+        ))
+
+    @app.post("/storyboard/alternatives")
+    def storyboard_alternatives(req: StoryboardAlternativesRequest) -> Dict[str, Any]:
+        from .storyboard_api import StoryboardService
+
+        return _storyboard_call("alternatives", lambda: StoryboardService().alternatives(
+            theme=req.rotation_theme,
+            tags_group=req.rotation_tags_group,
+            clip_start_abs=float(req.clip_start_abs),
+            clip_end_abs=float(req.clip_end_abs),
+            switch_points_abs=[float(p) for p in req.switch_points_abs],
+            interval_idx=int(req.interval_idx),
+            seed_key=req.seed_key,
+            exclude_file_names=list(req.exclude_file_names),
+            limit=int(req.limit),
+        ))
 
     @app.post("/media/fetch_external", response_model=FetchExternalVideoResponse)
     def fetch_external_video(req: FetchExternalVideoRequest) -> FetchExternalVideoResponse:

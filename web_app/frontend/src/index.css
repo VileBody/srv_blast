@@ -223,9 +223,34 @@
 .guide-mode-off-fade { animation: guide-mode-off-fade 320ms cubic-bezier(.16, 1, .3, 1) both; }
 .guide-mode-on-fade { animation: guide-mode-on-fade 320ms cubic-bezier(.16, 1, .3, 1) both; }
 
+/*
+ * Гайды таймлайна FX и раскадровки «Пула» — тот же язык: только transform/opacity,
+ * та же пружинка (.16,1,.3,1). Playhead пробегает мини-таймлайн (обёртка во всю ширину
+ * едет на свою ширину — без пиксельных констант), пилюля эффекта «перетаскивается» на
+ * дорожку, кадр раскадровки сменяется кроссфейдом двух клипов.
+ */
+@keyframes guide-tl-sweep { 0% { transform: translateX(0); } 100% { transform: translateX(100%); } }
+@keyframes guide-tl-drag {
+  0%, 12%   { transform: translate(0, 0) scale(1); opacity: 1; }
+  22%       { transform: translate(0, 0) scale(1.08); opacity: 1; }
+  52%, 62%  { transform: translate(var(--guide-drag-x, 64px), var(--guide-drag-y, 30px)) scale(1); opacity: 1; }
+  74%, 100% { transform: translate(var(--guide-drag-x, 64px), var(--guide-drag-y, 30px)) scale(.9); opacity: 0; }
+}
+@keyframes guide-tl-land { 0%, 58% { opacity: 0; transform: scaleX(.6); } 68%, 92% { opacity: 1; transform: scaleX(1); } 100% { opacity: 0; transform: scaleX(1); } }
+@keyframes guide-sb-a { 0%, 42% { opacity: 1; } 50%, 92% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes guide-sb-b { 0%, 42% { opacity: 0; } 50%, 92% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes guide-sb-press { 0%, 40% { transform: scale(1); } 45% { transform: scale(.82); } 52%, 100% { transform: scale(1); } }
+.guide-tl-sweep { animation: guide-tl-sweep 4.2s linear infinite; }
+.guide-tl-drag { animation: guide-tl-drag 4.2s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-tl-land { transform-origin: left center; animation: guide-tl-land 4.2s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-sb-a { animation: guide-sb-a 4.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-sb-b { animation: guide-sb-b 4.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-sb-press { animation: guide-sb-press 4.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .action-guide-enter,
   .guide-mode-reveal, .guide-mode-frame, .guide-track-piece,
+  .guide-tl-sweep, .guide-tl-drag, .guide-tl-land, .guide-sb-a, .guide-sb-b, .guide-sb-press,
   .guide-fit-drag, .guide-fit-select, .guide-fit-grow, .guide-fit-grow-label,
   .guide-hook-icon-a, .guide-hook-icon-b, .guide-hook-icon-c, .guide-hook-shake,
   .guide-pool-digit-4, .guide-pool-digit-5, .guide-pool-digit-6,
