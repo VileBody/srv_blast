@@ -16,7 +16,7 @@ type ActionGuideOverlayProps = {
   open: boolean;
   targetRef: RefObject<HTMLElement>;
   title: string;
-  text: string;
+  text: ReactNode;
   visual: ReactNode;
   dismissLabel: string;
   progressLabel: string;
@@ -63,6 +63,7 @@ export function ActionGuideOverlay({
   // юзер читает что-то другое на странице, выглядит как будто у него из-под
   // курсора выдёргивают экран.
   const hasScrolledRef = useRef(false);
+  const hasTarget = target !== null;
 
   useLayoutEffect(() => {
     if (!open || !cardRef.current) return;
@@ -74,7 +75,11 @@ export function ActionGuideOverlay({
     const observer = new ResizeObserver(updateCardHeight);
     observer.observe(card);
     return () => observer.disconnect();
-  }, [open, title, text, visual]);
+    // Высоту карточки дальше ведёт сам ResizeObserver. text/visual в зависимостях не
+    // нужны и вредны: хост с покадровым рендером (плеер таймлайна, раскадровка) создаёт
+    // новый JSX каждый кадр — наблюдатель пересоздавался 60 раз в секунду, и гайд лагал.
+    // hasTarget — потому что карточка монтируется только после первого замера цели.
+  }, [open, hasTarget]);
 
   useEffect(() => {
     if (!open) {
@@ -126,8 +131,13 @@ export function ActionGuideOverlay({
         let visibleRight = rect.right;
         let visibleBottom = rect.bottom;
         let visibleLeft = rect.left;
+        // Обрезаем по предкам с overflow, но только до первого position: fixed в цепочке:
+        // fixed-слой (например, полноэкранный таймлайн FX) их overflow не подчиняется, и
+        // иначе вырез обрезался по колонке страницы, внутри которой слой смонтирован.
+        let child: HTMLElement = element;
         let ancestor = element.parentElement;
         while (ancestor) {
+          if (window.getComputedStyle(child).position === 'fixed') break;
           const styles = window.getComputedStyle(ancestor);
           const clipsX = styles.overflowX === 'hidden' || styles.overflowX === 'clip' || styles.overflowX === 'auto' || styles.overflowX === 'scroll';
           const clipsY = styles.overflowY === 'hidden' || styles.overflowY === 'clip' || styles.overflowY === 'auto' || styles.overflowY === 'scroll';
@@ -142,6 +152,7 @@ export function ActionGuideOverlay({
               visibleBottom = Math.min(visibleBottom, ancestorRect.bottom - TARGET_GAP);
             }
           }
+          child = ancestor;
           ancestor = ancestor.parentElement;
         }
         const parsedScale = Number.parseFloat(window.getComputedStyle(document.documentElement).zoom);
@@ -191,14 +202,18 @@ export function ActionGuideOverlay({
     };
   }, [open, targetRef]);
 
+  // onDismiss у хостов — инлайн-стрелка (новая на каждый рендер); через ref слушатель
+  // не переподписывается на каждом кадре покадрово рендерящегося хоста.
+  const onDismissRef = useRef(onDismiss);
+  onDismissRef.current = onDismiss;
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onDismiss();
+      if (event.key === 'Escape') onDismissRef.current();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onDismiss, open]);
+  }, [open]);
 
   if (!open || !target) return null;
 

@@ -22,6 +22,31 @@ class CustomFootageSource(BaseModel):
     duration: float = Field(ge=1.0, le=600.0, allow_inf_nan=False)
 
 
+class FootagePlanClip(BaseModel):
+    file_name: str = Field(min_length=1, max_length=512)
+    fit_mode: Literal["cover", "contain", "stretch"] = "cover"
+    in_point: float = Field(ge=0.0, allow_inf_nan=False)
+    out_point: float = Field(ge=0.0, allow_inf_nan=False)
+    start_time: float = Field(allow_inf_nan=False)
+    source_offset_sec: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
+
+
+class FootagePlan(BaseModel):
+    version: Literal[1] = 1
+    clip_start_abs: float = Field(ge=0.0, allow_inf_nan=False)
+    clip_end_abs: float = Field(ge=0.0, allow_inf_nan=False)
+    switch_points_abs: list[float] = Field(default_factory=list, max_length=400)
+    clips: list[FootagePlanClip] = Field(min_length=1, max_length=401)
+
+
+class PinnedCuts(BaseModel):
+    """The FX timeline's cuts without clips: the build picks clips itself."""
+    version: Literal[1] = 1
+    clip_start_abs: float = Field(ge=0.0, allow_inf_nan=False)
+    clip_end_abs: float = Field(ge=0.0, allow_inf_nan=False)
+    switch_points_abs: list[float] = Field(default_factory=list, max_length=400)
+
+
 class SendAudioS3Request(BaseModel):
     """
     Minimal payload:
@@ -46,6 +71,15 @@ class SendAudioS3Request(BaseModel):
     subtitles_mode: SubtitlesMode = SUBTITLES_MODE_LEGACY_BLOCKS
     footage_artist_id: Optional[str] = None
     custom_footage_sources: list[CustomFootageSource] = Field(default_factory=list, max_length=50)
+    # Pinned storyboard (web «Пул» → раскадровка): the exact cuts and clips the
+    # user saw, built by mlcore.storyboard_plan. When set, the build skips cut
+    # generation and clip picking and renders this plan verbatim; a plan that
+    # does not match the job window or inventory fails the job explicitly.
+    footage_plan: Optional[FootagePlan] = None
+    # The FX timeline's cuts (pace «реже/чаще» or hand-edited) for a video whose
+    # clips the build still picks. Mutually exclusive with footage_plan, which
+    # already carries its cuts.
+    pinned_cuts: Optional[PinnedCuts] = None
     user_clip_start_sec: Optional[float] = Field(default=None, ge=0.0)
     user_clip_end_sec: Optional[float] = Field(default=None, ge=0.0)
     # Hook feature (Phase A-UX). When `hook_enabled` is true the orchestrator
@@ -527,6 +561,38 @@ SendVideoResponse = EnqueueJobResponse
 # The bots are slim (no librosa). They call this so the orchestrator (runtime
 # image, has librosa) runs analyze_focus_clip and returns just the picker data:
 # top drop candidates + measured bpm. Keeps the heavy ML dep out of the bots.
+class StoryboardCutsRequest(BaseModel):
+    audio_s3_url: str = Field(min_length=1)
+    clip_start_sec: float = Field(ge=0.0, allow_inf_nan=False)
+    clip_end_sec: float = Field(gt=0.0, allow_inf_nan=False)
+    user_drop_t: Optional[float] = Field(default=None, ge=0.0, allow_inf_nan=False)
+
+
+class StoryboardVideo(BaseModel):
+    seed_key: str = Field(min_length=1, max_length=200)
+    # shot index -> pinned file_name (a clip the user swapped in)
+    pins: Dict[int, str] = Field(default_factory=dict)
+
+
+class StoryboardSlotWindow(BaseModel):
+    rotation_theme: str = Field(min_length=1, max_length=120)
+    rotation_tags_group: str = Field(min_length=1, max_length=200)
+    clip_start_abs: float = Field(ge=0.0, allow_inf_nan=False)
+    clip_end_abs: float = Field(gt=0.0, allow_inf_nan=False)
+    switch_points_abs: list[float] = Field(default_factory=list, max_length=400)
+
+
+class StoryboardPickRequest(StoryboardSlotWindow):
+    videos: list[StoryboardVideo] = Field(min_length=1, max_length=100)
+
+
+class StoryboardAlternativesRequest(StoryboardSlotWindow):
+    interval_idx: int = Field(ge=0)
+    seed_key: str = Field(min_length=1, max_length=200)
+    exclude_file_names: list[str] = Field(default_factory=list, max_length=2000)
+    limit: int = Field(default=24, ge=1, le=100)
+
+
 class HookAnalyzeRequest(BaseModel):
     audio_s3_url: str = Field(min_length=1)
     clip_start_sec: float = Field(ge=0.0)

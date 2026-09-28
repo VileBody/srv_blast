@@ -1,0 +1,53 @@
+/* Раскадровка «Пула»: видео = рамка, стрелки кадров в полях по бокам, всё остальное внутри кадра. */
+.psb { position: relative; flex: 1; min-height: 0; display: flex; justify-content: center; align-items: stretch; }
+.psb .tx { position: relative; top: 1px; }
+.psb-frame { position: relative; overflow: hidden; border-radius: 15px; background: #000; height: 100%; aspect-ratio: 9 / 16; max-width: 100%; container-type: inline-size; }
+.psb-frame .shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
+.psb-frame .shot.on { opacity: 1; }
+.psb-ph { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; padding: 0 12%; color: rgba(246, 245, 253, .6); font-size: 13px; line-height: 1.45; }
+.psb-shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(5, 1, 15, .5) 0, transparent 20%, transparent 60%, rgba(5, 1, 15, .66) 100%); }
+.psb-glass { background: rgba(5, 1, 15, .58); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.psb-chips { position: absolute; left: 0; right: 0; top: 12px; z-index: 5; height: 32px; }
+.psb-chips .rail { display: flex; align-items: center; gap: 6px; height: 100%; padding: 0 12px; overflow-x: auto; scrollbar-width: none; cursor: grab; user-select: none; touch-action: pan-x; }
+.psb-chips .rail::-webkit-scrollbar { display: none; }
+.psb-chip { display: inline-flex; align-items: center; gap: 7px; height: 32px; flex: none; padding: 0 12px 0 9px; border-radius: 10px; font-size: 13.5px; line-height: 1; color: rgba(246, 245, 253, .8); white-space: nowrap; }
+.psb-chip.off { color: rgba(246, 245, 253, .4); }
+.psb-play { position: absolute; left: 50%; top: 46%; z-index: 6; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; color: var(--text); transform: translate(-50%, -50%); opacity: 0; transition: opacity .15s ease, filter .15s ease; }
+.psb-play:hover { filter: brightness(1.25); }
+.psb-frame:hover .psb-play, .psb-frame:focus-within .psb-play { opacity: 1; }
+.psb-arrow { position: absolute; top: 46%; z-index: 6; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; transform: translateY(-50%); color: rgba(246, 245, 253, .85); transition: color .15s ease, filter .15s ease, transform .12s cubic-bezier(.23, 1, .32, 1); }
+.psb-arrow.l { left: 10px; }
+.psb-arrow.r { right: 10px; }
+.psb-arrow:hover { color: var(--text); filter: brightness(1.3); }
+.psb-arrow:active { transform: translateY(-50%) scale(.94); }
+@media (hover: none), (pointer: coarse) { .psb-play { opacity: 1; } }
+.psb-dock { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 7; border-radius: 15px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.psb-dhead { display: flex; align-items: center; gap: 6px; min-height: 30px; padding-left: 4px; }
+.psb-dhead.edit { justify-content: space-between; }
+.psb-info { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
+.psb-info b { font-weight: 400; font-size: 13px; color: var(--text); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.psb-info small { font-size: 11px; color: rgba(246, 245, 253, .6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.psb-badge { font-size: 10px; padding: 2px 6px 1px; border-radius: 5px; background: #c6b6ff; color: #170c38; }
+.psb-badge.pin { background: var(--accent); color: #fff; cursor: pointer; border: 0; }
+.psb-badge.warn { background: rgba(245, 158, 11, .9); color: #1d1300; }
+.psb-btn { display: flex; align-items: center; justify-content: center; gap: 6px; height: 30px; min-width: 30px; padding: 0 9px; border-radius: 9px; background: rgba(246, 245, 253, .1); color: rgba(246, 245, 253, .8); font-size: 12px; white-space: nowrap; transition: background-color .15s ease, color .15s ease, transform .12s cubic-bezier(.23, 1, .32, 1); }
+.psb-btn:hover { background: rgba(246, 245, 253, .18); color: var(--text); }
+.psb-btn:active { transform: scale(.95); }
+.psb-btn.pri { background: var(--accent); color: #fff; }
+.psb-btn:disabled { opacity: .3; pointer-events: none; }
+.psb-var { display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 3px; border-radius: 9px; background: rgba(246, 245, 253, .08); }
+.psb-var .cnt { min-width: 58px; text-align: center; font-size: 13px; color: var(--text); line-height: 1; }
+.psb-var .cnt small { color: rgba(246, 245, 253, .4); font-size: 12px; }
+.psb-var button { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: rgba(246, 245, 253, .8); }
+.psb-var button:hover { background: rgba(246, 245, 253, .1); color: var(--text); }
+.psb-var button:disabled { opacity: .25; pointer-events: none; }
+.psb-strip { display: flex; gap: 4px; height: 54px; }
+.psb-seg { position: relative; flex: 1 1 0; min-width: 18px; border-radius: 7px; overflow: hidden; background: #1a1230; box-shadow: 0 0 0 1px rgba(246, 245, 253, .12); cursor: pointer; transition: box-shadow .15s ease, opacity .15s ease; }
+.psb-seg video { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; opacity: .8; pointer-events: none; }
+.psb-seg:hover video, .psb-seg.cur video { opacity: 1; }
+.psb-seg.sel { box-shadow: 0 0 0 2px #fff; }
+.psb-strip.editing .psb-seg:not(.sel) { opacity: .35; pointer-events: none; }
+.psb-seg .pg { position: absolute; left: 0; bottom: 0; height: 3px; width: 0; background: var(--accent-light); }
+.psb-seg .lk { position: absolute; top: 3px; right: 3px; width: 15px; height: 15px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; }
+.psb-seg .dm { position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: #c6b6ff; }
+.psb-seg .rp { position: absolute; left: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; }

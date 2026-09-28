@@ -8,6 +8,8 @@ import { LimitsIndicator } from '../ui/LimitsIndicator';
 import { BackSquareButton } from './WizardFrame';
 import { HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
+import { footageTypePlane } from '../../data/footageTypes';
+import { PoolStoryboard, StoryboardSlot } from './PoolStoryboard';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 
@@ -273,6 +275,10 @@ export function StageSlice() {
   const showTotalGuide = !totalGuideDismissed;
   const showDistributeGuide = totalGuideDismissed && !distributeGuideDismissed;
   useMarkGuideSeen('pool-distribute', totalGuideDismissed);
+  // Шаги 3–4 — раскадровка справа (PoolStoryboard). Она есть только у футажа из вайбов,
+  // без неё серия остаётся из двух шагов.
+  const storyboardAvailable = footageTypePlane(state.background.footageType) === 'vibes' && units.some((unit) => unit.key.startsWith('footage:'));
+  const poolGuideTotal = storyboardAvailable ? 4 : 2;
 
   // Явный скролл к цели до собственного instant-scrollIntoView оверлея: без него
   // цель может остаться частично за пределами внешнего скролл-контейнера страницы,
@@ -310,7 +316,7 @@ export function StageSlice() {
         title={t('wizard.pool.guideTotalTitle')}
         text={t('wizard.pool.guideTotalText')}
         dismissLabel={t('wizard.pool.guideNext')}
-        progressLabel={t('wizard.guideProgress', { current: 1, total: 2 })}
+        progressLabel={t('wizard.guideProgress', { current: 1, total: poolGuideTotal })}
         onDismiss={() => setTotalGuideDismissed(true)}
         variant="visual"
         shell="track-top"
@@ -399,8 +405,8 @@ export function StageSlice() {
         targetRef={distributeGuideTargetRef}
         title={t('wizard.pool.guideDistributeTitle')}
         text={t('wizard.pool.guideDistributeText')}
-        dismissLabel={t('wizard.pool.guideDismiss')}
-        progressLabel={t('wizard.guideProgress', { current: 2, total: 2 })}
+        dismissLabel={storyboardAvailable ? t('wizard.pool.guideNext') : t('wizard.pool.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 2, total: poolGuideTotal })}
         onDismiss={() => setDistributeGuideDismissed(true)}
         variant="visual"
         shell="track-top"
@@ -474,17 +480,37 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const transitionLabel = hookConfig?.effectGlue ? chip(hookConfig.effectGlue) : t('wizard.pool.notSelected');
   const styleLabel = combo.style ? chip(combo.style) : t('wizard.pool.noStyleSelected');
 
-  // Стрелки клавиатуры листают комбинации, пока фокус внутри панели
-  const onKeyDown = (event: React.KeyboardEvent) => {
-    if (total < 2) return;
-    if (event.key === 'ArrowLeft') setIndex((safeIndex - 1 + total) % total);
-    if (event.key === 'ArrowRight') setIndex((safeIndex + 1) % total);
-  };
+  /*
+   * Раскадровка: у каждого видео батча — свой вайб и свои реальные клипы по склейкам
+   * рецепта. Видео листаются пилюлей в шапке, стрелки ← → внутри — кадры видео.
+   * Раскадровка есть у футажа из вайбов; у фото, строба и своих исходников — пояснение.
+   */
+  const plane = footageTypePlane(state.background.footageType);
+  const slots: StoryboardSlot[] = useMemo(() => Array.from({ length: total }, (_, i) => {
+    const bgKey = combinationAt(
+      i, Object.entries(alloc.background), Object.entries(alloc.subtitles), Object.entries(alloc.hooks),
+      Object.entries(alloc.styles ?? {}), units, Boolean(state.background.color), colorStyle
+    ).bg;
+    if (bgKey?.startsWith('footage:') && plane === 'vibes') return { index: i + 1, group: bgKey.slice('footage:'.length) };
+    const reason = bgKey === '__color__' ? 'Строб и цвет собираются из цветовых планов — исходники не нужны'
+      : bgKey?.startsWith('photo:') ? 'Фото подберутся при генерации — раскадровка пока только для видео'
+        : bgKey?.startsWith('upload:') ? 'Своё видео — ваши клипы пойдут в том порядке, в каком загружены'
+          : bgKey?.startsWith('footage:') ? 'Раскадровка пока только для вайбов — коллекция подберётся при генерации'
+            : 'Фон этого видео ещё не распределён';
+    return { index: i + 1, reason };
+  }), [total, alloc, units, state.background.color, colorStyle, plane]);
+  const chips = [
+    { icon: combo.bg === '__color__' ? strobeIcon(14) : combo.bg?.startsWith('photo') ? photoIcon(14) : tagIcon(14), text: bgLabel ?? t('wizard.pool.notSelected'), off: !bgLabel },
+    { icon: tIcon(14), text: combo.sub ?? t('wizard.pool.notSelected'), off: !combo.sub },
+    { icon: boltIcon(14), text: hookLabel ?? t('wizard.pool.noHookSelected'), off: !hookLabel },
+    { icon: <img src="/assets/figma/combo-transition.svg" width="16" height="16" alt="" />, text: transitionLabel, off: !hookConfig?.effectGlue },
+    { icon: <img src="/assets/figma/combo-style.svg" width="16" height="16" alt="" />, text: styleLabel, off: !combo.style }
+  ];
 
   return (
-    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full" onKeyDown={onKeyDown}>
+    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
       <div className="card-2 flex min-h-0 flex-1 flex-col px-space-6 py-space-6 max-lg:px-space-5">
-        {/* Полная конфигурация одной вариации; листать можно кнопками или клавиатурой. */}
+        {/* Одно видео батча: пилюля листает видео, внутри — его реальные клипы и замена кадров. */}
         <div className="mb-space-5 flex shrink-0 items-center justify-between gap-space-3">
           <h2 className="wizard-h whitespace-nowrap">{t('wizard.pool.combinations')}</h2>
           <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
@@ -510,29 +536,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-hidden rounded-r15 border border-[rgba(139,111,230,.28)] bg-grad-soft-10">
-          <div className="grid h-[52px] grid-cols-[132px_minmax(0,1fr)] max-md:grid-cols-[96px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.09)] bg-[rgba(139,111,230,.08)] px-space-5 text-[13px] uppercase tracking-[.08em] text-text-40 max-md:h-[36px] max-md:px-[14px] max-md:text-[11px]">
-            <span>{t('wizard.pool.parameter')}</span>
-            <span>{t('wizard.pool.selectedValue')}</span>
-          </div>
-          <div className="flex h-[calc(100%_-_52px)] flex-col">
-            {[
-              [t('wizard.pool.background'), bgLabel ?? t('wizard.pool.notSelected'), combo.bg === '__color__' ? strobeIcon(18) : combo.bg?.startsWith('photo') ? photoIcon(18) : tagIcon(18)],
-              [t('wizard.pool.subtitles'), combo.sub ?? t('wizard.pool.notSelected'), tIcon(18)],
-              [t('wizard.pool.hook'), hookLabel ?? t('wizard.pool.noHookSelected'), boltIcon(18)],
-              [t('wizard.pool.transition'), transitionLabel, <img key="transition" src="/assets/figma/combo-transition.svg" width="22" height="22" alt="" />],
-              [t('wizard.pool.style'), styleLabel, <img key="style" src="/assets/figma/combo-style.svg" width="22" height="22" alt="" />]
-            ].map(([label, value, icon]) => (
-              <div key={String(label)} className="grid min-h-0 flex-1 grid-cols-[132px_minmax(0,1fr)] max-md:grid-cols-[96px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.07)] px-space-5 last:border-0 max-md:min-h-[40px] max-md:px-[14px]">
-                <span className="text-[15px] text-text-40">{label}</span>
-                <span className="flex min-w-0 items-center gap-space-3 text-[19px] text-text-80 max-md:gap-[8px] max-md:text-[14px]">
-                  <span className="flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-r10 bg-accent-20 max-md:h-[26px] max-md:w-[26px] max-md:rounded-[7px] max-md:[&>*]:scale-[.7]" aria-hidden="true">{icon}</span>
-                  <span className="truncate">{value}</span>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <PoolStoryboard slots={slots} current={safeIndex} chips={chips} />
       </div>
 
       <div className="card-2 flex h-[140px] shrink-0 items-center gap-[20px] px-space-6 py-space-6 max-lg:px-space-5">

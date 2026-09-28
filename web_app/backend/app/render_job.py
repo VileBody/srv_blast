@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import effect_map as em
+from . import storyboard as storyboard_plans
 
 SCHEMA = "blast.render_job/1"
 OUTPUT_DEFAULT = {
@@ -322,6 +323,10 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
             "sound": {"userSound": (cfg.get("sound") if v_kind in {"sound", "warmup"} else None)},
         })
 
+    # Раскадровка «Пула»: закреплённые склейки+клипы по видео (см. storyboard.py).
+    storyboard_plans.attach_to_variations(variations, stage_data.get("storyboard"), _segment(stage_data.get("timing")),
+                                          stage_data.get("timeline"))
+
     return {
         "schema": SCHEMA,
         "batchId": batch_id,
@@ -336,6 +341,9 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         "lyrics": {"full": stage_data.get("lyrics") or "", "fragment": stage_data.get("fragment")},
         "output": {**OUTPUT_DEFAULT, "s3Prefix": f"videos/{user_id}/{batch_id}"},
         "variations": variations,
+        # Склейки рецепта таймлайна (темп «реже/чаще» или ручные) — для видео без
+        # раскадровки; None, когда это «авто» (его рендер и так считает сам).
+        "recipe": storyboard_plans.recipe_cuts(stage_data.get("timeline"), _segment(stage_data.get("timing"))),
     }
 
 

@@ -509,6 +509,7 @@
       "configureThree": "Set the three steps below",
       "chooseBelow": "Choose an option below",
       "loadSound": "Choose warm-up",
+      "timeline": "Timeline",
       "soundFormats": "MP3, WAV",
       "soundUploadFailed": "Could not upload the sound",
       "listenSound": "Play sound",
@@ -552,7 +553,9 @@
       "guideWorkzoneTitle": "Tune the hook in the work zone",
       "guideWorkzoneText": "The transition, style and a preview of each option live right here, on the right.",
       "guideNext": "Next",
-      "guideDismiss": "Got it"
+      "guideDismiss": "Got it",
+      "guideTimelineTitle": "Build the video on the timeline",
+      "guideTimelineText": "Cuts already follow the track tempo. Set a transition on every cut, the hook on the drop and styles on the shots you want."
     },
     "subs": {
       "title": "Subtitles",
@@ -638,7 +641,11 @@
       "generate": "Generate",
       "vibeUnit": "Vibe — {{name}}",
       "ownVideoUnit": "Your video — {{name}}",
-      "photoUnit": "Photo — {{name}}"
+      "photoUnit": "Photo — {{name}}",
+      "guideStoryboardTitle": "Video storyboard",
+      "guideStoryboardText": "The real footage of this video, cut on the track tempo. The side arrows step through the shots.",
+      "guideReplaceTitle": "Swap a weak shot",
+      "guideReplaceText": "«Replace shot» shows other clips of the same vibe, «Done» pins your choice. The dice reshuffles the rest."
     },
     "page": {
       "genStarted": "Generation started",
@@ -714,6 +721,16 @@
       "tooLarge": "File exceeds 200 MB",
       "audioOnly": "Choose an audio file for the Audio option",
       "videoOnly": "Choose a video file for the Video option"
+    },
+    "fxTimeline": {
+      "guideLibraryTitle": "Effects library",
+      "guideLibraryText": "Hooks, transitions and styles. Drag one onto a lane or press <plus>+</plus>; <play>▶</play> plays an example in the preview.",
+      "guideCutsTitle": "Cuts on the track tempo",
+      "guideCutsText": "Shots are cut on the beats automatically. Click a cut to pick a transition, or drag a shot edge.",
+      "guidePaceTitle": "Cut frequency",
+      "guidePaceText": "«Auto» matches the render exactly. Make cuts sparser or denser — on the same beat grid.",
+      "guideNext": "Next",
+      "guideDismiss": "Got it"
     }
   },
   "chip": {
