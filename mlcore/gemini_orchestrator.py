@@ -2577,6 +2577,55 @@ def load_footage_exclude_file_names(*, logger: logging.Logger) -> List[str]:
     return exclude_file_names
 
 
+def collection_interval_cap(assets: List[Dict[str, Any]]) -> float:
+    """Longest shot a collection can fill: its shortest pre-cut clip, minus a
+    frame of slack (a clip exactly as long as the interval is a rounding error
+    away from not fitting). 0 when no durations are known."""
+    durs = [float(a.get("duration_sec") or 0.0) for a in assets if float(a.get("duration_sec") or 0.0) > 0.0]
+    return max(0.5, min(durs) - 0.05) if durs else 0.0
+
+
+def pinned_cuts_from_env(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    fast_start_seconds: float,
+    bpm: Optional[float],
+    interval_cap_sec: float,
+    logger: logging.Logger,
+) -> Optional[SwitchTimingPayload]:
+    """The timeline's cuts (``PINNED_CUTS_JSON``) as the job's switch points, or
+    None without them. Clips are still picked by the build. A collection keeps
+    its hard ceiling: a shot longer than its shortest clip is split on the same
+    rule as generated cuts (logged) — no clip could cover it otherwise."""
+    raw = (os.environ.get("PINNED_CUTS_JSON") or "").strip()
+    if not raw:
+        return None
+    from mlcore.storyboard_plan import validate_cuts
+
+    points = validate_cuts(json.loads(raw), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs)
+    if interval_cap_sec > 0.0:
+        from mlcore.switch_timing_deterministic import enforce_max_interval
+
+        before = len(points)
+        points = enforce_max_interval(
+            points, clip_start=clip_start_abs, clip_end=clip_end_abs, max_interval_sec=interval_cap_sec,
+        )
+        if len(points) != before:
+            logger.info("pinned_cuts_collection_split cuts=%d -> %d (cap=%.2fs)", before, len(points), interval_cap_sec)
+    duration = float(clip_end_abs) - float(clip_start_abs)
+    logger.info("pinned_cuts cuts=%d window=%.3f..%.3f (timeline recipe)", len(points), float(clip_start_abs), float(clip_end_abs))
+    return SwitchTimingPayload.model_validate(
+        {
+            "clip_start_abs": clip_start_abs,
+            "clip_end_abs": clip_end_abs,
+            "fast_start_seconds": min(float(fast_start_seconds), max(0.0, duration)),
+            "bpm": float(bpm) if bpm else None,
+            "switch_points_abs": points,
+        }
+    )
+
+
 def pinned_footage_plan_from_env(
     *,
     clip_start_abs: float,
@@ -4682,6 +4731,17 @@ def build_all_via_gemini_one_call(
     )
     if _pinned is not None:
         switch_payload, plan_selection = _pinned
+    else:
+        _pinned_cuts = pinned_cuts_from_env(
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+            fast_start_seconds=float(fast_start_seconds),
+            bpm=bpm,
+            interval_cap_sec=collection_interval_cap(picker_assets) if _collection_plane else 0.0,
+            logger=logger,
+        )
+        if _pinned_cuts is not None:
+            switch_payload = _pinned_cuts
     if switch_payload is None:
         # hook_aware: generate footage cut timings DETERMINISTICALLY from the
         # measured onsets (kick-driven, rhythm-locked) — no Stage2 timing LLM
@@ -4706,27 +4766,17 @@ def build_all_via_gemini_one_call(
             # outright ("no asset can cover interval"). Capping the hold keeps the
             # cuts musical (still chosen on beats, just sooner).
             _timing_params = None
-            _interval_cap = 0.0
-            if _collection_plane:
-                _durs = [
-                    float(a.get("duration_sec") or 0.0)
-                    for a in picker_assets
-                    if float(a.get("duration_sec") or 0.0) > 0.0
-                ]
-                if _durs:
-                    from mlcore.switch_timing_deterministic import SwitchTimingParams
+            _interval_cap = collection_interval_cap(picker_assets) if _collection_plane else 0.0
+            if _interval_cap > 0.0:
+                from mlcore.switch_timing_deterministic import SwitchTimingParams
 
-                    # Leave a frame of slack: a clip exactly as long as the
-                    # interval is a rounding error away from not fitting.
-                    _interval_cap = max(0.5, min(_durs) - 0.05)
-                    _defaults = SwitchTimingParams()
-                    if _interval_cap < _defaults.max_hold_sec:
-                        _timing_params = SwitchTimingParams(max_hold_sec=_interval_cap)
-                        logger.info(
-                            "stage2_collection_interval_cap max_hold=%.2fs "
-                            "(shortest clip %.2fs, pool=%d)",
-                            _interval_cap, min(_durs), len(_durs),
-                        )
+                _defaults = SwitchTimingParams()
+                if _interval_cap < _defaults.max_hold_sec:
+                    _timing_params = SwitchTimingParams(max_hold_sec=_interval_cap)
+                    logger.info(
+                        "stage2_collection_interval_cap max_hold=%.2fs (pool=%d)",
+                        _interval_cap, len(picker_assets),
+                    )
             _det = generate_switch_points(
                 onsets_classified=_onsets,
                 beats=[float(b) for b in hook_analysis.beats],

@@ -138,6 +138,17 @@ export interface StoryboardState {
   videos: Record<number, StoryboardVideo>;
 }
 
+/**
+ * Вводные, под которые посчитаны склейки рецепта: трек + окно + дроп. Одна функция
+ * и для таймлайна, и для отправки черновика — склейки под другие вводные в рендер
+ * не уходят (их сервер примет за «ещё считаются» и остановит генерацию).
+ */
+export function recipeKeyOf(s: { track?: { id?: string | number } | null; timingFrom: string; timingTo: string; hooks: { dropTime?: string } }): string {
+  const raw = s.hooks.dropTime ?? '';
+  const drop = /^\d{2}:\d{2}$/.test(raw) ? `${raw}:00` : raw;
+  return [s.track?.id ?? '', s.timingFrom, s.timingTo, drop].join('|');
+}
+
 export const emptyTimeline = (): TimelineRecipe => ({ key: '', pace: 'auto', cuts: null, edited: false, transitions: {}, styles: [] });
 export const emptyStoryboard = (): StoryboardState => ({ key: '', videos: {} });
 
@@ -544,7 +555,7 @@ export const useWizardStore = create<WizardStore>()(
           asr: state.asr.jobId
             ? { key: state.asr.key, jobId: state.asr.jobId, edited: state.asr.edited, words: state.asr.words }
             : null,
-          timeline: state.timeline,
+          timeline: { ...state.timeline, cuts: state.timeline.key === recipeKeyOf(state) ? state.timeline.cuts : null },
           // Раскадровка «Пула»: бэк приклеит план каждого видео к его вариации и
           // сверит фон и окно — устаревшая раскадровка = явная ошибка, а не тихий перебор.
           storyboard: Object.keys(state.storyboard.videos).length

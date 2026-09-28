@@ -101,3 +101,51 @@ def test_plan_without_an_exact_slot_fails_the_job(monkeypatch):
             clip_start_abs=10.0, clip_end_abs=20.0, fast_start_seconds=3.0, bpm=None,
             style_rotation_payload=None, mapped_assets=ctx.assets, logger=LOG,
         )
+
+
+# ── pinned cuts (timeline pace for videos the build picks clips for) ─────────
+
+def _cuts(**kw):
+    base = {"version": 1, "clip_start_abs": 10.0, "clip_end_abs": 20.0, "switch_points_abs": [12.0, 15.0, 17.5]}
+    base.update(kw)
+    return base
+
+
+def test_cuts_validate_and_trim_to_a_narrower_job_window():
+    assert sp.validate_cuts(_cuts(), clip_start_abs=10.0, clip_end_abs=20.0) == [12.0, 15.0, 17.5]
+    assert sp.validate_cuts(_cuts(), clip_start_abs=12.5, clip_end_abs=19.0) == [15.0, 17.5]
+    with pytest.raises(sp.StoryboardPlanError, match="cover"):
+        sp.validate_cuts(_cuts(), clip_start_abs=9.0, clip_end_abs=20.0)
+    with pytest.raises(sp.StoryboardPlanError, match="increasing"):
+        sp.validate_cuts(_cuts(switch_points_abs=[15.0, 12.0]), clip_start_abs=10.0, clip_end_abs=20.0)
+
+
+def test_pinned_cuts_env_guard():
+    tasks = pytest.importorskip("services.orchestrator.tasks")
+    assert json.loads(tasks.pinned_cuts_env_value({"pinned_cuts": _cuts()}))["switch_points_abs"] == [12.0, 15.0, 17.5]
+    assert tasks.pinned_cuts_env_value({}) is None
+    with pytest.raises(RuntimeError, match="footage_plan"):
+        tasks.pinned_cuts_env_value({"pinned_cuts": _cuts(), "footage_plan": {"version": 1}})
+    with pytest.raises(RuntimeError, match="custom"):
+        tasks.pinned_cuts_env_value({"pinned_cuts": _cuts(), "custom_footage_sources": [{"url": "s3://a"}]})
+
+
+def test_pinned_cuts_become_the_jobs_switch_points(monkeypatch):
+    orch = _orch()
+    monkeypatch.setenv("PINNED_CUTS_JSON", json.dumps(_cuts()))
+    switch = orch.pinned_cuts_from_env(clip_start_abs=10.0, clip_end_abs=20.0, fast_start_seconds=3.0,
+                                       bpm=120.0, interval_cap_sec=0.0, logger=LOG)
+    assert list(switch.switch_points_abs) == [12.0, 15.0, 17.5]
+    monkeypatch.delenv("PINNED_CUTS_JSON")
+    assert orch.pinned_cuts_from_env(clip_start_abs=10.0, clip_end_abs=20.0, fast_start_seconds=3.0,
+                                     bpm=None, interval_cap_sec=0.0, logger=LOG) is None
+
+
+def test_collection_cap_splits_a_shot_no_clip_could_cover(monkeypatch):
+    orch = _orch()
+    monkeypatch.setenv("PINNED_CUTS_JSON", json.dumps(_cuts(switch_points_abs=[16.0])))
+    switch = orch.pinned_cuts_from_env(clip_start_abs=10.0, clip_end_abs=20.0, fast_start_seconds=0.0,
+                                       bpm=None, interval_cap_sec=2.5, logger=LOG)
+    points = [10.0, *switch.switch_points_abs, 20.0]
+    assert 16.0 in switch.switch_points_abs and max(b - a for a, b in zip(points, points[1:])) <= 2.5 + 1e-6
+    assert orch.collection_interval_cap([{"duration_sec": 3.0}, {"duration_sec": 5.0}]) == pytest.approx(2.95)

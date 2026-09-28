@@ -1286,6 +1286,16 @@ class ProductionBackend:
             if custom_sources or bg_mode != "footage" or not selector.get("rotationTheme"):
                 raise ProductionBackendError("раскадровка применима только к футажу из вайба")
             payload["footage_plan"] = footage_plan
+        recipe = render_job.get("recipe")
+        if recipe and not footage_plan and not custom_sources:
+            # Склейки таймлайна для видео, клипы которого рендер подбирает сам. У плана
+            # раскадровки склейки свои, а своё видео идёт клипами встык — им не шлём.
+            payload["pinned_cuts"] = {
+                "version": 1,
+                "clip_start_abs": float(recipe["clipStartAbs"]),
+                "clip_end_abs": float(recipe["clipEndAbs"]),
+                "switch_points_abs": [float(p) for p in recipe["switchPointsAbs"]],
+            }
         return {key: value for key, value in payload.items() if value is not None and value != ""}
 
 

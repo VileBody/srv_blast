@@ -125,6 +125,7 @@ _LLM_ENV_KEYS = (
     "F6_VIDEO_URL",
     "CUSTOM_FOOTAGE_SOURCES_JSON",
     "FOOTAGE_PLAN_JSON",
+    "PINNED_CUTS_JSON",
     "F6_VIDEO_WIDTH",
     "F6_VIDEO_HEIGHT",
     "F6_VIDEO_DURATION",
@@ -1664,6 +1665,23 @@ def footage_plan_env_value(req: Dict[str, Any]) -> Optional[str]:
     return json.dumps(plan)
 
 
+def pinned_cuts_env_value(req: Dict[str, Any]) -> Optional[str]:
+    """PINNED_CUTS_JSON for a job, or None. Own uploaded video plays its clips
+    back to back and a footage_plan already carries its cuts — cuts sent next to
+    either would be silently ignored, so that is an explicit failure."""
+    pinned = req.get("pinned_cuts")
+    if not pinned:
+        return None
+    from .schemas import PinnedCuts
+
+    cuts = PinnedCuts.model_validate(pinned).model_dump()
+    if req.get("footage_plan"):
+        raise RuntimeError("pinned_cuts cannot be combined with footage_plan (the plan carries its cuts)")
+    if req.get("custom_footage_sources"):
+        raise RuntimeError("pinned_cuts do not apply to custom footage sources (played in upload order)")
+    return json.dumps(cuts)
+
+
 def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, Any]:
     if get_runtime_mode() != MODE_PROD:
         raise RuntimeError("Celery build_job is allowed only in MODE=prod")
@@ -2209,6 +2227,9 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     _footage_plan_json = footage_plan_env_value(req)
     if _footage_plan_json is not None:
         env["FOOTAGE_PLAN_JSON"] = _footage_plan_json
+    _pinned_cuts_json = pinned_cuts_env_value(req)
+    if _pinned_cuts_json is not None:
+        env["PINNED_CUTS_JSON"] = _pinned_cuts_json
     _f6_video_raw = req.get("f6_video_url")
     if _f6_video_raw is not None and str(_f6_video_raw).strip():
         _f6_video = str(_f6_video_raw).strip()

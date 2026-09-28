@@ -238,3 +238,33 @@ def test_pace_cuts_reach_the_orchestrator_request(monkeypatch) -> None:
     payload = backend._request_payload(job=web_job, variation=second, index=2, total=2, master_id=None)
     assert payload["footage_plan"]["switch_points_abs"] == cuts
     assert [c["in_point"] for c in payload["footage_plan"]["clips"]] == [10.0, *cuts]
+    assert "pinned_cuts" not in payload                       # у плана склейки свои
+
+    # видео без раскадровки: клипы подбирает рендер, но склейки — темпа «чаще»
+    stage_data["background"]["footage"] = ["Неон"]
+    stage_data["allocation"]["background"] = {"footage:Неон": 2}
+    job = render_job.build_render_job("b1", "p1", "u1", stage_data, 2)
+    first = job["variations"][0]
+    assert "footagePlan" not in first["background"]
+    web_job = {"id": "web-job", "projectId": "p1", "stageData": stage_data, "renderJob": job}
+    payload = backend._request_payload(job=web_job, variation=first, index=1, total=2, master_id=None)
+    assert payload["pinned_cuts"] == {"version": 1, "clip_start_abs": 10.0, "clip_end_abs": 20.0, "switch_points_abs": cuts}
+
+
+def test_recipe_cuts_only_when_the_user_changed_them(monkeypatch) -> None:
+    sb = _sb(monkeypatch)
+    seg = {"from": 10.0, "to": 20.0}
+    assert sb.recipe_cuts({"pace": "auto", "cuts": [12.0], "edited": False}, seg) is None
+    assert sb.recipe_cuts({"pace": "auto", "cuts": [12.5], "edited": True}, seg)["switchPointsAbs"] == [12.5]
+    assert sb.recipe_cuts({"pace": "sparse", "cuts": [15.0]}, seg)["pace"] == "sparse"
+
+
+def test_recipe_cuts_refuse_what_the_render_would_not_honour(monkeypatch) -> None:
+    sb = _sb(monkeypatch)
+    seg = {"from": 10.0, "to": 20.0}
+    with pytest.raises(sb.StoryboardError, match="считаются"):
+        sb.recipe_cuts({"pace": "dense", "cuts": None}, seg)          # ещё не пришли / устарели
+    with pytest.raises(sb.StoryboardError, match="другого отрывка"):
+        sb.recipe_cuts({"pace": "dense", "cuts": [8.0, 12.0]}, seg)
+    with pytest.raises(sb.StoryboardError, match="другого отрывка"):
+        sb.recipe_cuts({"pace": "dense", "cuts": [14.0, 12.0]}, seg)

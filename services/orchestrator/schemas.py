@@ -39,6 +39,14 @@ class FootagePlan(BaseModel):
     clips: list[FootagePlanClip] = Field(min_length=1, max_length=401)
 
 
+class PinnedCuts(BaseModel):
+    """The FX timeline's cuts without clips: the build picks clips itself."""
+    version: Literal[1] = 1
+    clip_start_abs: float = Field(ge=0.0, allow_inf_nan=False)
+    clip_end_abs: float = Field(ge=0.0, allow_inf_nan=False)
+    switch_points_abs: list[float] = Field(default_factory=list, max_length=400)
+
+
 class SendAudioS3Request(BaseModel):
     """
     Minimal payload:
@@ -68,6 +76,10 @@ class SendAudioS3Request(BaseModel):
     # generation and clip picking and renders this plan verbatim; a plan that
     # does not match the job window or inventory fails the job explicitly.
     footage_plan: Optional[FootagePlan] = None
+    # The FX timeline's cuts (pace «реже/чаще» or hand-edited) for a video whose
+    # clips the build still picks. Mutually exclusive with footage_plan, which
+    # already carries its cuts.
+    pinned_cuts: Optional[PinnedCuts] = None
     user_clip_start_sec: Optional[float] = Field(default=None, ge=0.0)
     user_clip_end_sec: Optional[float] = Field(default=None, ge=0.0)
     # Hook feature (Phase A-UX). When `hook_enabled` is true the orchestrator

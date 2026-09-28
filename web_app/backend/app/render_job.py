@@ -341,6 +341,9 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         "lyrics": {"full": stage_data.get("lyrics") or "", "fragment": stage_data.get("fragment")},
         "output": {**OUTPUT_DEFAULT, "s3Prefix": f"videos/{user_id}/{batch_id}"},
         "variations": variations,
+        # Склейки рецепта таймлайна (темп «реже/чаще» или ручные) — для видео без
+        # раскадровки; None, когда это «авто» (его рендер и так считает сам).
+        "recipe": storyboard_plans.recipe_cuts(stage_data.get("timeline"), _segment(stage_data.get("timing"))),
     }
 
 

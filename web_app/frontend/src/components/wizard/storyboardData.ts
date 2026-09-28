@@ -1,8 +1,9 @@
 import { useEffect, useMemo } from 'react';
+import { create } from 'zustand';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { StoryboardCutsResponse } from '../../lib/types';
-import { TimelinePace, TimelineStyleRange, useWizardStore } from '../../stores/wizardStore';
+import { recipeKeyOf, TimelinePace, TimelineStyleRange, useWizardStore } from '../../stores/wizardStore';
 import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
 
 /*
@@ -92,7 +93,7 @@ export function useRecipeCuts() {
   const setTimeline = useWizardStore((s) => s.setTimeline);
   const window = useRecipeWindow();
   const drop = dropTime ? normalizeDropTime(dropTime) : '';
-  const key = [track?.id ?? '', timingFrom, timingTo, drop].join('|');
+  const key = recipeKeyOf({ track, timingFrom, timingTo, hooks: { dropTime } });
 
   const query = useQuery<StoryboardCutsResponse>({
     queryKey: ['storyboard-cuts', key],
@@ -136,6 +137,16 @@ export function useRecipeCuts() {
     setPace
   };
 }
+
+/**
+ * Раскадровка «Пула» ещё не готова для текущих вводных (идёт подбор или склейки
+ * выбранного темпа ещё не пришли). Пока так — «Сгенерировать» ждёт: иначе в рендер
+ * ушли бы «авто»-склейки вместо выбранных.
+ */
+export const useStoryboardBusy = create<{ busy: boolean; setBusy: (busy: boolean) => void }>((set) => ({
+  busy: false,
+  setBusy: (busy) => set((state) => (state.busy === busy ? state : { busy }))
+}));
 
 /** Стабильный seed видео: одинаковые вводные → одинаковый подбор; «перемешать» его сдвигает. */
 export function seedKeyFor(batchKey: string, index: number, shuffle: number): string {

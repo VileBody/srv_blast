@@ -15,6 +15,7 @@ import { backgroundVariations, BackgroundWorkZone, StageBackground, type Backgro
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
 import { hasTrackInput, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
+import { useStoryboardBusy } from '../components/wizard/storyboardData';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
 import { dropToSeconds, timingToSeconds, usePlaybackUrl } from '../components/wizard/useFragmentAudio';
@@ -667,14 +668,16 @@ export function WizardPage() {
   }, [setStage, stage, trackReady]);
 
   // «Продолжить» подсвечивается только при непустом выборе; кликабельность — отдельно
+  // «Пул»: генерация ждёт раскадровку и склейки выбранного темпа (см. PoolStoryboard).
+  const storyboardBusy = useStoryboardBusy((s) => s.busy);
   const ready = useMemo(() => {
     if (stage === 1) return trackReady && timingReady && !segmentInvalid && state.lyrics.trim().length > 0;
     if (stage === 2) return backgroundVariations(state.background) > 0;
     if (stage === 3) return configuredHookCount > 0 && (!configuredHooksNeedDrop || dropReady);
     if (stage === 4) return state.subtitles.pool.length > 0;
-    if (stage === 5) return allocBalanced && trackReady;
+    if (stage === 5) return allocBalanced && trackReady && !storyboardBusy;
     return false;
-  }, [allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.lyrics, state.subtitles.pool, timingReady, trackReady]);
+  }, [storyboardBusy, allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.lyrics, state.subtitles.pool, timingReady, trackReady]);
 
   const canContinue = useMemo(() => {
     return ready;

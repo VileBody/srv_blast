@@ -153,6 +153,30 @@ def clip_view(clip: dict[str, Any]) -> dict[str, Any]:
 
 # ── render ────────────────────────────────────────────────────────────────────
 
+def recipe_cuts(timeline: dict[str, Any] | None, segment: dict[str, float] | None) -> dict[str, Any] | None:
+    """Склейки рецепта таймлайна для видео, клипы которых рендер подбирает сам
+    (фото, коллекции, строб, вайб без раскадровки).
+
+    «Авто» без ручных правок — это и есть разбиение рендера, его не шлём. Выбранный
+    темп или сдвинутые руками склейки обязаны дойти до рендера: если их нет или
+    они от другого отрывка — это явная ошибка, а не тихий откат на «авто».
+    """
+    if not timeline:
+        return None
+    pace = str(timeline.get("pace") or "auto")
+    if pace == "auto" and not timeline.get("edited"):
+        return None
+    cuts = timeline.get("cuts")
+    if not isinstance(cuts, list):
+        raise StoryboardError("Склейки таймлайна ещё считаются — подожди пару секунд и нажми снова")
+    if segment is None:
+        raise StoryboardError("Склейки таймлайна есть, а отрывок не выбран — выбери отрывок трека")
+    points = [float(c) for c in cuts]
+    if any(not (segment["from"] < p < segment["to"]) for p in points) or any(b <= a for a, b in zip(points, points[1:])):
+        raise StoryboardError("Склейки собраны для другого отрывка — открой таймлайн, они пересчитаются")
+    return {"pace": pace, "clipStartAbs": segment["from"], "clipEndAbs": segment["to"], "switchPointsAbs": points}
+
+
 def attach_to_variations(variations: list[dict[str, Any]], storyboard: dict[str, Any] | None,
                          segment: dict[str, float] | None, timeline: dict[str, Any] | None = None) -> None:
     """Приклеить закреплённые планы к вариациям рендера.

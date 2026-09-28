@@ -383,6 +383,30 @@ def build_plan(
     }
 
 
+def validate_cuts(
+    cuts: Dict[str, Any],
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+) -> List[float]:
+    """The timeline's cuts without clips (``pinned_cuts``): used for every video
+    whose clips the render still picks itself — photo, collections, strobe, a
+    vibe without a storyboard. Same window rule as ``validate_plan``: the job
+    window may be narrower (cuts outside it are dropped), never wider."""
+    if not isinstance(cuts, dict) or int(cuts.get("version") or 0) != 1:
+        raise StoryboardPlanError("pinned_cuts: unsupported or missing version")
+    ps, pe = float(cuts.get("clip_start_abs", -1)), float(cuts.get("clip_end_abs", -1))
+    js, je = float(clip_start_abs), float(clip_end_abs)
+    if js < ps - _WINDOW_TOL_SEC or je > pe + _WINDOW_TOL_SEC:
+        raise StoryboardPlanError(
+            f"pinned_cuts window {ps:.3f}..{pe:.3f} does not cover the job window {js:.3f}..{je:.3f}"
+        )
+    points = [float(p) for p in cuts.get("switch_points_abs") or []]
+    if any(not (ps < p < pe) for p in points) or any(b <= a for a, b in zip(points, points[1:])):
+        raise StoryboardPlanError("pinned_cuts: switch points must be increasing and inside their window")
+    return [p for p in points if js + _WINDOW_TOL_SEC < p < je - _WINDOW_TOL_SEC]
+
+
 def _trim_clip(clip: FootageClipPick, start: float, end: float) -> FootageClipPick:
     """Clamp a clip to [start, end] keeping the same source frames on screen:
     moving in_point forward by d plays the source d seconds later."""

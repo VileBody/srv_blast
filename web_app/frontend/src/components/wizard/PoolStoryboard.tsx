@@ -2,8 +2,8 @@ import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import type { StoryboardCandidate, StoryboardPickedVideo } from '../../lib/types';
-import { emptyStoryboard, StoryboardVideo, useWizardStore } from '../../stores/wizardStore';
-import { seedKeyFor, useRecipeCuts } from './storyboardData';
+import { emptyStoryboard, recipeKeyOf, StoryboardVideo, useWizardStore } from '../../stores/wizardStore';
+import { seedKeyFor, useRecipeCuts, useStoryboardBusy } from './storyboardData';
 import { usePlaybackUrl } from './useFragmentAudio';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
@@ -103,6 +103,20 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
+
+  /* ── генерация ждёт, пока раскадровка не соберётся под текущие вводные ──
+        Ошибка подбора генерацию не держит: видео без плана рендер подберёт сам по
+        склейкам рецепта. Ошибка склеек при выбранном темпе — держит: без них темп
+        до рендера не дойдёт. ── */
+  const timeline = useWizardStore((s) => s.timeline);
+  const currentRecipeKey = useWizardStore((s) => recipeKeyOf(s));
+  const recipeCustom = timeline.pace !== 'auto' || timeline.edited;
+  const recipeReady = timeline.key === currentRecipeKey && Boolean(timeline.cuts);
+  const storyboardPending = footageSlots.length > 0 && Boolean(cuts) && storyboard.key !== key && !status.error;
+  const busy = status.loading || storyboardPending || (recipeCustom && !recipeReady);
+  const setBusy = useStoryboardBusy((s) => s.setBusy);
+  useEffect(() => { setBusy(busy); }, [busy, setBusy]);
+  useEffect(() => () => setBusy(false), [setBusy]);
 
   const slot = slots[current];
   const video = slot?.group && storyboard.key === key ? storyboard.videos[slot.index] : undefined;
@@ -271,10 +285,12 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
   useMarkGuideSeen('pool-storyboard', showFrameGuide);
   useMarkGuideSeen('pool-replace', showReplaceGuide);
 
+  // Ошибка склеек — первой: пока её нет, «Сгенерировать» ждёт, и причина должна быть видна у любого видео.
   const placeholder = !slot ? null
+    : recipe.error ? `Не удалось посчитать склейки: ${recipe.error.message}`
     : !slot.group ? (slot.reason ?? 'Исходники этого видео подберутся при генерации')
       : status.error ? `Не удалось подобрать исходники: ${status.error}`
-        : !video ? (recipe.error ? `Не удалось посчитать склейки: ${recipe.error.message}` : 'Подбираем исходники…')
+        : !video ? 'Подбираем исходники…'
           : null;
 
   return (
