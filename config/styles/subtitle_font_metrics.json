@@ -1,0 +1,183 @@
+{
+ "size_pt": 100,
+ "tracking": -50,
+ "fonts": [
+  {
+   "ps": "Point-SemiBold",
+   "ok": true,
+   "cap_h": 66.992,
+   "cap_ink_h": 66.992,
+   "accent_top": 90.283,
+   "desc_bottom": 14.404,
+   "width_sample_px": 2570.635,
+   "width_sample_chars": 42,
+   "advance_per_char": 61.206
+  },
+  {
+   "ps": "Point-ExtraBold",
+   "ok": true,
+   "cap_h": 66.992,
+   "cap_ink_h": 66.992,
+   "accent_top": 90.381,
+   "desc_bottom": 14.111,
+   "width_sample_px": 2610.527,
+   "width_sample_chars": 42,
+   "advance_per_char": 62.155
+  },
+  {
+   "ps": "Inter-Bold",
+   "ok": true,
+   "cap_h": 72.727,
+   "cap_ink_h": 72.727,
+   "accent_top": 94.638,
+   "desc_bottom": 17.543,
+   "width_sample_px": 2584.915,
+   "width_sample_chars": 42,
+   "advance_per_char": 61.546
+  },
+  {
+   "ps": "HelveticaNeueCyr-Bold",
+   "ok": true,
+   "cap_h": 71.2,
+   "cap_ink_h": 71.2,
+   "accent_top": 90.4,
+   "desc_bottom": 18.3,
+   "width_sample_px": 2590.003,
+   "width_sample_chars": 42,
+   "advance_per_char": 61.667
+  },
+  {
+   "ps": "Montserrat-SemiBold",
+   "ok": true,
+   "cap_h": 70.0,
+   "cap_ink_h": 70.0,
+   "accent_top": 89.2,
+   "desc_bottom": 15.4,
+   "width_sample_px": 2714.5,
+   "width_sample_chars": 42,
+   "advance_per_char": 64.631
+  },
+  {
+   "ps": "SourceSansPro-Bold",
+   "ok": true,
+   "cap_h": 65.2,
+   "cap_ink_h": 65.2,
+   "accent_top": 84.0,
+   "desc_bottom": 18.8,
+   "width_sample_px": 2183.9,
+   "width_sample_chars": 42,
+   "advance_per_char": 51.998
+  },
+  {
+   "ps": "DidactGothic",
+   "ok": true,
+   "cap_h": 68.2,
+   "cap_ink_h": 68.2,
+   "accent_top": 82.8,
+   "desc_bottom": 8.2,
+   "width_sample_px": 2050.5,
+   "width_sample_chars": 42,
+   "advance_per_char": 48.821
+  },
+  {
+   "ps": "AKONY-Bold",
+   "ok": true,
+   "cap_h": 70.0,
+   "cap_ink_h": 70.0,
+   "accent_top": 101.7,
+   "desc_bottom": 8.0,
+   "width_sample_px": 5311.6,
+   "width_sample_chars": 42,
+   "advance_per_char": 126.467
+  },
+  {
+   "ps": "BebasNeueBold",
+   "ok": true,
+   "cap_h": 66.211,
+   "cap_ink_h": 66.211,
+   "accent_top": 88.135,
+   "desc_bottom": 19.043,
+   "width_sample_px": 2422.295,
+   "width_sample_chars": 42,
+   "advance_per_char": 57.674
+  },
+  {
+   "ps": "Kudry-WeirdHeadline",
+   "ok": true,
+   "cap_h": 72.812,
+   "cap_ink_h": 72.812,
+   "accent_top": 92.45,
+   "desc_bottom": 27.896,
+   "width_sample_px": 2472.256,
+   "width_sample_chars": 42,
+   "advance_per_char": 58.863
+  },
+  {
+   "ps": "Postertoastermono",
+   "ok": true,
+   "cap_h": 66.211,
+   "cap_ink_h": 66.211,
+   "accent_top": 88.135,
+   "desc_bottom": 19.043,
+   "width_sample_px": 2422.295,
+   "width_sample_chars": 42,
+   "advance_per_char": 57.674
+  },
+  {
+   "ps": "Anticva-Regular",
+   "ok": true,
+   "cap_h": 79.358,
+   "cap_ink_h": 79.358,
+   "accent_top": 91.946,
+   "desc_bottom": 19.235,
+   "width_sample_px": 2718.168,
+   "width_sample_chars": 42,
+   "advance_per_char": 64.718
+  },
+  {
+   "ps": "BazaART",
+   "ok": true,
+   "cap_h": 70.496,
+   "cap_ink_h": 70.496,
+   "accent_top": 82.883,
+   "desc_bottom": 16.113,
+   "width_sample_px": 1938.408,
+   "width_sample_chars": 42,
+   "advance_per_char": 46.153
+  },
+  {
+   "ps": "Bergamasco",
+   "ok": true,
+   "cap_h": 70.166,
+   "cap_ink_h": 70.117,
+   "accent_top": 88.184,
+   "desc_bottom": 9.766,
+   "width_sample_px": 2499.15,
+   "width_sample_chars": 42,
+   "advance_per_char": 59.504
+  },
+  {
+   "ps": "CormorantSC-Medium",
+   "ok": true,
+   "cap_h": 62.5,
+   "cap_ink_h": 62.5,
+   "accent_top": 80.2,
+   "desc_bottom": 19.2,
+   "width_sample_px": 2373.3,
+   "width_sample_chars": 42,
+   "advance_per_char": 56.507
+  },
+  {
+   "ps": "PlayfairDisplaySC-Regular",
+   "ok": true,
+   "cap_h": 70.801,
+   "cap_ink_h": 70.801,
+   "accent_top": 94.287,
+   "desc_bottom": 16.016,
+   "width_sample_px": 2442.55,
+   "width_sample_chars": 42,
+   "advance_per_char": 58.156
+  }
+ ],
+ "measured": "AE 2025, local PC, 2026-09-29, scripts/subtitle_font_lab/measure_font_metrics.jsx"
+}

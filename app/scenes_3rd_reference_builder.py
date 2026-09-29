@@ -5,6 +5,7 @@ import math
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.subtitle_font_layout import JaksonLayout
 from core.video_timing import AE_FPS
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
 
@@ -39,6 +40,32 @@ RENDER = {
 
 # Leading для TYPE_1 — пропорционален среднему между двумя размерами строк
 TYPE1_LEADING = int((RENDER["size_base"] + RENDER["size_line2"]) / 2 * 1.15)  # = 115
+
+_RENDER_DEFAULTS = dict(RENDER)
+
+# Раскладка от метрик шрифта (app/subtitle_font_layout.py). None → прод-числа
+# под Point как есть; задана → размеры/интервалы/якоря/поля из метрик.
+_LAYOUT: Optional[JaksonLayout] = None
+
+
+def apply_font_layout(layout: Optional[JaksonLayout]) -> None:
+    """Переключает билдер на раскладку шрифта (None — вернуть прод-дефолт)."""
+    global _LAYOUT
+    RENDER.clear()
+    RENDER.update(_RENDER_DEFAULTS)
+    _LAYOUT = layout
+    if layout is None:
+        return
+    RENDER["font_base"] = layout.font_base
+    RENDER["font_focus"] = layout.font_focus
+    RENDER["size_base"] = layout.size_base
+    RENDER["size_line2"] = layout.size_line2
+    RENDER["size_focus"] = round(_RENDER_DEFAULTS["size_focus"] * layout.size_base / _RENDER_DEFAULTS["size_base"], 2)
+    RENDER["leading"] = layout.leading_single
+
+
+def _type1_leading() -> float:
+    return _LAYOUT.leading_type1 if _LAYOUT is not None else TYPE1_LEADING
 
 
 FRAME = 1.0 / RENDER["fps"]   # ~0.04171s
@@ -604,6 +631,15 @@ class LayerFactory:
             td["text_animator"] = animator_cfg
         if no_layout_pass:
             td["no_layout_pass"] = True
+        elif _LAYOUT is not None:
+            if "\r" in text and not td["text_base"].get("_type1"):
+                td["text_base"] = dict(td["text_base"])
+                td["text_base"]["leading"] = _LAYOUT.leading_for(text, type1=False)
+            td["text_base"].pop("_type1", None)
+            td["layout_box"] = _LAYOUT.layout_box(
+                n_lines=text.count("\r") + 1,
+                leading=float(td["text_base"]["leading"]),
+            )
 
         eff = effects_extra if effects_extra is not None else {
             "ADBE Turbulent Displace": turbulent_displace(),
@@ -649,7 +685,10 @@ class LayerFactory:
 
         adj  = self.adj_layer(f"adj_{scene['id']}", t_in, t_out)
         tb   = text_base_dict()
-        tb["leading"] = TYPE1_LEADING
+        tb["leading"] = _type1_leading()
+        if _LAYOUT is not None:
+            tb["leading"] = _LAYOUT.leading_for(text, type1=True)
+            tb["_type1"] = True   # интервал уже посчитан под 80→120, не пересчитывать
         text_l = self.text_layer(
             name=text.replace("\r", " "),
             text=text,
@@ -870,10 +909,21 @@ class LayerFactory:
                    ease_in=[{"speed": 5.82, "influence": 95.0}] * 2 + [{"speed": 0.0, "influence": 95.0}],
                    ease_out=[{"speed": 0.0, "influence": 4.0}] * 3)
             )
-        _CHAR_PX_EST = 50
-        _MAX_W_PX    = 920
-        _est_w = len(word) * _CHAR_PX_EST
-        mine_scale = min(100, int(_MAX_W_PX / _est_w * 100)) if _est_w > _MAX_W_PX else 100
+        if _LAYOUT is not None:
+            # ширина знака и центр прописных — из метрик фокусного шрифта;
+            # поле шире с учётом глоу-копии (250%) не считаем: она размыта и 40%.
+            _max_w = RENDER["comp_w"] * (1.0 - 2.0 * _LAYOUT.margin_x)
+            _est_w = len(word) * _LAYOUT.advance_focus
+            mine_scale = min(100.0, round(_max_w / _est_w * 100.0, 2)) if _est_w > _max_w else 100
+            mine_anchor = [0, round(-_LAYOUT.cap_h_focus / 2.0, 2), 0]
+            mine_size = _LAYOUT.size_focus_base
+        else:
+            _CHAR_PX_EST = 50
+            _MAX_W_PX    = 920
+            _est_w = len(word) * _CHAR_PX_EST
+            mine_scale = min(100, int(_MAX_W_PX / _est_w * 100)) if _est_w > _MAX_W_PX else 100
+            mine_anchor = [0, -33.5, 0]
+            mine_size = RENDER["size_base"]
 
         mine_text = {
             "name":             "mine",
@@ -885,7 +935,7 @@ class LayerFactory:
             "adjustment_layer": False,
             "source_rect":      {},
             "props": {
-                "tf_anchor":   prop("ADBE Anchor Point",  [0, -33.5, 0]),
+                "tf_anchor":   prop("ADBE Anchor Point",  mine_anchor),
                 "tf_position": prop("ADBE Position",      [540, 960, 0]),
                 "tf_scale":    prop("ADBE Scale",         [mine_scale, mine_scale, 100]),
                 "tf_rotation": prop("ADBE Rotate Z",      0),
@@ -919,10 +969,11 @@ class LayerFactory:
                 "text_base": text_base_dict(
                     font=RENDER["font_focus"],
                     fill_color=RENDER["color_red"],
+                    font_size=mine_size,
                 ),
                 "char_styles_ungrouped": [
                     {"i": j, "font": RENDER["font_focus"],
-                     "fontSize": RENDER["size_base"]}
+                     "fontSize": mine_size}
                     for j in range(len(word))  # word уже содержит пробелы для фразы
                 ],
                 "no_text_animator": True,

@@ -1087,9 +1087,15 @@
       if (!layer || !lData || lData.type !== "text" || !targetComp) return;
       var td = (lData.text_data ? lData.text_data : null);
       if (td && td.no_layout_pass) return;
-      var marginX = 0.05;
+      // layout_box (app/subtitle_font_layout.py): коробка прописных в координатах
+      // слоя + поля кадра. Есть — центрируем по прописным и держим поля по X и Y;
+      // нет — прежнее поведение (поле 5% по X, центр чернильной рамки).
+      var box = (td && td.layout_box) ? td.layout_box : null;
+      var marginX = (box && isFinite(Number(box.margin_x))) ? Number(box.margin_x) : 0.05;
       var maxWidth = Number(targetComp.width) * (1.0 - 2.0 * marginX);
       if (!(maxWidth > 0)) return;
+      var maxHeight = (box && isFinite(Number(box.margin_y)))
+        ? Number(targetComp.height) * (1.0 - 2.0 * Number(box.margin_y)) : 0;
 
       var fps = Number(targetComp.frameRate || 25);
       if (!(fps > 0)) fps = 25;
@@ -1106,8 +1112,14 @@
         if (m.ok && m.widthPx >= best.widthPx) best = m;
       }
 
-      if (best.sr && best.widthPx > maxWidth + 1e-3) {
-        _scaleLayerUniform2D(layer, maxWidth / best.widthPx);
+      var fitMult = 1.0;
+      if (best.sr && best.widthPx > maxWidth + 1e-3) fitMult = maxWidth / best.widthPx;
+      if (best.sr && maxHeight > 0) {
+        var inkH = Math.abs(Number(best.sr.height)) * (best.widthPx / Math.max(1e-6, Math.abs(Number(best.sr.width))));
+        if (inkH > maxHeight + 1e-3) fitMult = Math.min(fitMult, maxHeight / inkH);
+      }
+      if (best.sr && fitMult < 1.0 - 1e-6) {
+        _scaleLayerUniform2D(layer, fitMult);
         best = {"widthPx": 0.0, "sr": null, "t": t2};
         for (var j = 0; j < samples.length; j++) {
           var m2 = _measureTextWidthPx(layer, samples[j]);
@@ -1120,6 +1132,9 @@
       var sr = best.sr;
       var centerX = Number(sr.left) + Number(sr.width) / 2.0;
       var centerY = Number(sr.top) + Number(sr.height) / 2.0;
+      if (box && isFinite(Number(box.cap_top)) && isFinite(Number(box.baseline_last))) {
+        centerY = (Number(box.cap_top) + Number(box.baseline_last)) / 2.0;
+      }
       var compCenterX = Number(targetComp.width) / 2.0;
       var compCenterY = Number(targetComp.height) / 2.0;
 
