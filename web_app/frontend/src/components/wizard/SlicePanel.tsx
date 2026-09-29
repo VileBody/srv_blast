@@ -5,7 +5,8 @@ import { cn } from '../../lib/cn';
 import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { LimitsIndicator } from '../ui/LimitsIndicator';
-import { BackSquareButton } from './WizardFrame';
+import { Surface } from '../ui/kit';
+import { WizardActions } from './WizardFrame';
 import { HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { footageTypePlane } from '../../data/footageTypes';
@@ -634,15 +635,9 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
         <PoolStoryboard slots={slots} current={safeIndex} chips={chips} />
       </div>
 
-      <div className="card-2 flex h-[140px] shrink-0 items-center gap-[20px] px-space-6 py-space-6 max-lg:px-space-5">
-        <BackSquareButton onClick={onBack} />
-        <button type="button" disabled={!canContinue || loading} onClick={onNext} className={cn('soft-btn h-[60px] flex-1 gap-space-3', ready && 'soft-btn-ready')}>
-          {loading ? <span className="spinner" /> : (<>
-            <span aria-hidden="true">✦</span>
-            {t('wizard.pool.generate')}
-          </>)}
-        </button>
-      </div>
+      <Surface level="card" className="shrink-0 px-[18px] py-[16px]">
+        <WizardActions ready={ready} loading={loading} onBack={onBack} onNext={onNext} nextLabel={t('wizard.pool.generate')} />
+      </Surface>
     </aside>
   );
 }

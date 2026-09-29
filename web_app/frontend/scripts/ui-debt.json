@@ -25,10 +25,8 @@
     "src/components/wizard/SourcesEditor.tsx": 23,
     "src/components/wizard/SubtitlesPanel.tsx": 5,
     "src/components/wizard/SubtitleTimeline.tsx": 19,
-    "src/components/wizard/TextPanel.tsx": 4,
     "src/components/wizard/timelineGuides.tsx": 18,
     "src/components/wizard/WarmupInput.tsx": 3,
-    "src/components/wizard/WizardFrame.tsx": 7,
     "src/contexts/ToastContext.tsx": 3,
     "src/index.css": 40,
     "src/pages/AdminAnalyticsPage.tsx": 52,
@@ -45,8 +43,7 @@
     "src/pages/SimplePage.tsx": 4,
     "src/pages/StatsPage.tsx": 33,
     "src/pages/TikTokPostPage.css": 10,
-    "src/pages/TikTokPostPage.tsx": 8,
-    "src/pages/WizardPage.tsx": 23
+    "src/pages/TikTokPostPage.tsx": 8
   },
   "radius": {
     "src/components/guidance/ActionGuideOverlay.tsx": 19,
@@ -77,8 +74,7 @@
     "src/pages/ProfilePage.tsx": 5,
     "src/pages/ProjectsPage.tsx": 5,
     "src/pages/StatsPage.tsx": 5,
-    "src/pages/TikTokPostPage.css": 17,
-    "src/pages/WizardPage.tsx": 10
+    "src/pages/TikTokPostPage.css": 17
   },
   "height": {
     "src/components/billing/BillingCard.tsx": 5,
@@ -98,7 +94,6 @@
     "src/components/wizard/SourcesEditor.tsx": 4,
     "src/components/wizard/SubtitlesPanel.tsx": 6,
     "src/components/wizard/SubtitleTimeline.tsx": 13,
-    "src/components/wizard/TextPanel.tsx": 1,
     "src/components/wizard/timelineGuides.tsx": 6,
     "src/pages/AdminAnalyticsPage.tsx": 2,
     "src/pages/AuthPage.tsx": 2,
@@ -107,8 +102,7 @@
     "src/pages/PricingPage.tsx": 2,
     "src/pages/ProfilePage.tsx": 5,
     "src/pages/ProjectsPage.tsx": 7,
-    "src/pages/StatsPage.tsx": 10,
-    "src/pages/WizardPage.tsx": 12
+    "src/pages/StatsPage.tsx": 10
   },
   "color": {
     "src/components/billing/BillingCard.tsx": 4,
@@ -137,7 +131,7 @@
     "src/components/wizard/SubtitleTimeline.tsx": 12,
     "src/components/wizard/timelineGuides.tsx": 64,
     "src/components/wizard/WarmupInput.tsx": 1,
-    "src/components/wizard/WizardFrame.tsx": 6,
+    "src/components/wizard/WizardFrame.tsx": 2,
     "src/index.css": 46,
     "src/lib/analysis.ts": 1,
     "src/lib/color.ts": 10,
@@ -151,7 +145,7 @@
     "src/pages/ProjectsPage.tsx": 21,
     "src/pages/StatsPage.tsx": 6,
     "src/pages/TikTokPostPage.css": 20,
-    "src/pages/WizardPage.tsx": 4,
+    "src/pages/WizardPage.tsx": 2,
     "src/stores/wizardStore.ts": 11
   },
   "nudge": {
@@ -164,7 +158,6 @@
     "src/pages/DashboardPage.tsx": 4,
     "src/pages/PricingPage.tsx": 2,
     "src/pages/ProfilePage.tsx": 2,
-    "src/pages/ProjectsPage.tsx": 2,
-    "src/pages/WizardPage.tsx": 1
+    "src/pages/ProjectsPage.tsx": 2
   }
 }

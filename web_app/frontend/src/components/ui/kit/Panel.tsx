@@ -1,4 +1,4 @@
-import { useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode } from 'react';
+import { forwardRef, useRef, useState, type DragEvent, type HTMLAttributes, type ReactNode } from 'react';
 import { cn } from '../../../lib/cn';
 import { GLYPH, Icon } from './Icon';
 
@@ -8,13 +8,13 @@ import { GLYPH, Icon } from './Icon';
  * Пунктир только у пустого места, куда можно что-то положить или создать (DropZone).
  * Заполненное всегда сплошное.
  */
-export function Surface({
-  level = 'panel',
-  className,
-  ...props
-}: HTMLAttributes<HTMLDivElement> & { level?: 'card' | 'panel' | 'field' }) {
+export const Surface = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement> & { level?: 'card' | 'panel' | 'field' }>(function Surface(
+  { level = 'panel', className, ...props },
+  ref
+) {
   return (
     <div
+      ref={ref}
       className={cn(
         level === 'card' && 'rounded-r25 border border-line bg-card',
         level === 'panel' && 'rounded-r15 border border-line bg-panel',
@@ -24,7 +24,7 @@ export function Surface({
       {...props}
     />
   );
-}
+});
 
 /**
  * Пустое место: загрузка файла или создание нового. Один стиль на весь сайт — пунктир
