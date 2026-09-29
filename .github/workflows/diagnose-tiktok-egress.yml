@@ -59,18 +59,17 @@ jobs:
           import base64, os, socket
           from urllib.parse import urlparse
           from src.outbound_proxy import OUTBOUND_PROXY_URL
+          CRLF = bytes([13, 10]).decode()
           print("container no_proxy:", {k: v for k, v in os.environ.items() if k.lower() == "no_proxy"} or "not set")
           print("container proxy env:", sorted(k for k in os.environ if "proxy" in k.lower()) or "none")
           u = urlparse(OUTBOUND_PROXY_URL)
           auth = base64.b64encode(f"{u.username}:{u.password}".encode()).decode()
-          for host in ("generativelanguage.googleapis.com", "open.tiktokapis.com", "open-upload.tiktokapis.com", "www.google.com", "api.ipify.org"):
+          hosts = ("generativelanguage.googleapis.com", "open.tiktokapis.com", "open-upload.tiktokapis.com", "www.google.com", "api.ipify.org")
+          for host in hosts:
               try:
                   s = socket.create_connection((u.hostname, u.port), timeout=15)
-                  s.sendall(f"CONNECT {host}:443 HTTP/1.1
-Host: {host}:443
-Proxy-Authorization: Basic {auth}
-
-".encode())
+                  head = [f"CONNECT {host}:443 HTTP/1.1", f"Host: {host}:443", f"Proxy-Authorization: Basic {auth}", "", ""]
+                  s.sendall(CRLF.join(head).encode())
                   s.settimeout(15)
                   data = b""
                   try:
@@ -79,14 +78,14 @@ Proxy-Authorization: Basic {auth}
                           if not chunk:
                               break
                           data += chunk
-                          if data.startswith(b"HTTP/1.1 200") or data.startswith(b"HTTP/1.0 200"):
+                          if data[:12] in (b"HTTP/1.1 200", b"HTTP/1.0 200"):
                               break
                   except socket.timeout:
                       pass
                   s.close()
-                  print(f"=== {host}
-{data.decode('utf-8', 'replace')[:1500]}")
+                  print("=== " + host)
+                  print(data.decode("utf-8", "replace")[:1500])
               except Exception as e:
-                  print(f"=== {host}
-ERR {type(e).__name__}: {e}")
+                  print("=== " + host)
+                  print(f"ERR {type(e).__name__}: {e}")
           PY
