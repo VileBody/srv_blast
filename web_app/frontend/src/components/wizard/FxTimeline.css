@@ -28,13 +28,23 @@
 .fxt-proj b { font-weight: 400; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fxt-proj span { font-size: 12px; color: var(--fxt-t40); white-space: nowrap; }
 .fxt-spacer { flex: 1; }
-/* вкладки вариантов (прототип): лента с прокруткой, активная — подложка + цветная метка */
-.fxt-vtabs { display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 3px; border-radius: 12px; background: var(--fxt-well); border: 1px solid var(--fxt-line); }
-.fxt-vtabs::-webkit-scrollbar { display: none; }
-.fxt-vtab { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 9px; color: var(--fxt-t60); font-size: 13px; white-space: nowrap; flex: none; transition: color .15s ease, background-color .15s ease; }
-.fxt-vtab:hover { color: var(--text); }
-.fxt-vtab[aria-selected="true"] { background: var(--fxt-raise); color: var(--text); box-shadow: inset 0 0 0 1px var(--fxt-line2); }
-.fxt-vtab i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+/* переключатель вариантов (прототип): пилюля «вариант ▾» + приклеенный к ней «+» */
+.fxt-vsw { position: relative; display: flex; align-items: center; z-index: 30; min-width: 0; }
+.fxt-vsw-main { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 9px; height: 38px; max-width: 360px; padding: 0 12px; border-radius: 11px; background: var(--fxt-raise); color: var(--text); font-size: 14px; box-shadow: inset 0 0 0 1px var(--fxt-line2); transition: box-shadow .15s ease; }
+.fxt-vsw-main:hover, .fxt-vsw-main[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--accent-light); }
+.fxt-vsw-main .cap { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--fxt-t40); }
+.fxt-vsw-main .lb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fxt-vsw-main .n { color: var(--fxt-t40); font-size: 12px; }
+.fxt-vsw i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.fxt-vsw-plus { position: relative; z-index: 1; display: grid; place-items: center; height: 38px; margin-left: -12px; padding: 0 13px 0 23px; border-radius: 0 11px 11px 0; background: var(--accent-20); color: var(--text); font-size: 18px; line-height: 1; transition: background-color .15s ease; }
+.fxt-vsw-plus:hover { background: rgba(139, 111, 230, .34); }
+.fxt-vsw-menu { position: absolute; left: 0; top: 46px; min-width: 320px; max-width: 420px; padding: 6px; border-radius: 12px; background: var(--fxt-pop); border: 1px solid var(--fxt-line2); box-shadow: 0 18px 40px rgba(0, 0, 0, .5); display: grid; gap: 2px; }
+.fxt-vsw-item { display: flex; align-items: center; gap: 10px; width: 100%; height: 38px; padding: 0 10px; border-radius: 8px; color: var(--fxt-t80); font-size: 14px; text-align: left; }
+.fxt-vsw-item:hover { background: var(--fxt-t06); color: var(--text); }
+.fxt-vsw-item[aria-current="true"] { background: var(--fxt-raise); color: var(--text); }
+.fxt-vsw-item .lb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fxt-vsw-item .ck { color: var(--accent-light); }
+.fxt-vsw-new { border-top: 1px solid var(--fxt-line); margin-top: 4px; padding-top: 4px; }
 .fxt-seg { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--fxt-well); border: 1px solid var(--fxt-line); }
 .fxt-seg button { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 9px; color: var(--fxt-t60); font-size: 13px; transition: color .15s ease, background-color .15s ease; }
 .fxt-seg button:hover { color: var(--text); }

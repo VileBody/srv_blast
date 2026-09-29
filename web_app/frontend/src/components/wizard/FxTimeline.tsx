@@ -294,7 +294,7 @@ function previewFor(item: LibItem): string | undefined {
   return undefined;
 }
 
-/** tabs — необязательная полоса вкладок в шапке (прототип вариантов FX: вкладка = вариант). */
+/** tabs — необязательный элемент в шапке (прототип вариантов FX: переключатель вариантов). */
 export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: React.ReactNode }) {
   const rootRef = useRef<HTMLDivElement>(null);
   useTooltips(rootRef);
@@ -759,7 +759,7 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
       <header className="fxt-top">
         <button type="button" className="fxt-back" onClick={onClose}><Glyph name="back" size={18} /><span className="tx">FX</span></button>
         <div className="fxt-proj"><b className="tx">{track?.filename ?? 'Трек'}</b><span className="tx num">{windowLabel}</span></div>
-        {tabs && <div className="fxt-vtabs" role="tablist" aria-label="Варианты">{tabs}</div>}
+        {tabs}
         <div className="fxt-spacer" />
         <div className="fxt-seg" role="group" aria-label="Формат превью">
           {(['9:16', '16:9'] as const).map((f) => {
