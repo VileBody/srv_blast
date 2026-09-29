@@ -142,7 +142,7 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
           <p className="mt-[8px] max-w-[640px] text-[14px] leading-[1.45] text-text-60 max-md:text-[13px]">{t('wizard.sources.editorHint')}</p>
         </div>
         <button type="button" className={ICON_BTN} onClick={onClose} aria-label={t('wizard.sources.close')}>
-          <span className="translate-y-[1px]" aria-hidden="true">✕</span>
+          <span aria-hidden="true">✕</span>
         </button>
       </header>
 

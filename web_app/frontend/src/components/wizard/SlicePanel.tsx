@@ -92,14 +92,14 @@ function PoolCombosGuideVisual() {
       <span className="flex min-w-0 flex-1 flex-col gap-[5px]">
         {rows.map((row, r) => (
           <span key={row.label} className={cn('guide-mode-reveal flex h-[22px] items-center gap-[5px]', `guide-mode-delay-${r + 1}`)}>
-            <span className="w-[30px] shrink-0 text-[9px] leading-none text-white/45"><span className="inline-block translate-y-px">{row.label}</span></span>
+            <span className="w-[30px] shrink-0 text-[9px] leading-none text-white/45"><span className="inline-block">{row.label}</span></span>
             {row.items.map((item) => (
               <span key={item.text} className="relative flex h-full min-w-0 items-center gap-[4px] overflow-hidden rounded-[6px] bg-white/[0.06] px-[6px] text-[9px] leading-none text-white/70">
                 {item.phase && <i className={cn('absolute inset-0 rounded-[6px]', on, item.phase === 'a' ? 'guide-sb-a' : 'guide-sb-b')} />}
                 {!item.phase && <i className={cn('absolute inset-0 rounded-[6px]', on)} />}
                 {item.dot && <i className="relative h-[5px] w-[5px] shrink-0 rounded-full" style={{ background: item.dot }} />}
-                <span className="relative translate-y-px truncate text-white">{item.text}</span>
-                <b className="relative ml-[2px] font-[400] text-white/55"><span className="inline-block translate-y-px">{item.n}</span></b>
+                <span className="relative truncate text-white">{item.text}</span>
+                <b className="relative ml-[2px] font-[400] text-white/55"><span className="inline-block">{item.n}</span></b>
               </span>
             ))}
           </span>
@@ -408,7 +408,7 @@ export function StageSlice() {
             <div className="rounded-r10 bg-grad-soft-10 p-space-4">
               <MiniPill icon={strobeIcon()} label={t('wizard.pool.colorVideo', { label: chip(colorGroup.label) })} />
               <div className="mt-space-3 flex flex-wrap items-center gap-space-3 pl-[25px] max-md:pl-0">
-                <span className="translate-y-px text-[15px] text-text-60">{t('wizard.pool.chooseFont')}</span>
+                <span className="text-[15px] text-text-60">{t('wizard.pool.chooseFont')}</span>
                 <span className="flex flex-wrap gap-space-2">
                   {subtitleStyles.map((style) => {
                     const field = colorGroup.strobe ? 'strobeFont' : 'colorFont';
@@ -417,7 +417,7 @@ export function StageSlice() {
                       <button
                         key={style}
                         type="button"
-                        className={cn('translate-y-[2px] rounded-r9 px-space-3 py-[3px] text-[13px] transition', current === style ? 'bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-60 hover:text-text')}
+                        className={cn('rounded-r9 px-space-3 py-[3px] text-[13px] transition', current === style ? 'bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-60 hover:text-text')}
                         onClick={() => setAllocation({ [field]: style })}
                       >
                         {style.toLowerCase()}

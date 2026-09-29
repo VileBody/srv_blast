@@ -107,7 +107,7 @@ function FreeTariff() {
         to="/app/pricing"
         className="group absolute bottom-[28px] right-[28px] flex h-[60px] w-[320px] items-center justify-center gap-[16px] rounded-r15 border border-accent bg-grad-soft-20 text-[24px] font-[400] leading-none text-transparent backdrop-blur-[80px] transition hover:brightness-125 max-md:relative max-md:bottom-auto max-md:right-auto max-md:z-[1] max-md:mt-[16px] max-md:w-full"
       >
-        <span className="translate-y-[2px]" style={gradSoft}>{t('profile.expandAccess')}</span>
+        <span style={gradSoft}>{t('profile.expandAccess')}</span>
         <FigIcon name="home-arrow.svg" h={15.464} className="transition-transform duration-150 group-hover:translate-x-[2px]" />
       </Link>
     </div>
@@ -174,7 +174,7 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
           <span key={index} className={cn(index > 0 && 'ml-[41px] max-md:ml-[14px]')}>
             <span className="inline-flex h-[35px] w-[80px] items-center justify-center rounded-r15 border border-accent bg-grad-soft-20 backdrop-blur-[15px] max-md:h-[28px] max-md:w-[64px] max-md:rounded-r10">
               {/* метрики Point сажают строчные буквы выше геометрического центра пила */}
-              <span className="translate-y-[1px] text-[24px] font-[400] leading-none text-transparent max-md:translate-y-0 max-md:!text-[14px]" style={gradSoft}>{m}</span>
+              <span className="text-[24px] font-[400] leading-none text-transparent max-md:!text-[14px]" style={gradSoft}>{m}</span>
             </span>
           </span>
         ))}

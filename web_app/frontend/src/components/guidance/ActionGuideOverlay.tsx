@@ -343,7 +343,7 @@ export function ActionGuideOverlay({
             <div className="px-[2px]">
               <div className="flex items-center justify-start gap-[8px]">
                 <h3 className="min-w-0 text-[18px] font-[400] leading-[21px] tracking-[-0.015em] text-text">{title}</h3>
-                <span className="-translate-y-px shrink-0 rounded-[7px] bg-white/[0.07] px-[7px] py-[4px] text-[10px] font-[350] text-text-60"><span className="inline-block translate-y-px">{progressLabel}</span></span>
+                <span className="-translate-y-px shrink-0 rounded-[7px] bg-white/[0.07] px-[7px] py-[4px] text-[10px] font-[350] text-text-60"><span className="inline-block">{progressLabel}</span></span>
               </div>
               <p className="mt-[9px] text-[15px] font-[350] leading-[20px] text-text-80">{text}</p>
             </div>

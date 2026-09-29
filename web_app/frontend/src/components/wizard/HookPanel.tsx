@@ -125,7 +125,7 @@ export function ChipIcon({ label }: { label: string }) {
     // «?» сидит на 1px ниже центра — компенсация метрики (правка ревью)
     return (
       <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-accent" aria-hidden="true">
-        <em className="mt-[1px] font-bold italic text-[24px] leading-none text-text">?</em>
+        <em className="font-bold italic text-[24px] leading-none text-text">?</em>
       </span>
     );
   }
@@ -509,7 +509,7 @@ export function StageHooks() {
             onClick={() => { setDropError(false); setCustomDrop(false); setHooks({ dropTime: normalizeDropTime(drop.time) }); }}
           >
             {/* глиф Point сидит выше геометрического центра пила */}
-            <span className="translate-y-[1px] whitespace-nowrap">
+            <span className="whitespace-nowrap">
               {drop.time}
               <small className="ml-2 text-xs opacity-70 max-md:hidden">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small>
               {/* телефон: без процентов — звезда справа от лучшего тайминга, в той же строке */}
@@ -552,7 +552,7 @@ export function StageHooks() {
             )}
             onClick={() => setCustomDrop(true)}
           >
-            <span className="translate-y-[1px] whitespace-nowrap">{customActive ? hooks.dropTime : <><span className="max-md:hidden">{t('wizard.fx.customDrop')}</span><span className="hidden max-md:inline">{t('wizard.fx.customDropShort')}</span></>}</span>
+            <span className="whitespace-nowrap">{customActive ? hooks.dropTime : <><span className="max-md:hidden">{t('wizard.fx.customDrop')}</span><span className="hidden max-md:inline">{t('wizard.fx.customDropShort')}</span></>}</span>
           </button>
         )}
       </div>
@@ -866,7 +866,7 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
             className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 max-md:hidden"
           >
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true"><path d="M2 5h16M2 10h16M2 15h16M6 3v4m5 1v4m4 1v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
-            <span className="translate-y-px">{t('wizard.fx.timeline')}</span>
+            <span>{t('wizard.fx.timeline')}</span>
           </button>
         </div>
 

@@ -27,7 +27,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
           )}
           style={current === lng ? { background: 'var(--grad-soft-20)', boxShadow: 'inset 0 0 0 1px var(--accent-light)' } : undefined}
         >
-          <span className="block translate-y-px">{lng}</span>
+          <span className="block">{lng}</span>
         </button>
       ))}
     </div>

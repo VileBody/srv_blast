@@ -86,14 +86,14 @@ export function TimelineVariantsGuideVisual() {
       <span className="absolute left-[150px] top-[4px] flex h-[22px] w-[40px] items-center justify-end rounded-r-[8px] bg-accent-20 pr-[9px] text-white"><span className="gt0-plus flex"><PlusSvg s={10} /></span></span>
       <span className="absolute left-[4px] top-[4px] flex h-[22px] w-[160px] items-center gap-[6px] rounded-[8px] bg-[#1d1533] px-[8px] shadow-[inset_0_0_0_1px_rgba(246,245,253,.13)]">
         <span className="relative h-full flex-1">
-          <span className="gt0-a absolute inset-0 flex items-center gap-[6px] text-[10px] leading-none text-white"><i className="h-[7px] w-[7px] rounded-full bg-[#8b6fe6]" /><span className="translate-y-px">Молния · Неон</span></span>
-          <span className="gt0-b absolute inset-0 flex items-center gap-[6px] text-[10px] leading-none text-white"><i className="h-[7px] w-[7px] rounded-full bg-[#e38fb5]" /><span className="translate-y-px">Звезда · Ч/Б</span></span>
+          <span className="gt0-a absolute inset-0 flex items-center gap-[6px] text-[10px] leading-none text-white"><i className="h-[7px] w-[7px] rounded-full bg-[#8b6fe6]" /><span>Молния · Неон</span></span>
+          <span className="gt0-b absolute inset-0 flex items-center gap-[6px] text-[10px] leading-none text-white"><i className="h-[7px] w-[7px] rounded-full bg-[#e38fb5]" /><span>Звезда · Ч/Б</span></span>
         </span>
         <span className="flex rotate-90 text-white/60"><Chev dir="r" s={8} /></span>
       </span>
       <span className="gt0-menu absolute left-[4px] top-[30px] flex w-[170px] flex-col gap-[2px] rounded-[8px] bg-[#1b1430] p-[3px] shadow-[0_8px_18px_rgba(0,0,0,.45)] ring-1 ring-white/10">
-        <span className="flex h-[17px] items-center gap-[6px] rounded-[5px] bg-[#1d1533] px-[6px] text-[10px] leading-none text-white"><i className="h-[6px] w-[6px] rounded-full bg-[#8b6fe6]" /><span className="flex-1 translate-y-px">Молния · Неон</span></span>
-        <span className="flex h-[17px] items-center gap-[6px] rounded-[5px] bg-white/[0.06] px-[6px] text-[10px] leading-none text-white/85"><i className="h-[6px] w-[6px] rounded-full bg-[#e38fb5]" /><span className="translate-y-px">Звезда · Ч/Б</span></span>
+        <span className="flex h-[17px] items-center gap-[6px] rounded-[5px] bg-[#1d1533] px-[6px] text-[10px] leading-none text-white"><i className="h-[6px] w-[6px] rounded-full bg-[#8b6fe6]" /><span className="flex-1">Молния · Неон</span></span>
+        <span className="flex h-[17px] items-center gap-[6px] rounded-[5px] bg-white/[0.06] px-[6px] text-[10px] leading-none text-white/85"><i className="h-[6px] w-[6px] rounded-full bg-[#e38fb5]" /><span>Звезда · Ч/Б</span></span>
       </span>
       <Cursor className="gt0-cur" />
     </Box>
@@ -134,7 +134,7 @@ export function TimelineLibraryGuideVisual() {
         <span key={label} className="absolute left-0 flex h-[22px] w-[170px] items-center gap-[7px] rounded-[7px] bg-white/[0.06] pl-[6px] pr-[5px]" style={{ top: 5 + i * 26 }}>
           {i === 1 && <i className="gl-sel absolute inset-0 rounded-[7px]" style={{ background: 'rgba(139,111,230,.28)', boxShadow: 'inset 0 0 0 1px #c6b6ff' }} />}
           <i className="relative h-[14px] w-[14px] shrink-0 rounded-full" style={{ background: 'rgba(198,182,255,.22)' }} />
-          <span className="relative flex-1 translate-y-px text-[10px] leading-none text-white">{label}</span>
+          <span className="relative flex-1 text-[10px] leading-none text-white">{label}</span>
           <span className="relative flex h-[14px] w-[14px] items-center justify-center rounded-full bg-white/10 pl-px text-white"><PlayTri s={7} /></span>
         </span>
       ))}
@@ -160,21 +160,21 @@ export function TimelinePlayerGuideVisual() {
           <i className="gp-a absolute inset-0" style={{ background: 'linear-gradient(170deg, #8b6fe6, #2a1b5e 70%)' }} />
           <i className="gp-b absolute inset-0" style={{ background: 'linear-gradient(190deg, #d9d2ff, #5f42b9 55%, #140e24)' }} />
           <span className="absolute left-[6px] top-[6px] h-[16px] w-[86px] rounded-[5px] bg-[rgba(5,1,15,.6)] text-[9px] leading-none text-white">
-            <span className="gp-a absolute inset-0 flex items-center px-[6px]"><span className="translate-y-px">Молния · 1/19</span></span>
-            <span className="gp-b absolute inset-0 flex items-center px-[6px]"><span className="translate-y-px">Затвор · 2/19</span></span>
+            <span className="gp-a absolute inset-0 flex items-center px-[6px]"><span>Молния · 1/19</span></span>
+            <span className="gp-b absolute inset-0 flex items-center px-[6px]"><span>Затвор · 2/19</span></span>
           </span>
           <span className="absolute left-[5px] top-[33px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[rgba(5,1,15,.6)] text-white/75"><Chev dir="l" /></span>
           <span className="gp-rarr absolute right-[5px] top-[33px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[rgba(5,1,15,.6)] text-white"><Chev dir="r" /></span>
           <span className="absolute inset-x-0 bottom-[6px] flex justify-center">
-            <span className="gp-put flex h-[18px] items-center gap-[4px] rounded-[6px] bg-[#7458c7] px-[8px] text-[9px] leading-none text-white"><PlusSvg s={8} /><span className="translate-y-px">На дроп</span></span>
+            <span className="gp-put flex h-[18px] items-center gap-[4px] rounded-[6px] bg-[#7458c7] px-[8px] text-[9px] leading-none text-white"><PlusSvg s={8} /><span>На дроп</span></span>
           </span>
         </span>
       </span>
       <DropFlag x={226} top={4} />
       <span className="absolute left-[170px] top-[34px] h-[22px] w-[114px] rounded-[6px] bg-[#0b0718] ring-1 ring-white/10" />
-      <span className="absolute left-[177px] top-[45px] -translate-y-1/2 text-[9px] leading-none text-white/40"><span className="inline-block translate-y-px">Хук</span></span>
+      <span className="absolute left-[177px] top-[45px] -translate-y-1/2 text-[9px] leading-none text-white/40"><span className="inline-block">Хук</span></span>
       <i className="absolute left-[225px] top-[17px] h-[56px] w-[2px] rounded-full bg-[#c6b6ff]/70" />
-      <span className="gp-land absolute left-[227px] top-[37px] flex h-[16px] w-[52px] items-center justify-center rounded-[4px] text-[8px] leading-none" style={{ background: HOOK, color: '#170c38' }}><span className="translate-y-px">Затвор</span></span>
+      <span className="gp-land absolute left-[227px] top-[37px] flex h-[16px] w-[52px] items-center justify-center rounded-[4px] text-[8px] leading-none" style={{ background: HOOK, color: '#170c38' }}><span>Затвор</span></span>
       <Cursor className="gp-cur" />
     </Box>
   );
@@ -188,7 +188,7 @@ export function TimelineCutsGuideVisual() {
         {['Щелчок', 'Минимакс', 'Вспышка'].map((label, i) => (
           <span key={label} className="relative flex h-[22px] w-[58px] items-center justify-center rounded-[5px] bg-white/[0.06] text-[9px] leading-none text-white/85">
             {i === 1 && <i className="gc-pick absolute inset-0 rounded-[5px]" style={{ background: 'rgba(139,111,230,.45)', boxShadow: 'inset 0 0 0 1px #c6b6ff' }} />}
-            <span className="relative translate-y-px">{label}</span>
+            <span className="relative">{label}</span>
           </span>
         ))}
         <i className="absolute bottom-[-4px] left-[70px] h-[8px] w-[8px] rotate-45 bg-[#1b1430]" />
@@ -219,7 +219,7 @@ export function TimelinePaceGuideVisual() {
         {phases.map(([l], i) => (
           <span key={l} className="relative flex h-[20px] w-[58px] items-center justify-center rounded-[6px] text-[10px] leading-none text-white/60">
             <i className={cn(cls[i], 'absolute inset-0 rounded-[6px] bg-accent')} />
-            <span className="relative translate-y-px text-white">{l}</span>
+            <span className="relative text-white">{l}</span>
           </span>
         ))}
       </span>
@@ -237,15 +237,15 @@ export function TimelineDoneGuideVisual() {
   return (
     <Box h={84}>
       <span className="absolute inset-x-0 top-[22px] h-[36px] rounded-[10px] bg-white/[0.05] ring-1 ring-white/10" />
-      <span className="absolute left-[6px] top-[28px] flex h-[24px] items-center gap-[3px] rounded-[7px] bg-white/[0.07] pl-[6px] pr-[9px] text-[10px] leading-none text-white/80"><Chev dir="l" /><span className="translate-y-px">FX</span></span>
-      <span className="absolute left-[62px] top-[40px] -translate-y-1/2 text-[9px] leading-none text-white/45"><span className="inline-block translate-y-px">Трек · 00:12 – 00:27</span></span>
+      <span className="absolute left-[6px] top-[28px] flex h-[24px] items-center gap-[3px] rounded-[7px] bg-white/[0.07] pl-[6px] pr-[9px] text-[10px] leading-none text-white/80"><Chev dir="l" /><span>FX</span></span>
+      <span className="absolute left-[62px] top-[40px] -translate-y-1/2 text-[9px] leading-none text-white/45"><span className="inline-block">Трек · 00:12 – 00:27</span></span>
       <span className="absolute left-[206px] top-[28px] flex">
-        <span className="gd-btn flex h-[24px] w-[72px] items-center justify-center rounded-[7px] bg-[#7458c7] text-[11px] leading-none text-white"><span className="translate-y-px">Готово</span></span>
+        <span className="gd-btn flex h-[24px] w-[72px] items-center justify-center rounded-[7px] bg-[#7458c7] text-[11px] leading-none text-white"><span>Готово</span></span>
       </span>
       <span className="absolute inset-x-0 top-[64px] flex justify-center">
         <span className="gd-toast flex h-[18px] items-center gap-[5px] rounded-[6px] bg-white/[0.08] px-[8px] text-[9px] leading-none text-white/85">
           <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="#c6b6ff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2.5 6.3 5 8.8l4.5-5" /></svg>
-          <span className="translate-y-px">Рецепт сохранён</span>
+          <span>Рецепт сохранён</span>
         </span>
       </span>
       <Cursor className="gd-cur" />
@@ -285,14 +285,14 @@ export function StoryboardReplaceGuideVisual() {
         <span className="flex h-[22px] items-center gap-[6px] rounded-[7px] bg-white/[0.08] px-[7px] text-[11px] leading-none text-white">
           <span className="text-white/60">‹</span>
           <span className="relative h-[12px] w-[30px] overflow-hidden">
-            <span className="guide-sb-a absolute inset-0 flex items-center justify-center"><span className="translate-y-px">2 / 8</span></span>
-            <span className="guide-sb-b absolute inset-0 flex items-center justify-center"><span className="translate-y-px">3 / 8</span></span>
+            <span className="guide-sb-a absolute inset-0 flex items-center justify-center"><span>2 / 8</span></span>
+            <span className="guide-sb-b absolute inset-0 flex items-center justify-center"><span>3 / 8</span></span>
           </span>
           <span className="guide-sb-press text-white">›</span>
         </span>
         <span className="flex h-[22px] items-center gap-[5px] rounded-[7px] bg-[#5f42b9] px-[8px] text-[11px] leading-none text-white">
           <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6z" /></svg>
-          <span className="translate-y-px">Готово</span>
+          <span>Готово</span>
         </span>
       </span>
       <span className="flex h-[26px] gap-[3px]">

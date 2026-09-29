@@ -4,15 +4,6 @@
  * Под lg — одна колонка: ролик, форма, прилипающая строка действия.
  */
 
-/*
- * Point с USE_TYPO_METRICS центрирует строку по полю 1475/451 — заглавные сидят ~1.4px выше
- * центра контролов. Override двигает центр строки к середине заглавных, общая высота та же (94%).
- * Отдельное семейство, а не правка глобального Point: по приложению разложены ручные
- * translate-y-[1px] под ту же проблему, глобальный фикс сдвинул бы их текст дважды.
- */
-@font-face { font-family: 'Point Centered'; font-weight: 350; src: url('/fonts/Point-Book.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
-@font-face { font-family: 'Point Centered'; font-weight: 400; src: url('/fonts/Point-Regular.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
-
 .ttp {
   --ttp-panel: #0d0820;
   --ttp-panel-2: #140d2b;
@@ -41,7 +32,7 @@
   border-radius: 22px;
   overflow: clip;
   color: var(--text);
-  font-family: 'Point Centered', var(--font);
+  font-family: var(--font);
   font-weight: 350;
   font-size: 15px;
   line-height: 1.4;

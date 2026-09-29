@@ -497,7 +497,7 @@ export function StatsPage() {
             onClick={() => createIteration.mutate({ count: 5, dimension: nextToTest(analysis)?.dimension ?? 'subtitles' })}
             className="relative z-0 -ml-[33px] flex h-[60px] w-[78px] shrink-0 items-center justify-center rounded-r15 border-2 border-accent bg-grad-soft-20 pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span className="translate-y-[1px]" aria-hidden="true">+</span>
+            <span aria-hidden="true">+</span>
           </button>
           {enough && analysis && <VerdictChips analysis={analysis} />}
         </div>

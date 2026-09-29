@@ -116,7 +116,7 @@ export function TagChip({ label, icon }: { label: string; icon: 'bg' | 'sub' | '
           <FigIcon name={`pd-chip-${icon}.svg`} h={12} />
         )}
       </span>
-      <span className="ml-[8px] translate-y-px whitespace-nowrap">{label}</span>
+      <span className="ml-[8px] whitespace-nowrap">{label}</span>
     </span>
   );
 }
@@ -133,7 +133,7 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
   return (
     <div className={cn('relative flex h-[60px] shrink-0 items-center rounded-[15px] bg-[#1d1534] pl-[28px] pr-[24px]', posted && 'opacity-70')}>
       <span className="flex w-[110px] shrink-0 items-center gap-[8px] truncate text-[16px] leading-none text-text">
-        <span className="translate-y-px truncate">{t('projectDetail.videoN', { n: video.index })}</span>
+        <span className="truncate">{t('projectDetail.videoN', { n: video.index })}</span>
         {posted && <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-success" aria-hidden="true" />}
       </span>
       <div
@@ -313,7 +313,7 @@ export function BatchTrack({
         )}
         style={{ background: 'var(--grad-soft-20)' }}
       >
-        <span className="translate-y-[1px]" aria-hidden="true">+</span>
+        <span aria-hidden="true">+</span>
       </button>
     </div>
   );

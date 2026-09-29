@@ -513,10 +513,16 @@
   --scroll-fade: rgb(32, 24, 54);
 }
 
-@font-face { font-family: 'Point'; font-weight: 350; src: url('/fonts/Point-Book.ttf') format('truetype'); font-display: swap; }
-@font-face { font-family: 'Point'; font-weight: 400; src: url('/fonts/Point-Regular.ttf') format('truetype'); font-display: swap; }
-@font-face { font-family: 'Point'; font-weight: 500; font-style: italic; src: url('/fonts/Point-MediumItalic.ttf') format('truetype'); font-display: swap; }
-@font-face { font-family: 'Point'; font-weight: 700; src: url('/fonts/PointBold.ttf') format('truetype'); font-display: swap; }
+/*
+ * Point с USE_TYPO_METRICS центрирует строку по полю 1475/451 (upm 2048): заглавные сидели
+ * ~1.4px выше центра любого контрола, и экраны компенсировали это ручными translate-y.
+ * Override двигает центр строки к середине заглавных; суммарная высота та же (94%),
+ * поэтому раскладка не едет. Safari override не поддерживает — там как было.
+ */
+@font-face { font-family: 'Point'; font-weight: 350; src: url('/fonts/Point-Book.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
+@font-face { font-family: 'Point'; font-weight: 400; src: url('/fonts/Point-Regular.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
+@font-face { font-family: 'Point'; font-weight: 500; font-style: italic; src: url('/fonts/Point-MediumItalic.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
+@font-face { font-family: 'Point'; font-weight: 700; src: url('/fonts/PointBold.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
 
 * { box-sizing: border-box; }
 html { min-height: 100%; background: var(--bg); color: var(--text); }

@@ -733,7 +733,7 @@ export function StageBackground({ guideGraphic = 'studio', guideVariant = 'visua
             <div className="flex min-h-[30px] items-center justify-between gap-space-4 px-[40px]">
               <span className="wizard-body flex items-center gap-space-3 leading-none">
                 <SvgMaskIcon src="/assets/figma/icon-strobe.svg" className="-translate-y-px" style={{ width: 20, height: 20, color: background.strobe ? ACCENT : WHITE80 }} />
-                <span className="translate-y-px">{t('wizard.bg.strobe')}</span>
+                <span>{t('wizard.bg.strobe')}</span>
                 <span className="ml-space-2 flex items-center">
                   <Toggle checked={background.strobe} onChange={(value) => setBackground({ strobe: value })} label={t('wizard.bg.strobe')} />
                 </span>

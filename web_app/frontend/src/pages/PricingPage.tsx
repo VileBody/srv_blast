@@ -263,7 +263,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
       {current ? (
         <span className="absolute inset-x-[28px] bottom-[28px] flex h-[60px] items-center justify-center gap-[10px] rounded-r15 bg-grad-main">
           <FigIcon name="pr-check.svg" h={15.5} className="-translate-y-[2px] rotate-45" />
-          <span className="-translate-y-[1px] text-[24px] font-[400] leading-none text-transparent" style={gradLight}>{t('pricing.yourPlan')}</span>
+          <span className="text-[24px] font-[400] leading-none text-transparent" style={gradLight}>{t('pricing.yourPlan')}</span>
         </span>
       ) : (
       <button

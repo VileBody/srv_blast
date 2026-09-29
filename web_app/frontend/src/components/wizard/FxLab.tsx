@@ -293,11 +293,11 @@ function VariantsGuideVisual() {
     <div className="flex w-full flex-col gap-[6px]" aria-hidden="true">
       {rows.map(([c, l], i) => (
         <span key={l} className={cn('guide-mode-reveal flex h-[24px] items-center gap-[7px] rounded-[7px] px-[8px] text-[11px] leading-none text-white/85', i ? 'guide-mode-delay-2 bg-white/[0.06]' : 'guide-mode-delay-1 bg-accent-20 shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
-          <i className="h-[7px] w-[7px] rounded-full" style={{ background: c }} /><span className="translate-y-px">{l}</span>
+          <i className="h-[7px] w-[7px] rounded-full" style={{ background: c }} /><span>{l}</span>
           <span className="ml-auto text-white/50">×</span>
         </span>
       ))}
-      <span className="guide-mode-reveal guide-mode-delay-3 flex h-[22px] w-fit items-center gap-[5px] rounded-[7px] bg-white/[0.08] px-[8px] text-[11px] leading-none text-white/80"><span>+</span><span className="translate-y-px">{t('wizard.fxv.add')}</span></span>
+      <span className="guide-mode-reveal guide-mode-delay-3 flex h-[22px] w-fit items-center gap-[5px] rounded-[7px] bg-white/[0.08] px-[8px] text-[11px] leading-none text-white/80"><span>+</span><span>{t('wizard.fxv.add')}</span></span>
     </div>
   );
 }
@@ -313,15 +313,15 @@ function DockGuideVisual() {
       <span className="flex min-w-0 flex-1 flex-col gap-[6px]">
         <span className="guide-mode-reveal guide-mode-delay-2 flex items-center gap-[6px] text-[10px] leading-none text-white/80">
           <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white/10">‹</span>
-          <span className="translate-y-px">{t('wizard.fxv.visBrowse')}</span>
+          <span>{t('wizard.fxv.visBrowse')}</span>
           <span className="guide-sb-press flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white/10">›</span>
         </span>
         <span className="guide-mode-reveal guide-mode-delay-3 flex gap-[4px]">
           {['Щелчок', 'Минимакс', 'Вспышка'].map((l, i) => (
-            <span key={l} className={cn('truncate rounded-[6px] px-[6px] py-[4px] text-[9px] leading-none', i === 1 ? 'bg-accent-20 text-white shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'bg-white/[0.07] text-white/60')}><span className="inline-block translate-y-px">{l}</span></span>
+            <span key={l} className={cn('truncate rounded-[6px] px-[6px] py-[4px] text-[9px] leading-none', i === 1 ? 'bg-accent-20 text-white shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'bg-white/[0.07] text-white/60')}><span className="inline-block">{l}</span></span>
           ))}
         </span>
-        <span className="guide-mode-reveal guide-mode-delay-4 text-[10px] leading-none text-white/60"><span className="inline-block translate-y-px">{t('wizard.fxv.visPick')}</span></span>
+        <span className="guide-mode-reveal guide-mode-delay-4 text-[10px] leading-none text-white/60"><span className="inline-block">{t('wizard.fxv.visPick')}</span></span>
       </span>
     </div>
   );
@@ -394,7 +394,7 @@ export function LabTypeList({ locked }: { locked: boolean }) {
                   onClick={(e) => { e.stopPropagation(); setHint(hint === item.kind ? null : item.kind); }}
                   aria-label={t('wizard.fx.whatIs', { label: chip(HOOK_LABELS[item.kind]) })}
                 >
-                  <span className="translate-y-px">?</span>
+                  <span>?</span>
                 </span>
                 {has && (
                   <span className="flex items-center gap-[5px]" aria-label={t('wizard.fxv.count', { count: variants.length })}>
@@ -417,8 +417,8 @@ export function LabTypeList({ locked }: { locked: boolean }) {
                       <div key={v.id} className={cn('flex h-[46px] items-center rounded-r10 transition', active ? 'bg-accent-20 shadow-[inset_0_0_0_1.5px_var(--accent-light)]' : 'bg-[rgba(5,1,15,.34)] hover:bg-[rgba(5,1,15,.5)]')}>
                         <button type="button" aria-current={active} className="flex h-full min-w-0 flex-1 items-center gap-[11px] pl-[14px] text-left" onClick={() => lab.select(v.id)}>
                           <i className="h-[9px] w-[9px] shrink-0 rounded-full" style={{ background: v.color }} />
-                          <span className={cn('min-w-0 translate-y-px truncate text-[16px]', active ? 'text-text' : 'text-text-80')}>{label(v)}</span>
-                          {!done && <span className="shrink-0 rounded-[6px] bg-[rgba(245,158,11,.14)] px-[7px] py-[3px] text-[12px] leading-none text-[var(--warning)]"><span className="inline-block translate-y-px">{t('wizard.fxv.configure')}</span></span>}
+                          <span className={cn('min-w-0 truncate text-[16px]', active ? 'text-text' : 'text-text-80')}>{label(v)}</span>
+                          {!done && <span className="shrink-0 rounded-[6px] bg-[rgba(245,158,11,.14)] px-[7px] py-[3px] text-[12px] leading-none text-[var(--warning)]"><span className="inline-block">{t('wizard.fxv.configure')}</span></span>}
                         </button>
                         <button type="button" aria-label={t('wizard.fxv.remove')} title={t('wizard.fxv.remove')} onClick={() => lab.remove(v.id)} className="mr-[6px] flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px] text-text-40 transition hover:bg-white/10 hover:text-text active:scale-95">
                           <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 1L11 11M11 1L1 11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
@@ -428,8 +428,8 @@ export function LabTypeList({ locked }: { locked: boolean }) {
                   })}
                   <button type="button" onClick={() => (variants.length ? lab.copyActive() : lab.add(item.kind))} className="flex h-[40px] w-fit items-center gap-[8px] rounded-r10 bg-white/[0.07] px-[14px] text-[15px] text-text-80 transition hover:bg-white/[0.12] hover:text-text active:scale-[.98]">
                     <span className="text-[18px] leading-none text-accent-light">+</span>
-                    <span className="translate-y-px">{t('wizard.fxv.add')}</span>
-                    <span className="translate-y-px text-[13px] text-text-40">{t('wizard.fxv.addHint')}</span>
+                    <span>{t('wizard.fxv.add')}</span>
+                    <span className="text-[13px] text-text-40">{t('wizard.fxv.addHint')}</span>
                   </button>
                 </div>
               )}
@@ -457,12 +457,12 @@ export function LabTypeList({ locked }: { locked: boolean }) {
 function LabModifier({ label, value, options, onPick }: { label: string; value: string; options: [string, string][]; onPick: (value: string) => void }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-x-[12px] gap-y-[6px] px-[4px]">
-      <span className="translate-y-px text-[14px] text-text-60">{label}</span>
+      <span className="text-[14px] text-text-60">{label}</span>
       <span className="flex min-w-0 max-w-full gap-[2px] rounded-[10px] bg-white/[0.06] p-[3px]" role="group" aria-label={label}>
         {options.map(([val, text]) => (
           <button key={val || 'std'} type="button" aria-pressed={value === val} onClick={() => onPick(val)}
             className={cn('h-[28px] whitespace-nowrap rounded-[8px] px-[12px] text-[13px] transition', value === val ? 'bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-60 hover:text-text')}>
-            <span className="inline-block translate-y-px">{text}</span>
+            <span className="inline-block">{text}</span>
           </button>
         ))}
       </span>
@@ -568,7 +568,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
           <button ref={timelineButtonRef} type="button" onClick={openTimeline}
             className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 disabled:opacity-40 max-md:hidden">
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true"><path d="M2 5h16M2 10h16M2 15h16M6 3v4m5 1v4m4 1v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
-            <span className="translate-y-px">{t('wizard.fx.timeline')}</span>
+            <span>{t('wizard.fx.timeline')}</span>
           </button>
         </div>
 
@@ -585,14 +585,14 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
               <div className="absolute left-[14px] right-[14px] top-[14px] z-[4] flex items-start justify-between gap-[8px]">
                 <div className="flex min-w-0 items-center gap-[8px] rounded-[10px] bg-[rgba(5,1,15,.58)] px-[12px] py-[7px] backdrop-blur-[10px]">
                   <i className="h-[9px] w-[9px] shrink-0 rounded-full" style={{ background: v.color }} />
-                  <span className="translate-y-px truncate text-[14px] text-text">{label(v)}</span>
+                  <span className="truncate text-[14px] text-text">{label(v)}</span>
                 </div>
                 {browsed && (
                   <div className="flex shrink-0 items-center gap-[8px] rounded-[10px] bg-[rgba(5,1,15,.58)] px-[12px] py-[7px] backdrop-blur-[10px]">
-                    <span className="translate-y-px text-[13px] text-text-60">{t('wizard.fxv.example')}</span>
-                    <span className="translate-y-px text-[14px] text-text">{chip(browsed)}</span>
-                    <span className="translate-y-px text-[12px] text-text-40">{cursor + 1}/{options.length}</span>
-                    {browsed === selected && <span className="rounded-[6px] bg-accent px-[6px] py-[2px] text-[11px] text-white"><span className="inline-block translate-y-px">{t('wizard.fxv.picked')}</span></span>}
+                    <span className="text-[13px] text-text-60">{t('wizard.fxv.example')}</span>
+                    <span className="text-[14px] text-text">{chip(browsed)}</span>
+                    <span className="text-[12px] text-text-40">{cursor + 1}/{options.length}</span>
+                    {browsed === selected && <span className="rounded-[6px] bg-accent px-[6px] py-[2px] text-[11px] text-white"><span className="inline-block">{t('wizard.fxv.picked')}</span></span>}
                   </div>
                 )}
               </div>
@@ -614,8 +614,8 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
                     return (
                       <button key={s.key} type="button" role="tab" aria-selected={i === tab} onClick={() => lab.setTab(i)}
                         className={cn('flex min-w-0 flex-1 flex-col items-start gap-[2px] rounded-r10 px-[12px] py-[7px] text-left transition', i === tab ? 'bg-accent-20 shadow-[inset_0_0_0_1.5px_var(--accent-light)]' : 'bg-white/[0.06] hover:bg-white/[0.1]')}>
-                        <span className="translate-y-px text-[11px] uppercase tracking-[.06em] text-text-40">{t(STEP_NAME[s.key])}</span>
-                        <span className={cn('w-full translate-y-px truncate text-[15px]', filled ? 'text-text' : 'text-text-40')}>{value ? chip(value) : t('wizard.fxv.choose')}</span>
+                        <span className="text-[11px] uppercase tracking-[.06em] text-text-40">{t(STEP_NAME[s.key])}</span>
+                        <span className={cn('w-full truncate text-[15px]', filled ? 'text-text' : 'text-text-40')}>{value ? chip(value) : t('wizard.fxv.choose')}</span>
                       </button>
                     );
                   })}

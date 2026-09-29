@@ -449,7 +449,7 @@ export function SubtitleTimeline() {
             <button
               type="button"
               aria-label={t('wizard.subs.timeline.help')}
-              className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 pt-[2px] text-[18px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] max-md:h-[30px] max-md:w-[30px] max-md:text-[15px]"
+              className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 text-[18px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] max-md:h-[30px] max-md:w-[30px] max-md:text-[15px]"
             >
               ?
             </button>
@@ -466,7 +466,7 @@ export function SubtitleTimeline() {
             disabled={!asr.edited}
             aria-label={t('wizard.subs.timeline.reset')}
             title={t('wizard.subs.timeline.reset')}
-            className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 pt-[2px] text-[16px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-35"
+            className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 text-[16px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-35"
           >
             ✕
           </button>

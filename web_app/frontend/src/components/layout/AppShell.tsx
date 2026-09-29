@@ -84,7 +84,7 @@ function Avatar({ name, avatarUrl, className, onClick }: { name?: string; avatar
       {avatarUrl ? (
         <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover p-[2px]" />
       ) : (
-        <span className="translate-y-[2px] leading-none">{(name ?? 'B').slice(0, 1).toUpperCase()}</span>
+        <span className="leading-none">{(name ?? 'B').slice(0, 1).toUpperCase()}</span>
       )}
     </NavLink>
   );
@@ -143,7 +143,7 @@ function MobileHeader({ onOpen, userName, avatarUrl }: { onOpen: () => void; use
     <header className="flex items-center justify-between rounded-r15 border border-border bg-nav px-[20px] py-[12px] md:hidden">
       <NavLink to="/app" className="flex items-center gap-[8px]">
         <img src="/assets/figma/logo-star.svg" width="24" height="24" alt="Blast" />
-        <span className="translate-y-[1px] text-[15px] font-bold leading-none">Blast</span>
+        <span className="text-[15px] font-bold leading-none">Blast</span>
       </NavLink>
       <span className="flex items-center gap-[8px]">
         {/* личный кабинет: на десктопе это аватар в сайдбаре, на телефоне — тот же аватар у бургера */}

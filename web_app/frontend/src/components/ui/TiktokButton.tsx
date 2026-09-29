@@ -52,7 +52,7 @@ export function TiktokButton({
     >
       <FigIcon name="tt-logo.svg" h={size === 'sm' ? 16 : 25} />
       <span
-        className={cn('translate-y-px font-[400] leading-none text-transparent', size === 'sm' ? 'text-[14px]' : 'text-[24px]')}
+        className={cn('font-[400] leading-none text-transparent', size === 'sm' ? 'text-[14px]' : 'text-[24px]')}
         style={{
           backgroundImage: 'linear-gradient(184deg, rgba(246,245,253,0.8) 8.5%, rgba(246,245,253,0.64) 94.6%)',
           WebkitBackgroundClip: 'text',
