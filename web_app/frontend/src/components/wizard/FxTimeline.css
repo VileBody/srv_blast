@@ -14,7 +14,9 @@
   width: var(--app-layout-w, 100vw); height: var(--app-layout-h, 100dvh);
   background: var(--bg, #05010f); color: var(--text, #f6f5fd); font-size: 14px; line-height: 1.4;
 }
-.fxt button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+/* сброс кнопок — нулевой специфичности (:where), иначе он перебивал классы кнопок
+   (.fxt-back, .fxt-primary, переключатель вариантов…): пропадали фон и отступы */
+:where(.fxt) button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 .fxt button:focus-visible, .fxt [tabindex]:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
 .fxt svg { display: block; flex: none; }
 .fxt .num { font-variant-numeric: tabular-nums; }
@@ -22,17 +24,41 @@
 .fxt .tx { position: relative; top: 1px; }
 
 .fxt-top { display: flex; align-items: center; gap: 16px; padding-inline: 16px; border-bottom: 1px solid var(--fxt-line); }
-.fxt-back { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 12px 0 8px; border-radius: 12px; color: var(--fxt-t60); transition: color .15s ease, background-color .15s ease; }
+.fxt-back { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px 0 10px; border-radius: 12px; color: var(--fxt-t60); transition: color .15s ease, background-color .15s ease; }
 .fxt-back:hover { color: var(--text); background: var(--fxt-t06); }
 .fxt-proj { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
 .fxt-proj b { font-weight: 400; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fxt-proj span { font-size: 12px; color: var(--fxt-t40); white-space: nowrap; }
 .fxt-spacer { flex: 1; }
+/* переключатель вариантов (прототип): пилюля «● вариант ▾» + приклеенный справа «+»,
+   левый край «+» уходит под основную пилюлю. Не сжимается шапкой — длину держит подпись. */
+.fxt .fxt-vsw { position: relative; display: flex; align-items: center; flex: none; z-index: 30; }
+.fxt .fxt-vsw-main { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px 0 14px; border-radius: 12px; background: var(--fxt-raise); color: var(--text); font-size: 15px; box-shadow: inset 0 0 0 1px var(--fxt-line2); transition: box-shadow .15s ease, background-color .15s ease; }
+.fxt .fxt-vsw-main:hover { background: #231a3c; }
+.fxt .fxt-vsw-main[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--accent-light); }
+.fxt .fxt-vsw-main .lb { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fxt .fxt-vsw-main .chev { color: var(--fxt-t60); transition: transform .15s var(--fxt-ease); }
+.fxt .fxt-vsw-main[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.fxt .fxt-vsw i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.fxt .fxt-vsw-plus { position: relative; z-index: 1; display: grid; place-items: center; height: 40px; margin-left: -12px; padding: 0 14px 0 26px; border-radius: 0 12px 12px 0; background: var(--accent-20); color: var(--text); transition: background-color .15s ease; }
+.fxt .fxt-vsw-plus:hover { background: rgba(139, 111, 230, .36); }
+.fxt .fxt-vsw-menu { position: absolute; left: 0; top: 48px; width: 340px; padding: 8px; border-radius: 14px; background: var(--fxt-pop); border: 1px solid var(--fxt-line2); box-shadow: 0 18px 40px rgba(0, 0, 0, .5); display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.fxt .fxt-vsw-item { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; height: 42px; padding: 0 14px; border-radius: 10px; color: var(--fxt-t80); font-size: 15px; text-align: left; transition: background-color .12s ease, color .12s ease; }
+.fxt .fxt-vsw-item:hover { background: var(--fxt-t06); color: var(--text); }
+.fxt .fxt-vsw-item[aria-current="true"] { background: var(--fxt-raise); color: var(--text); }
+.fxt .fxt-vsw-item .lb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fxt .fxt-vsw-item .ck { color: var(--accent-light); flex: none; }
+.fxt .fxt-vsw-sep { height: 1px; margin: 4px 6px; background: var(--fxt-line); }
+.fxt .fxt-vsw-item.new { color: var(--fxt-t80); }
+.fxt .fxt-vsw-item.new .ic { display: grid; place-items: center; width: 22px; height: 22px; margin-left: -6px; border-radius: 7px; background: var(--accent-20); color: var(--text); flex: none; }
 .fxt-seg { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--fxt-well); border: 1px solid var(--fxt-line); }
 .fxt-seg button { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 9px; color: var(--fxt-t60); font-size: 13px; transition: color .15s ease, background-color .15s ease; }
 .fxt-seg button:hover { color: var(--text); }
 .fxt-seg button[aria-pressed="true"] { background: var(--accent); color: var(--text); }
 .fxt-seg button[aria-disabled="true"] { opacity: .32; cursor: not-allowed; }
+/* переключатель длины слоу-шаттера в панели выбранного — компактный, в одну строку */
+.fxt-sel .fxt-seg { flex: none; }
+.fxt-sel .fxt-seg button { height: 26px; padding: 0 9px; font-size: 12px; white-space: nowrap; }
 .fxt-ratio { border: 1.5px solid currentColor; border-radius: 2px; display: block; }
 .fxt-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--fxt-t60); transition: color .15s ease, background-color .15s ease, transform .12s var(--fxt-ease); }
 .fxt-icon:hover { color: var(--text); background: var(--fxt-t06); }
@@ -103,10 +129,27 @@
 .fxt-ov { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
 .fxt-flash { background: #fff; mix-blend-mode: screen; }
 .fxt-trflash { background: #fff; }
-.fxt-fx { position: absolute; inset: 0; pointer-events: none; }
-.fxt-subs { position: absolute; left: 8%; right: 8%; bottom: 17%; text-align: center; font-weight: 400; font-size: clamp(14px, 6.4cqw, 34px); line-height: 1.08; text-transform: uppercase; color: #fff; text-shadow: 0 2px 12px rgba(0, 0, 0, .55); pointer-events: none; text-wrap: balance; }
+/* Слой кадров — всегда свой стек (z-index: 0): z-index кадров (1–2) не должен
+   вылезать наружу. Без этого, пока не выбран стиль (filter: none), кадры
+   перекрывали пример эффекта, вспышку на дропе и субтитры. */
+.fxt-fx { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.fxt-demo { position: absolute; inset: 0; z-index: 4; background: #000; }
 .fxt-chip { position: absolute; left: 10px; top: 10px; padding: 5px 9px 3px; border-radius: 8px; background: rgba(8, 5, 20, .66); font-size: 11px; color: var(--fxt-t80); display: flex; align-items: center; gap: 6px; pointer-events: none; z-index: 5; }
-.fxt-chip.demo { left: auto; right: 10px; background: var(--accent); color: #fff; }
+/* пример эффекта: сверху что это и какой по счёту, по бокам листать, снизу — поставить */
+.fxt-demo-top { position: absolute; left: 10px; right: 10px; top: 10px; z-index: 2; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 4px 0 12px; border-radius: 11px; background: rgba(8, 5, 20, .66); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-size: 13px; color: var(--text); }
+.fxt-demo-top .nm { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fxt-demo-top .c { margin-left: auto; flex: none; font-size: 12px; color: var(--fxt-t60); }
+.fxt-demo-top .x { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; color: var(--fxt-t60); transition: color .15s ease, background-color .15s ease; }
+.fxt-demo-top .x:hover { color: var(--text); background: var(--fxt-t06); }
+.fxt-demo-nav { position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 44px; height: 44px; margin-top: -22px; border-radius: 50%; background: rgba(5, 1, 15, .58); color: var(--fxt-t80); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); transition: color .15s ease, transform .12s var(--fxt-ease); }
+.fxt-demo-nav:hover { color: var(--text); }
+.fxt-demo-nav:active { transform: scale(.94); }
+.fxt-demo-nav.l { left: 10px; }
+.fxt-demo-nav.r { right: 10px; }
+.fxt-demo-put { position: absolute; left: 50%; bottom: 14px; z-index: 2; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px 0 14px; border-radius: 12px; background: linear-gradient(135deg, #8b6fe6, #5f42b9); color: #fff; font-size: 14px; white-space: nowrap; box-shadow: 0 8px 22px rgba(5, 1, 15, .45); transform: translateX(-50%); transition: filter .15s ease; }
+.fxt-demo-put:hover { filter: brightness(1.1); }
+.fxt-demo-put:disabled { background: rgba(8, 5, 20, .66); color: var(--fxt-t60); box-shadow: none; cursor: default; filter: none; }
+.fxt-item.demo { border-color: var(--accent); background: var(--fxt-t06); }
 .fxt-play { position: absolute; left: 50%; top: 50%; z-index: 8; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: rgba(5, 1, 15, .6); color: var(--text); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); transform: translate(-50%, -50%); opacity: 0; transition: opacity .15s ease, filter .15s ease; }
 .fxt-play:hover { filter: brightness(1.25); }
 .fxt-stage:hover .fxt-play, .fxt-stage:focus-within .fxt-play { opacity: 1; }
@@ -165,6 +208,9 @@
 .fxt-clip.sb { height: 26px; background: rgba(246, 245, 253, .1); color: var(--fxt-t80); font-size: 12px; cursor: pointer; border-radius: 7px; transition: background-color .15s ease; }
 .fxt-clip.sb:hover { background: rgba(246, 245, 253, .16); }
 .fxt-clip.sb.cur { background: rgba(246, 245, 253, .2); color: var(--text); }
+/* слово на пилюлю, как на шаге «Текст»: узкие пилюли без внутренних отступов, фокус-слово — акцентом */
+.fxt-clip.sb { padding: 0 5px; }
+.fxt-clip.sb.focus { background: var(--accent-20); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent-light); }
 .fxt-clip.off { opacity: .35; }
 .fxt-clip .lab { overflow: hidden; text-overflow: ellipsis; }
 .fxt-edge { position: absolute; top: 0; bottom: 0; width: 10px; cursor: ew-resize; z-index: 2; }
@@ -174,7 +220,10 @@
 .fxt-clip:hover .fxt-edge::after, .fxt-clip.sel .fxt-edge::after { opacity: .7; }
 .fxt-clip.fr .fxt-edge::after { background: #fff; }
 .fxt-outlab { position: absolute; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--fxt-hook); white-space: nowrap; pointer-events: none; }
-.fxt-join { position: absolute; top: 50%; width: 24px; height: 24px; margin-left: -12px; margin-top: -12px; border-radius: 50%; display: grid; place-items: center; background: var(--fxt-well); color: var(--fxt-t80); box-shadow: 0 0 0 2px var(--fxt-well); z-index: 4; transition: box-shadow .15s ease, transform .12s var(--fxt-ease); }
+/* Стык: почти непрозрачная подложка + размытие под ней — кадры не просвечивают сквозь кружок. */
+.fxt-join { position: absolute; top: 50%; width: 24px; height: 24px; margin-left: -12px; margin-top: -12px; border-radius: 50%; display: grid; place-items: center; background: rgba(11, 7, 24, .88); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: var(--fxt-t80); box-shadow: 0 0 0 2px var(--fxt-well); z-index: 4; transition: box-shadow .15s ease, transform .12s var(--fxt-ease); }
+.fxt-join.none { color: var(--fxt-t60); }
+.fxt-join.none:hover { color: var(--text); }
 .fxt-join:hover { box-shadow: 0 0 0 2px var(--fxt-well), 0 0 0 3px var(--fxt-t40); }
 .fxt-join:active { transform: scale(.92); }
 .fxt-join.sel { box-shadow: 0 0 0 2px var(--fxt-well), 0 0 0 3.5px #fff; }
@@ -204,6 +253,23 @@
 .fxt-opt:hover { background: var(--fxt-t06); color: var(--text); }
 .fxt-opt[aria-pressed="true"] { background: var(--accent-20); color: var(--text); }
 .fxt-opt .ck { margin-left: auto; color: var(--accent-light); }
+.fxt-cutpop .mstage .mnone { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 0 42px; text-align: center; font-size: 12px; line-height: 1.3; color: var(--fxt-t60); background: var(--fxt-well); }
+.fxt-cutpop .mtop { position: absolute; left: 6px; right: 6px; top: 6px; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 8px 4px; border-radius: 8px; background: rgba(5, 1, 15, .62); backdrop-filter: blur(8px); font-size: 11.5px; }
+.fxt-cutpop .mtop .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.fxt-cutpop .mtop .c { flex: none; color: var(--fxt-t60); }
+.fxt-cutpop .mnav { position: absolute; top: 50%; display: grid; place-items: center; width: 30px; height: 30px; margin-top: -15px; border-radius: 50%; background: rgba(5, 1, 15, .62); color: var(--fxt-t80); backdrop-filter: blur(8px); transition: color .12s ease, transform .12s ease; }
+.fxt-cutpop .mnav:hover { color: var(--text); }
+.fxt-cutpop .mnav:active { transform: scale(.94); }
+.fxt-cutpop .mnav.l { left: 6px; }
+.fxt-cutpop .mnav.r { right: 6px; }
+.fxt-cutpop .mstate { position: absolute; left: 50%; bottom: 8px; display: inline-flex; align-items: center; gap: 5px; max-width: calc(100% - 12px); padding: 4px 9px 3px; border-radius: 8px; background: rgba(5, 1, 15, .62); backdrop-filter: blur(8px); font-size: 11px; color: var(--fxt-t60); white-space: nowrap; transform: translateX(-50%); transition: color .15s ease, background-color .15s ease; }
+.fxt-cutpop .mstate.on { color: var(--text); background: rgba(95, 66, 185, .78); }
+/* три строки на виду, остальное — скроллом (переходов станет больше) */
+.fxt-cutpop .opts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; max-height: 124px; overflow-y: auto; overscroll-behavior: contain; scroll-snap-type: y proximity; scrollbar-width: thin; scrollbar-color: var(--fxt-line2) transparent; }
+.fxt-cutpop .opts .fxt-opt { scroll-snap-align: start; min-width: 0; }
+.fxt-cutpop .opts .fxt-opt .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fxt-cutpop .opts .fxt-opt:focus-visible { outline-offset: -2px; }
+.fxt-cutpop .opts .fxt-opt.browsed { box-shadow: inset 0 0 0 1px var(--fxt-line2); color: var(--text); }
 .fxt-pop .foot { display: flex; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--fxt-line); }
 .fxt-pop .foot .fxt-pill { flex: 1; justify-content: center; }
 .fxt-tip { position: fixed; left: 0; top: 0; z-index: 80; max-width: 280px; padding: 6px 10px 4px; border-radius: 8px; background: var(--fxt-pop); border: 1px solid var(--fxt-line2); box-shadow: 0 10px 28px rgba(0, 0, 0, .4); font-size: 11.5px; line-height: 1.3; color: var(--fxt-t80); pointer-events: none; opacity: 0; transform: translateY(var(--ty, 3px)); transition: opacity .12s ease, transform .15s var(--fxt-ease); }

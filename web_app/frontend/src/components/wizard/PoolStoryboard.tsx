@@ -7,6 +7,8 @@ import { seedKeyFor, useRecipeCuts, useStoryboardBusy } from './storyboardData';
 import { usePlaybackUrl } from './useFragmentAudio';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
+import { useFxLab } from './FxLab';
+import { poolGuideId } from './SlicePanel';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { StoryboardGuideVisual, StoryboardReplaceGuideVisual } from './timelineGuides';
 import './PoolStoryboard.css';
@@ -186,7 +188,14 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
   });
 
   /* ── действия ── */
-  const seekShot = (k: number) => { tRef.current = bounds[k] + 0.001; setT(tRef.current); };
+  // Во время игры время ведёт звук (тик берёт его из audio.currentTime) — переход на
+  // кадр двигает и его, иначе следующий тик вернул бы кадр назад.
+  const seekTo = (v: number) => {
+    tRef.current = v; setT(v);
+    const audio = audioRef.current;
+    if (audio && recipe.window) { try { audio.currentTime = recipe.window.start + v; } catch { /* ещё не загрузился */ } }
+  };
+  const seekShot = (k: number) => seekTo(bounds[k] + 0.001);
   const step = (d: number) => { if (!shots || edit) return; seekShot((s + d + shots) % shots); };
   const allFiles = () => Object.values(storyboard.videos).flatMap((v) => v.clips.map((c) => c.fileName));
 
@@ -194,7 +203,7 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
     if (!video || !cuts) return;
     const k = s;
     setEdit({ k, orig: video, candidates: [], pos: -1, loading: true });
-    tRef.current = bounds[k] + 0.001; setT(tRef.current); setPlaying(true);
+    seekTo(bounds[k] + 0.001); setPlaying(true);
     try {
       const res = await api.storyboardAlternatives({ clipFrom: timingFrom, clipTo: timingTo, cuts, group: video.group, shot: k, seedKey: video.seedKey, exclude: allFiles(), limit: 20 });
       if (!res.candidates.length) { setEdit(null); return; }
@@ -210,7 +219,7 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
     if (pos === edit.pos) return;
     setEdit({ ...edit, pos });
     setStoryboardVideo(withClip(edit.orig, edit.k, edit.candidates[pos]));
-    tRef.current = bounds[edit.k] + 0.001; setT(tRef.current);
+    seekTo(bounds[edit.k] + 0.001);
   };
   const cancelEdit = () => { if (!edit) return; setStoryboardVideo(edit.orig); setEdit(null); };
   const doneEdit = () => {
@@ -276,14 +285,15 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
   const { t: tr } = useTranslation();
   const frameGuideRef = useRef<HTMLDivElement>(null);
   const dockGuideRef = useRef<HTMLDivElement>(null);
-  const distributeGuideDismissed = useGuideLiveDismissed('pool-distribute');
+  const fxLab = useFxLab();
+  const distributeGuideDismissed = useGuideLiveDismissed(poolGuideId('distribute', fxLab));
   const sbReady = Boolean(video && clip) && !edit && distributeGuideDismissed;
-  const [replaceGuideDismissed, setReplaceGuideDismissed] = useGuideDismiss('pool-replace', sbReady && pinned === 0, false);
-  const [frameGuideDismissed, setFrameGuideDismissed] = useGuideDismiss('pool-storyboard', false);
+  const [replaceGuideDismissed, setReplaceGuideDismissed] = useGuideDismiss(poolGuideId('replace', fxLab), sbReady && pinned === 0, false);
+  const [frameGuideDismissed, setFrameGuideDismissed] = useGuideDismiss(poolGuideId('storyboard', fxLab), false);
   const showFrameGuide = sbReady && !frameGuideDismissed;
   const showReplaceGuide = sbReady && frameGuideDismissed && !replaceGuideDismissed;
-  useMarkGuideSeen('pool-storyboard', showFrameGuide);
-  useMarkGuideSeen('pool-replace', showReplaceGuide);
+  useMarkGuideSeen(poolGuideId('storyboard', fxLab), showFrameGuide);
+  useMarkGuideSeen(poolGuideId('replace', fxLab), showReplaceGuide);
 
   // Ошибка склеек — первой: пока её нет, «Сгенерировать» ждёт, и причина должна быть видна у любого видео.
   const placeholder = !slot ? null

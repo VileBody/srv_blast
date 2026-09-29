@@ -6,10 +6,10 @@ import { HookConfig, HookKind, TimelinePace, TimelineStyleRange, useWizardStore 
 import { EFFECT_HOOKS, EffectPreview, MOTIONS, NO_GLUE, OBJECTS, THOUGHTS, previewIdFor } from './HookPanel';
 import { PACES, dropOrphanStyleLabels, useRecipeCuts } from './storyboardData';
 import { usePlaybackUrl } from './useFragmentAudio';
-import { Trans, useTranslation } from 'react-i18next';
+import { useTranslation } from 'react-i18next';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
-import { TimelineCutsGuideVisual, TimelineLibraryGuideVisual, TimelinePaceGuideVisual } from './timelineGuides';
+import { TimelineCutsGuideVisual, TimelineDoneGuideVisual, TimelineLibraryGuideVisual, TimelinePaceGuideVisual, TimelinePlayerGuideVisual, TimelineVariantsGuideVisual, TimelineWatchGuideVisual } from './timelineGuides';
 import './FxTimeline.css';
 
 /*
@@ -47,7 +47,7 @@ const P = (d: string, a = '') => `<path d="${d}" ${a}/>`;
 const FILL = 'fill="currentColor" stroke="none"';
 function star(n: number, r1: number, r2: number) { let d = ''; for (let k = 0; k < n * 2; k++) { const r = k % 2 ? r2 : r1; const a = Math.PI * k / n - Math.PI / 2; d += `${k ? 'L' : 'M'}${(12 + r * Math.cos(a)).toFixed(2)} ${(12 + r * Math.sin(a)).toFixed(2)}`; } return `${d}Z`; }
 const ICONS: Record<string, string> = {
-  back: P('M15 5l-7 7 7 7'), play: P('M6 3.5v13l11-6.5L6 3.5Z', FILL), pause: P('M6 4h3v12H6zM11 4h3v12h-3z', FILL),
+  back: P('M15 5l-7 7 7 7'), fwd: P('M9 5l7 7-7 7'), close: P('M6.5 6.5l11 11M17.5 6.5l-11 11'), play: P('M6 3.5v13l11-6.5L6 3.5Z', FILL), pause: P('M6 4h3v12H6zM11 4h3v12h-3z', FILL),
   undo: P('M9 7L4.5 11.5 9 16') + P('M5 11.5h9a5 5 0 0 1 0 10h-2'), redo: P('M15 7l4.5 4.5L15 16') + P('M19 11.5h-9a5 5 0 0 0 0 10h2'),
   magnet: P('M6 4v7a6 6 0 0 0 12 0V4') + P('M6 8h4M14 8h4') + P('M10 4v7a2 2 0 0 0 4 0V4'),
   minus: P('M6 12h12'), plus: P('M12 6v12M6 12h12'), check: P('M5 12.5l4.5 4.5L19 7.5'),
@@ -129,15 +129,24 @@ function hookLabel(kind: HookKind | undefined, config: HookConfig | undefined): 
 }
 
 /** Интервал хука на дорожке (секунды от начала отрывка) — как его ставит рендер. */
+/** Длительность хуков «Эффектов» — default_duration из mlcore/hooks/f3_effect/manifest.json. */
+const EFFECT_HOOK_SEC: Record<string, number> = { 'Молния': 0.63, 'Затвор': 0.6, 'Слоу-шаттер': 0.5, 'Негатив зум': 0.25 };
+
+/** Длина слоу-шаттера — ровно как в рендере (overlay.py `__f3_hookDur`): стандарт,
+ *  до 3-й склейки после дропа (если их меньше — до конца), до конца ролика. */
+type SlowExtend = '' | 'after_drop:3' | 'to_end';
+function slowShutterEnd(extend: SlowExtend, drop: number, dur: number, bounds: number[]): number {
+  const base = drop + EFFECT_HOOK_SEC['Слоу-шаттер'];
+  if (extend === 'to_end') return Math.max(base, dur);
+  if (extend === 'after_drop:3') { const after = bounds.slice(1, -1).filter((b) => b > drop + 1e-3); return Math.max(base, after.length >= 3 ? after[2] : dur); }
+  return Math.min(dur, base);
+}
+const SLOW_EXTENDS: [SlowExtend, string][] = [['', 'Стандарт'], ['after_drop:3', '3 кадра'], ['to_end', 'До конца']];
+
 function hookSpan(kind: HookKind, config: HookConfig, drop: number, dur: number, bpm: number, bounds: number[]): [number, number] | null {
   if (kind === 'effects') {
-    const extend = config.effectHookExtend;
-    if (config.effectHook === 'Слоу-шаттер') {
-      if (extend === 'to_end') return [drop, dur];
-      if (extend === 'after_drop:3') { const next = bounds.filter((b) => b > drop + 1e-3); return [drop, next[Math.min(2, next.length - 1)] ?? dur]; }
-      return [drop, Math.min(dur, drop + 1.2)];
-    }
-    return [drop, Math.min(dur, drop + 0.7)];
+    if (config.effectHook === 'Слоу-шаттер') return [drop, slowShutterEnd((config.effectHookExtend ?? '') as SlowExtend, drop, dur, bounds)];
+    return [drop, Math.min(dur, drop + (EFFECT_HOOK_SEC[config.effectHook ?? ''] ?? 0.6))];
   }
   if (kind === 'motion') {
     const [lead, fixed] = MOTION_LEAD[config.motion ?? ''] ?? [4.3, false];
@@ -213,16 +222,16 @@ function useTooltips(root: React.RefObject<HTMLElement | null>) {
 }
 
 /* ── библиотека (не зависит от времени — не перерисовывается каждый кадр) ── */
-const Library = memo(function Library({ tab, setTab, hooksOn, open, setOpen, used, activeHookKind, onDemo, onAdd, onDragStart }: {
+const Library = memo(function Library({ tab, setTab, hooksOn, open, setOpen, used, activeHookKind, demoKey, onDemo, onAdd, onDragStart }: {
   tab: LibKind; setTab: (tab: LibKind) => void; hooksOn: boolean; open: Record<string, boolean>; setOpen: (kind: string) => void;
-  used: (item: LibItem) => boolean; activeHookKind?: HookKind; onDemo: (item: LibItem) => void; onAdd: (item: LibItem) => void;
+  used: (item: LibItem) => boolean; activeHookKind?: HookKind; demoKey?: string; onDemo: (item: LibItem) => void; onAdd: (item: LibItem) => void;
   onDragStart: (item: LibItem, e: ReactPointerEvent) => void;
 }) {
   const effective = tab === 'hook' && !hooksOn ? 'trans' : tab;
   const row = (item: LibItem, disabled = false, meta?: string) => {
     const on = used(item);
     return (
-      <div key={`${item.kind}:${item.label}`} className={`fxt-item${on ? ' on' : ''}${disabled ? ' off' : ''}`} tabIndex={0}
+      <div key={`${item.kind}:${item.label}`} className={`fxt-item${on ? ' on' : ''}${disabled ? ' off' : ''}${demoKey === `${item.kind}:${item.label}` ? ' demo' : ''}`} tabIndex={0}
         onPointerDown={(e) => { if (!disabled && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
         onKeyDown={(e) => { if (e.key === 'Enter' && !disabled) onAdd(item); }}>
         <Ic label={item.label} kind={item.kind} on={on} />
@@ -285,7 +294,88 @@ function previewFor(item: LibItem): string | undefined {
   return undefined;
 }
 
-export function FxTimeline({ onClose }: { onClose: () => void }) {
+/** Все примеры раздела подряд — их листают стрелками прямо в превью. */
+const DEMO_LISTS: Record<LibKind, LibItem[]> = {
+  hook: HOOK_CATS.flatMap((c) => c.options.map((label): LibItem => ({ kind: 'hook', label, hookKind: c.kind }))).filter((i) => previewFor(i)),
+  trans: GLUES.map((label): LibItem => ({ kind: 'trans', label })).filter((i) => previewFor(i)),
+  style: STYLES.map((label): LibItem => ({ kind: 'style', label })).filter((i) => previewFor(i))
+};
+const KIND_LABEL: Record<LibKind, string> = { hook: 'Хук', trans: 'Переход', style: 'Стиль' };
+
+/* ── переход на склейке: мини-превью со стрелками + короткий список ──
+      Выбор сразу ложится на склейку и не закрывает окно — можно сравнить несколько.
+      Стрелки листают примеры; на котором человек остановился (DWELL), тот и встаёт. ── */
+const CUT_DWELL_MS = 650;
+function CutPopover({ index, current, left, bottom, onApply, onApplyAll }: {
+  index: number; current: string; left: number; bottom: number;
+  onApply: (label: string) => void; onApplyAll: (label: string) => void;
+}) {
+  const [shown, setShown] = useState(current);
+  const pending = useRef<string | null>(null);
+  const timer = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const flush = () => { window.clearTimeout(timer.current); if (pending.current !== null) { onApply(pending.current); pending.current = null; } };
+  // Другая склейка — начинаем с её перехода; незавершённый выбор прошлой успевает встать.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setShown(current); return flush; }, [index]);
+  const pick = (label: string) => { window.clearTimeout(timer.current); pending.current = null; setShown(label); if (label !== current) onApply(label); };
+  const browse = (dir: 1 | -1) => {
+    const i = GLUES.indexOf(shown);
+    const next = GLUES[(i + dir + GLUES.length) % GLUES.length];
+    // фокус-рамка кликнутой раньше строки уехала бы за край списка и торчала полоской
+    if (listRef.current?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+    setShown(next);
+    window.clearTimeout(timer.current);
+    pending.current = next;
+    timer.current = window.setTimeout(flush, CUT_DWELL_MS);
+  };
+  // ← → листают примеры, пока открыто окно (а не двигают playhead таймлайна).
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      browse(e.key === 'ArrowRight' ? 1 : -1);
+    };
+    window.addEventListener('keydown', key, true);
+    return () => window.removeEventListener('keydown', key, true);
+  });
+  // Список показывает три строки — листаемая строка всегда в виду.
+  useEffect(() => {
+    const list = listRef.current;
+    const row = list?.querySelector<HTMLElement>(`[data-glue="${CSS.escape(shown)}"]`);
+    if (!list || !row) return;
+    const top = row.offsetTop - list.offsetTop;
+    if (top < list.scrollTop) list.scrollTo({ top, behavior: 'smooth' });
+    else if (top + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTo({ top: top + row.offsetHeight - list.clientHeight, behavior: 'smooth' });
+  }, [shown]);
+  const idx = GLUES.indexOf(shown);
+  const settled = shown === current && pending.current === null;
+  return (
+    <div className="fxt-pop fxt-cutpop" role="dialog" aria-label={`Переход на склейке ${index + 1}`} style={{ left, bottom }} onPointerDown={(e) => e.stopPropagation()}>
+      <div className="mstage" style={{ width: 169, height: 300 }}>
+        {shown === NO_GLUE
+          ? <div className="mnone"><Glyph name="t_none" size={28} /><span className="tx">Жёсткая склейка — без эффекта</span></div>
+          : <EffectPreview key={shown} previewId={previewIdFor('effectGlue', shown)} />}
+        <div className="mtop"><span className="nm tx">{shown}</span><span className="c tx num">{idx + 1}/{GLUES.length}</span></div>
+        <button type="button" className="mnav l" aria-label="Предыдущий переход" data-tip="Предыдущий · ←" onClick={() => browse(-1)}><Glyph name="back" size={16} sw={2} /></button>
+        <button type="button" className="mnav r" aria-label="Следующий переход" data-tip="Следующий · →" onClick={() => browse(1)}><Glyph name="fwd" size={16} sw={2} /></button>
+        <span className={`mstate${settled ? ' on' : ''}`}>{settled && <Glyph name="check" size={12} sw={2} />}<span className="tx">{settled ? `На склейке ${index + 1}` : 'Пример'}</span></span>
+      </div>
+      <h3>Переход на склейке {index + 1}</h3>
+      <div ref={listRef} className="opts" role="listbox" aria-label="Переходы">
+        {GLUES.map((label) => (
+          <button key={label} type="button" role="option" data-glue={label} className={`fxt-opt${label === shown && label !== current ? ' browsed' : ''}`} aria-selected={label === current} aria-pressed={label === current} onClick={() => pick(label)}>
+            <Ic kind="trans" label={label} on={label === current} size={26} /><span className="tx">{label}</span>{label === current && <span className="ck"><Glyph name="check" size={16} sw={2} /></span>}
+          </button>
+        ))}
+      </div>
+      <div className="foot"><button type="button" className="fxt-pill" onClick={() => { flush(); onApplyAll(pending.current ?? shown); }}><span className="tx">Текущий ко всем склейкам</span></button></div>
+    </div>
+  );
+}
+
+/** tabs — необязательный элемент в шапке (прототип вариантов FX: переключатель вариантов). */
+export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: React.ReactNode }) {
   const rootRef = useRef<HTMLDivElement>(null);
   useTooltips(rootRef);
   const track = useWizardStore((s) => s.track);
@@ -342,16 +432,14 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
   const sampleClips = samplePick.data?.videos[0]?.clips ?? [];
 
   /* ── субтитры: слова примерки, сгруппированные в короткие фразы ── */
+  // Дорожка субтитров — ровно те же слова и тайминги, что на шаге «Текст» (с правками
+  // и фокус-словами), по пилюле на слово. Своих группировок нет: как слова соберутся в
+  // строки, решает выбранный стиль субтитров уже в рендере.
   const subs = useMemo(() => {
     const words = asr.status === 'COMPLETED' ? asr.words : [];
-    const out: { a: number; b: number; text: string }[] = [];
-    for (const w of words) {
-      const last = out[out.length - 1];
-      const a = w.tStart - start; const b = w.tEnd - start;
-      if (last && a - last.b < 0.3 && last.text.split(' ').length < 3) { last.b = b; last.text += ` ${w.text}`; }
-      else out.push({ a, b, text: w.text });
-    }
-    return out.filter((s) => s.b > 0 && s.a < dur);
+    return words
+      .map((w) => ({ a: w.tStart - start, b: w.tEnd - start, text: w.text, focus: Boolean(w.focus) }))
+      .filter((s) => s.b > 0 && s.a < dur);
   }, [asr, start, dur]);
 
   /* ── состояние экрана ── */
@@ -364,35 +452,22 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
   const [zoom, setZoom] = useState(1);
   const [snap, setSnap] = useState(true);
   const [vis, setVis] = useState({ hook: true, s0: true, s1: true, subs: true });
-  const [demo, setDemo] = useState<{ previewId: string; label: string } | null>(null);
+  // Пример эффекта в превью: пока он открыт, стрелки листают весь раздел, «Поставить» кладёт
+  // эффект на дорожку и возвращает превью к ролику.
+  const [demo, setDemo] = useState<LibItem | null>(null);
   const [pop, setPop] = useState<{ i: number; x: number; y: number } | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [keysOpen, setKeysOpen] = useState(false);
 
-  /* ── подсказки: библиотека → склейки → частота. Информационные (действия не ждут),
-        поэтому без idle-реактивации; показ отмечается по факту. Склейки и частота — только
-        когда склейки посчитаны, иначе указывать не на что. ── */
-  const { t: tr } = useTranslation();
-  const libGuideRef = useRef<HTMLElement | null>(null);
-  const cutsGuideRef = useRef<HTMLDivElement | null>(null);
-  const paceGuideRef = useRef<HTMLDivElement>(null);
-  const [paceGuideDismissed, setPaceGuideDismissed] = useGuideDismiss('timeline-pace', false);
-  const [cutsGuideDismissed, setCutsGuideDismissed] = useGuideDismiss('timeline-cuts', false);
-  const [libGuideDismissed, setLibGuideDismissed] = useGuideDismiss('timeline-library', false);
-  const cutsReady = !recipe.loading && !recipe.error && shots > 0;
-  const showLibGuide = !libGuideDismissed;
-  const showCutsGuide = libGuideDismissed && !cutsGuideDismissed && cutsReady;
-  const showPaceGuide = libGuideDismissed && cutsGuideDismissed && !paceGuideDismissed && cutsReady;
-  useMarkGuideSeen('timeline-library', showLibGuide);
-  useMarkGuideSeen('timeline-cuts', showCutsGuide);
-  useMarkGuideSeen('timeline-pace', showPaceGuide);
-  // Esc закрывает подсказку (её собственный обработчик) — таймлайн при этом закрываться не должен.
-  const guideOpenRef = useRef(false);
-  guideOpenRef.current = showLibGuide || showCutsGuide || showPaceGuide;
-  useLayoutEffect(() => { libGuideRef.current = rootRef.current?.querySelector('.fxt-lib') ?? null; });
   const toastTimer = useRef(0);
   const say = useCallback((msg: string) => { setToast(msg); window.clearTimeout(toastTimer.current); toastTimer.current = window.setTimeout(() => setToast(null), 2400); }, []);
-  const seek = useCallback((v: number) => { const x = clamp(v, 0, dur - 1 / FPS); tRef.current = x; setT(x); }, [dur]);
+  // Во время игры время ведёт звук (тик читает audio.currentTime) — перемотка двигает
+  // и его, иначе клик по кадру/линейке откатывался следующим же тиком.
+  const seek = useCallback((v: number) => {
+    const x = clamp(v, 0, dur - 1 / FPS); tRef.current = x; setT(x);
+    const audio = audioRef.current;
+    if (audio) { try { audio.currentTime = start + x; } catch { /* ещё не загрузился */ } }
+  }, [dur, start]);
 
   /* ── история рецепта ── */
   const past = useRef<Snapshot[]>([]);
@@ -493,6 +568,13 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
     say('На этом кадре уже два стиля — это максимум');
   };
   const setTransition = (i: number, label: string) => { remember(); setTimeline({ transitions: { ...timeline.transitions, [i]: label } }); };
+  // В окне склейки переходы перебирают подряд — в историю это одна правка на открытие окна.
+  const popEdited = useRef<number | null>(null);
+  const setCutTransition = (i: number, label: string) => {
+    if (popEdited.current !== i) { remember(); popEdited.current = i; }
+    const { transitions } = useWizardStore.getState().timeline;
+    setTimeline({ transitions: { ...transitions, [i]: label } });
+  };
   const setTransitionAll = (label: string) => {
     remember();
     setTimeline({ transitions: Object.fromEntries(cuts.map((_, i) => [i, label])) });
@@ -541,7 +623,7 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
   /* ── drag: склейки, стили, библиотека ── */
   const cvRef = useRef<HTMLDivElement>(null);
   const laneRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const drag = useRef<null | { kind: 'scrub' } | { kind: 'cut'; i: number; cuts: number[] } | { kind: 'sedge'; uid: number; side: 'l' | 'r' } | { kind: 'smove'; uid: number; grab: number } | { kind: 'hookbody'; x0: number; warned: boolean } | { kind: 'lib'; item: LibItem; x0: number; y0: number; live: boolean }>(null);
+  const drag = useRef<null | { kind: 'scrub' } | { kind: 'cut'; i: number; cuts: number[] } | { kind: 'sedge'; uid: number; side: 'l' | 'r' } | { kind: 'smove'; uid: number; grab: number } | { kind: 'hookbody'; x0: number; warned: boolean } | { kind: 'hookedge' } | { kind: 'lib'; item: LibItem; x0: number; y0: number; live: boolean }>(null);
   const [ghost, setGhost] = useState<{ item: LibItem; x: number; y: number } | null>(null);
   const [place, setPlace] = useState<PlaceTarget | null>(null);
   const [snapLine, setSnapLine] = useState<number | null>(null);
@@ -582,6 +664,15 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
         const next = [...d.cuts]; next[d.i] = Math.round(v * 1000) / 1000; d.cuts = next; setDragCuts(next);
         setSnapLine(r.snapped && v > lo && v < hi ? v : null); return;
       }
+      if (d.kind === 'hookedge') {
+        // Слоу-шаттер тянется только до длин, которые умеет рендер, — прилипаем к ближайшей.
+        if (drop === null) return;
+        const v = xt(cvX(e.clientX));
+        let best: SlowExtend = '';
+        for (const [opt] of SLOW_EXTENDS) if (Math.abs(slowShutterEnd(opt, drop, dur, bounds) - v) < Math.abs(slowShutterEnd(best, drop, dur, bounds) - v)) best = opt;
+        if (best !== (config.effectHookExtend ?? '')) setHooks({ config: { effectHookExtend: best } });
+        return;
+      }
       if (d.kind === 'hookbody') { if (!d.warned && Math.abs(e.clientX - d.x0) > 6) { d.warned = true; say('Хук привязан к дропу — сдвинуть его нельзя. Дроп выбирается на шаге FX'); } return; }
       if (d.kind === 'sedge') {
         const s = styles.find((x) => x.uid === d.uid); if (!s) return;
@@ -607,9 +698,10 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
       const d = drag.current; drag.current = null; setSnapLine(null);
       if (!d) return;
       if (d.kind === 'cut') { setDragCuts(null); setTimeline({ cuts: d.cuts.map((c) => c + start), edited: true }); return; }
+      if (d.kind === 'hookedge') { document.body.style.cursor = ''; say(`Слоу-шаттер: ${SLOW_EXTENDS.find(([o]) => o === (config.effectHookExtend ?? ''))?.[1].toLowerCase()}`); return; }
       if (d.kind === 'lib') {
         document.body.style.cursor = ''; setGhost(null); setPlace(null);
-        if (!d.live) return;
+        if (!d.live) { onDemo(d.item); return; }
         const target = libTarget(d.item, e.clientX, e.clientY); if (!target) return;
         if ('join' in target) { setTransition(target.join, d.item.label); setSel({ type: 'cut', i: target.join }); say(`Склейка ${target.join + 1}: ${d.item.label}`); return; }
         if (target.bad) return;
@@ -637,6 +729,7 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
       drag.current = edge ? { kind: 'sedge', uid, side: edge.dataset.side === 'l' ? 'l' : 'r' } : { kind: 'smove', uid, grab: frameAt(xt(cvX(e.clientX))) - (s?.a ?? 0) };
       e.preventDefault(); return;
     }
+    if (target.closest('[data-hookedge]')) { setSel({ type: 'hook' }); drag.current = { kind: 'hookedge' }; document.body.style.cursor = 'ew-resize'; e.preventDefault(); return; }
     if (target.closest('.fxt-clip.hk')) { setSel({ type: 'hook' }); drag.current = { kind: 'hookbody', x0: e.clientX, warned: false }; return; }
     const sb = target.closest<HTMLElement>('.fxt-clip.sb');
     if (sb) { const i = Number(sb.dataset.sub); setSel({ type: 'sub', i }); seek(subs[i].a + 0.02); return; }
@@ -645,6 +738,79 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
     setSel(null);
   };
 
+  /* ── тур по таймлайну (v3): по пути человека. Посмотреть, что собрано → выбрать эффект
+        (он играет в превью) → листать примеры и поставить → поменять переход на склейке →
+        темп → «Готово». Каждый шаг закрывается самим действием (кнопка «Дальше» — если
+        не хочется); шаг ждёт, пока его цель есть на экране и ничто её не перекрывает. ── */
+  const { t: tr } = useTranslation();
+  const libGuideRef = useRef<HTMLElement | null>(null);
+  const variantsGuideRef = useRef<HTMLElement | null>(null);
+  const stageGuideRef = useRef<HTMLDivElement>(null);
+  const cutsGuideRef = useRef<HTMLDivElement | null>(null);
+  const paceGuideRef = useRef<HTMLDivElement>(null);
+  const doneGuideRef = useRef<HTMLButtonElement>(null);
+  const tourDismiss = {
+    variants: useGuideDismiss('timeline3-variants', false),
+    watch: useGuideDismiss('timeline3-watch', false),
+    library: useGuideDismiss('timeline3-library', false),
+    player: useGuideDismiss('timeline3-player', false),
+    cuts: useGuideDismiss('timeline3-cuts', false),
+    pace: useGuideDismiss('timeline3-pace', false),
+    done: useGuideDismiss('timeline3-done', false)
+  };
+  type TourStep = keyof typeof tourDismiss;
+  const tour: TourStep[] = [...(tabs ? ['variants' as const] : []), 'watch', 'library', 'player', 'cuts', 'pace', 'done'];
+  const finishStep = (id: TourStep) => { if (!tourDismiss[id][0]) tourDismiss[id][1](true); };
+  const cutsReady = !recipe.loading && !recipe.error && shots > 0;
+  const tourNext = tour.find((id) => !tourDismiss[id][0]);
+  const stepReady = (id: TourStep) => {
+    if (ghost || pop || keysOpen) return false;
+    if (id === 'player') return Boolean(demo);
+    if (demo) return id === 'library';
+    return id === 'cuts' || id === 'pace' ? cutsReady : true;
+  };
+  const tourShown: TourStep | null = tourNext && stepReady(tourNext) ? tourNext : null;
+  useMarkGuideSeen('timeline3-variants', tourShown === 'variants');
+  useMarkGuideSeen('timeline3-watch', tourShown === 'watch');
+  useMarkGuideSeen('timeline3-library', tourShown === 'library');
+  useMarkGuideSeen('timeline3-player', tourShown === 'player');
+  useMarkGuideSeen('timeline3-cuts', tourShown === 'cuts');
+  useMarkGuideSeen('timeline3-pace', tourShown === 'pace');
+  useMarkGuideSeen('timeline3-done', tourShown === 'done');
+  // Действие и есть «понял»: запустил ролик, открыл пример, открыл переходы на склейке.
+  useEffect(() => { if (playing) finishStep('watch'); });
+  useEffect(() => { if (demo) finishStep('library'); });
+  useEffect(() => { if (pop) finishStep('cuts'); });
+  // Esc закрывает подсказку (её собственный обработчик) — таймлайн при этом закрываться не должен.
+  const guideOpenRef = useRef(false);
+  guideOpenRef.current = tourShown !== null;
+  useLayoutEffect(() => {
+    libGuideRef.current = rootRef.current?.querySelector('.fxt-lib') ?? null;
+    variantsGuideRef.current = rootRef.current?.querySelector('.fxt-vsw') ?? null;
+  });
+
+  /* ── пример эффекта в превью ── */
+  const closeDemo = () => { setDemo(null); finishStep('player'); };
+  const browseDemo = (dir: 1 | -1) => {
+    if (!demo) return;
+    const list = DEMO_LISTS[demo.kind];
+    const i = list.findIndex((x) => x.label === demo.label);
+    onDemo(list[(i + dir + list.length) % list.length]);
+  };
+  const placeDemo = () => { if (!demo) return; addFromLib(demo); closeDemo(); };
+  const openTourDemo = () => {
+    const kind: LibKind = tab === 'hook' && !hooksOn ? 'trans' : tab;
+    const list = DEMO_LISTS[kind];
+    onDemo(list.find((x) => kind === 'hook' && x.label === activeHookLabel) ?? list[0]);
+  };
+  const addAndBack = useCallback((item: LibItem) => { addFromLib(item); setDemo(null); }, [addFromLib]);
+  // Листаем стрелками — строка в библиотеке едет следом, чтобы было видно, где ты.
+  useEffect(() => { if (demo) rootRef.current?.querySelector('.fxt-item.demo')?.scrollIntoView({ block: 'nearest' }); }, [demo]);
+  const demoTarget = !demo ? ''
+    : demo.kind === 'hook' ? 'На дроп'
+      : demo.kind === 'trans' ? (sel?.type === 'cut' ? `На склейку ${sel.i + 1}` : 'На все склейки')
+        : `На кадр ${(sel?.type === 'frame' ? sel.i : fNow) + 1}`;
+
   /* ── клавиатура ── */
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -652,6 +818,11 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
       if (e.code === 'Space') { e.preventDefault(); if (document.activeElement instanceof HTMLButtonElement) document.activeElement.blur(); setDemo(null); setPlaying((p) => !p); return; }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') { e.preventDefault(); redo(); return; }
+      if (demo) {
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); browseDemo(e.key === 'ArrowRight' ? 1 : -1); return; }
+        if (e.key === 'Enter' && !(e.target as HTMLElement).closest?.('button, .fxt-item')) { e.preventDefault(); placeDemo(); return; }
+        if (e.key === 'Escape') { if (!guideOpenRef.current) closeDemo(); return; }
+      }
       if (e.key === 'Delete' || e.key === 'Backspace') { del(); return; }
       if (e.key === 'Escape') { if (guideOpenRef.current) return; if (pop) setPop(null); else if (sel) setSel(null); else onClose(); return; }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); seek(tRef.current + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 1 : 1 / FPS)); return; }
@@ -694,14 +865,13 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
     if (trAnim === 'flash') return { opacity: p > 0.25 ? 1 : 0 };
     return {};
   };
-  const curSub = vis.subs ? subs.find((s) => t >= s.a && t < s.b) : undefined;
 
   /* ── подписи выделения ── */
   const selInfo = () => {
     if (!sel) return <span className="muted">Выбери кадр, склейку или эффект на дорожке</span>;
     if (sel.type === 'frame') return <><Ic kind="frame" label="frames" size={24} /><span className="nm">Кадр {pad(sel.i + 1)}</span><span className="meta num">{tc(bounds[sel.i])} → {tc(bounds[sel.i + 1])} · {secs(bounds[sel.i + 1] - bounds[sel.i])}</span></>;
     if (sel.type === 'cut') { const label = transitionAt(sel.i); return <><Ic kind="trans" label={label} size={24} /><span className="nm">Склейка {sel.i + 1} → {sel.i + 2}</span><span className="meta">{label}</span><button type="button" className="fxt-pill" onClick={() => setTransitionAll(label)}><span className="tx">Ко всем склейкам</span></button></>; }
-    if (sel.type === 'hook' && hookRange && activeHookLabel) return <><Ic kind="hook" label={activeHookLabel} size={24} /><span className="nm">{activeHookLabel}</span><span className="meta num">{hookRange[1] <= (drop ?? 0) + 1e-3 ? 'заканчивается на дропе' : 'стартует с дропа'} · {secs(hookRange[1] - hookRange[0])}</span><button type="button" className="fxt-icon" aria-label="Снять хук" data-tip="Снять хук · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>;
+    if (sel.type === 'hook' && hookRange && activeHookLabel) return <><Ic kind="hook" label={activeHookLabel} size={24} /><span className="nm">{activeHookLabel}</span><span className="meta num">{hookRange[1] <= (drop ?? 0) + 1e-3 ? 'заканчивается на дропе' : 'стартует с дропа'} · {secs(hookRange[1] - hookRange[0])}</span>{kind === 'effects' && config.effectHook === 'Слоу-шаттер' && <div className="fxt-seg" role="group" aria-label="Длина слоу-шаттера">{SLOW_EXTENDS.map(([opt, lab]) => <button key={opt || 'std'} type="button" aria-pressed={(config.effectHookExtend ?? '') === opt} onClick={() => setHooks({ config: { effectHookExtend: opt } })}><span className="tx">{lab}</span></button>)}</div>}<button type="button" className="fxt-icon" aria-label="Снять хук" data-tip="Снять хук · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>;
     if (sel.type === 'style') { const s = styles.find((x) => x.uid === sel.uid); if (!s) return null; return <><Ic kind="style" label={s.style} size={24} /><span className="nm">{s.style}</span><span className="meta num">{s.b - s.a > 1 ? `кадры ${s.a + 1}–${s.b}` : `кадр ${s.a + 1}`} · {secs(bounds[s.b] - bounds[s.a])}</span><button type="button" className="fxt-pill" onClick={() => { if (styleFree(s.lane, 0, shots, s.uid)) { remember(); setStyles(styles.map((x) => x.uid === s.uid ? { ...x, a: 0, b: shots } : x)); } else say('На этой дорожке мешает другой стиль — перенеси его на «Стиль 2»'); }}><span className="tx">На весь отрывок</span></button><button type="button" className="fxt-icon" aria-label="Удалить" data-tip="Удалить · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>; }
     if (sel.type === 'sub') { const s = subs[sel.i]; return s ? <><Ic kind="trans" label="thought" size={24} /><span className="nm">«{s.text}»</span><span className="meta num">{tc(s.a)} → {tc(s.b)} · тайминг и стиль — на шаге «Текст»</span></> : null; }
     return null;
@@ -711,7 +881,12 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
   const paceTip = (pace: TimelinePace) => { const n = recipe.data?.cuts[pace].length; const label = { sparse: 'Реже', auto: 'Авто — как посчитал рендер по темпу', dense: 'Чаще' }[pace]; return n !== undefined ? `${label} · ${n + 1} ${kadr(n + 1)}` : label; };
   const used = useCallback((item: LibItem) => item.kind === 'hook' ? activeHookLabel === item.label : item.kind === 'style' ? styles.some((s) => s.style === item.label) : Object.values(timeline.transitions).includes(item.label) || (defaultGlue === item.label && item.label !== NO_GLUE), [activeHookLabel, styles, timeline.transitions, defaultGlue]);
   const toggleOpen = useCallback((k: string) => setOpenState((o) => ({ ...o, [k]: !o[k] })), []);
-  const onDemo = useCallback((item: LibItem) => { const id = previewFor(item); if (id) { setPlaying(false); setDemo({ previewId: id, label: item.label }); } }, []);
+  const onDemo = useCallback((item: LibItem) => {
+    if (!previewFor(item)) return;
+    setPlaying(false); setDemo(item);
+    const hk = item.hookKind;
+    if (hk) setOpenState((o) => (o[hk] ? o : { ...o, [hk]: true }));
+  }, []);
 
   /* ── линейка ── */
   const step = pps > 90 ? 0.25 : pps > 40 ? 0.5 : 1;
@@ -735,6 +910,7 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
       <header className="fxt-top">
         <button type="button" className="fxt-back" onClick={onClose}><Glyph name="back" size={18} /><span className="tx">FX</span></button>
         <div className="fxt-proj"><b className="tx">{track?.filename ?? 'Трек'}</b><span className="tx num">{windowLabel}</span></div>
+        {tabs}
         <div className="fxt-spacer" />
         <div className="fxt-seg" role="group" aria-label="Формат превью">
           {(['9:16', '16:9'] as const).map((f) => {
@@ -749,14 +925,14 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
         </div>
         <div className="fxt-spacer" />
         <button type="button" className="fxt-icon" aria-label="Горячие клавиши" data-tip="Горячие клавиши" onClick={() => setKeysOpen((v) => !v)}><Glyph name="keys" size={20} /></button>
-        <button type="button" className="fxt-primary" onClick={onClose}><span className="tx">Готово</span></button>
+        <button ref={doneGuideRef} type="button" className="fxt-primary" onClick={onClose}><span className="tx">Готово</span></button>
       </header>
 
       <main ref={mainRef} className="fxt-main">
-        <Library tab={tab} setTab={setTab} hooksOn={hooksOn} open={open} setOpen={toggleOpen} used={used} activeHookKind={kind} onDemo={onDemo} onAdd={addFromLib} onDragStart={onLibDragStart} />
+        <Library tab={tab} setTab={setTab} hooksOn={hooksOn} open={open} setOpen={toggleOpen} used={used} activeHookKind={kind} demoKey={demo ? `${demo.kind}:${demo.label}` : undefined} onDemo={onDemo} onAdd={addAndBack} onDragStart={onLibDragStart} />
 
         <section className="fxt-panel fxt-pv" aria-label="Превью">
-          <div className="fxt-stage" style={{ width: stageSize.w, height: stageSize.h }}>
+          <div ref={stageGuideRef} className="fxt-stage" style={{ width: stageSize.w, height: stageSize.h }}>
             <div className="fxt-fx" style={{ filter: styleFilter(activeStyles, t) }}>
               {Array.from({ length: shots }, (_, i) => {
                 const clip = sampleClips[i];
@@ -768,13 +944,30 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
             </div>
             <div className="fxt-ov fxt-flash" style={{ opacity: flash }} />
             <div className="fxt-ov fxt-trflash" style={{ opacity: trFlash }} />
-            {curSub && <div className="fxt-subs">{curSub.text}</div>}
-            {demo && <EffectPreview previewId={demo.previewId} />}
-            <div className="fxt-chip"><Glyph name="film" size={12} /><span className="tx">{sampleVibe ? `Пример кадра · вайб «${sampleVibe}»` : 'Кадры — условные примеры'}</span></div>
-            {demo && <div className="fxt-chip demo"><span className="tx">Пример · {demo.label}</span></div>}
-            <button type="button" className="fxt-play" aria-label={playing ? 'Пауза' : 'Воспроизвести'} aria-pressed={playing} onClick={() => { setDemo(null); setPlaying((v) => !v); }}>
+            {demo && (() => {
+              const list = DEMO_LISTS[demo.kind];
+              const idx = list.findIndex((x) => x.label === demo.label);
+              const inUse = demo.kind === 'hook' && activeHookLabel === demo.label;
+              return (
+                <div className="fxt-demo">
+                  <EffectPreview previewId={previewFor(demo)} />
+                  <div className="fxt-demo-top">
+                    <span className="nm tx">{KIND_LABEL[demo.kind]} · {demo.label}</span>
+                    <span className="c tx num">{idx + 1} / {list.length}</span>
+                    <button type="button" className="x" aria-label="Вернуться к ролику" data-tip="К ролику · Esc" onClick={closeDemo}><Glyph name="close" size={16} sw={1.8} /></button>
+                  </div>
+                  <button type="button" className="fxt-demo-nav l" aria-label="Предыдущий пример" data-tip="Предыдущий · ←" onClick={() => browseDemo(-1)}><Glyph name="back" size={20} sw={2} /></button>
+                  <button type="button" className="fxt-demo-nav r" aria-label="Следующий пример" data-tip="Следующий · →" onClick={() => browseDemo(1)}><Glyph name="fwd" size={20} sw={2} /></button>
+                  <button type="button" className="fxt-demo-put" disabled={inUse} onClick={placeDemo}>
+                    {inUse ? <Glyph name="check" size={16} sw={2} /> : <Glyph name="plus" size={16} sw={2} />}<span className="tx">{inUse ? 'Уже в ролике' : demoTarget}</span>
+                  </button>
+                </div>
+              );
+            })()}
+            {!demo && <div className="fxt-chip"><Glyph name="film" size={12} /><span className="tx">{sampleVibe ? `Пример кадра · вайб «${sampleVibe}»` : 'Кадры — условные примеры'}</span></div>}
+            {!demo && <button type="button" className="fxt-play" aria-label={playing ? 'Пауза' : 'Воспроизвести'} aria-pressed={playing} onClick={() => { setDemo(null); setPlaying((v) => !v); }}>
               {playing ? <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 4h3v12H6zM11 4h3v12h-3z" fill="currentColor" /></svg> : <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="currentColor" /></svg>}
-            </button>
+            </button>}
           </div>
         </section>
 
@@ -788,7 +981,7 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
               <span className="lbl">Склейки</span>
               <div className="fxt-seg" role="group" aria-label="Частота склеек">
                 {PACES.map((pace, k) => (
-                  <button key={pace} type="button" aria-pressed={recipe.pace === pace} aria-label={paceTip(pace)} data-tip={paceTip(pace)} onClick={() => { if (recipe.pace !== pace) { remember(); recipe.setPace(pace); setSel(null); } }}>
+                  <button key={pace} type="button" aria-pressed={recipe.pace === pace} aria-label={paceTip(pace)} data-tip={paceTip(pace)} onClick={() => { finishStep('pace'); if (recipe.pace !== pace) { remember(); recipe.setPace(pace); setSel(null); } }}>
                     <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true" dangerouslySetInnerHTML={{ __html: paceGlyph(k) }} />
                   </button>
                 ))}
@@ -835,9 +1028,9 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
                   {!recipe.loading && !recipe.error && cuts.map((c, i) => {
                     const label = transitionAt(i);
                     return (
-                      <button key={`j${i}`} type="button" className={`fxt-join${sel?.type === 'cut' && sel.i === i ? ' sel' : ''}${place && 'join' in place && place.join === i ? ' target' : ''}`} style={{ left: tx(c) }} aria-label={`Склейка ${i + 1}: ${label}`}
-                        onClick={(e) => { setSel({ type: 'cut', i }); seek(Math.max(0, c - 0.5)); const z = zoomScale(); const r = e.currentTarget.getBoundingClientRect(); setPop({ i, x: (r.left + r.width / 2) / z, y: r.top / z }); }}>
-                        {label === NO_GLUE ? <span className="fxt-ic k-trans" style={{ width: 24, height: 24 }}><Glyph name="plus" size={12} sw={2} /></span> : <Ic kind="trans" label={label} on size={24} />}
+                      <button key={`j${i}`} type="button" className={`fxt-join${label === NO_GLUE ? ' none' : ''}${sel?.type === 'cut' && sel.i === i ? ' sel' : ''}${place && 'join' in place && place.join === i ? ' target' : ''}`} style={{ left: tx(c) }} aria-label={`Склейка ${i + 1}: ${label}`}
+                        onClick={(e) => { setSel({ type: 'cut', i }); popEdited.current = null; seek(Math.max(0, c - 0.5)); const z = zoomScale(); const r = e.currentTarget.getBoundingClientRect(); setPop({ i, x: (r.left + r.width / 2) / z, y: r.top / z }); }}>
+                        {label === NO_GLUE ? <Glyph name="plus" size={12} sw={2} /> : <Ic kind="trans" label={label} on size={24} />}
                       </button>
                     );
                   })}
@@ -846,7 +1039,7 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
                   {!hooksOn
                     ? <><div className="fxt-lockz" /><span className="fxt-hint" style={{ left: X0 + 8 }}>Хуки в 16:9 пока не работают — выбранный хук останется в 9:16</span></>
                     : hookRange && activeHookLabel
-                      ? (() => { const x = tx(hookRange[0]); const w = Math.max(18, tx(hookRange[1]) - x); return <><div className={`fxt-clip hk${sel?.type === 'hook' ? ' sel' : ''}${vis.hook ? '' : ' off'}`} style={{ left: x, width: w }}><Glyph name="lock" size={11} sw={2} /><Glyph name={GLYPH[activeHookLabel]} size={13} />{w >= 80 && <span className="lab">{activeHookLabel}</span>}</div>{w < 80 && <span className="fxt-outlab" style={{ left: x + w + 8 }}>{activeHookLabel}</span>}</>; })()
+                      ? (() => { const x = tx(hookRange[0]); const w = Math.max(18, tx(hookRange[1]) - x); return <><div className={`fxt-clip hk${sel?.type === 'hook' ? ' sel' : ''}${vis.hook ? '' : ' off'}`} style={{ left: x, width: w }}><Glyph name="lock" size={11} sw={2} /><Glyph name={GLYPH[activeHookLabel]} size={13} />{w >= 80 && <span className="lab">{activeHookLabel}</span>}{config.effectHook === 'Слоу-шаттер' && kind === 'effects' && <i className="fxt-edge r" data-hookedge="r" data-tip="Тяни: стандарт · 3 кадра · до конца" />}</div>{w < 80 && <span className="fxt-outlab" style={{ left: x + w + 8 }}>{activeHookLabel}</span>}</>; })()
                       : <span className="fxt-hint" style={{ left: tx(drop ?? 0) + 10 }}>{drop === null ? 'Выбери дроп на шаге FX — хук встанет на него' : 'Хук встанет на дроп'}</span>}
                 </div>
                 {([0, 1] as const).map((L) => (
@@ -864,7 +1057,7 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
                 ))}
                 <div className="fxt-lane l-subs">
                   {!subs.length && <span className="fxt-hint" style={{ left: X0 + 8 }}>Субтитры появятся после примерки на шаге «Текст»</span>}
-                  {subs.map((s, i) => { const x = tx(Math.max(0, s.a)); const w = tx(Math.min(dur, s.b)) - x; return <div key={`s${i}`} className={`fxt-clip sb${sel?.type === 'sub' && sel.i === i ? ' sel' : ''}${t >= s.a && t < s.b ? ' cur' : ''}${vis.subs ? '' : ' off'}`} data-sub={i} style={{ left: x, width: w }} title={s.text}><span className="lab">{s.text}</span></div>; })}
+                  {subs.map((s, i) => { const x = tx(Math.max(0, s.a)); const w = tx(Math.min(dur, s.b)) - x; return <div key={`s${i}`} className={`fxt-clip sb${s.focus ? ' focus' : ''}${sel?.type === 'sub' && sel.i === i ? ' sel' : ''}${t >= s.a && t < s.b ? ' cur' : ''}${vis.subs ? '' : ' off'}`} data-sub={i} style={{ left: x + 1, width: Math.max(2, w - 2) }} title={s.focus ? `${s.text} · фокус-слово` : s.text}><span className="lab">{s.focus ? '★ ' : ''}{s.text}</span></div>; })}
                 </div>
                 <div className="fxt-lane l-audio">
                   {beats.map((b, k) => <i key={k} className={`fxt-beat${drop !== null && Math.round((b - drop) * (bpm || 120) / 60) % 4 === 0 ? ' down' : ''}`} style={{ left: tx(b) }} />)}
@@ -887,64 +1080,40 @@ export function FxTimeline({ onClose }: { onClose: () => void }) {
       {ghost && <div className="fxt-ghost" style={{ left: ghost.x, top: ghost.y }}><Ic kind={ghost.item.kind} label={ghost.item.label} on size={26} /><span className="tx">{ghost.item.label}</span></div>}
 
       {pop && (() => {
-        const cur = transitionAt(pop.i);
         const vw = window.innerWidth / zoomScale(); const vh = window.innerHeight / zoomScale();
-        const left = clamp(pop.x - 132, 8, vw - 272);
         return (
-          <div className="fxt-pop" role="dialog" aria-label={`Переход на склейке ${pop.i + 1}`} style={{ left, bottom: Math.max(8, vh - pop.y + 10) }} onPointerDown={(e) => e.stopPropagation()}>
-            <div className="mstage" style={{ width: 169, height: 300 }}>
-              <EffectPreview previewId={previewIdFor('effectGlue', cur)} />
-            </div>
-            <h3>Переход на склейке {pop.i + 1}</h3>
-            {GLUES.map((label) => (
-              <button key={label} type="button" className="fxt-opt" aria-pressed={label === cur} onClick={() => { setTransition(pop.i, label); setPop(null); }}>
-                <Ic kind="trans" label={label} on={label === cur} size={26} /><span className="tx">{label}</span>{label === cur && <span className="ck"><Glyph name="check" size={16} sw={2} /></span>}
-              </button>
-            ))}
-            <div className="foot"><button type="button" className="fxt-pill" onClick={() => { setTransitionAll(cur); setPop(null); }}><span className="tx">Текущий ко всем склейкам</span></button></div>
-          </div>
+          <CutPopover index={pop.i} current={transitionAt(pop.i)} left={clamp(pop.x - 132, 8, vw - 272)} bottom={Math.max(8, vh - pop.y + 10)}
+            onApply={(label) => setCutTransition(pop.i, label)} onApplyAll={(label) => { setTransitionAll(label); setPop(null); }} />
         );
       })()}
 
-      <ActionGuideOverlay
-        open={showLibGuide}
-        targetRef={libGuideRef}
-        title={tr('wizard.fxTimeline.guideLibraryTitle')}
-        text={<Trans i18nKey="wizard.fxTimeline.guideLibraryText" components={{
-          plus: <b className="font-[700] text-text" />,
-          play: <span className="relative -top-px inline-block text-[0.72em]" />
-        }} />}
-        dismissLabel={tr('wizard.fxTimeline.guideNext')}
-        progressLabel={tr('wizard.guideProgress', { current: 1, total: 3 })}
-        onDismiss={() => setLibGuideDismissed(true)}
-        variant="visual"
-        shell="track-top"
-        visual={<TimelineLibraryGuideVisual />}
-      />
-      <ActionGuideOverlay
-        open={showCutsGuide}
-        targetRef={cutsGuideRef}
-        title={tr('wizard.fxTimeline.guideCutsTitle')}
-        text={tr('wizard.fxTimeline.guideCutsText')}
-        dismissLabel={tr('wizard.fxTimeline.guideNext')}
-        progressLabel={tr('wizard.guideProgress', { current: 2, total: 3 })}
-        onDismiss={() => setCutsGuideDismissed(true)}
-        variant="visual"
-        shell="track-top"
-        visual={<TimelineCutsGuideVisual />}
-      />
-      <ActionGuideOverlay
-        open={showPaceGuide}
-        targetRef={paceGuideRef}
-        title={tr('wizard.fxTimeline.guidePaceTitle')}
-        text={tr('wizard.fxTimeline.guidePaceText')}
-        dismissLabel={tr('wizard.fxTimeline.guideDismiss')}
-        progressLabel={tr('wizard.guideProgress', { current: 3, total: 3 })}
-        onDismiss={() => setPaceGuideDismissed(true)}
-        variant="visual"
-        shell="track-top"
-        visual={<TimelinePaceGuideVisual />}
-      />
+      {tour.map((id, i) => {
+        const target = { variants: variantsGuideRef, watch: stageGuideRef, library: libGuideRef, player: stageGuideRef, cuts: cutsGuideRef, pace: paceGuideRef, done: doneGuideRef }[id];
+        const visual = {
+          variants: <TimelineVariantsGuideVisual />, watch: <TimelineWatchGuideVisual />, library: <TimelineLibraryGuideVisual />,
+          player: <TimelinePlayerGuideVisual />, cuts: <TimelineCutsGuideVisual />, pace: <TimelinePaceGuideVisual />, done: <TimelineDoneGuideVisual />
+        }[id];
+        const key = id[0].toUpperCase() + id.slice(1);
+        const last = i === tour.length - 1;
+        return (
+          <ActionGuideOverlay
+            key={id}
+            open={tourShown === id}
+            targetRef={target as React.RefObject<HTMLElement>}
+            title={tr(`wizard.fxTimeline.guide${key}Title`)}
+            text={tr(`wizard.fxTimeline.guide${key}Text`)}
+            dismissLabel={tr(last ? 'wizard.fxTimeline.guideDismiss' : 'wizard.fxTimeline.guideNext')}
+            progressLabel={tr('wizard.guideProgress', { current: i + 1, total: tour.length })}
+            // «Дальше» на выборе эффекта сам открывает пример (хук ролика или первый в разделе),
+            // иначе шаг 4 про плеер было бы не на чем показать и он выпадал. «Дальше» на плеере
+            // возвращает превью к ролику — шаги про склейки и темп ждут закрытого примера.
+            onDismiss={() => { finishStep(id); if (id === 'library' && !demo) openTourDemo(); if (id === 'player') setDemo(null); }}
+            variant="visual"
+            shell="track-top"
+            visual={visual}
+          />
+        );
+      })}
 
       {keysOpen && (
         <div className="fxt-pop" style={{ right: 16, top: 64, width: 280 }} onPointerDown={(e) => e.stopPropagation()}>

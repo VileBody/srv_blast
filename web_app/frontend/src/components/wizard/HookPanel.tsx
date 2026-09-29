@@ -17,6 +17,7 @@ import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 import { TimelineButtonGuideVisual, useFxTimelineOpen, useTimelineGuideAvailable } from './timelineGuides';
+import { fxLabGuideId, LabTypeList, useFxLab, useFxLabTourProgress } from './FxLab';
 
 // Таймлайн сам берёт каталоги эффектов отсюда — статический импорт дал бы цикл модулей.
 const FxTimeline = lazy(() => import('./FxTimeline').then((m) => ({ default: m.FxTimeline })));
@@ -28,7 +29,7 @@ const FxTimeline = lazy(() => import('./FxTimeline').then((m) => ({ default: m.F
  * настройка в рабочей зоне; «Эффекты» — шаги с подтверждением галочкой.
  */
 
-const HOOK_TYPES: { kind: HookKind; icon: string; iconW: number; iconH: number; hint: string }[] = [
+export const HOOK_TYPES: { kind: HookKind; icon: string; iconW: number; iconH: number; hint: string }[] = [
   { kind: 'none', icon: '/assets/figma/icon-bolt.svg', iconW: 15, iconH: 18, hint: 'wizard.fx.hintNoHook' },
   { kind: 'warmup', icon: '/assets/figma/hook-sound.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintSound' },
   { kind: 'object', icon: '/assets/figma/hook-object.svg', iconW: 18, iconH: 18, hint: 'wizard.fx.hintObject' },
@@ -233,11 +234,11 @@ export function SlowShutterExtendToggle({ config, onPick }: { config: HookConfig
   );
 }
 
-function selectedStyles(config: HookConfig): string[] {
+export function selectedStyles(config: HookConfig): string[] {
   return config.effectStyles?.length ? config.effectStyles : (config.effectStyle ? [config.effectStyle] : []);
 }
 
-function toggleStyle(config: HookConfig, option?: string): Partial<HookConfig> {
+export function toggleStyle(config: HookConfig, option?: string): Partial<HookConfig> {
   if (!option) return {};
   const current = selectedStyles(config);
   const next = current.includes(option) ? current.filter((style) => style !== option) : [...current, option];
@@ -270,7 +271,7 @@ export function previewIdFor(key: keyof HookConfig, value?: string): string | un
   return item ? `${prefix}__${item.manifestId}` : undefined;
 }
 
-function configuredPreviewId(kind: HookKind, config: HookConfig, active?: HookStep): string | undefined {
+export function configuredPreviewId(kind: HookKind, config: HookConfig, active?: HookStep): string | undefined {
   if (active) {
     const selected = previewIdFor(active.key, config[active.key] as string | undefined);
     if (selected) return selected;
@@ -405,14 +406,32 @@ export function StageHooks() {
   // (пусто/не пусто), теперь оба не гейтятся задачей и без явной
   // последовательности пересекаются. Показ отмечаем отдельно после
   // showTypeGuide (см. ниже), когда dropGuideDismissed уже посчитан.
-  const [typeGuideDismissed, setTypeGuideDismissed] = useGuideDismiss('hook-type', Boolean(hooks.dropTime) && !hooks.kind, false);
-  const [dropGuideDismissed, setDropGuideDismissed] = useGuideDismiss('hook-drop', !hooks.dropTime && !typeGuideDismissed, true);
+  // Режим вариантов FX (по умолчанию): тот же дроп и тип, но как шаги 1–2 его общего тура
+  // (свои id и нумерация — см. FX_LAB_TOUR).
+  const fxLab = useFxLab();
+  const labProgress = useFxLabTourProgress();
+  const typeGuideId = fxLab ? fxLabGuideId('type') : 'hook-type';
+  const dropGuideId = fxLab ? fxLabGuideId('drop') : 'hook-drop';
+  // Вариантов прототипа в hooks.kind нет — «тип ещё не выбран» там = ни одного варианта.
+  const labVariantCount = useWizardStore((state) => state.fxVariants.filter((v) => !v.draft).length);
+  const [typeGuideDismissed, setTypeGuideDismissed] = useGuideDismiss(typeGuideId, Boolean(hooks.dropTime) && (fxLab ? labVariantCount === 0 : !hooks.kind), false);
+  const [dropGuideDismissed, setDropGuideDismissed] = useGuideDismiss(dropGuideId, !hooks.dropTime && !typeGuideDismissed, true);
   const fxTimelineOpen = useFxTimelineOpen((state) => state.open);
   const showDropGuide = !dropGuideDismissed && !fxTimelineOpen;
   // Четвёртый шаг (кнопка «Таймлайн») есть только там, где есть сама кнопка.
   const hookGuideTotal = useTimelineGuideAvailable() ? 4 : 3;
   const showTypeGuide = Boolean(hooks.dropTime) && dropGuideDismissed && !typeGuideDismissed && !fxTimelineOpen;
-  useMarkGuideSeen('hook-type', Boolean(hooks.dropTime) && dropGuideDismissed);
+  useMarkGuideSeen(typeGuideId, Boolean(hooks.dropTime) && dropGuideDismissed);
+  // В прототипе шаг закрывается самим действием, как в туре таймлайна: выбрал дроп
+  // (сменил, а не пришёл с уже выбранным) — шаг 1 пройден; завёл первый вариант — шаг 2.
+  const prevDropRef = useRef(hooks.dropTime);
+  const prevVariantCountRef = useRef(labVariantCount);
+  useEffect(() => {
+    if (fxLab && showDropGuide && hooks.dropTime && hooks.dropTime !== prevDropRef.current) setDropGuideDismissed(true);
+    if (fxLab && showTypeGuide && labVariantCount > prevVariantCountRef.current) setTypeGuideDismissed(true);
+    prevDropRef.current = hooks.dropTime;
+    prevVariantCountRef.current = labVariantCount;
+  });
   useScrollGuideIntoView(showDropGuide, dropGuideTargetRef);
   useScrollGuideIntoView(showTypeGuide, typeGuideTargetRef);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
@@ -546,7 +565,7 @@ export function StageHooks() {
         title={t('wizard.fx.guideDropTitle')}
         text={t('wizard.fx.guideDropText')}
         dismissLabel={t('wizard.fx.guideNext')}
-        progressLabel={t('wizard.guideProgress', { current: 1, total: hookGuideTotal })}
+        progressLabel={fxLab ? labProgress('drop') : t('wizard.guideProgress', { current: 1, total: hookGuideTotal })}
         onDismiss={() => setDropGuideDismissed(true)}
         variant="visual"
         shell="track-top"
@@ -557,7 +576,7 @@ export function StageHooks() {
 
       {/* Список типов: строки 620×80, скролл уходит под градиентные фейды (Figma Rectangle 771/772) */}
       <div ref={typeGuideTargetRef} className="relative mt-[12px] min-h-0 flex-1 max-md:mt-[8px]">
-        <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px] max-md:gap-[10px] max-md:py-0" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
+        {fxLab ? <LabTypeList locked={!hooks.dropTime} /> : <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px] max-md:gap-[10px] max-md:py-0" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
           {HOOK_TYPES.map((item) => {
             const active = hooks.kind === item.kind;
             const configured = hookPills(hooks).some((pill) => pill.kind === item.kind);
@@ -605,7 +624,7 @@ export function StageHooks() {
               </button>
             );
           })}
-        </div>
+        </div>}
       </div>
 
       <ActionGuideOverlay
@@ -614,7 +633,7 @@ export function StageHooks() {
         title={t('wizard.fx.guideTypeTitle')}
         text={t('wizard.fx.guideTypeText')}
         dismissLabel={t('wizard.fx.guideNext')}
-        progressLabel={t('wizard.guideProgress', { current: 2, total: hookGuideTotal })}
+        progressLabel={fxLab ? labProgress('type') : t('wizard.guideProgress', { current: 2, total: hookGuideTotal })}
         onDismiss={() => setTypeGuideDismissed(true)}
         variant="visual"
         shell="track-top"
@@ -632,7 +651,7 @@ export function StageHooks() {
  * прозрачность, сквозь них виден реальный фон → всегда в тон, при любом фоне.
  * Слева фейд у 0; справа встаёт перед кнопкой подтверждения (`rightGap`).
  */
-function ChipRow({ options, value, values, onPick, rightGap = 0, edgePad = 0 }: {
+export function ChipRow({ options, value, values, onPick, rightGap = 0, edgePad = 0 }: {
   options: string[];
   value?: string;
   values?: string[];

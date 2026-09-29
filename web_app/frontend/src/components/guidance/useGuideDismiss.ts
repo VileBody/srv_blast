@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { readGuideRecord, writeGuideRecord } from './guideMemory';
 import { useGuideLiveStore } from './guideLiveState';
 import { api } from '../../lib/api';
+import { useModalCount } from '../ui/Modal';
 
 const IDLE_MS = 45_000;
 const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'scroll', 'touchstart', 'wheel'] as const;
@@ -57,12 +58,15 @@ const ACTIVITY_EVENTS = ['pointerdown', 'keydown', 'scroll', 'touchstart', 'whee
  */
 export function useMarkGuideSeen(id: string, shown: boolean) {
   const markedSeenRef = useRef(false);
+  // Под открытой модалкой подсказку не видно (ActionGuideOverlay её прячет) —
+  // «видел» засчитываем только когда модалку закрыли и подсказка реально показалась.
+  const modalOpen = useModalCount((s) => s.count > 0);
   useEffect(() => {
-    if (!shown || markedSeenRef.current) return;
+    if (!shown || modalOpen || markedSeenRef.current) return;
     markedSeenRef.current = true;
     writeGuideRecord(id, { seen: true });
     void api.trackEvent('wizard_guide_seen', { guideId: id }).catch(() => {});
-  }, [shown, id]);
+  }, [shown, modalOpen, id]);
 }
 
 export function useGuideDismiss(id: string, active: boolean, visible: boolean = active): [boolean, (value: boolean) => void] {
