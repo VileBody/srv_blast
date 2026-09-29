@@ -26,7 +26,11 @@
     var CAPS_TRACKING = -50;
     var LC_TRACKING = 0;
     var CAPS = { cap: "Н", accent: "ЙЁ", desc: "ДЩЦ", width: "СЪЕШЬ ЖЕ ЕЩЁ ЭТИХ МЯГКИХ ФРАНЦУЗСКИХ БУЛОК" };
-    var LC = { xh: "о", asc: "бй", desc: "дру", width: "съешь же ещё этих мягких французских булок" };
+    // xh — одно «о» (у скриптов бывает крошечной/приподнятой). body — МЕДИАНА по
+    // отдельным буквам высоты строчных: рамку целого слова раздувают соединительные
+    // штрихи, одну букву — её причуды; медиана устойчива к обоим.
+    var LC = { xh: "о", body: ["н", "а", "м", "е", "с", "о"], asc: "бй", desc: "дру", width: "съешь же ещё этих мягких французских булок" };
+    function median(a) { a = a.slice().sort(function (x, y) { return x - y; }); var n = a.length; return n % 2 ? a[(n - 1) / 2] : (a[n / 2 - 1] + a[n / 2]) / 2; }
 
     // Только в чистом проекте: пустой несохранённый ИЛИ наш сохранённый лаб-проект
     // без изменений (его закрытие ничего не теряет). В конце закрываем без
@@ -74,6 +78,12 @@
             var dsc = measure(ps, CAPS.desc, CAPS_TRACKING);
             var wid = measure(ps, CAPS.width, CAPS_TRACKING);
             var xh = measure(ps, LC.xh, LC_TRACKING);
+            var tops = [], bots = [];
+            for (var b = 0; b < LC.body.length; b++) {
+                var rb = measure(ps, LC.body[b], LC_TRACKING);
+                tops.push(-rb.top);
+                bots.push(rb.top + rb.height);
+            }
             var lasc = measure(ps, LC.asc, LC_TRACKING);
             var ldsc = measure(ps, LC.desc, LC_TRACKING);
             var lwid = measure(ps, LC.width, LC_TRACKING);
@@ -85,6 +95,9 @@
                 num("desc_bottom", dsc.top + dsc.height),
                 num("advance_per_char", wid.width / CAPS.width.length),
                 num("x_h", -xh.top),
+                num("x_bottom", xh.top + xh.height),              // низ «о» (обычно ≈0, у части скриптов — нет)
+                num("body_top", median(tops)),                    // медиана верха строчных н,а,м,е,с,о
+                num("body_bottom", median(bots)),                 // медиана низа (+ = под базовой)
                 num("lc_asc_top", -lasc.top),
                 num("lc_desc_bottom", ldsc.top + ldsc.height),
                 num("lc_advance_per_char", lwid.width / LC.width.length)

@@ -27,7 +27,7 @@ from app import scenes_3rd_reference_builder as jakson  # noqa: E402
 from app.project_builder import _tojson_filter  # noqa: E402
 from app.project_config import AE_PROJECT  # noqa: E402
 from app.render_plan import build_render_plan_v1  # noqa: E402
-from app.subtitle_font_layout import jakson_layout  # noqa: E402
+from app.subtitle_font_layout import is_pairable, jakson_layout  # noqa: E402
 from app.text_comp import build_text_layers  # noqa: E402
 from core.subtitles_mode import SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP as MODE  # noqa: E402
 
@@ -54,6 +54,8 @@ WORD_STEP = 0.45
 SCENE_GAP = 0.35
 LEAD_IN = 0.40
 SLOT = 6.4          # секунд на один основной шрифт
+# Самодостаточные (pairable=false: AKONY, Kudry) в пары не берём — на фронте блок акцентов скрыт.
+PAIR_BASES = [f for f in lab.MAIN_FONTS if is_pairable(f[2])]
 
 
 def _segments(t0: float, tag: str) -> List[Dict[str, Any]]:
@@ -82,13 +84,13 @@ def _accent_jsx(env: Environment, label: str, accent_ps: str, metrics: Path) -> 
     main_name, text_name, mine_name = f"Пара · {label}", f"Текст · пара {label}", f'Текст "Mine" · пара {label}'
     text_layers: List[Dict[str, Any]] = []
     markers = []
-    for i, (_group, base_label, base_ps, _focus) in enumerate(lab.MAIN_FONTS):
+    for i, (_group, base_label, base_ps, _focus) in enumerate(PAIR_BASES):
         t0 = i * SLOT
         layout = jakson_layout(base_ps, accent_font=accent_ps, path=metrics)
         jakson.apply_font_layout(layout)
         try:
             cfg = {"subtitles_mode": MODE, "subtitle_flow_plan": {
-                "mode": MODE, "clip": {"start": 0.0, "end": SLOT * len(lab.MAIN_FONTS)},
+                "mode": MODE, "clip": {"start": 0.0, "end": SLOT * len(PAIR_BASES)},
                 "segments": _segments(t0, f"{i}_")}}
             text_layers += build_text_layers(full_edit_config=cfg, text_comp_name=text_name, mine_comp_name=mine_name)
         finally:
@@ -97,7 +99,7 @@ def _accent_jsx(env: Environment, label: str, accent_ps: str, metrics: Path) -> 
         markers.append({"t": t0, "label": f"{base_label} + {label}",
                         "accent_pt": a.size, "shift": a.baseline_shift})
 
-    dur = SLOT * len(lab.MAIN_FONTS)
+    dur = SLOT * len(PAIR_BASES)
     lab.COMP_DUR = dur   # _comp/_text_precomp берут длительность отсюда
     comps = [lab._comp(AE_PROJECT["main_comp"], main_name, bg=lab.BG_GREY),
              lab._comp(AE_PROJECT["text_comp"], text_name), lab._comp(AE_PROJECT["mine_comp"], mine_name)]

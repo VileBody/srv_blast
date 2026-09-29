@@ -11,6 +11,9 @@
    "desc_bottom": 14.404,
    "advance_per_char": 61.206,
    "x_h": 50.0,
+   "x_bottom": 1.221,
+   "body_top": 50.0,
+   "body_bottom": 1.221,
    "lc_asc_top": 73.193,
    "lc_desc_bottom": 22.021,
    "lc_advance_per_char": 57.165
@@ -23,6 +26,9 @@
    "desc_bottom": 14.111,
    "advance_per_char": 62.155,
    "x_h": 50.977,
+   "x_bottom": 1.318,
+   "body_top": 50.977,
+   "body_bottom": 1.318,
    "lc_asc_top": 74.023,
    "lc_desc_bottom": 22.021,
    "lc_advance_per_char": 58.956
@@ -35,6 +41,9 @@
    "desc_bottom": 17.543,
    "advance_per_char": 61.546,
    "x_h": 55.256,
+   "x_bottom": 1.065,
+   "body_top": 55.256,
+   "body_bottom": 1.048,
    "lc_asc_top": 74.574,
    "lc_desc_bottom": 20.455,
    "lc_advance_per_char": 56.829
@@ -47,6 +56,9 @@
    "desc_bottom": 18.3,
    "advance_per_char": 61.667,
    "x_h": 53.1,
+   "x_bottom": 1.6,
+   "body_top": 53.1,
+   "body_bottom": 1.4,
    "lc_asc_top": 73.4,
    "lc_desc_bottom": 18.4,
    "lc_advance_per_char": 55.257
@@ -59,6 +71,9 @@
    "desc_bottom": 15.4,
    "advance_per_char": 64.631,
    "x_h": 54.0,
+   "x_bottom": 0.7,
+   "body_top": 54.0,
+   "body_bottom": 0.7,
    "lc_asc_top": 77.9,
    "lc_desc_bottom": 20.1,
    "lc_advance_per_char": 59.819
@@ -71,6 +86,9 @@
    "desc_bottom": 18.8,
    "advance_per_char": 51.998,
    "x_h": 50.8,
+   "x_bottom": 1.2,
+   "body_top": 50.8,
+   "body_bottom": 1.2,
    "lc_asc_top": 73.1,
    "lc_desc_bottom": 19.4,
    "lc_advance_per_char": 50.881
@@ -83,6 +101,9 @@
    "desc_bottom": 8.2,
    "advance_per_char": 48.821,
    "x_h": 48.4,
+   "x_bottom": 1.6,
+   "body_top": 48.4,
+   "body_bottom": 1.6,
    "lc_asc_top": 72.6,
    "lc_desc_bottom": 20.0,
    "lc_advance_per_char": 47.514
@@ -95,6 +116,9 @@
    "desc_bottom": 8.0,
    "advance_per_char": 126.467,
    "x_h": 71.0,
+   "x_bottom": 1.0,
+   "body_top": 70.0,
+   "body_bottom": 0.0,
    "lc_asc_top": 101.7,
    "lc_desc_bottom": 8.0,
    "lc_advance_per_char": 131.348
@@ -107,6 +131,9 @@
    "desc_bottom": 19.043,
    "advance_per_char": 57.674,
    "x_h": 46.045,
+   "x_bottom": 1.367,
+   "body_top": 46.045,
+   "body_bottom": 1.147,
    "lc_asc_top": 69.434,
    "lc_desc_bottom": 21.582,
    "lc_advance_per_char": 46.974
@@ -119,6 +146,9 @@
    "desc_bottom": 27.896,
    "advance_per_char": 58.863,
    "x_h": 49.649,
+   "x_bottom": 1.108,
+   "body_top": 49.649,
+   "body_bottom": 1.108,
    "lc_asc_top": 86.609,
    "lc_desc_bottom": 23.666,
    "lc_advance_per_char": 50.156
@@ -131,6 +161,9 @@
    "desc_bottom": 19.043,
    "advance_per_char": 57.674,
    "x_h": 46.045,
+   "x_bottom": 1.367,
+   "body_top": 46.045,
+   "body_bottom": 1.147,
    "lc_asc_top": 69.434,
    "lc_desc_bottom": 21.582,
    "lc_advance_per_char": 46.974
@@ -143,6 +176,9 @@
    "desc_bottom": 19.235,
    "advance_per_char": 64.718,
    "x_h": 82.278,
+   "x_bottom": 1.813,
+   "body_top": 79.962,
+   "body_bottom": 0.604,
    "lc_asc_top": 89.429,
    "lc_desc_bottom": 19.235,
    "lc_advance_per_char": 69.48
@@ -155,6 +191,9 @@
    "desc_bottom": 16.113,
    "advance_per_char": 46.153,
    "x_h": 71.805,
+   "x_bottom": 1.309,
+   "body_top": 71.15,
+   "body_bottom": 0.655,
    "lc_asc_top": 79.761,
    "lc_desc_bottom": 16.113,
    "lc_advance_per_char": 47.838
@@ -167,6 +206,9 @@
    "desc_bottom": 9.766,
    "advance_per_char": 59.504,
    "x_h": 50.049,
+   "x_bottom": 0.244,
+   "body_top": 50.073,
+   "body_bottom": 0.049,
    "lc_asc_top": 71.094,
    "lc_desc_bottom": 21.387,
    "lc_advance_per_char": 53.853
@@ -179,6 +221,9 @@
    "desc_bottom": 19.2,
    "advance_per_char": 56.507,
    "x_h": 48.0,
+   "x_bottom": 1.2,
+   "body_top": 47.4,
+   "body_bottom": 0.0,
    "lc_asc_top": 63.9,
    "lc_desc_bottom": 15.7,
    "lc_advance_per_char": 51.398
@@ -191,6 +236,9 @@
    "desc_bottom": 16.016,
    "advance_per_char": 58.156,
    "x_h": 62.207,
+   "x_bottom": 1.416,
+   "body_top": 61.035,
+   "body_bottom": 0.244,
    "lc_asc_top": 86.182,
    "lc_desc_bottom": 16.016,
    "lc_advance_per_char": 61.265
@@ -203,6 +251,9 @@
    "desc_bottom": 11.6,
    "advance_per_char": 48.24,
    "x_h": 34.0,
+   "x_bottom": 0.8,
+   "body_top": 34.2,
+   "body_bottom": 0.95,
    "lc_asc_top": 56.3,
    "lc_desc_bottom": 31.8,
    "lc_advance_per_char": 42.212
@@ -215,6 +266,9 @@
    "desc_bottom": 32.05,
    "advance_per_char": 50.976,
    "x_h": 30.356,
+   "x_bottom": 2.956,
+   "body_top": 30.555,
+   "body_bottom": 3.156,
    "lc_asc_top": 67.334,
    "lc_desc_bottom": 46.484,
    "lc_advance_per_char": 25.657
@@ -227,6 +281,9 @@
    "desc_bottom": 25.5,
    "advance_per_char": 98.019,
    "x_h": 32.5,
+   "x_bottom": 0.6,
+   "body_top": 32.4,
+   "body_bottom": 0.7,
    "lc_asc_top": 60.7,
    "lc_desc_bottom": 26.1,
    "lc_advance_per_char": 39.267
@@ -239,6 +296,9 @@
    "desc_bottom": 29.7,
    "advance_per_char": 73.269,
    "x_h": 27.8,
+   "x_bottom": 0.0,
+   "body_top": 27.8,
+   "body_bottom": 0.0,
    "lc_asc_top": 60.266,
    "lc_desc_bottom": 31.2,
    "lc_advance_per_char": 36.06
@@ -251,6 +311,9 @@
    "desc_bottom": 31.0,
    "advance_per_char": 74.771,
    "x_h": 20.1,
+   "x_bottom": 0.6,
+   "body_top": 20.05,
+   "body_bottom": 0.6,
    "lc_asc_top": 91.6,
    "lc_desc_bottom": 59.0,
    "lc_advance_per_char": 30.288
@@ -263,6 +326,9 @@
    "desc_bottom": 13.596,
    "advance_per_char": 85.876,
    "x_h": 19.839,
+   "x_bottom": -8.762,
+   "body_top": 19.789,
+   "body_bottom": -8.661,
    "lc_asc_top": 36.758,
    "lc_desc_bottom": 16.415,
    "lc_advance_per_char": 34.663
@@ -275,6 +341,9 @@
    "desc_bottom": 13.4,
    "advance_per_char": 36.245,
    "x_h": 39.1,
+   "x_bottom": -14.2,
+   "body_top": 38.4,
+   "body_bottom": -14.849,
    "lc_asc_top": 59.9,
    "lc_desc_bottom": 16.2,
    "lc_advance_per_char": 28.224
@@ -287,6 +356,9 @@
    "desc_bottom": 7.8,
    "advance_per_char": 20.771,
    "x_h": 42.133,
+   "x_bottom": 0.75,
+   "body_top": 42.033,
+   "body_bottom": 0.866,
    "lc_asc_top": 60.766,
    "lc_desc_bottom": 20.766,
    "lc_advance_per_char": 21.039
@@ -304,6 +376,9 @@
    "desc_bottom": 24.0,
    "advance_per_char": 91.469,
    "x_h": 30.466,
+   "x_bottom": 0.116,
+   "body_top": 30.216,
+   "body_bottom": 0.149,
    "lc_asc_top": 67.633,
    "lc_desc_bottom": 30.983,
    "lc_advance_per_char": 30.669
@@ -316,6 +391,9 @@
    "desc_bottom": 34.912,
    "advance_per_char": 78.651,
    "x_h": 38.916,
+   "x_bottom": -0.098,
+   "body_top": 39.404,
+   "body_bottom": 0.049,
    "lc_asc_top": 64.111,
    "lc_desc_bottom": 34.57,
    "lc_advance_per_char": 49.704

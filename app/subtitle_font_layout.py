@@ -44,9 +44,11 @@ from typing import Any, Dict, Optional
 
 METRICS_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_metrics.json"
 TUNING_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_tuning.json"
-_TUNING_KEYS = {"line_gap_mult", "accent_scale", "accent_baseline_shift", "note"}
-# Строчная «о» акцента = 85% высоты прописных основного (стартовая точка, см. лаб пар).
-ACCENT_X_H_RATIO = 0.85
+_TUNING_KEYS = {"line_gap_mult", "pairable", "accent_scale", "accent_baseline_shift", "accent_space_tracking", "note"}
+# Тело строчных акцента (ink «о») = высоте прописных основного и стоит по их
+# центру: акцент в балансе с капсом, росчерки уходят поверх соседнего текста.
+# (0.85 давало акцент заметно мельче и легче капса — смотр пар 2026-09-29.)
+ACCENT_X_H_RATIO = 1.0
 
 REFERENCE_FONT = "Point-SemiBold"
 
@@ -79,6 +81,9 @@ class FontMetrics:
     advance_per_char: float
     # строчные (акцентное слово пары; трекинг 0) — None, если не мерили
     x_h: Optional[float] = None
+    x_bottom: Optional[float] = None      # низ ink «о» под базовой линией (≈0; у части скриптов нет)
+    body_top: Optional[float] = None      # тело строчных: медиана верха букв н,а,м,е,с,о
+    body_bottom: Optional[float] = None   # тело строчных: низ (+ = под базовой)
     lc_asc_top: Optional[float] = None
     lc_desc_bottom: Optional[float] = None
     lc_advance_per_char: Optional[float] = None
@@ -87,7 +92,7 @@ class FontMetrics:
         return value * size / 100.0
 
     def require_lowercase(self) -> None:
-        if None in (self.x_h, self.lc_asc_top, self.lc_desc_bottom, self.lc_advance_per_char):
+        if None in (self.x_h, self.x_bottom, self.body_top, self.body_bottom, self.lc_asc_top, self.lc_desc_bottom, self.lc_advance_per_char):
             raise RuntimeError(f"no lowercase AE metrics for accent font {self.ps!r} — re-run measure_font_metrics.jsx")
 
 
@@ -113,7 +118,7 @@ def _load_metrics(path_str: str) -> Dict[str, FontMetrics]:
             advance_per_char=float(row["advance_per_char"]),
             **{
                 k: (float(row[k]) if row.get(k) is not None else None)
-                for k in ("x_h", "lc_asc_top", "lc_desc_bottom", "lc_advance_per_char")
+                for k in ("x_h", "x_bottom", "body_top", "body_bottom", "lc_asc_top", "lc_desc_bottom", "lc_advance_per_char")
             },
         )
     return out
@@ -144,10 +149,14 @@ class AccentLayout:
     """Акцентное слово пары: другой шрифт внутри строки основного.
 
     Основной шрифт — капсом, акцент — строчными (скрипты в капсе разваливаются).
-    Видимый размер: высота строчной «о» акцента = ACCENT_X_H_RATIO × высота
-    прописных основного (× ручной accent_scale). Трекинг 0 — рукописные буквы
-    соединяются, −50 их рвёт. Базовая линия общая, ручной сдвиг — в долях
-    прописных основного (плюс = вверх).
+    Размер: ink-высота тела строчных акцента (медиана по буквам н,а,м,е,с,о — рамку слова
+    раздувают соединительные штрихи, одна «о» у скриптов бывает крошечной) =
+    ACCENT_X_H_RATIO × высота прописных основного (× ручной accent_scale).
+    Сдвиг по вертикали: центр тела встаёт на центр прописных (+ ручной accent_baseline_shift в долях прописных, плюс = вверх).
+    Трекинг 0 — рукописные буквы соединяются, −50 их рвёт. Росчерки акцента НЕ
+    раздвигают строки: они ложатся поверх соседнего текста (глубина, а не ломка
+    композиции). Пробелы вокруг акцента — ручной трекинг (у скриптов бывают
+    большие отрицательные отступы, слово липнет к соседу).
     """
 
     font: str
@@ -157,6 +166,7 @@ class AccentLayout:
     asc_px: float              # чернила над базовой линией строки (с учётом сдвига)
     desc_px: float             # чернила под базовой линией строки (с учётом сдвига)
     advance_px: float
+    space_tracking: float      # трекинг пробелов до/после акцентного слова
 
 
 @dataclass(frozen=True)
@@ -187,33 +197,25 @@ class JaksonLayout:
     def leading_for(self, text: str, *, type1: bool, accent_word: Optional[str] = None) -> float:
         """Интервал для конкретного текста (строки разделены символом CR, как в AE).
 
-        Обычный зазор по Point; раздвигаем только при реальном риске касания:
-        выносная (Д/Ц/Щ или хвост акцентного слова) в строке i против
-        надстрочной (Й/Ё или росчерк акцентного слова) в строке i+1.
+        Обычный зазор по Point; раздвигаем только при реальном риске касания
+        букв основного шрифта: выносная Д/Ц/Щ в строке i против Й/Ё в строке i+1.
+        Акцентное слово (accent_word) из проверки исключается целиком: его
+        росчерки намеренно ложатся поверх соседних строк.
         """
         s1 = self.size_base
         s2 = self.size_line2 if type1 else self.size_base
         m = self.metrics
         cap_h2 = m.per_pt(m.cap_h, s2)
         plain = cap_h2 + (self.gap_type1 if type1 else self.gap_single) * self.cap_h_base
-        acc = self.accent if accent_word else None
         aw = (accent_word or "").lower()
-
-        def split(line: str):
-            words = line.split(" ")
-            has_acc = acc is not None and any(w.lower() == aw for w in words)
-            base = " ".join(w for w in words if not (acc is not None and w.lower() == aw)).upper()
-            return base, has_acc
-
-        lines = [split(ln) for ln in text.split("\r")]
+        lines = [
+            " ".join(w for w in ln.split(" ") if not (aw and w.lower() == aw)).upper()
+            for ln in text.split("\r")
+        ]
         leading = plain
-        for (a, a_acc), (b, b_acc) in zip(lines, lines[1:]):
+        for a, b in zip(lines, lines[1:]):
             bottom = m.per_pt(m.desc_bottom, s1) if DESC_CHARS & set(a) else 0.0
-            if a_acc:
-                bottom = max(bottom, acc.desc_px)
             top = m.per_pt(m.accent_top, s2) if ACCENT_CHARS & set(b) else cap_h2
-            if b_acc:
-                top = max(top, acc.asc_px)
             if bottom > 0.0 or top > cap_h2:
                 leading = max(leading, bottom + top + MIN_CLEARANCE_RATIO * self.cap_h_base)
         # ручная подстройка (subtitle_font_tuning.json): множитель видимого зазора
@@ -234,8 +236,10 @@ def accent_layout(accent_font: str, *, cap_h_base: float, path: Path = METRICS_P
     m = font_metrics(accent_font, path=path)
     m.require_lowercase()
     tune = font_tuning(accent_font, path=tuning_path)
-    size = ACCENT_X_H_RATIO * cap_h_base / (m.x_h / 100.0) * float(tune.get("accent_scale", 1.0))
-    shift = float(tune.get("accent_baseline_shift", 0.0)) * cap_h_base
+    body_ink = m.body_top + m.body_bottom          # ink-высота тела строчных на 100 pt
+    size = ACCENT_X_H_RATIO * cap_h_base / (body_ink / 100.0) * float(tune.get("accent_scale", 1.0))
+    body_center = m.per_pt(m.body_top - m.body_bottom, size) / 2.0   # центр тела над базовой линией
+    shift = cap_h_base / 2.0 - body_center + float(tune.get("accent_baseline_shift", 0.0)) * cap_h_base
     return AccentLayout(
         font=accent_font,
         size=round(size, 2),
@@ -244,11 +248,14 @@ def accent_layout(accent_font: str, *, cap_h_base: float, path: Path = METRICS_P
         asc_px=round(m.per_pt(m.lc_asc_top, size) + shift, 2),
         desc_px=round(max(0.0, m.per_pt(m.lc_desc_bottom, size) - shift), 2),
         advance_px=round(m.per_pt(m.lc_advance_per_char, size), 2),
+        space_tracking=float(tune.get("accent_space_tracking", 0.0)),
     )
 
 
 def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_font: Optional[str] = None,
                   path: Path = METRICS_PATH) -> JaksonLayout:
+    if accent_font:
+        check_pairable(font_base)
     ref = font_metrics(REFERENCE_FONT, path=path)
     base = font_metrics(font_base, path=path)
     focus = font_metrics(font_focus or font_base, path=path)
@@ -294,3 +301,14 @@ def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_fo
         line_gap_mult=float(font_tuning(font_base).get("line_gap_mult", 1.0)),
         accent=accent_layout(accent_font, cap_h_base=cap_h_base, path=path) if accent_font else None,
     )
+
+
+def is_pairable(font_base: str) -> bool:
+    """Самодостаточные основные (AKONY, Kudry): фронт не показывает блок акцентов."""
+    return font_tuning(font_base).get("pairable") is not False
+
+
+def check_pairable(font_base: str) -> None:
+    """Акцент к «непарному» шрифту — ошибка на границе, не молчаливая подмена."""
+    if not is_pairable(font_base):
+        raise RuntimeError(f"font {font_base!r} is not pairable with an accent font (subtitle_font_tuning.json)")

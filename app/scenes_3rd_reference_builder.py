@@ -531,8 +531,11 @@ def build_char_styles_accent(text: str, focus_word: str, accent: Any) -> List[Di
     """TYPE_2 с парой шрифтов: фокус-слово — акцентный шрифт/размер/трекинг/сдвиг."""
     styles = []
     char_i = 0
-    for w in text.replace("\r", " ").split(" "):
+    words = text.replace("\r", " ").split(" ")
+    for wi, w in enumerate(words):
         is_focus = w.upper() == focus_word.upper()
+        if is_focus and wi > 0 and text[char_i - 1] == " ":
+            styles.append({"i": char_i - 1, "tracking": accent.space_tracking})
         for _ch in w:
             entry: Dict = {"i": char_i, "font": RENDER["font_base"]}
             if is_focus:
@@ -544,7 +547,9 @@ def build_char_styles_accent(text: str, focus_word: str, accent: Any) -> List[Di
                 })
             styles.append(entry)
             char_i += 1
-        char_i += 1  # пробел
+        if is_focus and char_i < len(text) and text[char_i] == " ":
+            styles.append({"i": char_i, "tracking": accent.space_tracking})
+        char_i += 1  # пробел / \r
     return styles
 
 
