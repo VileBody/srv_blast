@@ -1159,5 +1159,28 @@
     "retrying": "Retrying…",
     "code": "Error code: {{code}}",
     "inlineRetry": "Refresh"
+  },
+  "trackUsage": {
+    "title": "Where your tracks went",
+    "explain": "A track is charged to your limit once — the first time you upload it. New clips from the same track don't use your track limit; their videos only use generations.",
+    "empty": "No tracks charged yet. Your first uploaded track will show up here.",
+    "spentAt": "Charged {{date}}",
+    "spent": "Charged",
+    "botTrack": "Track from the Telegram bot",
+    "botHint": "clips made in the bot aren't listed here",
+    "untitled": "Untitled track",
+    "noFragments": "No clips yet",
+    "wholeTrack": "Whole track",
+    "projectDeleted": "Project deleted",
+    "failed": "Generation failed",
+    "fragments_one": "{{count}} clip",
+    "fragments_other": "{{count}} clips",
+    "videos_one": "{{count}} video",
+    "videos_other": "{{count}} videos",
+    "inWork_one": "{{count}} video in progress",
+    "inWork_other": "{{count}} videos in progress",
+    "showAll": "Show all ({{count}})",
+    "showLess": "Show less",
+    "failedPart": "{{count}} failed"
   }
 }
