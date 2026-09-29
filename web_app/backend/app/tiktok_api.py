@@ -16,8 +16,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import http.client
 import json
 import secrets
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -181,10 +183,49 @@ def fetch_user_info(access_token: str) -> dict[str, Any]:
     return (payload.get("data") or {}).get("user") or {}
 
 
+class _SocksHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS поверх SOCKS5: TCP через прокси, TLS и проверка сертификата — как обычно, по имени хоста."""
+
+    def __init__(self, *args: Any, proxy: urllib.parse.ParseResult, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._proxy = proxy
+
+    def connect(self) -> None:
+        import socks  # PySocks; нужен только для публикации через SOCKS-прокси
+
+        sock = socks.create_connection(
+            (self.host, self.port),
+            timeout=self.timeout,
+            proxy_type=socks.SOCKS5,
+            proxy_addr=self._proxy.hostname,
+            proxy_port=self._proxy.port or 1080,
+            proxy_rdns=self._proxy.scheme == "socks5h",
+            proxy_username=urllib.parse.unquote(self._proxy.username or "") or None,
+            proxy_password=urllib.parse.unquote(self._proxy.password or "") or None,
+        )
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+class _SocksHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, proxy: str) -> None:
+        super().__init__()
+        self._proxy = urllib.parse.urlparse(proxy)
+
+    def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        return self.do_open(lambda host, **kw: _SocksHTTPSConnection(host, proxy=self._proxy, **kw), req)
+
+
 def _opener(proxy: str = "") -> urllib.request.OpenerDirector:
-    """Прокси только там, где его просят: у urllib глобальный opener подхватил бы HTTP(S)_PROXY."""
+    """Прокси только там, где его просят: у urllib глобальный opener подхватил бы HTTP(S)_PROXY.
+
+    http(s)://… — HTTP CONNECT, socks5://… и socks5h://… — SOCKS5 (h — имя резолвит прокси).
+    """
     if not proxy:
         return urllib.request.build_opener()
+    if proxy.startswith(("socks5://", "socks5h://")):
+        # Пустой ProxyHandler — чтобы переменные окружения не наложили поверх ещё и HTTP-прокси
+        return urllib.request.build_opener(urllib.request.ProxyHandler({}), _SocksHTTPSHandler(proxy))
     return urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
 
 

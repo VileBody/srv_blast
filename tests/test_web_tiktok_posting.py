@@ -168,14 +168,15 @@ def test_file_upload_chunk_count_rounds_down(monkeypatch: pytest.MonkeyPatch, si
     assert chunk_size <= last <= 128_000_000
 
 
-def test_publish_goes_through_the_shared_foreign_proxy_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_publish_goes_through_its_own_foreign_proxy_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     # TikTok не принимает загрузку с российских IP: без прокси публикация с сервера в Москве
-    # падает у TikTok с FAILED / internal
+    # падает у TikTok с FAILED / internal. Прокси LLM пускает только Google — у TikTok свой.
     monkeypatch.syspath_prepend(str(REPO_ROOT))
-    from src.outbound_proxy import OUTBOUND_PROXY_URL
+    from src.outbound_proxy import OUTBOUND_PROXY_URL, TIKTOK_PUBLISH_PROXY_URL
 
     monkeypatch.delenv("TIKTOK_PUBLISH_PROXY", raising=False)
-    assert _load_config(monkeypatch, "*").publish_proxy == OUTBOUND_PROXY_URL
+    assert _load_config(monkeypatch, "*").publish_proxy == TIKTOK_PUBLISH_PROXY_URL
+    assert TIKTOK_PUBLISH_PROXY_URL != OUTBOUND_PROXY_URL
     monkeypatch.setenv("TIKTOK_PUBLISH_PROXY", "direct")
     assert _load_config(monkeypatch, "*").publish_proxy == ""
     monkeypatch.setenv("TIKTOK_PUBLISH_PROXY", "http://proxy.example:8080")
@@ -187,6 +188,30 @@ def test_proxy_opener_is_scoped_to_the_request(monkeypatch: pytest.MonkeyPatch) 
     with_proxy = module._opener("http://proxy.example:8080")
     handlers = [h for h in with_proxy.handlers if h.__class__.__name__ == "ProxyHandler"]
     assert handlers and handlers[0].proxies == {"http": "http://proxy.example:8080", "https": "http://proxy.example:8080"}
+
+
+def test_socks_proxy_tunnels_https_and_keeps_env_proxies_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module(monkeypatch)
+    monkeypatch.setenv("HTTPS_PROXY", "http://env-proxy.example:3128")
+    opener = module._opener("socks5h://user:pa%40ss@socks.example:1080")
+    names = [h.__class__.__name__ for h in opener.handlers]
+    assert "_SocksHTTPSHandler" in names
+    # HTTPS_PROXY из окружения не должен наложиться поверх SOCKS
+    assert not [h for h in opener.handlers if getattr(h, "proxies", None)]
+
+    seen = {}
+
+    def fake_create_connection(address, **kwargs):
+        seen.update(address=address, **kwargs)
+        raise OSError("stop before the network")
+
+    import socks
+    monkeypatch.setattr(socks, "create_connection", fake_create_connection)
+    with pytest.raises(OSError):
+        opener.open("https://open.tiktokapis.com/v2/post/publish/status/fetch/", timeout=5)
+    assert seen["address"] == ("open.tiktokapis.com", 443)
+    assert (seen["proxy_addr"], seen["proxy_port"], seen["proxy_rdns"]) == ("socks.example", 1080, True)
+    assert (seen["proxy_username"], seen["proxy_password"]) == ("user", "pa@ss")
 
 
 def test_dead_publish_route_is_reported_as_ours_not_tiktoks(monkeypatch: pytest.MonkeyPatch) -> None:

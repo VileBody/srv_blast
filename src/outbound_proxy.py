@@ -11,3 +11,8 @@
 """
 
 OUTBOUND_PROXY_URL = "http://FazPoo:U6WHvC@45.153.20.238:10506"
+
+# Публикация в TikTok. Общий прокси выше пускает только адреса Google (по имени:
+# Gemini/google.com → 200, TikTok, ipify и любые IP → 502 «Host Not Found»), поэтому
+# у TikTok свой: индивидуальный IPv4 в США, протокол SOCKS5 (HTTP CONNECT он не держит).
+TIKTOK_PUBLISH_PROXY_URL = "socks5h://XuVcAy:5BSpFJ@23.236.155.186:8000"
