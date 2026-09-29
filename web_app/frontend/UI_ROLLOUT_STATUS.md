@@ -12,7 +12,7 @@
 |---|---|---|---|
 | `5946c04` | 0 | Токены шкалы в `tailwind.config.ts` / `index.css` (`text-ui-*`, `rounded-r6`, `h-ctl*`, `panel` / `field` / `accent-strong` / `line` / `scrim`…). Страж `npm run ui:check` (`scripts/check-ui.mjs`, долг по файлам в `scripts/ui-debt.json`) + шаг в CI. `UI_RULES.md`. Визуально ничего не меняет. | зелёный |
 | `d24f748` | 1 | Метрики Point (`ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%`) во всех 4 `@font-face` — текст по центру контролов на всём сайте. Сняты 64 ручные подгонки в 15 файлах. Экран TikTok переведён на общий шрифт. | зелёный |
-| `ddc5101` | 2 | Общие компоненты `src/components/ui/kit/`: `Button` / `ButtonLink`, `Segmented`, `Pager`, `SectionHeader`, `Surface` / `DropZone`, `Tag` / `Pill`, `ActionBar`, `TextField` / `Checkbox` / `Switch`, `Dialog`, `Icon` + `GLYPH`. Витрина `/dev/kit` (только dev-сборка, в прод-бандл не попадает). | на момент записи шёл |
+| `ddc5101` | 2 | Общие компоненты `src/components/ui/kit/`: `Button` / `ButtonLink`, `Segmented`, `Pager`, `SectionHeader`, `Surface` / `DropZone`, `Tag` / `Pill`, `ActionBar`, `TextField` / `Checkbox` / `Switch`, `Dialog`, `Icon` + `GLYPH`. Витрина `/dev/kit` (только dev-сборка, в прод-бандл не попадает). | зелёный |
 
 Экран выкладки в TikTok (PR #361) уже на проде, в эту ветку не входит.
 
