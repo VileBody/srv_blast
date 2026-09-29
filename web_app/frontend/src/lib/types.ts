@@ -194,6 +194,8 @@ export interface VideoVersion {
   /** проставляется бэком после успешной публикации в TikTok */
   postedAt?: string | null;
   tiktokStatus?: string | null;
+  /** id опубликованного поста — для ссылки «Открыть» (TikTok отдаёт его не всегда) */
+  tiktokPostIds?: string[] | null;
   metrics?: {
     view_count: number;
     like_count: number;
