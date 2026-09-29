@@ -53,6 +53,8 @@ class TiktokConfig:
     scopes: str
     upload_source: str
     allowed_user_ids: tuple[str, ...]
+    # Через что идёт публикация (init, загрузка файла, статус). Пусто — напрямую.
+    publish_proxy: str = ""
 
     @property
     def configured(self) -> bool:
@@ -76,6 +78,26 @@ class TiktokConfig:
         return bool(known & set(self.allowed_user_ids))
 
 
+def _publish_proxy() -> str:
+    """Прокси для публикации: TIKTOK_PUBLISH_PROXY, иначе общий зарубежный прокси проекта.
+
+    TikTok не принимает загрузку нового контента с российских IP, а сервер сайта в Москве:
+    публикация напрямую проходит init и загрузку, но падает у TikTok с `internal`. Поэтому
+    по умолчанию — тот же прокси, что у LLM (src/outbound_proxy.py). `direct` — без прокси,
+    для запуска вне России.
+    """
+    value = os.getenv("TIKTOK_PUBLISH_PROXY", "").strip()
+    if value.lower() == "direct":
+        return ""
+    if value:
+        return value
+    try:
+        from src.outbound_proxy import OUTBOUND_PROXY_URL
+    except ImportError as exc:  # образ собран без общего модуля — это ошибка сборки, не молчим
+        raise RuntimeError("tiktok_config: src/outbound_proxy.py is missing; set TIKTOK_PUBLISH_PROXY") from exc
+    return OUTBOUND_PROXY_URL
+
+
 def load() -> TiktokConfig:
     load_env()
     upload_source = os.getenv("TIKTOK_UPLOAD_SOURCE", "FILE_UPLOAD").strip().upper()
@@ -96,4 +118,5 @@ def load() -> TiktokConfig:
         scopes=os.getenv("TIKTOK_SCOPES", "user.info.basic,video.publish,video.list"),
         upload_source=upload_source,
         allowed_user_ids=allowed,
+        publish_proxy=_publish_proxy(),
     )
