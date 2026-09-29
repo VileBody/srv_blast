@@ -1697,14 +1697,11 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     bg["uploads"] = list(dict.fromkeys(item["id"] for item in sources))
     bg["sourceAssets"] = sources
     by_url = {item["s3Key"]: item for item in owned}
-    hooks = stage_data.get("hooks") or {}
-    configs = hooks.get("configs") or {}
-    selected_hook_families = render_job_builder.selected_hook_families(stage_data)
-    for family in ("sound", "warmup"):
-        if family not in selected_hook_families:
+    # Прогрев: файл должен принадлежать проекту, метаданные берём с сервера. В режиме
+    # вариантов FX прогревов может быть несколько (по одному на вариант).
+    for family, cfg in render_job_builder.selected_hook_configs(stage_data):
+        if family not in ("sound", "warmup"):
             continue
-        cfg = configs.get(family)
-        if not cfg: continue
         video = cfg.get("warmupKind") == "video"
         url = cfg.get("videoUrl" if video else "soundUrl")
         asset = by_url.get(url)
@@ -1729,13 +1726,18 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         if payload.videosToGenerate > credits_left:
             analytics.track("limit_hit", store.current_user_id(), {"limit": "videos", "left": credits_left})
             raise HTTPException(status_code=402, detail=f"Доступно {credits_left} генераций")
-    job = store.create_job(
-        project_id,
-        stage_data,
-        payload.videosToGenerate,
-        payload.idempotencyKey,
-        enqueue_mock=RUNTIME.backend == "mock",
-    )
+    try:
+        job = store.create_job(
+            project_id,
+            stage_data,
+            payload.videosToGenerate,
+            payload.idempotencyKey,
+            enqueue_mock=RUNTIME.backend == "mock",
+        )
+    except ValueError as exc:
+        # Раскладка батча не сошлась (пул, варианты FX, устаревшая раскадровка) — это
+        # ошибка вводных, которую человек может поправить, а не 500.
+        raise HTTPException(422, detail=str(exc)) from exc
     if RUNTIME.backend == "production":
         live_job = store.JOBS[job["id"]]
         try:

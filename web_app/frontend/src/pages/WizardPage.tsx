@@ -13,7 +13,7 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { backgroundVariations, BackgroundWorkZone, StageBackground, type BackgroundGuideGraphic } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
-import { hasTrackInput, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
+import { hasTrackInput, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { useStoryboardBusy } from '../components/wizard/storyboardData';
 import { LabWorkZone, useFxLab } from '../components/wizard/FxLab';
@@ -619,12 +619,21 @@ export function WizardPage() {
   const selectedHooks = hookPills(state.hooks);
   const selectedStyles = selectedEffectStyles(state.hooks);
   const hookTarget = compatibleHookTarget(state.background, state.allocation.background);
+  // Режим вариантов FX (?fxLab=1): хуки — это варианты (fxVariants), доли — allocation.variants.
+  // Классические hooks.configs/allocation.hooks/styles в этом режиме не участвуют.
+  const fxLab = useFxLab();
+  const labVariants = state.fxVariants.filter((v) => !v.draft);
+  const labVariantsComplete = labVariants.length > 0 && labVariants.every((v) => hookComplete(v.kind, v.config));
+  const labAllocSum = labVariants.reduce((sum, v) => sum + (state.allocation.variants?.[v.id] ?? 0), 0);
+  const fxAllocBalanced = fxLab
+    ? (labVariants.length === 0 ? labAllocSum === 0 : labAllocSum === hookTarget)
+    : (selectedHooks.length === 0 ? allocHooksSum === 0 : allocHooksSum === hookTarget)
+      && (selectedStyles.length === 0 ? allocStylesSum === 0 : allocStylesSum === hookTarget);
   const allocBalanced =
     state.allocation.total > 0 &&
     allocBgSum === state.allocation.total - fixedColorCount &&
     (state.subtitles.pool.length === 0 || allocSubsSum === state.allocation.total - fixedColorCount) &&
-    (selectedHooks.length === 0 ? allocHooksSum === 0 : allocHooksSum === hookTarget) &&
-    (selectedStyles.length === 0 ? allocStylesSum === 0 : allocStylesSum === hookTarget);
+    fxAllocBalanced;
   const safeVideosToGenerate = Math.max(1, state.allocation.total);
 
   // Трек и текст — обязательные вводные: без них рендерить lyric-video нечего.
@@ -671,16 +680,17 @@ export function WizardPage() {
   // «Продолжить» подсвечивается только при непустом выборе; кликабельность — отдельно
   // «Пул»: генерация ждёт раскадровку и склейки выбранного темпа (см. PoolStoryboard).
   const storyboardBusy = useStoryboardBusy((s) => s.busy);
-  // Прототип вариантов FX (?fxLab=1): рабочая зона и список типов из FxLab.tsx.
-  const fxLab = useFxLab();
   const ready = useMemo(() => {
     if (stage === 1) return trackReady && timingReady && !segmentInvalid && state.lyrics.trim().length > 0;
     if (stage === 2) return backgroundVariations(state.background) > 0;
+    // Варианты: все должны быть настроены (у недонастроенного на шаге FX метка «настроить»),
+    // дроп нужен, если хоть один вариант — не «Без хука».
+    if (stage === 3 && fxLab) return labVariantsComplete && (!labVariants.some((v) => v.kind !== 'none') || dropReady);
     if (stage === 3) return configuredHookCount > 0 && (!configuredHooksNeedDrop || dropReady);
     if (stage === 4) return state.subtitles.pool.length > 0;
     if (stage === 5) return allocBalanced && trackReady && !storyboardBusy;
     return false;
-  }, [storyboardBusy, allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.lyrics, state.subtitles.pool, timingReady, trackReady]);
+  }, [storyboardBusy, allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.lyrics, state.subtitles.pool, timingReady, trackReady, fxLab, labVariants, labVariantsComplete]);
 
   const canContinue = useMemo(() => {
     return ready;

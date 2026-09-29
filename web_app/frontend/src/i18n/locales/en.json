@@ -607,6 +607,9 @@
       "guideTotalText": "Raise the counter — the more videos, the wider the coverage of backgrounds, hooks and subtitles.",
       "guideDistributeTitle": "Distribute the videos",
       "guideDistributeText": "Set how many videos go to each background, hook and style — or press “Distribute”.",
+      "guideTotalTextVariants": "Raise the counter — more videos means more combinations of backgrounds, subtitles and FX variants.",
+      "guideDistributeTitleVariants": "Build the combinations",
+      "guideDistributeTextVariants": "Every video is a background, a subtitle style and an FX variant. Set how many videos each one gets, or press “Distribute”. The result is in “Combinations” on the right.",
       "guideNext": "Next",
       "guideDismiss": "Got it",
       "less": "Less",
@@ -625,6 +628,7 @@
       "bgNote": "Footage and photos for {{count}} videos",
       "subsNote": "For {{count}} videos",
       "fxNote": "For {{count}} videos with footage",
+      "fxNoVariants": "Set up at least one variant on the FX step",
       "stylesNote": "One per {{count}} footage videos",
       "parameter": "Parameter",
       "selectedValue": "Selected",
@@ -736,7 +740,7 @@
       "guideWatchTitle": "Watch what you already have",
       "guideWatchText": "Press ▶ on the preview or Space — the video plays with the track: shots, the hook on the drop, transitions and styles, just like the render.",
       "guidePlayerTitle": "Browse and add it",
-      "guidePlayerText": "Arrows ‹ › or ← → switch to the neighbouring effects. Like one? Press the button below: it lands on the lane and the preview goes back to your video.",
+      "guidePlayerText": "Arrows ‹ › switch to the neighbouring effects. Like one? Press the button below: it lands on the lane and the preview goes back to your video.",
       "guideDoneTitle": "Done — everything is saved",
       "guideDoneText": "Edits save on their own. Press «Done» to go back to FX — you can reopen the timeline any time."
     }

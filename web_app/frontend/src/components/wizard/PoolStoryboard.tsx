@@ -7,6 +7,8 @@ import { seedKeyFor, useRecipeCuts, useStoryboardBusy } from './storyboardData';
 import { usePlaybackUrl } from './useFragmentAudio';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
+import { useFxLab } from './FxLab';
+import { poolGuideId } from './SlicePanel';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { StoryboardGuideVisual, StoryboardReplaceGuideVisual } from './timelineGuides';
 import './PoolStoryboard.css';
@@ -283,14 +285,15 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
   const { t: tr } = useTranslation();
   const frameGuideRef = useRef<HTMLDivElement>(null);
   const dockGuideRef = useRef<HTMLDivElement>(null);
-  const distributeGuideDismissed = useGuideLiveDismissed('pool-distribute');
+  const fxLab = useFxLab();
+  const distributeGuideDismissed = useGuideLiveDismissed(poolGuideId('distribute', fxLab));
   const sbReady = Boolean(video && clip) && !edit && distributeGuideDismissed;
-  const [replaceGuideDismissed, setReplaceGuideDismissed] = useGuideDismiss('pool-replace', sbReady && pinned === 0, false);
-  const [frameGuideDismissed, setFrameGuideDismissed] = useGuideDismiss('pool-storyboard', false);
+  const [replaceGuideDismissed, setReplaceGuideDismissed] = useGuideDismiss(poolGuideId('replace', fxLab), sbReady && pinned === 0, false);
+  const [frameGuideDismissed, setFrameGuideDismissed] = useGuideDismiss(poolGuideId('storyboard', fxLab), false);
   const showFrameGuide = sbReady && !frameGuideDismissed;
   const showReplaceGuide = sbReady && frameGuideDismissed && !replaceGuideDismissed;
-  useMarkGuideSeen('pool-storyboard', showFrameGuide);
-  useMarkGuideSeen('pool-replace', showReplaceGuide);
+  useMarkGuideSeen(poolGuideId('storyboard', fxLab), showFrameGuide);
+  useMarkGuideSeen(poolGuideId('replace', fxLab), showReplaceGuide);
 
   // Ошибка склеек — первой: пока её нет, «Сгенерировать» ждёт, и причина должна быть видна у любого видео.
   const placeholder = !slot ? null

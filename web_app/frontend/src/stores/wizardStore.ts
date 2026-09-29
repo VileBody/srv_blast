@@ -149,8 +149,33 @@ export function recipeKeyOf(s: { track?: { id?: string | number } | null; timing
   return [s.track?.id ?? '', s.timingFrom, s.timingTo, drop].join('|');
 }
 
+/**
+ * Включён ли режим вариантов FX (прототип `?fxLab=1`, флаг липкий на вкладку — см. useFxLab).
+ * Нужен вне React: stageData собирается в сторе.
+ */
+export function fxVariantsMode(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const param = new URLSearchParams(window.location.search).get('fxLab');
+    if (param === '0') return false;
+    return param !== null || window.sessionStorage.getItem('fxLab') === '1';
+  } catch {
+    return false;
+  }
+}
+
 export const emptyTimeline = (): TimelineRecipe => ({ key: '', pace: 'auto', cuts: null, edited: false, transitions: {}, styles: [] });
 export const emptyStoryboard = (): StoryboardState => ({ key: '', videos: {} });
+
+/**
+ * Вариант FX (шаг FX в режиме вариантов): тип хука + его настройка (хук · склейка · ОДИН
+ * стиль). У одного типа может быть несколько вариантов — поэтому это отдельный список, а не
+ * hooks.configs[kind]. «Пул» раздаёт ролики по вариантам (allocation.variants), бэк
+ * разворачивает их в вариации рендера. recipe — переходы/стили варианта на таймлайне
+ * (склейки и темп общие на батч и живут в timeline); draft — создан из таймлайна, хук ещё
+ * не выбран: в пул и на бэк не идёт.
+ */
+export interface FxVariant { id: string; kind: HookKind; config: HookConfig; color: string; recipe?: TimelineRecipe; draft?: boolean }
 
 export interface WizardStateData {
   projectId?: string | null;
@@ -201,6 +226,8 @@ export interface WizardStateData {
     color: string;
     pool: string[];
   };
+  /** Варианты FX (режим вариантов шага FX); пусто — классический hooks.configs. */
+  fxVariants: FxVariant[];
   /** Этап «Пул»: распределение вариаций (Figma W19/W33) */
   allocation: {
     total: number;
@@ -208,6 +235,8 @@ export interface WizardStateData {
     subtitles: Record<string, number>;
     hooks: Record<string, number>;
     styles: Record<string, number>;
+    /** id варианта FX → число роликов (режим вариантов) */
+    variants: Record<string, number>;
     strobeFont?: string;
     colorFont?: string;
     seeded: boolean;
@@ -367,7 +396,8 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   background: { mode: 'footage', footage: [], footageType: DEFAULT_FOOTAGE_TYPE, uploads: [], sourceVideos: [], photo: [], photoEffects: false, photoStyle: undefined, color: undefined, strobe: false, glue: undefined },
   hooks: { dropTime: undefined, kind: undefined, configs: {} },
   subtitles: { color: '#f6f5fd', pool: [] },
-  allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, styles: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
+  fxVariants: [],
+  allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, styles: {}, variants: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
   asr: emptyAsr(),
   timeline: emptyTimeline(),
   storyboard: emptyStoryboard(),
@@ -518,6 +548,7 @@ export const useWizardStore = create<WizardStore>()(
           })(),
           hooks: migrateHooks({ ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) }),
           subtitles: { ...fresh.subtitles, ...((raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {}) },
+          fxVariants: Array.isArray(raw.fxVariants) ? (raw.fxVariants as FxVariant[]) : [],
           allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },
           timeline: { ...fresh.timeline, ...((raw.timeline as Partial<TimelineRecipe>) ?? {}) },
           asr: (() => {
@@ -547,9 +578,18 @@ export const useWizardStore = create<WizardStore>()(
             ? { from: state.timingFrom, to: state.timingTo }
             : { mode: state.timingMode },
           background: state.background,
-          hooks: state.hooks,
+          // Режим вариантов FX: хуки едут списком вариантов, а распределение — по их id.
+          // Классические hooks.configs/allocation.hooks/styles при этом пустые: иначе бэк
+          // развернул бы ещё и их (два источника одного и того же). Черновики (без хука)
+          // не едут — их не видно ни в пуле, ни в рендере.
+          ...(fxVariantsMode()
+            ? {
+              hooks: { dropTime: state.hooks.dropTime, configs: {} },
+              fxVariants: state.fxVariants.filter((v) => !v.draft).map(({ id, kind, config }) => ({ id, kind, config })),
+              allocation: { ...state.allocation, hooks: {}, styles: {} }
+            }
+            : { hooks: state.hooks, allocation: (({ variants: _variants, ...rest }) => rest)(state.allocation) }),
           subtitles: state.subtitles,
-          allocation: state.allocation,
           // Примерка субтитров: бэк сверит key со своими вводными и, если совпало,
           // отдаст правки в оркестратор и запустит рендер от этой ASR-джобы.
           asr: state.asr.jobId
@@ -577,7 +617,7 @@ export const useWizardStore = create<WizardStore>()(
           id: 'source-video-legacy', format: background.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...background.uploads]
         }];
         background.sourceVideos ??= [];
-        return { ...raw, background, timeline: { ...emptyTimeline(), ...(raw.timeline ?? {}) }, storyboard: raw.storyboard ?? emptyStoryboard(), hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {},
+        return { ...raw, background, fxVariants: Array.isArray(raw.fxVariants) ? raw.fxVariants : [], timeline: { ...emptyTimeline(), ...(raw.timeline ?? {}) }, storyboard: raw.storyboard ?? emptyStoryboard(), hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {}, variants: raw.allocation?.variants ?? {},
           hooks: Object.fromEntries(Object.entries(raw.allocation?.hooks ?? {}).map(([key, value]) => [key === 'sound' ? 'warmup' : key, value])) } };
       },
       partialize: (state) => ({
@@ -591,6 +631,7 @@ export const useWizardStore = create<WizardStore>()(
         timingTo: state.timingTo,
         background: state.background,
         hooks: state.hooks,
+        fxVariants: state.fxVariants,
         subtitles: state.subtitles,
         allocation: state.allocation,
         asr: state.asr,

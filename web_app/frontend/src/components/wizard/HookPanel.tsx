@@ -17,7 +17,7 @@ import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 import { TimelineButtonGuideVisual, useFxTimelineOpen, useTimelineGuideAvailable } from './timelineGuides';
-import { fxLabGuideId, LabTypeList, useFxLab, useFxLabStore, useFxLabTourProgress } from './FxLab';
+import { fxLabGuideId, LabTypeList, useFxLab, useFxLabTourProgress } from './FxLab';
 
 // Таймлайн сам берёт каталоги эффектов отсюда — статический импорт дал бы цикл модулей.
 const FxTimeline = lazy(() => import('./FxTimeline').then((m) => ({ default: m.FxTimeline })));
@@ -413,7 +413,7 @@ export function StageHooks() {
   const typeGuideId = fxLab ? fxLabGuideId('type') : 'hook-type';
   const dropGuideId = fxLab ? fxLabGuideId('drop') : 'hook-drop';
   // Вариантов прототипа в hooks.kind нет — «тип ещё не выбран» там = ни одного варианта.
-  const labVariantCount = useFxLabStore((state) => state.variants.length);
+  const labVariantCount = useWizardStore((state) => state.fxVariants.filter((v) => !v.draft).length);
   const [typeGuideDismissed, setTypeGuideDismissed] = useGuideDismiss(typeGuideId, Boolean(hooks.dropTime) && (fxLab ? labVariantCount === 0 : !hooks.kind), false);
   const [dropGuideDismissed, setDropGuideDismissed] = useGuideDismiss(dropGuideId, !hooks.dropTime && !typeGuideDismissed, true);
   const fxTimelineOpen = useFxTimelineOpen((state) => state.open);

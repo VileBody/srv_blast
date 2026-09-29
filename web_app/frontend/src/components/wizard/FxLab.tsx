@@ -9,7 +9,7 @@ import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { CatalogMedia } from './CatalogPreview';
 import { useDragScroll } from './BackgroundPanel';
 import { PillsFooter } from './WizardFrame';
-import { emptyTimeline, HOOK_LABELS, HookConfig, HookKind, hookComplete, TimelineRecipe, useWizardStore } from '../../stores/wizardStore';
+import { emptyTimeline, FxVariant, HOOK_LABELS, HookConfig, HookKind, hookComplete, TimelineRecipe, useWizardStore } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
@@ -52,7 +52,8 @@ export const useFxLab = () => {
   }
 };
 
-export interface LabVariant { id: string; kind: HookKind; config: HookConfig; color: string; recipe?: TimelineRecipe; draft?: boolean }
+/** Вариант живёт в сторе визарда (fxVariants): переживает перезагрузку и едет на бэк. */
+export type LabVariant = FxVariant;
 const PALETTE = ['#8b6fe6', '#e38fb5', '#6fc7c0', '#e8b45f', '#9fb5ff', '#b7e27a', '#ff9a7a', '#d6a1ff'];
 const STEP_NAME: Record<string, string> = {
   sound: 'Прогрев', object: 'Объект', effectHook: 'Эффект', motion: 'Движение', thought: 'Мысль',
@@ -61,12 +62,11 @@ const STEP_NAME: Record<string, string> = {
 
 type Snapshot = { hooks: ReturnType<typeof useWizardStore.getState>['hooks']; timeline: TimelineRecipe };
 
+/** Только состояние интерфейса; сами варианты и их доли — в сторе визарда. */
 interface LabState {
-  variants: LabVariant[];
   activeId: string | null;
   expanded: HookKind | null;
   tab: number;
-  counts: Record<string, number>;
   snapshot: Snapshot | null;
   select: (id: string) => void;
   toggleType: (kind: HookKind) => void;
@@ -83,8 +83,16 @@ interface LabState {
   endTimeline: () => void;
 }
 
-let seq = 0;
-const newId = () => `v${++seq}`;
+/** Id переживают перезагрузку (они ключи allocation.variants) — счётчик модуля тут не годится. */
+const newId = () => `v-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const variantsNow = () => useWizardStore.getState().fxVariants;
+const setVariants = (next: FxVariant[]) => useWizardStore.setState({ fxVariants: next });
+/** Первый свободный цвет палитры: после удаления варианта цвета не повторяются. */
+const nextColor = (list: FxVariant[]) => PALETTE.find((c) => !list.some((v) => v.color === c)) ?? PALETTE[list.length % PALETTE.length];
+const setCounts = (patch: (counts: Record<string, number>) => Record<string, number>) => {
+  const { allocation, setAllocation } = useWizardStore.getState();
+  setAllocation({ variants: patch(allocation.variants ?? {}) });
+};
 
 function stepFilled(step: HookStep, config: HookConfig): boolean {
   return step.key === 'effectStyle' ? selectedStyles(config).length > 0 : Boolean(config[step.key]);
@@ -95,12 +103,21 @@ function firstOpenTab(v?: LabVariant): number {
   return i < 0 ? 0 : i;
 }
 
+/* Склейки и темп — общие на батч (по ним собрана раскадровка «Пула» и считает рендер),
+   у варианта свои только переходы и стили таймлайна. */
+const BATCH_TIMELINE_KEYS = ['key', 'pace', 'cuts', 'edited'] as const;
+function withBatchCuts(recipe: TimelineRecipe, batch: TimelineRecipe): TimelineRecipe {
+  const out = { ...recipe };
+  for (const k of BATCH_TIMELINE_KEYS) (out as Record<string, unknown>)[k] = batch[k];
+  return out;
+}
+
 function loadIntoWizard(v: LabVariant) {
   const store = useWizardStore.getState();
   useWizardStore.setState({
     // черновой вариант (создан из таймлайна) ещё без хука — таймлайн откроется пустым
     hooks: { ...store.hooks, kind: v.draft ? undefined : v.kind, configs: v.draft ? {} : { [v.kind]: v.config } },
-    timeline: v.recipe ? { ...v.recipe } : { ...emptyTimeline(), pace: 'auto' }
+    timeline: withBatchCuts(v.recipe ?? { ...emptyTimeline(), pace: 'auto' }, store.timeline)
   });
 }
 function readFromWizard(v: LabVariant): LabVariant {
@@ -108,79 +125,118 @@ function readFromWizard(v: LabVariant): LabVariant {
   if (!hooks.kind) return { ...v, recipe: { ...timeline } };
   return { ...v, kind: hooks.kind, draft: false, config: { ...(hooks.configs[hooks.kind] ?? {}) }, recipe: { ...timeline } };
 }
-const mkDraft = (): LabVariant => ({ id: newId(), kind: 'none', config: {}, color: PALETTE[seq % PALETTE.length], draft: true });
+const mkDraft = (list: FxVariant[]): LabVariant => ({ id: newId(), kind: 'none', config: {}, color: nextColor(list), draft: true });
 
 export const useFxLabStore = create<LabState>((set, get) => ({
-  variants: [],
   activeId: null,
   expanded: null,
   tab: 0,
-  counts: {},
   snapshot: null,
-  select: (id) => set((s) => ({ activeId: id, expanded: s.variants.find((v) => v.id === id)?.kind ?? s.expanded, tab: firstOpenTab(s.variants.find((v) => v.id === id)) })),
+  select: (id) => set((s) => { const v = variantsNow().find((x) => x.id === id); return { activeId: id, expanded: v?.kind ?? s.expanded, tab: firstOpenTab(v) }; }),
   toggleType: (kind) => {
     const s = get();
     if (s.expanded === kind) { set({ expanded: null }); return; }
-    const first = s.variants.find((v) => v.kind === kind);
+    const first = variantsNow().find((v) => v.kind === kind && !v.draft);
     if (first) set({ expanded: kind, activeId: first.id, tab: firstOpenTab(first) });
     else get().add(kind);
   },
-  add: (kind, config = {}) => set((s) => {
-    const v = { id: newId(), kind, config, color: PALETTE[seq % PALETTE.length] };
-    return { variants: [...s.variants, v], activeId: v.id, expanded: kind, tab: firstOpenTab(v), counts: { ...s.counts, [v.id]: 1 } };
-  }),
+  add: (kind, config = {}) => {
+    const list = variantsNow();
+    const v: LabVariant = { id: newId(), kind, config, color: nextColor(list) };
+    setVariants([...list, v]);
+    setCounts((c) => ({ ...c, [v.id]: 1 }));
+    set({ activeId: v.id, expanded: kind, tab: firstOpenTab(v) });
+  },
   copyActive: () => {
-    const s = get();
-    const src = s.variants.find((v) => v.id === s.activeId);
+    const list = variantsNow();
+    const src = list.find((v) => v.id === get().activeId);
     if (!src) return;
     // Копия: тот же хук, склейка и темп; стиль — выбрать заново (в варианте он один).
     const config: HookConfig = { ...src.config, effectStyles: [], effectStyle: undefined };
-    const v: LabVariant = { id: newId(), kind: src.kind, config, color: PALETTE[seq % PALETTE.length], recipe: src.recipe ? { ...src.recipe, styles: [] } : undefined };
-    set({ variants: [...s.variants, v], activeId: v.id, expanded: v.kind, tab: hookSteps(v.kind).length - 1, counts: { ...s.counts, [v.id]: 1 } });
+    const v: LabVariant = { id: newId(), kind: src.kind, config, color: nextColor(list), recipe: src.recipe ? { ...src.recipe, styles: [] } : undefined };
+    setVariants([...list, v]);
+    setCounts((c) => ({ ...c, [v.id]: 1 }));
+    set({ activeId: v.id, expanded: v.kind, tab: hookSteps(v.kind).length - 1 });
   },
-  remove: (id) => set((s) => {
-    const variants = s.variants.filter((v) => v.id !== id);
+  remove: (id) => {
+    const s = get();
+    const variants = variantsNow().filter((v) => v.id !== id);
+    setVariants(variants);
+    setCounts(({ [id]: _gone, ...rest }) => rest);
     const activeId = s.activeId === id ? (variants.find((v) => v.kind === s.expanded) ?? variants[0])?.id ?? null : s.activeId;
-    const { [id]: _gone, ...counts } = s.counts;
-    return { variants, activeId, counts };
-  }),
-  patch: (patch) => set((s) => ({ variants: s.variants.map((v) => (v.id === s.activeId ? { ...v, config: { ...v.config, ...patch } } : v)) })),
+    set({ activeId });
+  },
+  patch: (patch) => { const id = get().activeId; setVariants(variantsNow().map((v) => (v.id === id ? { ...v, config: { ...v.config, ...patch } } : v))); },
   setTab: (tab) => set({ tab }),
-  setCount: (id, n) => set((s) => ({ counts: { ...s.counts, [id]: Math.max(0, n) } })),
+  setCount: (id, n) => setCounts((c) => ({ ...c, [id]: Math.max(0, n) })),
   beginTimeline: () => {
     const s = get();
-    let v = s.variants.find((x) => x.id === s.activeId);
+    let v = variantsNow().find((x) => x.id === s.activeId);
     // Таймлайн доступен всегда: без вариантов открываем черновой — он станет вариантом,
     // как только в таймлайне выберут хук (иначе при закрытии исчезнет).
-    if (!v) { v = mkDraft(); set({ variants: [...s.variants, v], activeId: v.id, counts: { ...s.counts, [v.id]: 1 } }); }
+    if (!v) { v = mkDraft(variantsNow()); setVariants([...variantsNow(), v]); setCounts((c) => ({ ...c, [v!.id]: 1 })); set({ activeId: v.id }); }
     const { hooks, timeline } = useWizardStore.getState();
     set({ snapshot: { hooks, timeline } });
     loadIntoWizard(v);
   },
   newInTimeline: () => {
     const s = get();
-    const variants = s.variants.map((x) => (x.id === s.activeId ? readFromWizard(x) : x));
-    const v = mkDraft();
-    set({ variants: [...variants, v], activeId: v.id, counts: { ...s.counts, [v.id]: 1 } });
+    const variants = variantsNow().map((x) => (x.id === s.activeId ? readFromWizard(x) : x));
+    const v = mkDraft(variants);
+    setVariants([...variants, v]);
+    setCounts((c) => ({ ...c, [v.id]: 1 }));
+    set({ activeId: v.id });
     loadIntoWizard(v);
   },
   switchTimeline: (id) => {
     const s = get();
-    const next = s.variants.find((x) => x.id === id);
+    const next = variantsNow().find((x) => x.id === id);
     if (!next || id === s.activeId) return;
-    const variants = s.variants.map((x) => (x.id === s.activeId ? readFromWizard(x) : x));
-    set({ variants, activeId: id, expanded: next.kind });
+    const variants = variantsNow().map((x) => (x.id === s.activeId ? readFromWizard(x) : x));
+    setVariants(variants);
+    set({ activeId: id, expanded: next.kind });
     loadIntoWizard(variants.find((x) => x.id === id)!);
   },
   endTimeline: () => {
     const s = get();
     // черновики, которым в таймлайне так и не выбрали хук, не остаются пустыми вариантами
-    const variants = s.variants.map((x) => (x.id === s.activeId ? readFromWizard(x) : x)).filter((x) => !x.draft);
+    const all = variantsNow().map((x) => (x.id === s.activeId ? readFromWizard(x) : x));
+    const variants = all.filter((x) => !x.draft);
+    const dropped = all.filter((x) => x.draft).map((x) => x.id);
+    setVariants(variants);
+    if (dropped.length) setCounts((c) => Object.fromEntries(Object.entries(c).filter(([k]) => !dropped.includes(k))));
     const active = variants.find((x) => x.id === s.activeId);
-    set({ variants, snapshot: null, activeId: active?.id ?? variants[0]?.id ?? null, expanded: active?.kind ?? s.expanded, tab: firstOpenTab(active) });
-    if (s.snapshot) useWizardStore.setState({ hooks: s.snapshot.hooks, timeline: s.snapshot.timeline });
+    set({ snapshot: null, activeId: active?.id ?? variants[0]?.id ?? null, expanded: active?.kind ?? s.expanded, tab: firstOpenTab(active) });
+    // Хуки визарда возвращаем как были; склейки и темп, выбранные на таймлайне, остаются —
+    // они общие на батч и нужны раскадровке «Пула» и рендеру.
+    if (s.snapshot) useWizardStore.setState((w) => ({ hooks: s.snapshot!.hooks, timeline: withBatchCuts(s.snapshot!.timeline, w.timeline) }));
   }
 }));
+
+/**
+ * Варианты для экрана: без черновиков, если таймлайн закрыт. Черновик мог остаться в
+ * черновике визарда, если вкладку закрыли с открытым таймлайном, — его убираем при входе.
+ */
+export function useLabVariants(): LabVariant[] {
+  return useWizardStore((s) => s.fxVariants);
+}
+export function useDropStaleDrafts() {
+  useEffect(() => {
+    if (useFxLabStore.getState().snapshot) return;
+    const list = variantsNow();
+    if (!list.some((v) => v.draft)) return;
+    const drafts = list.filter((v) => v.draft).map((v) => v.id);
+    setVariants(list.filter((v) => !v.draft));
+    setCounts((c) => Object.fromEntries(Object.entries(c).filter(([k]) => !drafts.includes(k))));
+  }, []);
+}
+
+/** Название хука варианта (для чипа «Комбинаций»): «Молния», «Свайп», «Без хука». */
+export function variantHookLabel(v: LabVariant, chip: (label: string) => string): string {
+  const c = v.config;
+  const hook = v.kind === 'none' ? HOOK_LABELS.none : (c.sound ?? c.object ?? c.effectHook ?? c.motion ?? c.thought);
+  return chip(hook ?? HOOK_LABELS[v.kind]);
+}
 
 /** Короткое описание варианта: хук · склейка · стиль. */
 export function useVariantLabel() {
@@ -273,12 +329,20 @@ export function LabTypeList({ locked }: { locked: boolean }) {
   const { t } = useTranslation();
   const chip = useChip();
   const lab = useFxLabStore();
+  const allVariants = useLabVariants();
   const label = useVariantLabel();
   const [hint, setHint] = useState<HookKind | null>(null);
+  useDropStaleDrafts();
+  // После перезагрузки варианты на месте, а выбор интерфейса — нет: открываем первый.
+  useEffect(() => {
+    if (lab.activeId && allVariants.some((v) => v.id === lab.activeId)) return;
+    const first = allVariants.find((v) => !v.draft);
+    if (first) lab.select(first.id);
+  }, [allVariants, lab]);
   const openRef = useRef<HTMLDivElement>(null);
 
   // Шаг «Варианты»: у раскрытого типа уже есть вариант, а подсказка про тип закрыта.
-  const hasOpen = Boolean(lab.expanded && lab.variants.some((v) => v.kind === lab.expanded));
+  const hasOpen = Boolean(lab.expanded && allVariants.some((v) => v.kind === lab.expanded && !v.draft));
   const typeDismissed = useGuideLiveDismissed(fxLabGuideId('type'));
   const progress = useFxLabTourProgress();
   const [variantsGuideDismissed, setVariantsGuideDismissed] = useGuideDismiss(fxLabGuideId('variants'), false);
@@ -289,7 +353,7 @@ export function LabTypeList({ locked }: { locked: boolean }) {
     <>
       <div className="no-scrollbar flex h-full flex-col gap-[14px] overflow-y-auto py-[16px]" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
         {HOOK_TYPES.map((item) => {
-          const variants = lab.variants.filter((v) => v.kind === item.kind);
+          const variants = allVariants.filter((v) => v.kind === item.kind && !v.draft);
           const open = lab.expanded === item.kind;
           const has = variants.length > 0;
           const isLocked = locked && item.kind !== 'none';
@@ -404,12 +468,13 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
   const { t } = useTranslation();
   const chip = useChip();
   const lab = useFxLabStore();
+  const allVariants = useLabVariants();
   const label = useVariantLabel();
   const pillsScroll = useDragScroll();
   const [timelineOpen, setTimelineOpen] = useState(false);
   const dockRef = useRef<HTMLDivElement>(null);
   const footRef = useRef<HTMLDivElement>(null);
-  const v = lab.variants.find((x) => x.id === lab.activeId);
+  const v = allVariants.find((x) => x.id === lab.activeId);
   const steps = v ? hookSteps(v.kind) : [];
   const tab = Math.min(lab.tab, Math.max(0, steps.length - 1));
   const step = steps[tab];
@@ -485,7 +550,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
         <div className="flex shrink-0 items-center justify-between gap-space-3">
           <h2 className="wizard-h whitespace-nowrap">{t('wizard.workZone')}</h2>
           <button ref={timelineButtonRef} type="button" onClick={openTimeline}
-            className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 disabled:opacity-40">
+            className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 disabled:opacity-40 max-md:hidden">
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true"><path d="M2 5h16M2 10h16M2 15h16M6 3v4m5 1v4m4 1v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
             <span className="translate-y-px">{t('wizard.fx.timeline')}</span>
           </button>
@@ -566,7 +631,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
 
       <div ref={footRef}>
         <PillsFooter
-          pills={lab.variants.map((x) => ({
+          pills={allVariants.filter((x) => !x.draft).map((x) => ({
             key: x.id,
             label: label(x),
             icon: <SvgMaskIcon src={iconOf(x.kind).icon} style={{ width: 13, height: 15, color: 'var(--accent-light)' }} />,
@@ -636,7 +701,8 @@ function LabVariantSwitcher() {
     window.addEventListener('pointerdown', close);
     return () => window.removeEventListener('pointerdown', close);
   }, [open]);
-  const cur = lab.variants.find((x) => x.id === lab.activeId);
+  const allVariants = useLabVariants();
+  const cur = allVariants.find((x) => x.id === lab.activeId);
   const check = <svg className="ck" viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
   return (
     <div ref={ref} className="fxt-vsw">
@@ -650,7 +716,7 @@ function LabVariantSwitcher() {
       </button>
       {open && (
         <div className="fxt-vsw-menu" role="listbox" aria-label="Варианты">
-          {lab.variants.map((x) => (
+          {allVariants.map((x) => (
             <button key={x.id} type="button" role="option" aria-selected={x.id === lab.activeId} aria-current={x.id === lab.activeId} className="fxt-vsw-item" title={label(x)} onClick={() => { lab.switchTimeline(x.id); setOpen(false); }}>
               <i style={{ background: x.color }} /><span className="lb tx">{label(x)}</span>
               {x.id === lab.activeId && check}
@@ -670,9 +736,11 @@ function LabVariantSwitcher() {
 /* ── «Пул»: у каждого варианта своя пилюля и счётчик ──────────────────────── */
 
 export function useLabPoolRows() {
-  const lab = useFxLabStore();
+  const setCount = useFxLabStore((s) => s.setCount);
+  const variants = useLabVariants();
+  const counts = useWizardStore((s) => s.allocation.variants ?? {});
   const label = useVariantLabel();
-  return lab.variants
-    .filter((v) => hookComplete(v.kind, v.config))
-    .map((v) => ({ id: v.id, color: v.color, kind: v.kind, label: label(v), count: lab.counts[v.id] ?? 0, set: (n: number) => lab.setCount(v.id, n) }));
+  return variants
+    .filter((v) => !v.draft && hookComplete(v.kind, v.config))
+    .map((v) => ({ id: v.id, color: v.color, kind: v.kind, label: label(v), count: counts[v.id] ?? 0, set: (n: number) => setCount(v.id, n) }));
 }
