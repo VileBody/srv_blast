@@ -229,3 +229,34 @@ def test_dead_publish_route_is_reported_as_ours_not_tiktoks(monkeypatch: pytest.
     assert caught.value.code == "route_unavailable"
     assert caught.value.status == 502
     assert "proxy" in str(caught.value)
+
+
+def test_chunk_upload_streams_the_body_so_a_slow_link_does_not_time_out(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    # Через прокси публикации ~100 КБ/с: весь чанк одним sendall упирался в таймаут 120 с
+    # («The write operation timed out»). Тело должно уходить потоком, с известной длиной.
+    module = _module(monkeypatch)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"x" * 6_000_000)
+    monkeypatch.setattr(module, "_json_request", lambda *a, **k: {"publish_id": "p1", "upload_url": "https://upload.example/u"})
+    sent = []
+
+    class Resp:
+        status = 201
+
+        def read(self, n=-1):
+            return b""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class Opener:
+        def open(self, req, timeout=None):
+            sent.append((hasattr(req.data, "read"), req.get_header("Content-length"), len(req.data.read()), timeout))
+            return Resp()
+
+    monkeypatch.setattr(module, "_opener", lambda proxy="": Opener())
+    module.init_direct_post_file("token", {"privacy_level": "SELF_ONLY"}, video, "socks5h://p:1")
+    assert sent == [(True, "6000000", 6_000_000, 120)]
