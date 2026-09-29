@@ -139,11 +139,12 @@ function SectionCard({ title, note, warn, children }: { title: string; note: str
   );
 }
 
-function MiniPill({ icon, label }: { icon: ReactNode; label: string }) {
+function MiniPill({ icon, label, trail }: { icon: ReactNode; label: string; trail?: ReactNode }) {
   return (
     <span className="mini-pill">
       <span className="mini-pill-icon" aria-hidden="true">{icon}</span>
       {label}
+      {trail}
     </span>
   );
 }
@@ -387,7 +388,7 @@ export function StageSlice() {
           >
             {labRows.map((row) => (
               <div key={row.id} className="flex items-center justify-between gap-space-3">
-                <MiniPill icon={<span className="flex items-center gap-[6px]"><i className="h-[8px] w-[8px] rounded-full" style={{ background: row.color }} />{hookKindIcon(row.kind)}</span>} label={row.label} />
+                <MiniPill icon={hookKindIcon(row.kind)} label={row.label} trail={<i className="ml-[8px] inline-block h-[8px] w-[8px] shrink-0 rounded-full" style={{ background: row.color }} aria-hidden="true" />} />
                 <Stepper value={row.count} onChange={row.set} />
               </div>
             ))}

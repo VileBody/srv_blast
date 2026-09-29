@@ -247,9 +247,62 @@
 .guide-sb-b { animation: guide-sb-b 4.4s cubic-bezier(.16, 1, .3, 1) infinite; }
 .guide-sb-press { animation: guide-sb-press 4.4s cubic-bezier(.16, 1, .3, 1) infinite; }
 
+/*
+ * Тур таймлайна v2: в каждом визуале курсор показывает само действие. Один период на
+ * визуал, все слои (курсор, призрак, блок, всплывашка) делят одни и те же проценты —
+ * иначе движение читается «вразнобой». Только transform/opacity.
+ */
+.gt-cur { position: absolute; left: 0; top: 0; width: 14px; height: 16px; z-index: 5; pointer-events: none; transform-origin: 2px 2px; }
+/* 1. библиотека: ▶ → пример в превью, затем перетащить на дорожку */
+@keyframes gt1-cur { 0% { transform: translate(236px, 58px); } 14% { transform: translate(122px, 14px); } 18% { transform: translate(122px, 14px) scale(.8); } 22% { transform: translate(122px, 14px); } 40% { transform: translate(46px, 16px); } 44% { transform: translate(46px, 16px) scale(.8); } 70% { transform: translate(128px, 56px) scale(.8); } 74% { transform: translate(128px, 56px); } 92%, 100% { transform: translate(236px, 58px); } }
+@keyframes gt1-flash { 0%, 18% { opacity: 0; } 22%, 38% { opacity: 1; } 44%, 100% { opacity: 0; } }
+@keyframes gt1-ghost { 0%, 43% { opacity: 0; transform: translate(0, 0); } 45% { opacity: 1; transform: translate(0, 0); } 70% { opacity: 1; transform: translate(82px, 40px); } 74%, 100% { opacity: 0; transform: translate(82px, 40px); } }
+@keyframes gt1-land { 0%, 72% { opacity: 0; } 76%, 94% { opacity: 1; } 100% { opacity: 0; } }
+.gt1-cur { animation: gt1-cur 6s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gt1-flash { animation: gt1-flash 6s linear infinite; }
+.gt1-ghost { animation: gt1-ghost 6s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gt1-land { animation: gt1-land 6s linear infinite; }
+/* 2. склейки: нажать на кружок → список переходов; потянуть кружок → склейка сдвинулась */
+@keyframes gt2-cur { 0% { transform: translate(236px, 66px); } 15% { transform: translate(92px, 50px); } 19% { transform: translate(92px, 50px) scale(.8); } 23% { transform: translate(92px, 50px); } 36% { transform: translate(112px, 14px); } 40% { transform: translate(112px, 14px) scale(.8); } 44% { transform: translate(112px, 14px); } 60% { transform: translate(186px, 50px); } 64% { transform: translate(186px, 50px) scale(.8); } 80% { transform: translate(214px, 50px) scale(.8); } 84% { transform: translate(214px, 50px); } 100% { transform: translate(236px, 66px); } }
+@keyframes gt2-pop { 0%, 20% { opacity: 0; transform: translateY(4px); } 24%, 46% { opacity: 1; transform: none; } 52%, 100% { opacity: 0; transform: none; } }
+@keyframes gt2-pick { 0%, 39% { opacity: 0; } 41%, 50% { opacity: 1; } 54%, 100% { opacity: 0; } }
+@keyframes gt2-icon { 0%, 41% { opacity: 0; } 45%, 96% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes gt2-move { 0%, 64% { transform: translateX(0); } 80%, 92% { transform: translateX(28px); } 100% { transform: translateX(0); } }
+@keyframes gt2-grow { 0%, 64% { transform: scaleX(1); } 80%, 92% { transform: scaleX(1.33); } 100% { transform: scaleX(1); } }
+.gt2-cur { animation: gt2-cur 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gt2-pop { animation: gt2-pop 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gt2-pick { animation: gt2-pick 6.4s linear infinite; }
+.gt2-icon { animation: gt2-icon 6.4s linear infinite; }
+.gt2-move { animation: gt2-move 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gt2-grow { transform-origin: left center; animation: gt2-grow 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+/* 3. хук: стоит на дропе (замок); у слоу-шаттера тянется правый край */
+@keyframes gt3-cur { 0% { transform: translate(236px, 64px); } 25% { transform: translate(160px, 38px); } 30% { transform: translate(160px, 38px) scale(.8); } 65% { transform: translate(236px, 38px) scale(.8); } 70% { transform: translate(236px, 38px); } 100% { transform: translate(236px, 64px); } }
+@keyframes gt3-grow { 0%, 30% { transform: scaleX(1); } 65%, 90% { transform: scaleX(3.1); } 100% { transform: scaleX(1); } }
+.gt3-cur { animation: gt3-cur 5s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gt3-grow { transform-origin: left center; animation: gt3-grow 5s cubic-bezier(.16, 1, .3, 1) infinite; }
+/* 4. стили: перетащить на кадр, потянуть край на соседние кадры */
+@keyframes gt4-cur { 0% { transform: translate(236px, 70px); } 12% { transform: translate(30px, 12px); } 16% { transform: translate(30px, 12px) scale(.8); } 42% { transform: translate(126px, 54px) scale(.8); } 46% { transform: translate(126px, 54px); } 58% { transform: translate(176px, 56px); } 62% { transform: translate(176px, 56px) scale(.8); } 80% { transform: translate(262px, 56px) scale(.8); } 84% { transform: translate(262px, 56px); } 100% { transform: translate(236px, 70px); } }
+@keyframes gt4-ghost { 0%, 15% { opacity: 0; transform: translate(0, 0); } 17% { opacity: 1; transform: translate(0, 0); } 42% { opacity: 1; transform: translate(98px, 42px); } 46%, 100% { opacity: 0; transform: translate(98px, 42px); } }
+@keyframes gt4-land { 0%, 44% { opacity: 0; transform: scaleX(1); } 47%, 62% { opacity: 1; transform: scaleX(1); } 80%, 94% { opacity: 1; transform: scaleX(2.07); } 100% { opacity: 0; transform: scaleX(2.07); } }
+.gt4-cur { animation: gt4-cur 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gt4-ghost { animation: gt4-ghost 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gt4-land { transform-origin: left center; animation: gt4-land 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+/* 0. варианты (прототип): открыть список, выбрать другой, «+» — новый */
+@keyframes gt0-cur { 0% { transform: translate(236px, 70px); } 14% { transform: translate(70px, 12px); } 18% { transform: translate(70px, 12px) scale(.8); } 22% { transform: translate(70px, 12px); } 40% { transform: translate(70px, 58px); } 44% { transform: translate(70px, 58px) scale(.8); } 48% { transform: translate(70px, 58px); } 70% { transform: translate(178px, 12px); } 74% { transform: translate(178px, 12px) scale(.8); } 78% { transform: translate(178px, 12px); } 100% { transform: translate(236px, 70px); } }
+@keyframes gt0-menu { 0%, 18% { opacity: 0; transform: translateY(-4px); } 22%, 46% { opacity: 1; transform: none; } 50%, 100% { opacity: 0; transform: none; } }
+@keyframes gt0-a { 0%, 45% { opacity: 1; } 49%, 96% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes gt0-b { 0%, 45% { opacity: 0; } 49%, 96% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes gt0-plus { 0%, 72% { transform: scale(1); } 75% { transform: scale(.86); } 79%, 100% { transform: scale(1); } }
+.gt0-cur { animation: gt0-cur 6s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gt0-menu { animation: gt0-menu 6s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gt0-a { animation: gt0-a 6s linear infinite; }
+.gt0-b { animation: gt0-b 6s linear infinite; }
+.gt0-plus { animation: gt0-plus 6s cubic-bezier(.16, 1, .3, 1) infinite; }
+
 @media (prefers-reduced-motion: reduce) {
   .action-guide-enter,
   .guide-mode-reveal, .guide-mode-frame, .guide-track-piece,
+  .gt-cur, .gt0-cur, .gt0-menu, .gt0-a, .gt0-b, .gt0-plus, .gt1-cur, .gt1-flash, .gt1-ghost, .gt1-land, .gt2-cur, .gt2-pop, .gt2-pick, .gt2-icon, .gt2-move, .gt2-grow, .gt3-cur, .gt3-grow, .gt4-cur, .gt4-ghost, .gt4-land,
   .guide-tl-sweep, .guide-tl-drag, .guide-tl-land, .guide-sb-a, .guide-sb-b, .guide-sb-press,
   .guide-fit-drag, .guide-fit-select, .guide-fit-grow, .guide-fit-grow-label,
   .guide-hook-icon-a, .guide-hook-icon-b, .guide-hook-icon-c, .guide-hook-shake,

@@ -2,6 +2,7 @@ import { type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, use
 import { createPortal } from 'react-dom';
 import { cn } from '../../lib/cn';
 import { useModalCount } from '../ui/Modal';
+import { useFxTimelineOpen } from '../wizard/timelineGuides';
 
 type TargetBox = {
   top: number;
@@ -56,7 +57,13 @@ export function ActionGuideOverlay({
 }: ActionGuideOverlayProps) {
   // Пока открыта модалка, подсказка ждёт — и снова появится, когда модалку закроют.
   const modalOpen = useModalCount((s) => s.count > 0);
-  const open = requestedOpen && !modalOpen;
+  // Полноэкранный таймлайн FX перекрывает визард: пока он открыт, живут только подсказки,
+  // которые указывают внутрь него (иначе, например, реактивация «Выбери тип хука» после
+  // 45 с простоя всплывала поверх таймлайна).
+  const timelineOpen = useFxTimelineOpen((s) => s.open);
+  const [insideTimeline, setInsideTimeline] = useState(false);
+  useLayoutEffect(() => { setInsideTimeline(Boolean(targetRef.current?.closest('.fxt'))); });
+  const open = requestedOpen && !modalOpen && (!timelineOpen || insideTimeline);
   const [target, setTarget] = useState<TargetBox | null>(null);
   const [cardHeight, setCardHeight] = useState(CARD_ESTIMATED_HEIGHT);
   const cardRef = useRef<HTMLElement>(null);

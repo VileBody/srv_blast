@@ -13,8 +13,9 @@ import { emptyTimeline, HOOK_LABELS, HookConfig, HookKind, hookComplete, Timelin
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
+import { useFxTimelineOpen } from './timelineGuides';
 import {
-  ChipRow, HOOK_TYPES, HookStep, SlowShutterExtendToggle, StyleScopeToggle,
+  ChipRow, HOOK_TYPES, HookStep,
   hookSteps, previewIdFor, selectedStyles
 } from './HookPanel';
 
@@ -185,7 +186,7 @@ export const useFxLabStore = create<LabState>((set, get) => ({
 export function useVariantLabel() {
   const chip = useChip();
   return (v: LabVariant) => {
-    if (v.draft) return 'Новый вариант';
+    if (v.draft) return 'Пустой вариант — выбери хук';
     const c = v.config;
     const hook = v.kind === 'none' ? HOOK_LABELS.none : (c.sound ?? c.object ?? c.effectHook ?? c.motion ?? c.thought);
     const style = selectedStyles(c)[0];
@@ -353,6 +354,24 @@ export function LabTypeList({ locked }: { locked: boolean }) {
   );
 }
 
+/* ── уточнение выбранного (где действует стиль, длина шлейфа): строка в доке ── */
+
+function LabModifier({ label, value, options, onPick }: { label: string; value: string; options: [string, string][]; onPick: (value: string) => void }) {
+  return (
+    <div className="flex items-center justify-between gap-[12px] px-[4px]">
+      <span className="translate-y-px text-[14px] text-text-60">{label}</span>
+      <span className="flex gap-[2px] rounded-[10px] bg-white/[0.06] p-[3px]" role="group" aria-label={label}>
+        {options.map(([val, text]) => (
+          <button key={val || 'std'} type="button" aria-pressed={value === val} onClick={() => onPick(val)}
+            className={cn('h-[28px] whitespace-nowrap rounded-[8px] px-[12px] text-[13px] transition', value === val ? 'bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-60 hover:text-text')}>
+            <span className="inline-block translate-y-px">{text}</span>
+          </button>
+        ))}
+      </span>
+    </div>
+  );
+}
+
 /* ── рабочая зона: пример во всю высоту, настройка — доком внутри него ─────── */
 
 function LabPreview({ previewId }: { previewId?: string }) {
@@ -411,8 +430,11 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
 
   // Таймлайн — на том же варианте; на время работы вариант «одалживается» в стор визарда.
   useEffect(() => () => { if (useFxLabStore.getState().snapshot) useFxLabStore.getState().endTimeline(); }, []);
-  const openTimeline = () => { lab.beginTimeline(); setTimelineOpen(true); };
-  const closeTimeline = () => { lab.endTimeline(); setTimelineOpen(false); };
+  // общий флаг «таймлайн открыт»: по нему молчат подсказки шага FX (в т.ч. реактивация по простою)
+  const setTimelineFlag = useFxTimelineOpen((s) => s.setOpen);
+  useEffect(() => () => setTimelineFlag(false), [setTimelineFlag]);
+  const openTimeline = () => { lab.beginTimeline(); setTimelineOpen(true); setTimelineFlag(true); };
+  const closeTimeline = () => { lab.endTimeline(); setTimelineOpen(false); setTimelineFlag(false); };
 
   const pick = (option?: string) => {
     if (!v || !step) return;
@@ -492,12 +514,22 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
                     );
                   })}
                 </div>
-                {(step?.key === 'effectStyle' && v.kind !== 'none') || (step?.key === 'effectHook' && config.effectHook === 'Слоу-шаттер') ? (
-                  <div className="flex justify-end">
-                    {step.key === 'effectStyle' && <StyleScopeToggle config={config} onPick={(full) => lab.patch({ effectStyleFull: full })} />}
-                    {step.key === 'effectHook' && <SlowShutterExtendToggle config={config} onPick={(value) => lab.patch({ effectHookExtend: value })} />}
-                  </div>
-                ) : null}
+                {step?.key === 'effectStyle' && v.kind !== 'none' && style && (
+                  <LabModifier
+                    label="Где действует стиль"
+                    value={config.effectStyleFull ? 'full' : 'pre'}
+                    options={[['pre', 'До дропа'], ['full', 'Весь ролик']]}
+                    onPick={(val) => lab.patch({ effectStyleFull: val === 'full' })}
+                  />
+                )}
+                {step?.key === 'effectHook' && config.effectHook === 'Слоу-шаттер' && (
+                  <LabModifier
+                    label="Длина шлейфа"
+                    value={config.effectHookExtend ?? ''}
+                    options={[['', 'Стандарт'], ['after_drop:3', '3 кадра'], ['to_end', 'До конца']]}
+                    onPick={(val) => lab.patch({ effectHookExtend: val as HookConfig['effectHookExtend'] })}
+                  />
+                )}
                 {step && (step.options.length === 0
                   ? <p className="px-[4px] text-[14px] text-text-60">Загрузка своего звука или видео — как сейчас (в прототипе не подключено)</p>
                   : <ChipRow options={step.options} value={selected} onPick={pick} />)}
@@ -512,7 +544,8 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
           pills={lab.variants.map((x) => ({
             key: x.id,
             label: label(x),
-            icon: <span className="flex items-center gap-[7px]"><i className="h-[9px] w-[9px] rounded-full" style={{ background: x.color }} /><SvgMaskIcon src={iconOf(x.kind).icon} style={{ width: 13, height: 15, color: 'var(--accent-light)' }} /></span>
+            icon: <SvgMaskIcon src={iconOf(x.kind).icon} style={{ width: 13, height: 15, color: 'var(--accent-light)' }} />,
+            trail: <i className="ml-[10px] inline-block h-[9px] w-[9px] shrink-0 rounded-full" style={{ background: x.color }} aria-hidden="true" />
           }))}
           activeKey={lab.activeId ?? undefined}
           emptyLabel={t('wizard.fx.add')}
@@ -568,27 +601,29 @@ function LabVariantSwitcher() {
     return () => window.removeEventListener('pointerdown', close);
   }, [open]);
   const cur = lab.variants.find((x) => x.id === lab.activeId);
-  const idx = cur ? lab.variants.indexOf(cur) + 1 : 0;
+  const check = <svg className="ck" viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
   return (
     <div ref={ref} className="fxt-vsw">
-      <button type="button" className="fxt-vsw-main" aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <span className="cap tx">Вариант</span>
+      <button type="button" className="fxt-vsw-main" aria-haspopup="listbox" aria-expanded={open} aria-label="Вариант рецепта" onClick={() => setOpen((o) => !o)}>
         {cur && <i style={{ background: cur.color }} />}
-        <span className="lb tx">{cur ? label(cur) : '—'}</span>
-        <span className="n tx">{idx}/{lab.variants.length}</span>
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true" style={{ transform: open ? 'rotate(180deg)' : undefined, transition: 'transform .15s ease' }}><path d="m3.5 6 4.5 4 4.5-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        <span className="lb tx">{cur ? label(cur) : 'Вариантов нет'}</span>
+        <svg className="chev" viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><path d="m3.5 6 4.5 4 4.5-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
-      <button type="button" className="fxt-vsw-plus" aria-label="Новый вариант" title="Новый вариант" onClick={() => { lab.newInTimeline(); setOpen(false); }}><span className="tx">+</span></button>
+      <button type="button" className="fxt-vsw-plus" aria-label="Новый вариант" data-tip="Новый вариант" onClick={() => { lab.newInTimeline(); setOpen(false); }}>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+      </button>
       {open && (
         <div className="fxt-vsw-menu" role="listbox" aria-label="Варианты">
           {lab.variants.map((x) => (
             <button key={x.id} type="button" role="option" aria-selected={x.id === lab.activeId} aria-current={x.id === lab.activeId} className="fxt-vsw-item" onClick={() => { lab.switchTimeline(x.id); setOpen(false); }}>
               <i style={{ background: x.color }} /><span className="lb tx">{label(x)}</span>
-              {x.id === lab.activeId && <span className="ck">✓</span>}
+              {x.id === lab.activeId && check}
             </button>
           ))}
-          <button type="button" className="fxt-vsw-item fxt-vsw-new" onClick={() => { lab.newInTimeline(); setOpen(false); }}>
-            <span className="ck">+</span><span className="lb tx">Новый вариант</span>
+          <div className="fxt-vsw-sep" />
+          <button type="button" className="fxt-vsw-item new" onClick={() => { lab.newInTimeline(); setOpen(false); }}>
+            <span className="ic"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></span>
+            <span className="lb tx">Добавить вариант</span>
           </button>
         </div>
       )}

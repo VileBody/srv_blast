@@ -9,7 +9,7 @@ import { usePlaybackUrl } from './useFragmentAudio';
 import { Trans, useTranslation } from 'react-i18next';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
-import { TimelineCutsGuideVisual, TimelineLibraryGuideVisual, TimelinePaceGuideVisual } from './timelineGuides';
+import { TimelineCutsGuideVisual, TimelineHookGuideVisual, TimelineLibraryGuideVisual, TimelinePaceGuideVisual, TimelineStylesGuideVisual, TimelineVariantsGuideVisual } from './timelineGuides';
 import './FxTimeline.css';
 
 /*
@@ -377,27 +377,43 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
   const [toast, setToast] = useState<string | null>(null);
   const [keysOpen, setKeysOpen] = useState(false);
 
-  /* ── подсказки: библиотека → склейки → частота. Информационные (действия не ждут),
-        поэтому без idle-реактивации; показ отмечается по факту. Склейки и частота — только
-        когда склейки посчитаны, иначе указывать не на что. ── */
+  /* ── тур по таймлайну (v2): каждый шаг показывает на своём элементе, как с ним работать.
+        Порядок — как человек собирает ролик: библиотека → кадры и склейки → хук → стили →
+        темп (с вариантами — сначала переключатель вариантов). Информационные: без
+        idle-реактивации, «видел» — по факту показа. Шаги про дорожки ждут склеек. ── */
   const { t: tr } = useTranslation();
   const libGuideRef = useRef<HTMLElement | null>(null);
+  const variantsGuideRef = useRef<HTMLElement | null>(null);
   const cutsGuideRef = useRef<HTMLDivElement | null>(null);
+  const hookGuideRef = useRef<HTMLDivElement | null>(null);
+  const stylesGuideRef = useRef<HTMLDivElement | null>(null);
   const paceGuideRef = useRef<HTMLDivElement>(null);
-  const [paceGuideDismissed, setPaceGuideDismissed] = useGuideDismiss('timeline-pace', false);
-  const [cutsGuideDismissed, setCutsGuideDismissed] = useGuideDismiss('timeline-cuts', false);
-  const [libGuideDismissed, setLibGuideDismissed] = useGuideDismiss('timeline-library', false);
+  const tourDismiss = {
+    variants: useGuideDismiss('timeline2-variants', false),
+    library: useGuideDismiss('timeline2-library', false),
+    cuts: useGuideDismiss('timeline2-cuts', false),
+    hook: useGuideDismiss('timeline2-hook', false),
+    styles: useGuideDismiss('timeline2-styles', false),
+    pace: useGuideDismiss('timeline2-pace', false)
+  };
+  type TourStep = keyof typeof tourDismiss;
+  const tour: TourStep[] = [...(tabs ? ['variants' as const] : []), 'library', 'cuts', 'hook', 'styles', 'pace'];
   const cutsReady = !recipe.loading && !recipe.error && shots > 0;
-  const showLibGuide = !libGuideDismissed;
-  const showCutsGuide = libGuideDismissed && !cutsGuideDismissed && cutsReady;
-  const showPaceGuide = libGuideDismissed && cutsGuideDismissed && !paceGuideDismissed && cutsReady;
-  useMarkGuideSeen('timeline-library', showLibGuide);
-  useMarkGuideSeen('timeline-cuts', showCutsGuide);
-  useMarkGuideSeen('timeline-pace', showPaceGuide);
+  const tourNext = tour.find((id) => !tourDismiss[id][0]);
+  const tourShown: TourStep | null = tourNext && (tourNext === 'variants' || tourNext === 'library' || cutsReady) ? tourNext : null;
+  useMarkGuideSeen('timeline2-variants', tourShown === 'variants');
+  useMarkGuideSeen('timeline2-library', tourShown === 'library');
+  useMarkGuideSeen('timeline2-cuts', tourShown === 'cuts');
+  useMarkGuideSeen('timeline2-hook', tourShown === 'hook');
+  useMarkGuideSeen('timeline2-styles', tourShown === 'styles');
+  useMarkGuideSeen('timeline2-pace', tourShown === 'pace');
   // Esc закрывает подсказку (её собственный обработчик) — таймлайн при этом закрываться не должен.
   const guideOpenRef = useRef(false);
-  guideOpenRef.current = showLibGuide || showCutsGuide || showPaceGuide;
-  useLayoutEffect(() => { libGuideRef.current = rootRef.current?.querySelector('.fxt-lib') ?? null; });
+  guideOpenRef.current = tourShown !== null;
+  useLayoutEffect(() => {
+    libGuideRef.current = rootRef.current?.querySelector('.fxt-lib') ?? null;
+    variantsGuideRef.current = rootRef.current?.querySelector('.fxt-vsw') ?? null;
+  });
   const toastTimer = useRef(0);
   const say = useCallback((msg: string) => { setToast(msg); window.clearTimeout(toastTimer.current); toastTimer.current = window.setTimeout(() => setToast(null), 2400); }, []);
   // Во время игры время ведёт звук (тик читает audio.currentTime) — перемотка двигает
@@ -866,7 +882,7 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
                     );
                   })}
                 </div>
-                <div ref={(el) => { laneRefs.current.hook = el; }} className={`fxt-lane l-hook${place && 'lane' in place && place.lane === 'hook' ? ' over' : ''}`}>
+                <div ref={(el) => { laneRefs.current.hook = el; hookGuideRef.current = el; }} className={`fxt-lane l-hook${place && 'lane' in place && place.lane === 'hook' ? ' over' : ''}`}>
                   {!hooksOn
                     ? <><div className="fxt-lockz" /><span className="fxt-hint" style={{ left: X0 + 8 }}>Хуки в 16:9 пока не работают — выбранный хук останется в 9:16</span></>
                     : hookRange && activeHookLabel
@@ -874,7 +890,7 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
                       : <span className="fxt-hint" style={{ left: tx(drop ?? 0) + 10 }}>{drop === null ? 'Выбери дроп на шаге FX — хук встанет на него' : 'Хук встанет на дроп'}</span>}
                 </div>
                 {([0, 1] as const).map((L) => (
-                  <div key={L} ref={(el) => { laneRefs.current[`s${L}`] = el; }} className={`fxt-lane l-s${L}${place && 'lane' in place && place.lane === `s${L}` ? ' over' : ''}`}>
+                  <div key={L} ref={(el) => { laneRefs.current[`s${L}`] = el; if (L === 0) stylesGuideRef.current = el; }} className={`fxt-lane l-s${L}${place && 'lane' in place && place.lane === `s${L}` ? ' over' : ''}`}>
                     {!styles.some((s) => s.lane === L) && <span className="fxt-hint" style={{ left: X0 + 8 }}>{L ? 'Второй стиль поверх первого — до двух на кадр' : 'Перетащи стиль — он ляжет по границам кадров'}</span>}
                     {styles.filter((s) => s.lane === L && s.b <= shots).map((s) => {
                       const x = tx(bounds[s.a]); const w = tx(bounds[s.b]) - x;
@@ -930,45 +946,35 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
         );
       })()}
 
-      <ActionGuideOverlay
-        open={showLibGuide}
-        targetRef={libGuideRef}
-        title={tr('wizard.fxTimeline.guideLibraryTitle')}
-        text={<Trans i18nKey="wizard.fxTimeline.guideLibraryText" components={{
-          plus: <b className="font-[700] text-text" />,
-          play: <span className="relative -top-px inline-block text-[0.72em]" />
-        }} />}
-        dismissLabel={tr('wizard.fxTimeline.guideNext')}
-        progressLabel={tr('wizard.guideProgress', { current: 1, total: 3 })}
-        onDismiss={() => setLibGuideDismissed(true)}
-        variant="visual"
-        shell="track-top"
-        visual={<TimelineLibraryGuideVisual />}
-      />
-      <ActionGuideOverlay
-        open={showCutsGuide}
-        targetRef={cutsGuideRef}
-        title={tr('wizard.fxTimeline.guideCutsTitle')}
-        text={tr('wizard.fxTimeline.guideCutsText')}
-        dismissLabel={tr('wizard.fxTimeline.guideNext')}
-        progressLabel={tr('wizard.guideProgress', { current: 2, total: 3 })}
-        onDismiss={() => setCutsGuideDismissed(true)}
-        variant="visual"
-        shell="track-top"
-        visual={<TimelineCutsGuideVisual />}
-      />
-      <ActionGuideOverlay
-        open={showPaceGuide}
-        targetRef={paceGuideRef}
-        title={tr('wizard.fxTimeline.guidePaceTitle')}
-        text={tr('wizard.fxTimeline.guidePaceText')}
-        dismissLabel={tr('wizard.fxTimeline.guideDismiss')}
-        progressLabel={tr('wizard.guideProgress', { current: 3, total: 3 })}
-        onDismiss={() => setPaceGuideDismissed(true)}
-        variant="visual"
-        shell="track-top"
-        visual={<TimelinePaceGuideVisual />}
-      />
+      {tour.map((id, i) => {
+        const target = { variants: variantsGuideRef, library: libGuideRef, cuts: cutsGuideRef, hook: hookGuideRef, styles: stylesGuideRef, pace: paceGuideRef }[id];
+        const visual = {
+          variants: <TimelineVariantsGuideVisual />, library: <TimelineLibraryGuideVisual />, cuts: <TimelineCutsGuideVisual />,
+          hook: <TimelineHookGuideVisual />, styles: <TimelineStylesGuideVisual />, pace: <TimelinePaceGuideVisual />
+        }[id];
+        const key = id[0].toUpperCase() + id.slice(1);
+        const last = i === tour.length - 1;
+        return (
+          <ActionGuideOverlay
+            key={id}
+            open={tourShown === id}
+            targetRef={target as React.RefObject<HTMLElement>}
+            title={tr(`wizard.fxTimeline.guide${key}Title`)}
+            text={id === 'library'
+              ? <Trans i18nKey="wizard.fxTimeline.guideLibraryText" components={{
+                plus: <b className="font-[700] text-text" />,
+                play: <span className="relative -top-px inline-block text-[0.72em]" />
+              }} />
+              : tr(`wizard.fxTimeline.guide${key}Text`)}
+            dismissLabel={tr(last ? 'wizard.fxTimeline.guideDismiss' : 'wizard.fxTimeline.guideNext')}
+            progressLabel={tr('wizard.guideProgress', { current: i + 1, total: tour.length })}
+            onDismiss={() => tourDismiss[id][1](true)}
+            variant="visual"
+            shell="track-top"
+            visual={visual}
+          />
+        );
+      })}
 
       {keysOpen && (
         <div className="fxt-pop" style={{ right: 16, top: 64, width: 280 }} onPointerDown={(e) => e.stopPropagation()}>

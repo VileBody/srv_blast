@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { ReactNode, useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { cn } from '../../lib/cn';
 
@@ -48,71 +48,146 @@ export function TimelineButtonGuideVisual() {
   );
 }
 
-/** Таймлайн 1/3: библиотека → эффект перетаскивается на дорожку. */
-export function TimelineLibraryGuideVisual() {
-  const rows = [HOOK, 'rgba(246,245,253,.75)', STYLE];
+/* ── тур таймлайна v2: курсор показывает само действие ─────────────────────── */
+
+/** Курсор-стрелка: белый с тёмной обводкой, видно на любой подложке. */
+function Cursor({ className }: { className: string }) {
   return (
-    <div className="relative h-[60px] w-full" aria-hidden="true">
-      {rows.map((color, i) => (
-        <span key={i} className={cn('guide-mode-reveal absolute left-0 flex h-[16px] w-[104px] items-center gap-[6px] rounded-[5px] bg-white/[0.06] px-[4px]', delay(i))} style={{ top: 2 + i * 20 }}>
-          <i className="h-[9px] w-[9px] shrink-0 rounded-[3px]" style={{ background: color, opacity: .85 }} />
-          <i className="h-[3px] flex-1 rounded-full bg-white/25" />
+    <svg className={cn('gt-cur', className)} viewBox="0 0 14 16" aria-hidden="true">
+      <path d="M1.5 1.5v11.2l3.1-2.7 2 4.4 2-.9-2-4.3 4.2-.2z" fill="#fff" stroke="#140e24" strokeWidth="1.1" strokeLinejoin="round" />
+    </svg>
+  );
+}
+const Box = ({ h = 76, children }: { h?: number; children: ReactNode }) => (
+  <div className="relative w-full overflow-hidden" style={{ height: h }} aria-hidden="true">{children}</div>
+);
+const txt = 'absolute leading-none text-[10px]';
+
+/** 0 (прототип). Варианты: открыть список, выбрать другой; «+» — новый вариант. */
+export function TimelineVariantsGuideVisual() {
+  return (
+    <Box>
+      <span className="absolute left-[150px] top-[4px] flex h-[22px] w-[40px] items-center justify-end rounded-r-[8px] bg-accent-20 pr-[9px] text-[13px] leading-none text-white"><span className="gt0-plus inline-block">+</span></span>
+      <span className="absolute left-[4px] top-[4px] flex h-[22px] w-[160px] items-center gap-[6px] rounded-[8px] bg-[#1d1533] px-[8px] shadow-[inset_0_0_0_1px_rgba(246,245,253,.13)]">
+        <span className="relative h-full flex-1">
+          <span className="gt0-a absolute inset-0 flex items-center gap-[6px] text-[10px] leading-none text-white"><i className="h-[7px] w-[7px] rounded-full bg-[#8b6fe6]" /><span className="translate-y-px">Молния · Неон</span></span>
+          <span className="gt0-b absolute inset-0 flex items-center gap-[6px] text-[10px] leading-none text-white"><i className="h-[7px] w-[7px] rounded-full bg-[#e38fb5]" /><span className="translate-y-px">Звезда · Ч/Б</span></span>
         </span>
-      ))}
-      <span className="guide-mode-reveal guide-mode-delay-4 absolute left-[120px] right-0 top-[4px] h-[22px]">
-        <Frames widths={[1.4, 1, 1, 1.2]} />
+        <span className="text-[9px] text-white/60">▾</span>
       </span>
-      <span className="guide-mode-reveal guide-mode-delay-5 absolute left-[120px] right-0 top-[36px] h-[20px] rounded-[5px] bg-white/[0.06]" />
-      <i className="guide-tl-land absolute left-[172px] top-[38px] h-[16px] w-[64px] rounded-[4px]" style={{ background: STYLE }} />
-      <span
-        className="guide-tl-drag absolute left-[22px] top-[42px] h-[16px] w-[64px] rounded-[4px] shadow-[0_6px_14px_rgba(5,1,15,.45)]"
-        style={{ background: STYLE, ['--guide-drag-x' as string]: '150px', ['--guide-drag-y' as string]: '-4px' }}
-      />
-    </div>
+      <span className="gt0-menu absolute left-[4px] top-[30px] flex w-[170px] flex-col gap-[2px] rounded-[8px] bg-[#1b1430] p-[3px] shadow-[0_8px_18px_rgba(0,0,0,.45)] ring-1 ring-white/10">
+        <span className="flex h-[17px] items-center gap-[6px] rounded-[5px] bg-[#1d1533] px-[6px] text-[10px] leading-none text-white"><i className="h-[6px] w-[6px] rounded-full bg-[#8b6fe6]" /><span className="flex-1 translate-y-px">Молния · Неон</span><span className="text-[#8b6fe6]">✓</span></span>
+        <span className="flex h-[17px] items-center gap-[6px] rounded-[5px] bg-white/[0.06] px-[6px] text-[10px] leading-none text-white/85"><i className="h-[6px] w-[6px] rounded-full bg-[#e38fb5]" /><span className="translate-y-px">Звезда · Ч/Б</span></span>
+      </span>
+      <Cursor className="gt0-cur" />
+    </Box>
   );
 }
 
-/** Таймлайн 2/3: склейки по битам — стык с переходом пульсирует, граница кадра двигается. */
+/** 1. Библиотека: ▶ — пример в превью справа; перетащить строку на дорожку — эффект встал. */
+export function TimelineLibraryGuideVisual() {
+  return (
+    <Box>
+      <span className="absolute left-[4px] top-[4px] flex h-[24px] w-[146px] items-center gap-[7px] rounded-[7px] bg-white/[0.06] pl-[6px]">
+        <i className="h-[14px] w-[14px] rounded-full" style={{ background: 'rgba(198,182,255,.2)' }} />
+        <span className="translate-y-px text-[10px] leading-none text-white">Молния</span>
+        <span className="absolute left-[110px] top-[4px] flex h-[16px] w-[16px] items-center justify-center rounded-full bg-white/10 text-[8px] text-white">▶</span>
+        <span className="absolute left-[130px] top-[4px] flex h-[16px] w-[14px] items-center justify-center text-[11px] text-white/70">+</span>
+      </span>
+      <span className="absolute left-[244px] top-[4px] h-[56px] w-[32px] overflow-hidden rounded-[6px] bg-[#0b0718] ring-1 ring-white/10">
+        <i className="gt1-flash absolute inset-0" style={{ background: 'linear-gradient(170deg, #c6b6ff, #5f42b9 60%, #140e24)' }} />
+        <span className="absolute inset-x-0 bottom-[3px] text-center text-[7px] leading-none text-white/70">превью</span>
+      </span>
+      <span className="absolute left-[4px] top-[48px] h-[22px] w-[232px] rounded-[6px] bg-[#0b0718]" />
+      <span className={cn(txt, 'left-[10px] top-[56px] text-white/40')}>Хук</span>
+      <span className="gt1-land absolute left-[102px] top-[50px] flex h-[18px] w-[52px] items-center justify-center rounded-[5px] text-[9px] leading-none" style={{ background: HOOK, color: '#170c38' }}><span className="translate-y-px">Молния</span></span>
+      <span className="gt1-ghost absolute left-[20px] top-[6px] flex h-[18px] w-[52px] items-center justify-center rounded-[5px] text-[9px] leading-none shadow-[0_6px_14px_rgba(5,1,15,.5)]" style={{ background: HOOK, color: '#170c38' }}><span className="translate-y-px">Молния</span></span>
+      <Cursor className="gt1-cur" />
+    </Box>
+  );
+}
+
+/** 2. Склейки: кружок между кадрами → выбрать переход; потянуть кружок → склейка сдвинулась. */
 export function TimelineCutsGuideVisual() {
   return (
-    <div className="relative flex w-full items-center" aria-hidden="true">
-      <Frames widths={[1.5, 1, 1.2, 1, 1.3]} height={30} cur={1} />
-      {/* Статичное центрирование и бегущие анимации — на разных слоях: анимация transform
-          иначе затёрла бы translate(-50%). */}
-      <span className="absolute top-1/2 h-[20px] w-[20px] -translate-x-1/2 -translate-y-1/2" style={{ left: '41.5%' }}>
-        <span className="guide-mode-reveal guide-mode-delay-6 block h-full w-full">
-          <span className="guide-pulse flex h-full w-full items-center justify-center rounded-full bg-[#2a2140] text-white shadow-[0_0_0_1.5px_#8b6fe6]">
-            <svg viewBox="0 0 12 12" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"><path d="M2 4h7l-2-2M10 8H3l2 2" /></svg>
+    <Box>
+      <span className="gt2-pop absolute left-[68px] top-[2px] flex gap-[3px] rounded-[7px] bg-[#1b1430] p-[3px] shadow-[0_8px_18px_rgba(0,0,0,.45)] ring-1 ring-white/10">
+        {['Щелчок', 'Минимакс', 'Вспышка'].map((l, i) => (
+          <span key={l} className="relative flex h-[18px] items-center rounded-[5px] bg-white/[0.06] px-[5px] text-[9px] leading-none text-white/80">
+            {i === 1 && <i className="gt2-pick absolute inset-0 rounded-[5px] bg-accent-light/50 ring-1 ring-accent-light" />}
+            <span className="relative translate-y-px">{l}</span>
           </span>
-        </span>
+        ))}
       </span>
-      <span className="absolute top-1/2 h-[34px] w-[4px] -translate-y-1/2" style={{ left: '61.7%' }}>
-        <span className="guide-mode-reveal guide-mode-delay-7 block h-full w-full">
-          <i className="guide-fit-drag block h-full w-full rounded-full bg-white/90" />
-        </span>
+      <span className="absolute inset-x-0 top-[38px] h-[24px] overflow-hidden">
+        <span className="absolute left-0 top-0 h-full w-[90px] rounded-[5px]" style={{ background: FRAME }} />
+        <span className="gt2-grow absolute left-[94px] top-0 h-full w-[88px] rounded-[5px]" style={{ background: FRAME }} />
+        <span className="gt2-move absolute left-[186px] top-0 h-full w-[120px] rounded-[5px]" style={{ background: FRAME }} />
       </span>
-    </div>
+      <span className="absolute left-[84px] top-[42px] flex h-[16px] w-[16px] items-center justify-center rounded-full bg-[#0b0718] text-[10px] text-white/80 ring-2 ring-[#0b0718]">
+        <span className="absolute">+</span>
+        <span className="gt2-icon absolute flex h-full w-full items-center justify-center rounded-full bg-accent text-[8px] text-white">◇</span>
+      </span>
+      <span className="gt2-move absolute left-[176px] top-[42px] flex h-[16px] w-[16px] items-center justify-center rounded-full bg-[#0b0718] text-[10px] text-white/80 ring-2 ring-[#0b0718]">+</span>
+      <span className={cn(txt, 'left-[4px] top-[66px] text-white/40')}>кадр 1</span>
+      <span className={cn(txt, 'left-[98px] top-[66px] text-white/40')}>кадр 2</span>
+      <Cursor className="gt2-cur" />
+    </Box>
   );
 }
 
-/** Таймлайн 3/3: реже / авто / чаще — одна сетка битов, разная частота склеек. */
-export function TimelinePaceGuideVisual() {
-  const rows: [string, number[]][] = [
-    ['Реже', [1, 1, 1]],
-    ['Авто', [1.2, 1, 1, 1.1, 1]],
-    ['Чаще', [1, 1, 1, 1, 1, 1, 1, 1, 1]]
-  ];
+/** 3. Хук: всегда на дропе, сдвинуть нельзя; у слоу-шаттера тянется правый край. */
+export function TimelineHookGuideVisual() {
   return (
-    <div className="flex w-full flex-col gap-[5px]" aria-hidden="true">
-      {rows.map(([label, widths], i) => (
-        <span key={label} className={cn('guide-mode-reveal flex items-center gap-[8px] rounded-[6px] px-[4px] py-[2px]', delay(i * 2), i === 1 && 'bg-accent-20 shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
-          <span className="w-[32px] shrink-0 text-[10px] leading-none text-white/75"><span className="inline-block translate-y-px">{label}</span></span>
-          <span className="flex h-[12px] flex-1 gap-[2px]">
-            {widths.map((w, k) => <i key={k} className="rounded-[3px]" style={{ flexGrow: w, flexBasis: 0, background: FRAME }} />)}
+    <Box>
+      <span className="absolute left-[102px] top-[2px] rounded-[5px] bg-[#c6b6ff] px-[5px] py-[2px] text-[8px] leading-none text-[#170c38]">дроп</span>
+      <span className="absolute left-[120px] top-[16px] h-[56px] w-[2px] bg-[#c6b6ff]/80" />
+      <span className="absolute left-0 right-0 top-[28px] h-[22px] rounded-[6px] bg-[#0b0718]" />
+      <span className="gt3-grow absolute left-[121px] top-[30px] h-[18px] w-[36px] rounded-[5px]" style={{ background: HOOK }} />
+      <span className="absolute left-[125px] top-[35px] flex items-center gap-[4px] text-[8px] leading-none text-[#170c38]"><svg viewBox="0 0 12 12" width="8" height="8" fill="none" aria-hidden="true"><path d="M3.5 5.5V4a2.5 2.5 0 0 1 5 0v1.5M2.5 5.5h7v5h-7z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" /></svg><span className="translate-y-px">Слоу-шаттер</span></span>
+      <span className={cn(txt, 'left-[8px] top-[36px] text-white/40')}>до дропа</span>
+      <Cursor className="gt3-cur" />
+    </Box>
+  );
+}
+
+/** 4. Стили: перетащить из библиотеки на кадр; потянуть край — на соседние кадры. */
+export function TimelineStylesGuideVisual() {
+  return (
+    <Box>
+      <span className="absolute left-[8px] top-[4px] flex h-[18px] w-[58px] items-center justify-center rounded-[5px] bg-white/[0.08] text-[9px] leading-none text-white"><span className="translate-y-px">Неон</span></span>
+      <span className="gt4-ghost absolute left-[8px] top-[4px] flex h-[18px] w-[58px] items-center justify-center rounded-[5px] text-[9px] leading-none shadow-[0_6px_14px_rgba(5,1,15,.5)]" style={{ background: STYLE, color: '#2b1906' }}><span className="translate-y-px">Неон</span></span>
+      <span className="absolute inset-x-0 top-[28px] flex h-[12px] gap-[3px]">
+        {[0, 1, 2].map((i) => <i key={i} className="flex-1 rounded-[3px]" style={{ background: FRAME, opacity: .7 }} />)}
+      </span>
+      <span className="absolute inset-x-0 top-[44px] h-[22px] rounded-[6px] bg-[#0b0718]" />
+      <span className="gt4-land absolute left-[96px] top-[46px] flex h-[18px] w-[84px] items-center rounded-[5px] pl-[6px] text-[9px] leading-none" style={{ background: STYLE, color: '#2b1906' }}><span className="translate-y-px">Неон</span></span>
+      <span className={cn(txt, 'left-[8px] top-[51px] text-white/40')}>Стиль 1</span>
+      <Cursor className="gt4-cur" />
+    </Box>
+  );
+}
+
+/** 5. Темп: реже · авто · чаще — одна сетка битов, разное число склеек. */
+export function TimelinePaceGuideVisual() {
+  const phases: [string, number][] = [['Реже', 3], ['Авто', 5], ['Чаще', 9]];
+  const cls = ['guide-hook-icon-a', 'guide-hook-icon-b', 'guide-hook-icon-c'];
+  return (
+    <Box h={58}>
+      <span className="absolute left-1/2 top-[2px] flex -translate-x-1/2 gap-[2px] rounded-[8px] bg-[#0b0718] p-[2px] ring-1 ring-white/10">
+        {phases.map(([l], i) => (
+          <span key={l} className="relative flex h-[20px] w-[58px] items-center justify-center rounded-[6px] text-[10px] leading-none text-white/60">
+            <i className={cn(cls[i], 'absolute inset-0 rounded-[6px] bg-accent')} />
+            <span className="relative translate-y-px text-white">{l}</span>
           </span>
+        ))}
+      </span>
+      {phases.map(([l, n], i) => (
+        <span key={l} className={cn(cls[i], 'absolute inset-x-0 top-[34px] flex h-[18px] gap-[3px]')}>
+          {Array.from({ length: n }, (_, k) => <i key={k} className="flex-1 rounded-[4px]" style={{ background: FRAME }} />)}
         </span>
       ))}
-    </div>
+    </Box>
   );
 }
 
