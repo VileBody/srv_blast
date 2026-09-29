@@ -458,3 +458,101 @@ def check_pair(font_base: str, accent_font: str) -> None:
     reason = pair_block_reason(font_base, accent_font)
     if reason:
         raise RuntimeError(f"font pair not allowed: {reason} (subtitle_font_catalog.json)")
+
+
+# ===========================================================================
+# impulse (2nd template): строчные, одна строка, long + short-«пульс»
+# ===========================================================================
+# Прод: Point-Light 100 pt + белая обводка 3 px (утолщение тем же цветом), трекинг
+# −25, anchor [0.564, −23.213] (центр строчных Point-Light), long висит в 75% до
+# выхода, пик short ограничен шириной по оценке «62 px на букву». Здесь всё то же,
+# но от метрик шрифта: размер — по ТЕЛУ СТРОЧНЫХ (текст impulse строчный),
+# anchor — центр тела, ширина — замер. Эталон — Point-Light.
+IMPULSE_REFERENCE_FONT = "Point-Light"
+IMPULSE_REF_SIZE = 100.0
+IMPULSE_REF_STROKE = 3.0
+IMPULSE_TRACKING = -25
+IMPULSE_LONG_HOLD_SCALE = 75.0          # long до выхода — 75% (первый кейфрейм прода)
+IMPULSE_SHORT_MIN_PEAK = 150.0
+IMPULSE_SHADOW_PRESETS = {
+    # (opacity 0..255, softness) для 3 стандартных Drop Shadow прода; soft = прод
+    "none": None,
+    "soft": [(255, 0), (255, 25), (127.5, 50)],
+    "strong": [(255, 0), (255, 40), (210, 85)],
+}
+
+
+@dataclass(frozen=True)
+class ImpulseLayout:
+    font: str
+    size: float
+    stroke_px: float
+    anchor_x: float
+    anchor_y: float
+    advance_px: float            # px на знак при 100% масштаба слоя (с трекингом impulse)
+    safe_width: float
+    params: JaksonTextParams
+
+    @property
+    def vertical_scale(self) -> float:
+        return HEIGHT_PRESETS[self.params.height]
+
+    @property
+    def justification_code(self) -> str:
+        return JUSTIFICATION_CODES[POSITION_PRESETS[self.params.position][0]]
+
+    def position(self, *, comp_w: float = 1080.0, comp_h: float = 1920.0, short: bool) -> List[float]:
+        """long — по позиции пресета; short (ударное слово) всегда по центру X."""
+        align, cy = POSITION_PRESETS[self.params.position]
+        mx = comp_w * SAFE_MARGIN_X
+        x = comp_w / 2.0
+        if not short and align == "left":
+            x = mx
+        elif not short and align == "right":
+            x = comp_w - mx
+        return [round(x, 2), round(comp_h * cy, 2), 0]
+
+    def text_width(self, text: str) -> float:
+        return len(text) * self.advance_px + 2.0 * self.stroke_px
+
+    def long_hold_scale(self, text: str) -> float:
+        """75% прода, но не шире безопасной зоны."""
+        w = self.text_width(text)
+        fit = 100.0 * self.safe_width / w if w > 0 else IMPULSE_LONG_HOLD_SCALE
+        return round(min(IMPULSE_LONG_HOLD_SCALE, fit), 2)
+
+    def short_peak(self, text: str, dur: float) -> float:
+        """Формула прода (по длительности), ширина — по замеру вместо 62 px/знак."""
+        peak_by_dur = round(190 + (1.0 - float(dur)) * 180)
+        w = self.text_width(text)
+        peak_by_width = round(100.0 * self.safe_width / w) if w > 0 else peak_by_dur
+        return float(max(min(IMPULSE_SHORT_MIN_PEAK, peak_by_width), min(peak_by_dur, peak_by_width)))
+
+
+def impulse_layout(font: str, *, params: Optional[JaksonTextParams] = None, render_preset: str = "vertical",
+                   path: Path = METRICS_PATH) -> ImpulseLayout:
+    params = params or JaksonTextParams()
+    params.check_render_preset(render_preset)
+    if params.height != "normal" and not allows_height_stretch(font):
+        raise ValueError(f"height {params.height!r} is only for serif fonts (catalog 'serif': true), got {font!r}")
+    ref = font_metrics(IMPULSE_REFERENCE_FONT, path=path)
+    m = font_metrics(font, path=path)
+    ref.require_lowercase()
+    m.require_lowercase()
+    v = HEIGHT_PRESETS[params.height]
+    ref_body = ref.body_top + ref.body_bottom
+    body = m.body_top + m.body_bottom
+    size = IMPULSE_REF_SIZE * ref_body / body * SIZE_PRESETS[params.size]
+    stroke = IMPULSE_REF_STROKE * size / IMPULSE_REF_SIZE
+    body_center = m.per_pt(m.body_top - m.body_bottom, size) / 2.0 * v
+    advance = m.per_pt(m.lc_advance_per_char, size) + IMPULSE_TRACKING / 1000.0 * size
+    return ImpulseLayout(
+        font=font,
+        size=round(size, 2),
+        stroke_px=round(stroke, 2),
+        anchor_x=0.0,
+        anchor_y=round(-body_center, 2),
+        advance_px=round(advance, 2),
+        safe_width=round(1080.0 * (1.0 - 2.0 * SAFE_MARGIN_X), 2),
+        params=params,
+    )
