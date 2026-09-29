@@ -865,6 +865,9 @@
               if (cs.fontSize !== undefined) r.fontSize = cs.fontSize;
               if (cs.fillColor !== undefined) { r.applyFill = true; r.fillColor = cs.fillColor; }
               if (cs.fauxItalic !== undefined) r.fauxItalic = !!cs.fauxItalic;
+              // пары шрифтов (app/subtitle_font_layout.AccentLayout): трекинг и сдвиг акцента
+              if (cs.tracking !== undefined) r.tracking = cs.tracking;
+              if (cs.baselineShift !== undefined) r.baselineShift = cs.baselineShift;
             } catch(eChar) {
               logErr("charStyle failed layer=" + layer.name + " i=" + i, eChar);
             }

@@ -519,6 +519,35 @@ def build_char_styles(text: str, focus_word: Optional[str],
     return styles
 
 
+def _lower_focus_word(text: str, focus_word: str) -> str:
+    """Фокус-слово строчными (длина не меняется → индексы символов те же)."""
+    parts = []
+    for line in text.split("\r"):
+        parts.append(" ".join(w.lower() if w.upper() == focus_word.upper() else w for w in line.split(" ")))
+    return "\r".join(parts)
+
+
+def build_char_styles_accent(text: str, focus_word: str, accent: Any) -> List[Dict]:
+    """TYPE_2 с парой шрифтов: фокус-слово — акцентный шрифт/размер/трекинг/сдвиг."""
+    styles = []
+    char_i = 0
+    for w in text.replace("\r", " ").split(" "):
+        is_focus = w.upper() == focus_word.upper()
+        for _ch in w:
+            entry: Dict = {"i": char_i, "font": RENDER["font_base"]}
+            if is_focus:
+                entry.update({
+                    "font": accent.font,
+                    "fontSize": accent.size,
+                    "tracking": accent.tracking,
+                    "baselineShift": accent.baseline_shift,
+                })
+            styles.append(entry)
+            char_i += 1
+        char_i += 1  # пробел
+    return styles
+
+
 def build_char_styles_uniform(text: str) -> List[Dict]:
     """Все символы — font_base, без переопределения fontSize (наследует text_base)."""
     styles = []
@@ -632,10 +661,10 @@ class LayerFactory:
         if no_layout_pass:
             td["no_layout_pass"] = True
         elif _LAYOUT is not None:
-            if "\r" in text and not td["text_base"].get("_type1"):
+            if "\r" in text and not td["text_base"].get("_leading_fixed"):
                 td["text_base"] = dict(td["text_base"])
                 td["text_base"]["leading"] = _LAYOUT.leading_for(text, type1=False)
-            td["text_base"].pop("_type1", None)
+            td["text_base"].pop("_leading_fixed", None)
             td["layout_box"] = _LAYOUT.layout_box(
                 n_lines=text.count("\r") + 1,
                 leading=float(td["text_base"]["leading"]),
@@ -688,7 +717,7 @@ class LayerFactory:
         tb["leading"] = _type1_leading()
         if _LAYOUT is not None:
             tb["leading"] = _LAYOUT.leading_for(text, type1=True)
-            tb["_type1"] = True   # интервал уже посчитан под 80→120, не пересчитывать
+            tb["_leading_fixed"] = True   # интервал уже посчитан под 80→120, не пересчитывать
         text_l = self.text_layer(
             name=text.replace("\r", " "),
             text=text,
@@ -725,7 +754,18 @@ class LayerFactory:
             kf_ease(t_out,              0, speed_in=-99.9),
         ]
 
-        char_styles = build_char_styles(text, focus, "italic")
+        tb = None
+        accent = _LAYOUT.accent if _LAYOUT is not None else None
+        if accent is not None and focus:
+            # пара шрифтов: фокус-слово — акцентным шрифтом, строчными, внутри строки
+            text = _lower_focus_word(text, focus)
+            char_styles = build_char_styles_accent(text, focus, accent)
+            tb = text_base_dict()
+            tb["allCaps"] = False          # основной текст уже в верхнем регистре
+            tb["leading"] = _LAYOUT.leading_for(text, type1=False, accent_word=focus)
+            tb["_leading_fixed"] = True
+        else:
+            char_styles = build_char_styles(text, focus, "italic")
         adj = self.adj_layer(f"adj_{scene['id']}", t_in, t_out)
         text_l = self.text_layer(
             name=text.replace("\r", " "),
@@ -735,6 +775,7 @@ class LayerFactory:
             opacity_kfs=op_kfs,
             animator_cfg=text_animator_cfg(n),
             char_styles=char_styles,
+            text_base=tb,
             effects_extra={
                 "ADBE Turbulent Displace": turbulent_displace(),
                 "ADBE Posterize Time":    posterize_time(),
