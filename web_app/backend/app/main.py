@@ -2202,10 +2202,10 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
             return {"ok": True, "status": "PUBLISH_COMPLETE", "publishId": publish_id, "mock": True}
 
         if cfg.upload_source == "PULL_FROM_URL":
-            result = tiktok_api.init_direct_post_pull(token, post_info, str(video_url))
+            result = tiktok_api.init_direct_post_pull(token, post_info, str(video_url), cfg.publish_proxy)
         elif str(video_url).startswith("/static/"):
             local_path = STATIC_DIR / str(video_url).removeprefix("/static/")
-            result = tiktok_api.init_direct_post_file(token, post_info, local_path)
+            result = tiktok_api.init_direct_post_file(token, post_info, local_path, cfg.publish_proxy)
         elif RUNTIME.production:
             with tempfile.TemporaryDirectory(prefix="blast-tiktok-") as temp_dir:
                 local_path = Path(temp_dir) / f"{payload.videoId}.mp4"
@@ -2213,7 +2213,7 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
                     _production_backend().download_video(str(video_url), local_path)
                 except Exception as exc:
                     raise _production_error(exc) from exc
-                result = tiktok_api.init_direct_post_file(token, post_info, local_path)
+                result = tiktok_api.init_direct_post_file(token, post_info, local_path, cfg.publish_proxy)
         else:
             raise HTTPException(
                 status_code=422,
@@ -2240,7 +2240,7 @@ def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
             raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         return {"publishId": publish_id, "status": "PUBLISH_COMPLETE", "mock": True}
     try:
-        result = tiktok_api.fetch_publish_status(_access_token(), publish_id)
+        result = tiktok_api.fetch_publish_status(_access_token(), publish_id, tiktok_config.load().publish_proxy)
     except tiktok_api.TikTokApiError as exc:
         raise HTTPException(status_code=exc.status or 502, detail={"code": exc.code, "message": str(exc)}) from exc
     status = result.get("status")

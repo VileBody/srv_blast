@@ -166,3 +166,41 @@ def test_file_upload_chunk_count_rounds_down(monkeypatch: pytest.MonkeyPatch, si
     # последний чанк забирает остаток и не превышает лимит TikTok в 128 МБ
     last = size - chunk_size * (total - 1)
     assert chunk_size <= last <= 128_000_000
+
+
+def test_publish_goes_through_the_shared_foreign_proxy_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # TikTok не принимает загрузку с российских IP: без прокси публикация с сервера в Москве
+    # падает у TikTok с FAILED / internal
+    monkeypatch.syspath_prepend(str(REPO_ROOT))
+    from src.outbound_proxy import OUTBOUND_PROXY_URL
+
+    monkeypatch.delenv("TIKTOK_PUBLISH_PROXY", raising=False)
+    assert _load_config(monkeypatch, "*").publish_proxy == OUTBOUND_PROXY_URL
+    monkeypatch.setenv("TIKTOK_PUBLISH_PROXY", "direct")
+    assert _load_config(monkeypatch, "*").publish_proxy == ""
+    monkeypatch.setenv("TIKTOK_PUBLISH_PROXY", "http://proxy.example:8080")
+    assert _load_config(monkeypatch, "*").publish_proxy == "http://proxy.example:8080"
+
+
+def test_proxy_opener_is_scoped_to_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module(monkeypatch)
+    with_proxy = module._opener("http://proxy.example:8080")
+    handlers = [h for h in with_proxy.handlers if h.__class__.__name__ == "ProxyHandler"]
+    assert handlers and handlers[0].proxies == {"http": "http://proxy.example:8080", "https": "http://proxy.example:8080"}
+
+
+def test_dead_publish_route_is_reported_as_ours_not_tiktoks(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Прокси, который не туннелирует до TikTok, раньше ронял /api/tiktok/post в 500,
+    # а UI писал «TikTok rejected the video» — хотя TikTok запроса даже не видел.
+    module = _module(monkeypatch)
+
+    class DeadOpener:
+        def open(self, req, timeout=None):
+            raise module.urllib.error.URLError(OSError("Tunnel connection failed: 502 Bad Gateway"))
+
+    monkeypatch.setattr(module, "_opener", lambda proxy="": DeadOpener())
+    with pytest.raises(module.TikTokApiError) as caught:
+        module.fetch_publish_status("token", "pub_1", "http://proxy.example:8080")
+    assert caught.value.code == "route_unavailable"
+    assert caught.value.status == 502
+    assert "proxy" in str(caught.value)

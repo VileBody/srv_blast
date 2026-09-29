@@ -181,7 +181,20 @@ def fetch_user_info(access_token: str) -> dict[str, Any]:
     return (payload.get("data") or {}).get("user") or {}
 
 
-def _json_request(url: str, access_token: str, payload: dict[str, Any]) -> dict[str, Any]:
+def _opener(proxy: str = "") -> urllib.request.OpenerDirector:
+    """Прокси только там, где его просят: у urllib глобальный opener подхватил бы HTTP(S)_PROXY."""
+    if not proxy:
+        return urllib.request.build_opener()
+    return urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+
+
+def _route_error(exc: OSError, proxy: str) -> TikTokApiError:
+    """Сеть до TikTok (прокси публикации или соединение) — не ответ TikTok; так и говорим."""
+    via = "proxy" if proxy else "direct"
+    return TikTokApiError("route_unavailable", f"TikTok unreachable ({via}): {getattr(exc, 'reason', exc)}", 502)
+
+
+def _json_request(url: str, access_token: str, payload: dict[str, Any], proxy: str = "") -> dict[str, Any]:
     req = urllib.request.Request(
         url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -192,7 +205,7 @@ def _json_request(url: str, access_token: str, payload: dict[str, Any]) -> dict[
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        with _opener(proxy).open(req, timeout=_TIMEOUT) as resp:
             result = json.load(resp)
     except urllib.error.HTTPError as exc:
         try:
@@ -201,6 +214,8 @@ def _json_request(url: str, access_token: str, payload: dict[str, Any]) -> dict[
             raise TikTokApiError(str(error.get("code") or exc.code), str(error.get("message") or exc.reason), exc.code) from exc
         except (json.JSONDecodeError, AttributeError):
             raise TikTokApiError(str(exc.code), str(exc.reason), exc.code) from exc
+    except OSError as exc:  # URLError, таймаут, «Tunnel connection failed» от прокси
+        raise _route_error(exc, proxy) from exc
     error = result.get("error") or {}
     if error.get("code") not in (None, "ok"):
         raise TikTokApiError(str(error.get("code")), str(error.get("message") or "TikTok API error"))
@@ -212,13 +227,13 @@ def query_creator_info(access_token: str) -> dict[str, Any]:
     return _json_request(CREATOR_INFO_URL, access_token, {})
 
 
-def init_direct_post_pull(access_token: str, post_info: dict[str, Any], video_url: str) -> dict[str, Any]:
+def init_direct_post_pull(access_token: str, post_info: dict[str, Any], video_url: str, proxy: str = "") -> dict[str, Any]:
     if not video_url.startswith("https://"):
         raise ValueError("PULL_FROM_URL requires a public HTTPS video URL")
     return _json_request(DIRECT_POST_INIT_URL, access_token, {
         "post_info": post_info,
         "source_info": {"source": "PULL_FROM_URL", "video_url": video_url},
-    })
+    }, proxy)
 
 
 def chunk_plan(size: int) -> tuple[int, int]:
@@ -236,7 +251,7 @@ def chunk_plan(size: int) -> tuple[int, int]:
     return chunk_size, max(1, size // chunk_size)
 
 
-def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_path: str | Path) -> dict[str, Any]:
+def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_path: str | Path, proxy: str = "") -> dict[str, Any]:
     """Initialize FILE_UPLOAD and stream the already-rendered MP4 unchanged."""
     path = Path(video_path)
     size = path.stat().st_size
@@ -251,7 +266,7 @@ def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_pa
             "chunk_size": chunk_size,
             "total_chunk_count": total_chunks,
         },
-    })
+    }, proxy)
     upload_url = data.get("upload_url")
     if not upload_url:
         raise TikTokApiError("missing_upload_url", "TikTok did not return an upload URL")
@@ -268,24 +283,29 @@ def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_pa
                 "Content-Length": str(len(body)),
                 "Content-Range": f"bytes {offset}-{end}/{size}",
             })
-            with urllib.request.urlopen(req, timeout=90) as resp:
-                # TikTok отвечает 206 на промежуточные чанки и 201 на последний. Ответы
-                # сохраняем: без них «FAILED / internal» после загрузки не отличить от
-                # сбоя на нашей стороне.
-                transfer.append({
-                    "chunk": index + 1,
-                    "range": f"{offset}-{end}/{size}",
-                    "status": resp.status,
-                    "body": resp.read(300).decode("utf-8", "replace"),
-                })
+            try:
+                with _opener(proxy).open(req, timeout=120) as resp:
+                    # TikTok отвечает 206 на промежуточные чанки и 201 на последний. Ответы
+                    # сохраняем: без них «FAILED / internal» после загрузки не отличить от
+                    # сбоя на нашей стороне.
+                    transfer.append({
+                        "chunk": index + 1,
+                        "range": f"{offset}-{end}/{size}",
+                        "status": resp.status,
+                        "body": resp.read(300).decode("utf-8", "replace"),
+                    })
+            except urllib.error.HTTPError as exc:
+                raise TikTokApiError(str(exc.code), f"chunk {index + 1}: {exc.reason}", exc.code) from exc
+            except OSError as exc:
+                raise _route_error(exc, proxy) from exc
             offset = end + 1
     data["transfer"] = transfer
     data["upload_host"] = urllib.parse.urlparse(upload_url).hostname
     return data
 
 
-def fetch_publish_status(access_token: str, publish_id: str) -> dict[str, Any]:
-    return _json_request(PUBLISH_STATUS_URL, access_token, {"publish_id": publish_id})
+def fetch_publish_status(access_token: str, publish_id: str, proxy: str = "") -> dict[str, Any]:
+    return _json_request(PUBLISH_STATUS_URL, access_token, {"publish_id": publish_id}, proxy)
 
 
 def list_videos(access_token: str, cursor: int | None = None, max_count: int = 20) -> dict[str, Any]:

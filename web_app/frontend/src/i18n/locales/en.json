@@ -987,6 +987,7 @@
     "phaseSendingHint": "our server is transferring the video file to TikTok",
     "phaseProcessingHint": "TikTok is checking the video — usually up to a couple of minutes",
     "failReason": {
+      "route_unavailable": "Couldn't reach TikTok from our server — the problem is on our side, not with the video. Please try again in a few minutes.",
       "internal": "TikTok couldn't process the video on its side. Please try again in a minute.",
       "unaudited_client_can_only_post_to_private_accounts": "Until TikTok approves Blast, you can only post to a private account. Turn on “Private account” in TikTok settings.",
       "spam_risk_too_many_posts": "TikTok limited the number of posts per day. Please try again later.",
