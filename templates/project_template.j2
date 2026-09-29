@@ -868,6 +868,8 @@
               // пары шрифтов (app/subtitle_font_layout.AccentLayout): трекинг и сдвиг акцента
               if (cs.tracking !== undefined) r.tracking = cs.tracking;
               if (cs.baselineShift !== undefined) r.baselineShift = cs.baselineShift;
+              // пара на двух слоях: «чужие» буквы слоя прозрачные, но занимают место
+              if (cs.applyFill !== undefined) r.applyFill = !!cs.applyFill;
             } catch(eChar) {
               logErr("charStyle failed layer=" + layer.name + " i=" + i, eChar);
             }
@@ -1090,6 +1092,28 @@
       if (!layer || !lData || lData.type !== "text" || !targetComp) return;
       var td = (lData.text_data ? lData.text_data : null);
       if (td && td.no_layout_pass) return;
+      // layout_follow: слой-двойник (акцент пары) повторяет финальную раскладку
+      // оригинала — ближайшего ниже слоя с этим именем (он создан перед ним).
+      if (td && td.layout_follow) {
+        var src = null;
+        for (var li = 1; li <= targetComp.numLayers; li++) {
+          var cand = targetComp.layer(li);
+          if (cand !== layer && cand.name === String(td.layout_follow)) { src = cand; break; }
+        }
+        if (!src) { logLine("ERR", "layout_follow source missing=" + td.layout_follow + " layer=" + layer.name); return; }
+        try {
+          var stf = src.property("ADBE Transform Group"), dtf = layer.property("ADBE Transform Group");
+          var names = ["ADBE Anchor Point", "ADBE Position", "ADBE Scale"];
+          for (var ni = 0; ni < names.length; ni++) {
+            var sp = safeProp(stf, names[ni]), dp = safeProp(dtf, names[ni]);
+            if (!sp || !dp) continue;
+            if (sp.numKeys && sp.numKeys > 0) { logLine("ERR", "layout_follow: animated " + names[ni] + " on " + src.name); continue; }
+            var v = sp.value;
+            _setPropConstant3D(dp, Number(v[0]), Number(v[1]), (v.length >= 3) ? Number(v[2]) : 0);
+          }
+        } catch(eF) { logErr("layout_follow failed layer=" + layer.name, eF); }
+        return;
+      }
       // layout_box (app/subtitle_font_layout.py): коробка прописных в координатах
       // слоя + поля кадра. Есть — центрируем по прописным и держим поля по X и Y;
       // нет — прежнее поведение (поле 5% по X, центр чернильной рамки).

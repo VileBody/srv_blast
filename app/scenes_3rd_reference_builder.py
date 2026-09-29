@@ -177,6 +177,20 @@ def s_drop_shadow() -> Dict:
     }
 
 
+def accent_separation_shadow() -> Dict:
+    """Плотная короткая тень акцентного слова пары — отделяет его от букв основного
+    шрифта, по которым идут росчерки (общая S_DropShadow мягкая и широкая, её мало).
+    Стандартный ADBE Drop Shadow: без сдвига, только ореол вокруг штриха."""
+    return {
+        "0001": prop("ADBE Drop Shadow-0001", [0, 0, 0, 1]),  # Shadow Color
+        "0002": prop("ADBE Drop Shadow-0002", 170),           # Opacity (0..255 ≈ 67%)
+        "0003": prop("ADBE Drop Shadow-0003", 0),             # Direction
+        "0004": prop("ADBE Drop Shadow-0004", 0.0),           # Distance
+        "0005": prop("ADBE Drop Shadow-0005", 14.0),          # Softness
+        "0006": prop("ADBE Drop Shadow-0006", 0),             # Shadow Only
+    }
+
+
 def turbulent_displace() -> Dict:
     return {
         "0001": prop("ADBE Turbulent Displace-0001", 1),
@@ -527,8 +541,17 @@ def _lower_focus_word(text: str, focus_word: str) -> str:
     return "\r".join(parts)
 
 
-def build_char_styles_accent(text: str, focus_word: str, accent: Any) -> List[Dict]:
-    """TYPE_2 с парой шрифтов: фокус-слово — акцентный шрифт/размер/трекинг/сдвиг."""
+def build_char_styles_accent(text: str, focus_word: str, accent: Any, *, visible: str) -> List[Dict]:
+    """TYPE_2 с парой шрифтов: фокус-слово — акцентный шрифт/размер/трекинг/сдвиг.
+
+    Пара рисуется ДВУМЯ слоями с одинаковой раскладкой (все символы на местах):
+    visible="base"   — основной слой, буквы акцента прозрачные (applyFill=false);
+    visible="accent" — слой акцента поверх, прозрачные буквы основного.
+    Так росчерки акцента ложатся ПОВЕРХ соседних строк (внутри одного слоя AE
+    рисует поздние буквы поверх ранних — хвост из 1-й строки уходил под 2-ю).
+    """
+    if visible not in ("base", "accent"):
+        raise ValueError(f"visible must be 'base' or 'accent', got {visible!r}")
     styles = []
     char_i = 0
     words = text.replace("\r", " ").split(" ")
@@ -545,6 +568,8 @@ def build_char_styles_accent(text: str, focus_word: str, accent: Any) -> List[Di
                     "tracking": accent.tracking,
                     "baselineShift": accent.baseline_shift,
                 })
+            if is_focus != (visible == "accent"):
+                entry["applyFill"] = False
             styles.append(entry)
             char_i += 1
         if is_focus and char_i < len(text) and text[char_i] == " ":
@@ -759,35 +784,58 @@ class LayerFactory:
             kf_ease(t_out,              0, speed_in=-99.9),
         ]
 
-        tb = None
         accent = _LAYOUT.accent if _LAYOUT is not None else None
-        if accent is not None and focus:
-            # пара шрифтов: фокус-слово — акцентным шрифтом, строчными, внутри строки
-            text = _lower_focus_word(text, focus)
-            char_styles = build_char_styles_accent(text, focus, accent)
-            tb = text_base_dict()
-            tb["allCaps"] = False          # основной текст уже в верхнем регистре
-            tb["leading"] = _LAYOUT.leading_for(text, type1=False, accent_word=focus)
-            tb["_leading_fixed"] = True
-        else:
-            char_styles = build_char_styles(text, focus, "italic")
+        effects = {
+            "ADBE Turbulent Displace": turbulent_displace(),
+            "ADBE Posterize Time":    posterize_time(),
+            "ADBE Minimax":           minimax_exit(t_out),
+        }
         adj = self.adj_layer(f"adj_{scene['id']}", t_in, t_out)
-        text_l = self.text_layer(
-            name=text.replace("\r", " "),
-            text=text,
-            t_in=t_in, t_out=t_out,
-            reveal_kfs=rev_kfs,
-            opacity_kfs=op_kfs,
+
+        if accent is None or not focus:
+            text_l = self.text_layer(
+                name=text.replace("\r", " "),
+                text=text,
+                t_in=t_in, t_out=t_out,
+                reveal_kfs=rev_kfs,
+                opacity_kfs=op_kfs,
+                animator_cfg=text_animator_cfg(n),
+                char_styles=build_char_styles(text, focus, "italic"),
+                effects_extra=effects,
+            )
+            return [adj, text_l]
+
+        # пара шрифтов: фокус-слово — акцентным шрифтом, строчными, отдельным слоем сверху
+        text = _lower_focus_word(text, focus)
+        tb = text_base_dict()
+        tb["allCaps"] = False          # основной текст уже в верхнем регистре
+        tb["leading"] = _LAYOUT.leading_for(text, type1=False, accent_word=focus)
+        tb["_leading_fixed"] = True
+        common = dict(
+            text=text, t_in=t_in, t_out=t_out,
+            reveal_kfs=rev_kfs, opacity_kfs=op_kfs,
             animator_cfg=text_animator_cfg(n),
-            char_styles=char_styles,
-            text_base=tb,
-            effects_extra={
-                "ADBE Turbulent Displace": turbulent_displace(),
-                "ADBE Posterize Time":    posterize_time(),
-                "ADBE Minimax":           minimax_exit(t_out),
-            }
         )
-        return [adj, text_l]
+        base_name = text.replace("\r", " ")
+        base_l = self.text_layer(
+            name=base_name,
+            char_styles=build_char_styles_accent(text, focus, accent, visible="base"),
+            text_base=dict(tb),
+            effects_extra=dict(effects),
+            **common,
+        )
+        accent_l = self.text_layer(
+            name=base_name + " · акцент",
+            char_styles=build_char_styles_accent(text, focus, accent, visible="accent"),
+            text_base=dict(tb),
+            effects_extra={**effects, "ADBE Drop Shadow": accent_separation_shadow()},
+            **common,
+        )
+        # раскладку не считаем заново: копируем anchor/position/scale основного слоя
+        # после его финального прохода — иначе прозрачные буквы могли бы сдвинуть рамку
+        accent_l["text_data"]["layout_follow"] = base_name
+        # шаблон создаёт слои с конца массива: base → accent (сверху) → adj
+        return [adj, accent_l, base_l]
 
     def build_type3(self, scene: Dict, word_timings=None) -> List[Dict]:
         """
