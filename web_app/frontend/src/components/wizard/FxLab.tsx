@@ -269,7 +269,8 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
           </button>
         </div>
 
-        <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10">
+        {/* узкий экран: у колонки нет высоты — зона примера держит 9:16, как на проде */}
+        <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10 max-lg:aspect-[9/16] max-lg:w-full max-lg:flex-none">
           {v && <LabPreview previewId={previewId} />}
           {!v && (
             <div className="flex h-full items-center justify-center p-space-5">
