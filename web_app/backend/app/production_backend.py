@@ -6,7 +6,7 @@ import mimetypes
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 from urllib.parse import quote, unquote, urlparse
 from uuid import uuid4
 
@@ -575,7 +575,7 @@ class ProductionBackend:
     def upload_source(
         self,
         *,
-        content: bytes,
+        content: bytes | BinaryIO,
         user_id: str,
         filename: str,
         content_type: str | None,
@@ -605,7 +605,7 @@ class ProductionBackend:
     def upload_hook_sound(
         self,
         *,
-        content: bytes,
+        content: bytes | BinaryIO,
         user_id: str,
         filename: str,
         content_type: str | None,
