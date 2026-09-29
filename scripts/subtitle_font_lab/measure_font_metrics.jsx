@@ -51,6 +51,17 @@
     var comp = app.project.items.addComp("_font_metrics_probe", 1080, 1920, 1, 1, 23.976);
     var rows = [];
 
+    // doc.font возвращает запрошенное имя даже при подмене — этого мало.
+    // Проверяем по реестру шрифтов AE (24+): шрифт должен быть найден и не быть заменой.
+    function requireRealFont(ps) {
+        var found = app.fonts.getFontsByPostScriptName(ps);
+        if (!found || found.length === 0) throw new Error("font not resolvable in AE: " + ps);
+        for (var k = 0; k < found.length; k++) {
+            if (!found[k].isSubstitute) return;
+        }
+        throw new Error("font is a substitute in AE (unresolvable): " + ps);
+    }
+
     function measure(ps, text, tracking) {
         var layer = comp.layers.addText(text);
         var src = layer.property("Source Text");
@@ -73,6 +84,7 @@
     for (var i = 0; i < fonts.length; i++) {
         var ps = fonts[i].ps;
         try {
+            requireRealFont(ps);
             var cap = measure(ps, CAPS.cap, CAPS_TRACKING);
             var acc = measure(ps, CAPS.accent, CAPS_TRACKING);
             var dsc = measure(ps, CAPS.desc, CAPS_TRACKING);

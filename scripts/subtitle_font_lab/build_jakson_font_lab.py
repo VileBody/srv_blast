@@ -35,27 +35,17 @@ from app import scenes_3rd_reference_builder as jakson  # noqa: E402
 from app.project_builder import _tojson_filter  # noqa: E402
 from app.project_config import AE_PROJECT  # noqa: E402
 from app.render_plan import build_render_plan_v1  # noqa: E402
-from app.subtitle_font_layout import jakson_layout  # noqa: E402
+from app.subtitle_font_layout import jakson_layout, load_catalog  # noqa: E402
 from app.text_comp import build_text_layers  # noqa: E402
 from core.subtitles_mode import SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP  # noqa: E402
 
-# (группа, подпись, PostScript основного, PostScript фокусного для TYPE_4)
+# (группа, подпись, PostScript основного, PostScript фокусного для TYPE_4) — из каталога
+# config/styles/subtitle_font_catalog.json: основные не-скрипты (скрипт-как-основной — отдельный режим).
+_GROUP_BY_CATEGORY = {"sans_system": "01_CORE_SANS", "display": "02_DISPLAY", "editorial": "03_EDITORIAL"}
 MAIN_FONTS = [
-    ("01_CORE_SANS", "Point SemiBold (эталон)", "Point-SemiBold", "Point-ExtraBold"),
-    ("01_CORE_SANS", "Inter Bold", "Inter-Bold", None),
-    ("01_CORE_SANS", "Helvetica Neue Cyr Bold", "HelveticaNeueCyr-Bold", None),
-    ("01_CORE_SANS", "Montserrat SemiBold", "Montserrat-SemiBold", None),
-    ("01_CORE_SANS", "Source Sans Pro Bold", "SourceSansPro-Bold", None),
-    ("01_CORE_SANS", "Didact Gothic", "DidactGothic", None),
-    ("02_DISPLAY", "AKONY", "AKONY-Bold", None),
-    ("02_DISPLAY", "Bebas Neue Bold", "BebasNeueBold", None),
-    ("02_DISPLAY", "Kudry Weird Headline", "Kudry-WeirdHeadline", None),
-    ("02_DISPLAY", "Postertoaster", "Postertoastermono", None),
-    ("03_EDITORIAL", "Anticva", "Anticva-Regular", None),
-    ("03_EDITORIAL", "BazaART", "BazaART", None),
-    ("03_EDITORIAL", "Bergamasco", "Bergamasco", None),
-    ("03_EDITORIAL", "Cormorant SC Medium", "CormorantSC-Medium", None),
-    ("03_EDITORIAL", "Playfair Display SC", "PlayfairDisplaySC-Regular", None),
+    (_GROUP_BY_CATEGORY[row["category"]], row["label"], ps, row.get("focus_ps"))
+    for ps, row in load_catalog().items()
+    if "base" in (row.get("roles") or []) and row["category"] in _GROUP_BY_CATEGORY
 ]
 
 # Худший случай для межстрочного: выносные Д/Щ в первой строке, Ё/Й во второй.
