@@ -978,6 +978,7 @@
     "phaseSendingHint": "наш сервер передаёт файл ролика в TikTok",
     "phaseProcessingHint": "TikTok проверяет ролик — обычно это до пары минут",
     "failReason": {
+      "route_unavailable": "Сервер Blast не смог достучаться до TikTok — проблема на нашей стороне, не в ролике. Попробуй через несколько минут.",
       "internal": "TikTok не смог обработать ролик на своей стороне. Попробуйте ещё раз через минуту.",
       "unaudited_client_can_only_post_to_private_accounts": "Пока TikTok не одобрил Blast, публиковать можно только в приватный аккаунт. Включите «Частный аккаунт» в настройках TikTok.",
       "spam_risk_too_many_posts": "TikTok ограничил число публикаций за день. Попробуйте позже.",

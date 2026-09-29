@@ -188,6 +188,12 @@ def _opener(proxy: str = "") -> urllib.request.OpenerDirector:
     return urllib.request.build_opener(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
 
 
+def _route_error(exc: OSError, proxy: str) -> TikTokApiError:
+    """Сеть до TikTok (прокси публикации или соединение) — не ответ TikTok; так и говорим."""
+    via = "proxy" if proxy else "direct"
+    return TikTokApiError("route_unavailable", f"TikTok unreachable ({via}): {getattr(exc, 'reason', exc)}", 502)
+
+
 def _json_request(url: str, access_token: str, payload: dict[str, Any], proxy: str = "") -> dict[str, Any]:
     req = urllib.request.Request(
         url,
@@ -208,6 +214,8 @@ def _json_request(url: str, access_token: str, payload: dict[str, Any], proxy: s
             raise TikTokApiError(str(error.get("code") or exc.code), str(error.get("message") or exc.reason), exc.code) from exc
         except (json.JSONDecodeError, AttributeError):
             raise TikTokApiError(str(exc.code), str(exc.reason), exc.code) from exc
+    except OSError as exc:  # URLError, таймаут, «Tunnel connection failed» от прокси
+        raise _route_error(exc, proxy) from exc
     error = result.get("error") or {}
     if error.get("code") not in (None, "ok"):
         raise TikTokApiError(str(error.get("code")), str(error.get("message") or "TikTok API error"))
@@ -275,16 +283,21 @@ def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_pa
                 "Content-Length": str(len(body)),
                 "Content-Range": f"bytes {offset}-{end}/{size}",
             })
-            with _opener(proxy).open(req, timeout=120) as resp:
-                # TikTok отвечает 206 на промежуточные чанки и 201 на последний. Ответы
-                # сохраняем: без них «FAILED / internal» после загрузки не отличить от
-                # сбоя на нашей стороне.
-                transfer.append({
-                    "chunk": index + 1,
-                    "range": f"{offset}-{end}/{size}",
-                    "status": resp.status,
-                    "body": resp.read(300).decode("utf-8", "replace"),
-                })
+            try:
+                with _opener(proxy).open(req, timeout=120) as resp:
+                    # TikTok отвечает 206 на промежуточные чанки и 201 на последний. Ответы
+                    # сохраняем: без них «FAILED / internal» после загрузки не отличить от
+                    # сбоя на нашей стороне.
+                    transfer.append({
+                        "chunk": index + 1,
+                        "range": f"{offset}-{end}/{size}",
+                        "status": resp.status,
+                        "body": resp.read(300).decode("utf-8", "replace"),
+                    })
+            except urllib.error.HTTPError as exc:
+                raise TikTokApiError(str(exc.code), f"chunk {index + 1}: {exc.reason}", exc.code) from exc
+            except OSError as exc:
+                raise _route_error(exc, proxy) from exc
             offset = end + 1
     data["transfer"] = transfer
     data["upload_host"] = urllib.parse.urlparse(upload_url).hostname
