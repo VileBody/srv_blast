@@ -24,30 +24,34 @@ jobs:
           from app import tiktok_api
           from src.outbound_proxy import TIKTOK_PUBLISH_PROXY_URL as P
           blob = os.urandom(3_000_000)
-          for label, proxy in (("direct", ""), ("socks", P)):
+          UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126 Safari/537.36"
+          for label, proxy, URL in (("direct", "", "https://speed.cloudflare.com/__up"),
+                                    ("socks", P, "https://speed.cloudflare.com/__up"),
+                                    ("socks", P, "https://httpbin.org/post")):
+              label = f"{label}/{URL.split('/')[2].split('.')[-2]}"
               op = tiktok_api._opener(proxy)
               for size in (200_000, 1_000_000, 3_000_000):
-                  req = urllib.request.Request("https://speed.cloudflare.com/__up", data=blob[:size], method="POST",
-                                               headers={"Content-Type": "application/octet-stream"})
+                  req = urllib.request.Request(URL, data=blob[:size], method="POST",
+                                               headers={"Content-Type": "application/octet-stream", "User-Agent": UA})
                   t = time.time()
                   try:
                       with op.open(req, timeout=60) as r:
                           r.read()
                       dt = time.time() - t
-                      print(f"{label:6} up   {size/1e6:.1f}MB {dt:6.1f}s {size/dt/1e3:8.0f} KB/s")
+                      print(f"{label:17} up   {size/1e6:.1f}MB {dt:6.1f}s {size/dt/1e3:8.0f} KB/s")
                   except Exception as e:
-                      print(f"{label:6} up   {size/1e6:.1f}MB FAIL after {time.time()-t:.1f}s: {type(e).__name__}: {e}")
+                      print(f"{label:17} up   {size/1e6:.1f}MB FAIL after {time.time()-t:.1f}s: {type(e).__name__}: {e}")
               t = time.time()
               try:
-                  with op.open("https://speed.cloudflare.com/__down?bytes=3000000", timeout=60) as r:
+                  with op.open(urllib.request.Request("https://speed.cloudflare.com/__down?bytes=3000000", headers={"User-Agent": UA}), timeout=60) as r:
                       n = len(r.read())
                   dt = time.time() - t
-                  print(f"{label:6} down {n/1e6:.1f}MB {dt:6.1f}s {n/dt/1e3:8.0f} KB/s")
+                  print(f"{label:17} down {n/1e6:.1f}MB {dt:6.1f}s {n/dt/1e3:8.0f} KB/s")
               except Exception as e:
-                  print(f"{label:6} down FAIL after {time.time()-t:.1f}s: {type(e).__name__}: {e}")
+                  print(f"{label:17} down FAIL after {time.time()-t:.1f}s: {type(e).__name__}: {e}")
           PY
           echo "=== MTU towards the proxy"
-          ip route get 23.236.155.186 || true
+          ping -c1 -W3 -s 56 23.236.155.186 >/dev/null 2>&1 && echo "ping small ok" || echo "ping small FAIL (ICMP blocked here, MTU probe meaningless)"
           for s in 1472 1400 1300 1200 1000; do
             if ping -c1 -W3 -M do -s $s 23.236.155.186 >/dev/null 2>&1; then echo "ping DF size=$s ok"; else echo "ping DF size=$s FAIL"; fi
           done
