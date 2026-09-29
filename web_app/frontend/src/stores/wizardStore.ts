@@ -66,14 +66,15 @@ export interface SubtitleTextSettings {
   size: 'small' | 'medium' | 'large';
   height: 'compact' | 'normal' | 'tall';
   shadow: 'none' | 'soft' | 'strong';
-  outline: 'none' | 'thin' | 'thick';
-  outlineColor: string;
-  position: 'left' | 'center' | 'right';
+  // 'down' — только для 16:9 (рендер отклоняет его для вертикали). Обводки нет:
+  // смотр в AE 2026-09-29 — нигде не выглядит хорошо.
+  position: 'left' | 'center' | 'right' | 'down';
 }
 
 export const DEFAULT_SUBTITLE_TEXT_SETTINGS: SubtitleTextSettings = {
-  font: 'Point-SemiBold', size: 'medium', height: 'normal',
-  shadow: 'soft', outline: 'thin', outlineColor: '#000000', position: 'center'
+  // large = авто-максимум jakson (прод); medium/small — только меньше
+  font: 'Point-SemiBold', size: 'large', height: 'normal',
+  shadow: 'soft', position: 'center'
 };
 
 /**
@@ -500,17 +501,19 @@ export const useWizardStore = create<WizardStore>()(
     }),
     {
       name: 'blast-wizard-v4',
-      version: 6,
+      version: 7,
       migrate: (raw: any, version: number) => {
         const background = { ...raw.background };
         if (!background.sourceVideos?.length && background.uploads?.length) background.sourceVideos = [{
           id: 'source-video-legacy', format: background.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...background.uploads]
         }];
         background.sourceVideos ??= [];
-        const text = { ...DEFAULT_SUBTITLE_TEXT_SETTINGS, ...(raw.subtitles?.text ?? {}) };
-        // #8b6fe6 was the UI default before outline color became user-editable;
-        // migrate that former default once, without replacing other chosen colors.
-        if (version < 6 && text.outlineColor?.toLowerCase() === '#8b6fe6') text.outlineColor = DEFAULT_SUBTITLE_TEXT_SETTINGS.outlineColor;
+        const text: any = { ...DEFAULT_SUBTITLE_TEXT_SETTINGS, ...(raw.subtitles?.text ?? {}) };
+        // v7: обводка убрана из параметров; прежний дефолт размера 'medium' был
+        // только CSS-превью — переводим на 'large' (= авто-максимум рендера).
+        delete text.outline;
+        delete text.outlineColor;
+        if (version < 7 && text.size === 'medium') text.size = 'large';
         return { ...raw, background, subtitles: { color: raw.subtitles?.color ?? '#f6f5fd', pool: raw.subtitles?.pool ?? [], ...raw.subtitles, text }, hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {},
           hooks: Object.fromEntries(Object.entries(raw.allocation?.hooks ?? {}).map(([key, value]) => [key === 'sound' ? 'warmup' : key, value])) } };
       },

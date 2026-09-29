@@ -62,8 +62,9 @@ def apply_font_layout(layout: Optional[JaksonLayout]) -> None:
     RENDER["size_line2"] = layout.size_line2
     RENDER["size_focus"] = round(_RENDER_DEFAULTS["size_focus"] * layout.size_base / _RENDER_DEFAULTS["size_base"], 2)
     RENDER["leading"] = layout.leading_single
-    if layout.params.hook_color:
-        RENDER["color_red"] = hex_to_rgb01(layout.params.hook_color)
+    if layout.params.accent_color:
+        # не больше двух цветов в кадре: ударное слово TYPE_4 — тем же акцентным цветом
+        RENDER["color_red"] = hex_to_rgb01(layout.params.accent_color)
 
 
 def _type4_position() -> List[float]:
@@ -165,14 +166,8 @@ def text_base_dict(font=None, fill_color=None, italic=False,
     }
     if _LAYOUT is not None:
         tb["justificationCode"] = _LAYOUT.justification_code
-        # пользовательская обводка — только у слоёв с заливкой (TYPE_5 outline-слой свой)
-        if not apply_stroke and _LAYOUT.stroke_px > 0:
-            tb.update({
-                "applyStroke": True,
-                "strokeWidth": _LAYOUT.stroke_px,
-                "strokeColor": hex_to_rgb01(_LAYOUT.params.outline_color),
-                "strokeOverFill": False,
-            })
+        if _LAYOUT.vertical_scale != 1.0:
+            tb["verticalScale"] = _LAYOUT.vertical_scale
     return tb
 
 
@@ -587,6 +582,8 @@ def build_char_styles_accent(text: str, focus_word: str, accent: Any, *, visible
                     "fontSize": accent.size,
                     "tracking": accent.tracking,
                     "baselineShift": accent.baseline_shift,
+                    # скрипт не тянем: растяжение по высоте — только для основного
+                    "verticalScale": 1.0,
                 })
             if is_focus and visible == "accent" and _LAYOUT is not None and _LAYOUT.params.accent_color:
                 entry["fillColor"] = hex_to_rgb01(_LAYOUT.params.accent_color)

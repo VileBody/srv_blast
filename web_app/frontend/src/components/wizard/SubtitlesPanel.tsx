@@ -106,7 +106,7 @@ function nearestHuePercent(hex: string): number {
 }
 
 function VisualChoice<T extends string>({ kind, label, value, options, onChange }: {
-  kind: 'size' | 'height' | 'position' | 'shadow' | 'outline';
+  kind: 'size' | 'height' | 'position' | 'shadow';
   label: string; value: T; options: { value: T; label: string }[]; onChange: (value: T) => void;
 }) {
   return <fieldset className="flex min-w-0 items-center justify-between gap-[16px] border-0 border-b border-white/10 px-0 py-[13px] last:border-b-0">
@@ -121,7 +121,7 @@ function VisualChoice<T extends string>({ kind, label, value, options, onChange 
   </fieldset>;
 }
 
-function ChoiceGlyph({ kind, index, selected }: { kind: 'size' | 'height' | 'position' | 'shadow' | 'outline'; index: number; selected: boolean }) {
+function ChoiceGlyph({ kind, index, selected }: { kind: 'size' | 'height' | 'position' | 'shadow'; index: number; selected: boolean }) {
   if (kind === 'position') {
     return <span className="relative flex h-[18px] w-[26px] items-center rounded-[4px] border border-current/55 px-[3px]"><i className={cn('h-[7px] w-[3px] rounded-full bg-current transition-all', index === 0 ? 'mr-auto' : index === 1 ? 'mx-auto' : 'ml-auto')} /></span>;
   }
@@ -243,15 +243,9 @@ function SubtitleTextCustomization({ colorGuideTargetRef }: { colorGuideTargetRe
       <VisualChoice kind="shadow" label={t('wizard.subs.customization.shadow')} value={settings.shadow} onChange={(shadow) => updateText({ shadow })} options={[
         { value: 'none', label: t('wizard.subs.customization.none') }, { value: 'soft', label: t('wizard.subs.customization.soft') }, { value: 'strong', label: t('wizard.subs.customization.strong') }
       ]} />
-      <VisualChoice kind="outline" label={t('wizard.subs.customization.outline')} value={settings.outline} onChange={(outline) => updateText({ outline })} options={[
-        { value: 'none', label: t('wizard.subs.customization.none') }, { value: 'thin', label: t('wizard.subs.customization.thin') }, { value: 'thick', label: t('wizard.subs.customization.thick') }
-      ]} />
       <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-[16px] border-t border-white/10 pt-[14px]">
         <SubtitleColorControl guideRef={colorGuideTargetRef} label={t('wizard.subs.customization.color')} value={subtitles.color}
           defaultColor="#f6f5fd" defaultLabel={t('wizard.subs.customization.whiteColor')} onChange={(color) => setSubtitles({ color })} />
-        <div aria-hidden="true" className="col-span-2 my-[10px] border-t border-white/10" />
-        <SubtitleColorControl label={t('wizard.subs.customization.outlineColor')} value={settings.outlineColor}
-          defaultColor="#000000" defaultLabel={t('wizard.subs.customization.defaultOutlineColor')} onChange={(outlineColor) => updateText({ outlineColor })} />
       </div>
     </div>
   </section>;
@@ -400,7 +394,6 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
   const sizeValue = { small: '5.2cqi', medium: '7cqi', large: '8.5cqi' }[textSettings.size];
   const heightScale = { compact: 0.8, normal: 1, tall: 1.3 }[textSettings.height];
   const shadow = { none: 'none', soft: '0 2px 7px rgba(0,0,0,.78)', strong: '0 3px 13px rgba(0,0,0,.95)' }[textSettings.shadow];
-  const stroke = { none: '0 transparent', thin: `1px ${textSettings.outlineColor}`, thick: `2px ${textSettings.outlineColor}` }[textSettings.outline];
   const horizontal = textSettings.position === 'left' ? 'justify-start text-left' : textSettings.position === 'right' ? 'justify-end text-right' : 'justify-center text-center';
 
   return (
@@ -412,8 +405,7 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
           <div className={cn('flex h-full w-full items-center', horizontal)}>
           <div className="max-w-full whitespace-pre-wrap break-words font-bold uppercase leading-[1.05]"
             style={{ color: subtitles.color, fontFamily: fontFamilies[textSettings.font], fontSize: sizeValue,
-              transform: `scaleY(${heightScale})`, transformOrigin: 'center center', textShadow: shadow,
-              WebkitTextStroke: stroke }}>
+              transform: `scaleY(${heightScale})`, transformOrigin: 'center center', textShadow: shadow }}>
             {caption || 'Текст появится здесь'}
           </div>
           </div>

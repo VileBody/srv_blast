@@ -830,6 +830,7 @@
           try { if (base.strokeWidth !== undefined) textDoc.strokeWidth = base.strokeWidth; } catch(_) {}
           try { if (base.strokeColor !== undefined) textDoc.strokeColor = base.strokeColor; } catch(_) {}
           try { if (base.strokeOverFill !== undefined) textDoc.strokeOverFill = !!base.strokeOverFill; } catch(_) {}
+          try { if (base.verticalScale !== undefined) textDoc.verticalScale = Number(base.verticalScale); } catch(_) {}
           try { if (base.tracking !== undefined) textDoc.tracking = base.tracking; } catch(_) {}
           try { if (base.leading !== undefined) textDoc.leading = base.leading; } catch(_) {}
           try { if (base.autoLeading !== undefined) textDoc.autoLeading = !!base.autoLeading; } catch(_) {}
@@ -873,6 +874,7 @@
               if (cs.baselineShift !== undefined) r.baselineShift = cs.baselineShift;
               // пара на двух слоях: «чужие» буквы слоя прозрачные, но занимают место
               if (cs.applyFill !== undefined) r.applyFill = !!cs.applyFill;
+              if (cs.verticalScale !== undefined) r.verticalScale = Number(cs.verticalScale);
             } catch(eChar) {
               logErr("charStyle failed layer=" + layer.name + " i=" + i, eChar);
             }

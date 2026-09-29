@@ -37,7 +37,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -76,21 +76,25 @@ ACCENT_CHARS = frozenset("ЙЁ")
 # Пользовательские параметры текста (визард) — именованные пресеты. Числа живут
 # ТОЛЬКО здесь, на стороне рендера; фронт шлёт имена.
 # ---------------------------------------------------------------------------
-# размер: только МЕНЬШЕ авто-максимума jakson (авто уже максимально крупный)
-SIZE_PRESETS = {"auto": 1.0, "m": 0.9, "s": 0.8}
-# позиция: (выравнивание по X, центр группы по Y в долях высоты кадра)
+# Имена — как в визарде (web_app/frontend/src/stores/wizardStore.ts, SubtitleTextSettings).
+# размер: только МЕНЬШЕ авто-максимума jakson (large = авто, прод)
+SIZE_PRESETS = {"large": 1.0, "medium": 0.9, "small": 0.8}
+# высота: вертикальное растяжение букв (AE verticalScale); ширина букв всегда 100%
+HEIGHT_PRESETS = {"compact": 0.8, "normal": 1.0, "tall": 1.3}
+# позиция: (выравнивание по X, центр группы по Y в долях высоты текст-компа 1080×1920)
 POSITION_PRESETS = {
     "center": ("center", 0.50),
-    "up": ("center", 0.36),
-    "down": ("center", 0.64),
     "left": ("left", 0.50),
     "right": ("right", 0.50),
+    # только для 16:9: текст-комп вложен в кадр 1920×1080, видна его середина
+    # (y 420..1500) — 0.64 ≈ нижняя треть видимого кадра
+    "down": ("center", 0.64),
 }
+POSITION_ONLY_FOR_PRESETS = {"down": {"wide"}}
 # тень (Sapphire S_DropShadow): soft = прод-значения
 SHADOW_PRESETS = {"none": None, "soft": {"opacity": 2.0, "blur": 60.0}, "strong": {"opacity": 4.0, "blur": 34.0}}
-# обводка под заливкой: толщина в долях высоты прописных (масштабно-инвариантно)
-OUTLINE_PRESETS = {"none": 0.0, "thin": 0.07, "thick": 0.14}
 JUSTIFICATION_CODES = {"left": "7413", "right": "7414", "center": "7415"}
+# Обводки нет сознательно (смотр 2026-09-29: нигде не выглядит хорошо).
 
 
 def hex_to_rgb01(value: str) -> list:
@@ -102,24 +106,31 @@ def hex_to_rgb01(value: str) -> list:
 
 @dataclass(frozen=True)
 class JaksonTextParams:
-    """Выбор пользователя для jakson. Неизвестный пресет — ошибка (No Fallback)."""
+    """Выбор пользователя для jakson. Неизвестный пресет — ошибка (No Fallback).
 
-    size: str = "auto"
+    Цвета: в кадре не больше ДВУХ — основной (заливка, SUBTITLES_FORCE_FILL_HEX) и
+    один акцентный. accent_color красит и акцентное слово пары (TYPE_2), и ударное
+    слово (TYPE_4). None — прод: акцент как основной текст, ударное — красное.
+    """
+
+    size: str = "large"
+    height: str = "normal"
     position: str = "center"
     shadow: str = "soft"
-    outline: str = "none"
-    outline_color: str = "#000000"
-    accent_color: Optional[str] = None      # None — белый, как основной
-    hook_color: Optional[str] = None        # TYPE_4; None — прод-красный
+    accent_color: Optional[str] = None
 
     def __post_init__(self) -> None:
-        for name, table in (("size", SIZE_PRESETS), ("position", POSITION_PRESETS),
-                            ("shadow", SHADOW_PRESETS), ("outline", OUTLINE_PRESETS)):
+        for name, table in (("size", SIZE_PRESETS), ("height", HEIGHT_PRESETS),
+                            ("position", POSITION_PRESETS), ("shadow", SHADOW_PRESETS)):
             if getattr(self, name) not in table:
                 raise ValueError(f"unknown {name} preset {getattr(self, name)!r} (allowed: {sorted(table)})")
-        for name in ("outline_color", "accent_color", "hook_color"):
-            if getattr(self, name) is not None:
-                hex_to_rgb01(getattr(self, name))
+        if self.accent_color is not None:
+            hex_to_rgb01(self.accent_color)
+
+    def check_render_preset(self, render_preset: str) -> None:
+        allowed = POSITION_ONLY_FOR_PRESETS.get(self.position)
+        if allowed is not None and render_preset not in allowed:
+            raise ValueError(f"position {self.position!r} is only for render presets {sorted(allowed)}, got {render_preset!r}")
 
 
 @dataclass(frozen=True)
@@ -258,8 +269,8 @@ class JaksonLayout:
         return JUSTIFICATION_CODES[self.align_x]
 
     @property
-    def stroke_px(self) -> float:
-        return round(OUTLINE_PRESETS[self.params.outline] * self.cap_h_base, 2)
+    def vertical_scale(self) -> float:
+        return HEIGHT_PRESETS[self.params.height]
 
     @property
     def shadow(self) -> Optional[Dict[str, float]]:
@@ -326,7 +337,8 @@ def accent_layout(accent_font: str, *, cap_h_base: float, path: Path = METRICS_P
 
 
 def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_font: Optional[str] = None,
-                  params: Optional[JaksonTextParams] = None, path: Path = METRICS_PATH) -> JaksonLayout:
+                  params: Optional[JaksonTextParams] = None, render_preset: str = "vertical",
+                  path: Path = METRICS_PATH) -> JaksonLayout:
     if accent_font:
         check_pair(font_base, accent_font)
     ref = font_metrics(REFERENCE_FONT, path=path)
@@ -334,7 +346,11 @@ def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_fo
     focus = font_metrics(font_focus or font_base, path=path)
 
     params = params or JaksonTextParams()
-    # 1) размеры по видимой высоте прописных (Point = эталон) × пресет размера
+    params.check_render_preset(render_preset)
+    v = HEIGHT_PRESETS[params.height]
+    # 1) размеры по видимой высоте прописных (Point = эталон) × пресет размера.
+    #    Растяжение по высоте (v) размер в pt НЕ меняет — ширина букв остаётся той же,
+    #    растут только вертикальные метрики (ниже: base_v).
     k = ref.cap_h / base.cap_h * SIZE_PRESETS[params.size]
     size_base = round(REF_SIZE_BASE * k, 2)
     size_line2 = round(REF_SIZE_LINE2 * k, 2)
@@ -345,9 +361,10 @@ def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_fo
     gap_single = (REF_LEADING_SINGLE - ref_cap80) / ref_cap80
     gap_type1 = (REF_LEADING_TYPE1 - ref.per_pt(ref.cap_h, REF_SIZE_LINE2)) / ref_cap80
 
-    cap_h_base = base.per_pt(base.cap_h, size_base)
-    leading_single = round(base.per_pt(base.cap_h, size_base) + gap_single * cap_h_base, 2)
-    leading_type1 = round(base.per_pt(base.cap_h, size_line2) + gap_type1 * cap_h_base, 2)
+    base_v = replace(base, cap_h=base.cap_h * v, accent_top=base.accent_top * v, desc_bottom=base.desc_bottom * v)
+    cap_h_base = base_v.per_pt(base_v.cap_h, size_base)
+    leading_single = round(base_v.per_pt(base_v.cap_h, size_base) + gap_single * cap_h_base, 2)
+    leading_type1 = round(base_v.per_pt(base_v.cap_h, size_line2) + gap_type1 * cap_h_base, 2)
 
     # 3) вместимость строки для промпта: у Point 12/13 знаков, шире шрифт → меньше
     adv_base = base.per_pt(base.advance_per_char, size_base)
@@ -362,14 +379,14 @@ def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_fo
         leading_single=leading_single,
         leading_type1=leading_type1,
         cap_h_base=round(cap_h_base, 2),
-        cap_h_focus=round(focus.per_pt(focus.cap_h, size_focus_base), 2),
+        cap_h_focus=round(focus.per_pt(focus.cap_h, size_focus_base) * v, 2),
         advance_base=round(adv_base, 2),
         advance_focus=round(focus.per_pt(focus.advance_per_char, size_focus_base), 2),
         margin_x=SAFE_MARGIN_X,
         margin_y=SAFE_MARGIN_Y,
         line_chars_type1=max(6, int(REF_LINE_CHARS_TYPE1 / width_ratio)),
         line_chars_two_groups=max(6, int(REF_LINE_CHARS_TWO_GROUPS / width_ratio)),
-        metrics=base,
+        metrics=base_v,
         gap_single=gap_single,
         gap_type1=gap_type1,
         line_gap_mult=float(font_tuning(font_base).get("line_gap_mult", 1.0)),

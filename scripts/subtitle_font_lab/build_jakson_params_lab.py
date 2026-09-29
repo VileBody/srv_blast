@@ -38,17 +38,18 @@ PAIRS = [
 ]
 
 BASE = JaksonTextParams()
+# Смотр 2026-09-29: обводки нет вовсе; «выше» нет; «ниже» — только 16:9 (здесь 9:16);
+# акцентный цвет один на TYPE_2 и TYPE_4 (не больше двух цветов в кадре).
 GROUPS = {
-    "01 размер": [("авто", replace(BASE, size="auto")), ("M −10%", replace(BASE, size="m")),
-                  ("S −20%", replace(BASE, size="s"))],
-    "02 позиция": [(name, replace(BASE, position=name)) for name in ("center", "up", "down", "left", "right")],
-    "03 тень": [(name, replace(BASE, shadow=name)) for name in ("none", "soft", "strong")],
-    "04 обводка": [("нет", BASE), ("тонкая чёрная", replace(BASE, outline="thin")),
-                   ("толстая чёрная", replace(BASE, outline="thick")),
-                   ("толстая красная", replace(BASE, outline="thick", outline_color="#E51515"))],
-    "05 цвета": [("по умолчанию", BASE), ("акцент розовый", replace(BASE, accent_color="#FF5FA8")),
-                 ("ударное жёлтое", replace(BASE, hook_color="#FFD23F")),
-                 ("акцент + ударное", replace(BASE, accent_color="#FF5FA8", hook_color="#FFD23F"))],
+    "01 размер": [("large (авто)", replace(BASE, size="large")), ("medium −10%", replace(BASE, size="medium")),
+                  ("small −20%", replace(BASE, size="small"))],
+    "02 высота": [("compact 80%", replace(BASE, height="compact")), ("normal", replace(BASE, height="normal")),
+                  ("tall 130%", replace(BASE, height="tall"))],
+    "03 позиция": [(name, replace(BASE, position=name)) for name in ("center", "left", "right")],
+    "04 тень": [(name, replace(BASE, shadow=name)) for name in ("none", "soft", "strong")],
+    "05 цвета": [("по умолчанию (белый + красный)", BASE),
+                 ("акцент розовый", replace(BASE, accent_color="#FF5FA8")),
+                 ("акцент жёлтый", replace(BASE, accent_color="#FFD23F"))],
 }
 
 # (тип, строки, фокус-слово, стиль фокуса)
