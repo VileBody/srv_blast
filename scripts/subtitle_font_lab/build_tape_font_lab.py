@@ -125,13 +125,13 @@ def main() -> None:
         parts.append(f"// ===== {label} ({ps}) =====\n{_font_jsx(env, label, ps, args.metrics)}\n")
         groups.setdefault(group, []).append(label)
         lay = tape_layout(ps, path=args.metrics)
-        rows.append(f"{label}\t{lay.size}\t{lay.leading}\t{lay.box}\t{lay.faux_italic}")
+        rows.append(f"{label}\t{lay.size}\t{lay.leading}\t{lay.case}\t{lay.faux_italic}")
     parts.append(_finalize_jsx(args.out_aep, groups))
     args.out_dir.mkdir(parents=True, exist_ok=True)
     out = args.out_dir / "tape_font_lab.jsx"
     out.write_text("".join(parts), encoding="utf-8")
     print(out)
-    print("font\tsize_pt\tleading\tbox\tfaux_italic")
+    print("font\tsize_pt\tleading\tcase\tfaux_italic")
     print("\n".join(rows))
 
 

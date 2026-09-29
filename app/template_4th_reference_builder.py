@@ -170,12 +170,10 @@ def _char_styles(*, text: str, focus_word_indices: set[int]) -> List[Dict[str, A
     styles: List[Dict[str, Any]] = []
     word_idx = 0
     for i, ch in enumerate(text):
-        if ch == " ":
+        if ch in (" ", "\r"):
             word_idx += 1
             if _TAPE_LAYOUT is not None and _TAPE_LAYOUT.space_tracking is not None:
                 styles.append({"i": i, "tracking": _TAPE_LAYOUT.space_tracking})
-            continue
-        if ch == "\r":
             continue
         is_focus = word_idx in focus_word_indices
         lay = _TAPE_LAYOUT
@@ -194,7 +192,7 @@ def _reveal_keyframes(*, seg: Any, text: str) -> List[Dict[str, Any]]:
     in_t = float(seg.in_point)
     out_t = float(seg.out_point)
     dur = max(_FRAME_SEC, out_t - in_t)
-    words = [w for w in str(text).split(" ") if w]
+    words = [w for w in str(text).replace("\r", " ").split(" ") if w]   # \r — наш перенос строки
     n_words = max(1, len(words))
     tokens = sorted(list(seg.tokens or []), key=lambda t: (float(t.t_start), float(t.t_end), str(t.text)))
     if len(tokens) >= 2:
@@ -248,6 +246,11 @@ def build_template_4th_reference_layers(
         if not text:
             continue
         focus_words = _focus_word_indices(text=text, tokens=list(seg.tokens or []))
+        if _TAPE_LAYOUT is not None:
+            # строки режет рендер (≤ 2), регистр — по шрифту (скрипты строчными)
+            if _TAPE_LAYOUT.case == "lower":
+                text = text.lower()
+            text = _TAPE_LAYOUT.break_lines(text)
 
         # --- Основной слой субтитра в Text-компе ---
         layer = {
@@ -294,7 +297,7 @@ def build_template_4th_reference_layers(
                     "justificationCode": _TAPE_LAYOUT.justification_code if _TAPE_LAYOUT is not None else "7415",
                     **({"verticalScale": _TAPE_LAYOUT.vertical_scale}
                        if _TAPE_LAYOUT is not None and _TAPE_LAYOUT.vertical_scale != 1.0 else {}),
-                    "allCaps": True,
+                    "allCaps": _TAPE_LAYOUT is None or _TAPE_LAYOUT.case == "upper",
                     "leftIndent": 0,
                     "rightIndent": 0,
                     "firstLineIndent": 0,
@@ -303,8 +306,8 @@ def build_template_4th_reference_layers(
                 },
                 "char_styles_ungrouped": _char_styles(text=text, focus_word_indices=focus_words),
                 "text_animator": _text_animator_cfg(),
-                "box_text": list(_TAPE_LAYOUT.box) if _TAPE_LAYOUT is not None else [900, 160],
-                **({"layout_box": _TAPE_LAYOUT.layout_box()} if _TAPE_LAYOUT is not None else {}),
+                # с раскладкой — точечный текст с нашими переносами (без бокса AE)
+                **({"box_text": [900, 160]} if _TAPE_LAYOUT is None else {"layout_box": _TAPE_LAYOUT.layout_box()}),
             },
         }
         layers.append(layer)

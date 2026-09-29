@@ -455,6 +455,13 @@ def check_style_allowed(font: str, style: str, *, path: Path = CATALOG_PATH) -> 
         raise ValueError(f"font {font!r} is excluded for subtitle style {style!r} (subtitle_font_catalog.json)")
 
 
+def text_case(font: str, *, path: Path = CATALOG_PATH) -> str:
+    """Регистр основного текста: скрипты — только строчными (капсом рукописный текст
+    не читается — смотр 2026-09-30), остальные — как задумано стилем."""
+    row = load_catalog(path).get(font) or {}
+    return "lower" if row.get("category") == "script" else "upper"
+
+
 def allows_height_stretch(font_base: str, *, path: Path = CATALOG_PATH) -> bool:
     """Растяжение по высоте — только шрифтам с засечками (catalog "serif": true)."""
     return load_catalog(path).get(font_base, {}).get("serif") is True
@@ -621,13 +628,32 @@ TAPE_SHADOW_PRESETS = {"none": None, "soft": {"opacity": 2.0, "blur": 60.0}, "st
 
 @dataclass(frozen=True)
 class TapeLayout:
+    """Строки tape разбивает РЕНДЕР, а не перенос в боксе AE: максимум 2 строки
+    (3-й не бывает никогда; переполнение бокса AE молча режет). Не влезло в 2
+    строки по ширине — финальный проход уменьшает группу целиком."""
+
     font: str
     size: float
     leading: float
-    box: List[float]          # [w, h] — высота с запасом на 3-ю строку (переполнение бокса AE молча режет)
+    advance_px: float         # px на знак (капс/строчные — по регистру, с трекингом tape)
     faux_italic: bool
+    case: str                 # "upper" | "lower" (скрипты)
     params: JaksonTextParams
     space_tracking: Optional[float] = None
+
+    def break_lines(self, text: str) -> str:
+        """1 строка, если влезает в ширину tape; иначе 2 по границе слов,
+        с минимальной шириной самой длинной строки."""
+        words = text.split(" ")
+        if len(words) < 2 or len(text) * self.advance_px <= TAPE_BOX_W:
+            return text
+        best, best_w = text, float("inf")
+        for k in range(1, len(words)):
+            a, b = " ".join(words[:k]), " ".join(words[k:])
+            w = max(len(a), len(b)) * self.advance_px
+            if w < best_w:
+                best, best_w = a + "\r" + b, w
+        return best
 
     @property
     def vertical_scale(self) -> float:
@@ -662,18 +688,35 @@ def tape_layout(font: str, *, params: Optional[JaksonTextParams] = None, render_
     ref = font_metrics(TAPE_REFERENCE_FONT, path=path)
     m = font_metrics(font, path=path)
     v = HEIGHT_PRESETS[params.height]
-    size = TAPE_REF_SIZE * ref.cap_h / m.cap_h * SIZE_PRESETS[params.size]
-    cap = m.per_pt(m.cap_h, size) * v
+    case = text_case(font)
+    # капс — прописные к прописным эталона; строчные (скрипты) — тело строчных к телу строчных эталона
+    if case == "lower":
+        m.require_lowercase()
+        ref.require_lowercase()
+        own, ref_own = m.body_top + m.body_bottom, ref.body_top + ref.body_bottom
+    else:
+        own, ref_own = m.cap_h, ref.cap_h
+    size = TAPE_REF_SIZE * ref_own / own * SIZE_PRESETS[params.size]
+    cap = m.per_pt(own, size) * v
     ref_cap = ref.per_pt(ref.cap_h, TAPE_REF_SIZE)
     gap_ratio = (TAPE_REF_LEADING - ref_cap) / ref_cap
-    leading = cap + gap_ratio * cap * float(font_tuning(font).get("line_gap_mult", 1.0))
-    box_h = size * v + 2.0 * leading + size / 3.0
+    # line_gap_mult (AKONY ×2) — поправка jakson под строки 80/120; у tape строки
+    # одного размера, там она давала слишком большой зазор (смотр 2026-09-30)
+    leading = cap + gap_ratio * cap
+    if case == "lower":
+        # строчные: зазор по телу мал для скриптов с высокими б/д — не меньше
+        # «хвост строки 1 + верх строки 2 + просвет», иначе строки налезают
+        leading = max(leading, (m.per_pt(m.lc_desc_bottom, size) + m.per_pt(m.lc_asc_top, size)) * v
+                      + MIN_CLEARANCE_RATIO * cap)
+    adv =m.lc_advance_per_char if case == "lower" else m.advance_per_char
+    advance = m.per_pt(adv, size) + TAPE_TRACKING / 1000.0 * size
     return TapeLayout(
         font=font,
         size=round(size, 2),
         leading=round(leading, 2),
-        box=[TAPE_BOX_W, round(box_h, 1)],
+        advance_px=round(advance, 2),
         faux_italic=not font.lower().endswith("italic"),
+        case=case,
         params=params,
         space_tracking=font_tuning(font).get("space_tracking"),
     )
