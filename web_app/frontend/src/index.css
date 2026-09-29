@@ -483,6 +483,9 @@
   --accent-strong: #6a4fcf;
   --accent-soft:   rgba(139, 111, 230, 0.16);
   --accent-line:   rgba(139, 111, 230, 0.55);
+  --line:          rgba(246, 245, 253, 0.09);
+  --line-strong:   rgba(246, 245, 253, 0.16);
+  --scrim:         rgba(5, 1, 15, 0.55);
   --ctl-xs:    24px;
   --ctl-sm:    32px;
   --ctl:       44px;
