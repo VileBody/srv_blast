@@ -474,6 +474,20 @@
   --r12: 12px;
   --r10: 10px;
   --r9:  9px;
+  --r6:  6px;
+
+  /* Единая шкала (UI_RULES.md): поверхности, акцент и высоты контролов для новых компонентов */
+  --panel:         #140d2b;
+  --field:         #1a1236;
+  --field-hover:   #211742;
+  --accent-strong: #6a4fcf;
+  --accent-soft:   rgba(139, 111, 230, 0.16);
+  --accent-line:   rgba(139, 111, 230, 0.55);
+  --ctl-xs:    24px;
+  --ctl-sm:    32px;
+  --ctl:       44px;
+  --ctl-touch: 52px;
+  --ctl-lg:    60px;
 
   --t-fast:  0.15s ease;
   --t-base:  0.25s ease;

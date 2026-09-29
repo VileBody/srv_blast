@@ -9,6 +9,7 @@
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "typecheck": "tsc -b --pretty",
     "i18n:check": "node scripts/check-i18n.mjs",
+    "ui:check": "node scripts/check-ui.mjs",
     "lint:types": "tsc --noEmit --pretty",
     "icons:box": "python scripts/gen-icon-box.py"
   },
