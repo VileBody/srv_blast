@@ -150,18 +150,43 @@ export function recipeKeyOf(s: { track?: { id?: string | number } | null; timing
 }
 
 /**
- * Включён ли режим вариантов FX (прототип `?fxLab=1`, флаг липкий на вкладку — см. useFxLab).
- * Нужен вне React: stageData собирается в сторе.
+ * Режим вариантов FX — поведение по умолчанию. `?fxLab=0` — аварийный откат на классический
+ * шаг FX (hooks.configs); флаг липкий на вкладку: навигация визарда переписывает адрес и
+ * теряет параметр. `?fxLab=1` снимает откат. Нужен и вне React: stageData собирается в сторе.
  */
 export function fxVariantsMode(): boolean {
-  if (typeof window === 'undefined') return false;
+  if (typeof window === 'undefined') return true;
+  const param = new URLSearchParams(window.location.search).get('fxLab');
   try {
-    const param = new URLSearchParams(window.location.search).get('fxLab');
-    if (param === '0') return false;
-    return param !== null || window.sessionStorage.getItem('fxLab') === '1';
+    if (param === '0') window.sessionStorage.setItem('fxLab', '0');
+    else if (param !== null) window.sessionStorage.removeItem('fxLab');
+    return window.sessionStorage.getItem('fxLab') !== '0';
   } catch {
-    return false;
+    return param !== '0';
   }
+}
+
+/**
+ * Черновик, собранный в классическом шаге FX (hooks.configs), — в варианты: по варианту на
+ * каждый стиль типа (раньше стили у типа копились списком и делились в «Пуле» отдельно).
+ * Недонастроенные конфиги тоже переезжают — на шаге FX у них будет метка «настроить».
+ */
+export function variantsFromLegacyHooks(hooks: WizardStateData['hooks']): FxVariant[] {
+  const out: FxVariant[] = [];
+  for (const kind of Object.keys(HOOK_LABELS) as HookKind[]) {
+    const config = hooks.configs[kind];
+    if (!config) continue;
+    const styles = config.effectStyles?.length ? config.effectStyles : (config.effectStyle ? [config.effectStyle] : []);
+    for (const style of styles.length ? styles : [undefined]) {
+      out.push({
+        id: `v-${kind}-${out.length + 1}-${Date.now().toString(36)}`,
+        kind,
+        config: { ...config, effectStyles: style ? [style] : [], effectStyle: style },
+        color: FX_VARIANT_PALETTE[out.length % FX_VARIANT_PALETTE.length]
+      });
+    }
+  }
+  return out;
 }
 
 export const emptyTimeline = (): TimelineRecipe => ({ key: '', pace: 'auto', cuts: null, edited: false, transitions: {}, styles: [] });

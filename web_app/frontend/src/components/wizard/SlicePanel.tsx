@@ -240,7 +240,7 @@ export function StageSlice() {
     : null;
   const fixedCount = colorGroup ? 1 : 0;
   const subtitleStyles = state.subtitles.pool;
-  // Режим вариантов FX (?fxLab=1): строки секции FX — варианты (стиль внутри варианта),
+  // Режим вариантов FX (по умолчанию): строки секции FX — варианты (стиль внутри варианта),
   // доли — allocation.variants. Классические хуки и отдельная секция стилей в нём не участвуют.
   const fxLab = useFxLab();
   const labRows = useLabPoolRows();

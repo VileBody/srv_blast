@@ -1,15 +1,21 @@
 import { DragEvent, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '../../lib/api';
-import { useWizardStore } from '../../stores/wizardStore';
+import { HookConfig, useWizardStore } from '../../stores/wizardStore';
 import { AUDIO_FILE_ACCEPT, isAudioFile, isVideoFile, VIDEO_FILE_ACCEPT } from '../../lib/mediaFiles';
 
 type WarmupKind = 'audio' | 'video';
 
-export function WarmupInput() {
+/**
+ * Загрузка прогрева (свой звук или видео). По умолчанию пишет в классический
+ * hooks.configs.warmup; шаг FX в режиме вариантов передаёт конфиг своего варианта и onPatch.
+ */
+export function WarmupInput({ value, onPatch }: { value?: HookConfig; onPatch?: (patch: Partial<HookConfig>) => void } = {}) {
   const { t } = useTranslation();
-  const config = useWizardStore(s => s.hooks.configs.warmup) ?? {};
-  const setHooks = useWizardStore(s => s.setHooks);
+  const storeConfig = useWizardStore(s => s.hooks.configs.warmup);
+  const storeSetHooks = useWizardStore(s => s.setHooks);
+  const config = (onPatch ? value : storeConfig) ?? {};
+  const setHooks = ({ config: patch }: { kind: 'warmup'; config: Partial<HookConfig> }) => (onPatch ? onPatch(patch) : storeSetHooks({ kind: 'warmup', config: patch }));
   const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');

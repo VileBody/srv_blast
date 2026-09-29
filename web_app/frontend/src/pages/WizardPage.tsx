@@ -16,7 +16,7 @@ import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
 import { hasTrackInput, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { useStoryboardBusy } from '../components/wizard/storyboardData';
-import { LabWorkZone, useFxLab } from '../components/wizard/FxLab';
+import { LabWorkZone, useFxLab, useLegacyHooksToVariants } from '../components/wizard/FxLab';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
 import { dropToSeconds, timingToSeconds, usePlaybackUrl } from '../components/wizard/useFragmentAudio';
@@ -619,9 +619,10 @@ export function WizardPage() {
   const selectedHooks = hookPills(state.hooks);
   const selectedStyles = selectedEffectStyles(state.hooks);
   const hookTarget = compatibleHookTarget(state.background, state.allocation.background);
-  // Режим вариантов FX (?fxLab=1): хуки — это варианты (fxVariants), доли — allocation.variants.
+  // Режим вариантов FX (по умолчанию; ?fxLab=0 — классический шаг): хуки — это варианты (fxVariants), доли — allocation.variants.
   // Классические hooks.configs/allocation.hooks/styles в этом режиме не участвуют.
   const fxLab = useFxLab();
+  useLegacyHooksToVariants(fxLab);
   const labVariants = state.fxVariants.filter((v) => !v.draft);
   const labVariantsComplete = labVariants.length > 0 && labVariants.every((v) => hookComplete(v.kind, v.config));
   const labAllocSum = labVariants.reduce((sum, v) => sum + (state.allocation.variants?.[v.id] ?? 0), 0);
