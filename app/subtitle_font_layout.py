@@ -500,6 +500,7 @@ class ImpulseLayout:
     safe_width: float
     params: JaksonTextParams
     space_tracking: Optional[float] = None   # ручной трекинг пробелов (tuning space_tracking)
+    accent: Optional["ImpulseAccent"] = None  # short акцентным шрифтом пары
 
     @property
     def vertical_scale(self) -> float:
@@ -520,8 +521,10 @@ class ImpulseLayout:
             x = comp_w - mx
         return [round(x, 2), round(comp_h * cy, 2), 0]
 
-    def text_width(self, text: str) -> float:
-        return len(text) * self.advance_px + 2.0 * self.stroke_px
+    def text_width(self, text: str, *, short: bool = False) -> float:
+        adv = self.accent.advance_px if (short and self.accent is not None) else self.advance_px
+        stroke = self.accent.stroke_px if (short and self.accent is not None) else self.stroke_px
+        return len(text) * adv + 2.0 * stroke
 
     def long_hold_scale(self, text: str) -> float:
         """75% прода, но не шире безопасной зоны."""
@@ -532,13 +535,29 @@ class ImpulseLayout:
     def short_peak(self, text: str, dur: float) -> float:
         """Формула прода (по длительности), ширина — по замеру вместо 62 px/знак."""
         peak_by_dur = round(190 + (1.0 - float(dur)) * 180)
-        w = self.text_width(text)
+        w = self.text_width(text, short=True)
         peak_by_width = round(100.0 * self.safe_width / w) if w > 0 else peak_by_dur
         return float(max(min(IMPULSE_SHORT_MIN_PEAK, peak_by_width), min(peak_by_dur, peak_by_width)))
 
 
+@dataclass(frozen=True)
+class ImpulseAccent:
+    """short (ударное слово impulse) акцентным шрифтом пары.
+
+    Текст impulse строчный у обоих, поэтому баланс — по ТЕЛУ строчных: тело
+    акцента = тело основного. Трекинг 0 (скрипты соединяются), обводка-утолщение
+    impulse масштабируется с размером, как у основного.
+    """
+
+    font: str
+    size: float
+    stroke_px: float
+    anchor_y: float
+    advance_px: float
+
+
 def impulse_layout(font: str, *, params: Optional[JaksonTextParams] = None, render_preset: str = "vertical",
-                   path: Path = METRICS_PATH) -> ImpulseLayout:
+                   accent_font: Optional[str] = None, path: Path = METRICS_PATH) -> ImpulseLayout:
     params = params or JaksonTextParams()
     params.check_render_preset(render_preset)
     check_style_allowed(font, "impulse")
@@ -555,6 +574,21 @@ def impulse_layout(font: str, *, params: Optional[JaksonTextParams] = None, rend
     stroke = IMPULSE_REF_STROKE * size / IMPULSE_REF_SIZE
     body_center = m.per_pt(m.body_top - m.body_bottom, size) / 2.0 * v
     advance = m.per_pt(m.lc_advance_per_char, size) + IMPULSE_TRACKING / 1000.0 * size
+    accent = None
+    if accent_font:
+        check_pair(font, accent_font)
+        check_style_allowed(accent_font, "impulse")
+        a = font_metrics(accent_font, path=path)
+        a.require_lowercase()
+        a_size = size * body / (a.body_top + a.body_bottom) * float(font_tuning(accent_font).get("accent_scale", 1.0))
+        accent = ImpulseAccent(
+            font=accent_font,
+            size=round(a_size, 2),
+            stroke_px=round(IMPULSE_REF_STROKE * a_size / IMPULSE_REF_SIZE, 2),
+            # скрипт не растягиваем по высоте (как в jakson) — центр тела без v
+            anchor_y=round(-a.per_pt(a.body_top - a.body_bottom, a_size) / 2.0, 2),
+            advance_px=round(a.per_pt(a.lc_advance_per_char, a_size), 2),
+        )
     return ImpulseLayout(
         font=font,
         size=round(size, 2),
@@ -565,4 +599,5 @@ def impulse_layout(font: str, *, params: Optional[JaksonTextParams] = None, rend
         safe_width=round(1080.0 * (1.0 - 2.0 * SAFE_MARGIN_X), 2),
         params=params,
         space_tracking=font_tuning(font).get("space_tracking"),
+        accent=accent,
     )

@@ -38,7 +38,7 @@
     var p = app.project;
     if (!p || p.renderQueue.numItems !== 0) throw new Error("font metrics: render queue is busy");
     if (p.file) {
-        if (p.dirty || String(p.file.name).indexOf("jakson-") !== 0) {
+        if (p.dirty || !/^(jakson|impulse|tape|trendy|brat)-/.test(String(p.file.name))) {
             throw new Error("font metrics: foreign or modified project is open: " + p.file.fsName);
         }
         p.close(CloseOptions.DO_NOT_SAVE_CHANGES);

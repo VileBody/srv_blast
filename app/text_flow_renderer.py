@@ -216,6 +216,24 @@ SCENES_PROFILES: Dict[str, LayerMotionProfile] = {
 }
 
 
+def _impulse_font(lay: "ImpulseLayout | None", is_long: bool) -> Dict[str, Any]:
+    """Шрифт/размер/обводка/трекинг слоя impulse: прод, основной или акцент пары (short)."""
+    if lay is None:
+        return {"font": "Point-Light", "fontSize": 100, "strokeWidth": 3, "tracking": -25}
+    if not is_long and lay.accent is not None:
+        a = lay.accent
+        return {"font": a.font, "fontSize": a.size, "strokeWidth": a.stroke_px, "tracking": 0}
+    return {"font": lay.font, "fontSize": lay.size, "strokeWidth": lay.stroke_px, "tracking": -25}
+
+
+def _impulse_anchor(lay: "ImpulseLayout | None", is_long: bool) -> List[float]:
+    if lay is None:
+        return [0.564, -23.213, 0]
+    if not is_long and lay.accent is not None:
+        return [0.0, lay.accent.anchor_y, 0]
+    return [lay.anchor_x, lay.anchor_y, 0]
+
+
 def _impulse_fill(is_long: bool) -> List[float]:
     """Не больше двух цветов: short (ударное слово) — акцентным цветом, если он выбран.
     Обводка impulse того же цвета — это утолщение, не контур."""
@@ -1102,8 +1120,7 @@ class FlowTextLayerRenderer:
                 "adjustment_layer": False,
                 "source_rect": {},
                 "props": {
-                    "tf_anchor": _prop("ADBE Anchor Point",
-                                       [lay.anchor_x, lay.anchor_y, 0] if lay is not None else [0.564, -23.213, 0]),
+                    "tf_anchor": _prop("ADBE Anchor Point", _impulse_anchor(lay, is_long)),
                     "tf_position": _prop("ADBE Position",
                                          lay.position(short=not is_long) if lay is not None else [540, 960, 0]),
                     "tf_scale": _prop("ADBE Scale", keyframes=scale_kfs),
@@ -1123,18 +1140,16 @@ class FlowTextLayerRenderer:
                     },
                     "layer_styles_enabled": False,
                     "text_base": {
-                        "font": lay.font if lay is not None else "Point-Light",
-                        "fontSize": lay.size if lay is not None else 100,
+                        **_impulse_font(lay, is_long),
                         "applyFill": True,
                         "fillColor": _impulse_fill(is_long),
                         "applyStroke": True,
-                        "strokeWidth": lay.stroke_px if lay is not None else 3,
                         "strokeColor": _impulse_fill(is_long),
-                        "tracking": -25,
                         "leading": 250,
                         "autoLeading": False,
                         "justificationCode": (lay.justification_code if (lay is not None and is_long) else "7415"),
-                        **({"verticalScale": lay.vertical_scale} if lay is not None and lay.vertical_scale != 1.0 else {}),
+                        **({"verticalScale": lay.vertical_scale}
+                           if lay is not None and lay.vertical_scale != 1.0 and (is_long or lay.accent is None) else {}),
                         "allCaps": False,
                         "leftIndent": 0,
                         "rightIndent": 0,
@@ -1144,7 +1159,8 @@ class FlowTextLayerRenderer:
                     },
                     "char_styles_ungrouped": (
                         [{"i": ci, "tracking": lay.space_tracking} for ci, ch in enumerate(clean_text) if ch == " "]
-                        if lay is not None and lay.space_tracking is not None else []
+                        if lay is not None and lay.space_tracking is not None and (is_long or lay.accent is None)
+                        else []
                     ),
                     "no_layout_pass": True,
                     "text_animator": {
