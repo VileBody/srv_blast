@@ -34,6 +34,21 @@
    "lc_advance_per_char": 58.956
   },
   {
+   "ps": "Montserrat-BoldItalic",
+   "ok": true,
+   "cap_h": 70.0,
+   "accent_top": 90.0,
+   "desc_bottom": 14.8,
+   "advance_per_char": 65.855,
+   "x_h": 54.6,
+   "x_bottom": 0.8,
+   "body_top": 54.6,
+   "body_bottom": 0.8,
+   "lc_asc_top": 76.0,
+   "lc_desc_bottom": 20.2,
+   "lc_advance_per_char": 61.571
+  },
+  {
    "ps": "Point-SemiBold",
    "ok": true,
    "cap_h": 66.992,
@@ -377,21 +392,6 @@
    "lc_asc_top": 91.6,
    "lc_desc_bottom": 59.0,
    "lc_advance_per_char": 30.288
-  },
-  {
-   "ps": "Hello_January_script-Script",
-   "ok": true,
-   "cap_h": 77.142,
-   "accent_top": 80.264,
-   "desc_bottom": 13.596,
-   "advance_per_char": 85.876,
-   "x_h": 19.839,
-   "x_bottom": -8.762,
-   "body_top": 19.789,
-   "body_bottom": -8.661,
-   "lc_asc_top": 36.758,
-   "lc_desc_bottom": 16.415,
-   "lc_advance_per_char": 34.663
   }
  ],
  "measured": "AE 2025, local PC, 2026-09-30, scripts/subtitle_font_lab/measure_font_metrics.jsx (substitute check)"

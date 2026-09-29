@@ -601,3 +601,79 @@ def impulse_layout(font: str, *, params: Optional[JaksonTextParams] = None, rend
         space_tracking=font_tuning(font).get("space_tracking"),
         accent=accent,
     )
+
+
+# ===========================================================================
+# tape (4th template): капс, текст-бокс с переносом, фокус-слова цветом в строке
+# ===========================================================================
+# Прод: Montserrat-BoldItalic 60 pt, трекинг −25, leading 80, box 900×160 (ровно
+# 2 строки), фокус #E51515, эффекты Glow + 2×Drop Shadow + S_DropShadow. Узнаваемость
+# держится на НАКЛОНЕ — у прямых шрифтов включаем faux italic.
+TAPE_REFERENCE_FONT = "Montserrat-BoldItalic"
+TAPE_REF_SIZE = 60.0
+TAPE_REF_LEADING = 80.0
+TAPE_TRACKING = -25
+TAPE_BOX_W = 900.0
+TAPE_FOCUS_RED = [0.898, 0.082, 0.082]
+# S_DropShadow tape (прод = soft); Glow остаётся всегда — это вид tape, не тень
+TAPE_SHADOW_PRESETS = {"none": None, "soft": {"opacity": 2.0, "blur": 60.0}, "strong": {"opacity": 4.0, "blur": 34.0}}
+
+
+@dataclass(frozen=True)
+class TapeLayout:
+    font: str
+    size: float
+    leading: float
+    box: List[float]          # [w, h] — высота с запасом на 3-ю строку (переполнение бокса AE молча режет)
+    faux_italic: bool
+    params: JaksonTextParams
+    space_tracking: Optional[float] = None
+
+    @property
+    def vertical_scale(self) -> float:
+        return HEIGHT_PRESETS[self.params.height]
+
+    @property
+    def justification_code(self) -> str:
+        return JUSTIFICATION_CODES[POSITION_PRESETS[self.params.position][0]]
+
+    @property
+    def focus_rgb(self) -> List[float]:
+        return hex_to_rgb01(self.params.accent_color) if self.params.accent_color else list(TAPE_FOCUS_RED)
+
+    @property
+    def shadow(self) -> Optional[Dict[str, float]]:
+        return TAPE_SHADOW_PRESETS[self.params.shadow]
+
+    def layout_box(self) -> Dict[str, Any]:
+        """Бокс-текст: базовая линия 1-й строки не в y 0 → центрируем по чернилам,
+        а поля/выравнивание/позицию по Y даём как у jakson."""
+        align, cy = POSITION_PRESETS[self.params.position]
+        return {"margin_x": SAFE_MARGIN_X, "margin_y": SAFE_MARGIN_Y, "align_x": align, "center_y": cy}
+
+
+def tape_layout(font: str, *, params: Optional[JaksonTextParams] = None, render_preset: str = "vertical",
+                path: Path = METRICS_PATH) -> TapeLayout:
+    params = params or JaksonTextParams()
+    params.check_render_preset(render_preset)
+    check_style_allowed(font, "tape")
+    if params.height != "normal" and not allows_height_stretch(font):
+        raise ValueError(f"height {params.height!r} is only for serif fonts (catalog 'serif': true), got {font!r}")
+    ref = font_metrics(TAPE_REFERENCE_FONT, path=path)
+    m = font_metrics(font, path=path)
+    v = HEIGHT_PRESETS[params.height]
+    size = TAPE_REF_SIZE * ref.cap_h / m.cap_h * SIZE_PRESETS[params.size]
+    cap = m.per_pt(m.cap_h, size) * v
+    ref_cap = ref.per_pt(ref.cap_h, TAPE_REF_SIZE)
+    gap_ratio = (TAPE_REF_LEADING - ref_cap) / ref_cap
+    leading = cap + gap_ratio * cap * float(font_tuning(font).get("line_gap_mult", 1.0))
+    box_h = size * v + 2.0 * leading + size / 3.0
+    return TapeLayout(
+        font=font,
+        size=round(size, 2),
+        leading=round(leading, 2),
+        box=[TAPE_BOX_W, round(box_h, 1)],
+        faux_italic=not font.lower().endswith("italic"),
+        params=params,
+        space_tracking=font_tuning(font).get("space_tracking"),
+    )

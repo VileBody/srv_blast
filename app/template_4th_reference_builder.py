@@ -5,6 +5,16 @@ from typing import Any, Dict, List
 
 from core.video_timing import AE_FPS, frame_duration_s, frames_to_seconds
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
+from app.subtitle_font_layout import TapeLayout
+
+# Раскладка tape от метрик шрифта (app/subtitle_font_layout.tape_layout).
+# None → прод-числа под Montserrat-BoldItalic как есть.
+_TAPE_LAYOUT: "TapeLayout | None" = None
+
+
+def apply_tape_layout(layout: "TapeLayout | None") -> None:
+    global _TAPE_LAYOUT
+    _TAPE_LAYOUT = layout
 
 
 _FPS = float(AE_FPS)
@@ -115,6 +125,23 @@ def _effects() -> Dict[str, Any]:
     }
 
 
+def _tape_effects() -> Dict[str, Any]:
+    """Эффекты tape; пресет тени правит только S_DropShadow (Glow и 2 коротких
+    Drop Shadow — часть вида tape, «none» убирает и их)."""
+    eff = _effects()
+    lay = _TAPE_LAYOUT
+    if lay is None:
+        return eff
+    sh = lay.shadow
+    if sh is None:
+        for k in ("ADBE Drop Shadow", "0002:ADBE Drop Shadow", "S_DropShadow"):
+            eff.pop(k, None)
+        return eff
+    eff["S_DropShadow"]["0051"] = _prop("S_DropShadow-0051", sh["opacity"])
+    eff["S_DropShadow"]["0052"] = _prop("S_DropShadow-0052", sh["blur"])
+    return eff
+
+
 def _norm_word(raw: str) -> str:
     return _CLEAN_RE.sub("", str(raw or "").lower()).strip()
 
@@ -145,17 +172,21 @@ def _char_styles(*, text: str, focus_word_indices: set[int]) -> List[Dict[str, A
     for i, ch in enumerate(text):
         if ch == " ":
             word_idx += 1
+            if _TAPE_LAYOUT is not None and _TAPE_LAYOUT.space_tracking is not None:
+                styles.append({"i": i, "tracking": _TAPE_LAYOUT.space_tracking})
             continue
         if ch == "\r":
             continue
         is_focus = word_idx in focus_word_indices
-        styles.append(
-            {
-                "i": i,
-                "font": _FONT_NAME,
-                "fillColor": list(_FOCUS_RED if is_focus else _WHITE),
-            }
-        )
+        lay = _TAPE_LAYOUT
+        entry = {
+            "i": i,
+            "font": lay.font if lay is not None else _FONT_NAME,
+            "fillColor": list((lay.focus_rgb if lay is not None else _FOCUS_RED) if is_focus else _WHITE),
+        }
+        if lay is not None and lay.faux_italic:
+            entry["fauxItalic"] = True   # вид tape держится на наклоне
+        styles.append(entry)
     return styles
 
 
@@ -237,7 +268,7 @@ def build_template_4th_reference_layers(
                 "reveal": _prop("ADBE Text Percent Start", keyframes=_reveal_keyframes(seg=seg, text=text)),
                 "anim_opacity": _prop("ADBE Opacity", 0),
             },
-            "effects": _effects(),
+            "effects": _tape_effects(),
             "style_instructions": [],
             "text_data": {
                 "layer_meta": {
@@ -250,17 +281,19 @@ def build_template_4th_reference_layers(
                 },
                 "layer_styles_enabled": False,
                 "text_base": {
-                    "font": _FONT_NAME,
-                    "fontSize": _FONT_SIZE,
+                    "font": _TAPE_LAYOUT.font if _TAPE_LAYOUT is not None else _FONT_NAME,
+                    "fontSize": _TAPE_LAYOUT.size if _TAPE_LAYOUT is not None else _FONT_SIZE,
                     "applyFill": True,
                     "fillColor": list(_WHITE),
                     "applyStroke": False,
                     "strokeWidth": 0,
                     "strokeColor": None,
                     "tracking": _TRACKING,
-                    "leading": _LEADING,
+                    "leading": _TAPE_LAYOUT.leading if _TAPE_LAYOUT is not None else _LEADING,
                     "autoLeading": False,
-                    "justificationCode": "7415",
+                    "justificationCode": _TAPE_LAYOUT.justification_code if _TAPE_LAYOUT is not None else "7415",
+                    **({"verticalScale": _TAPE_LAYOUT.vertical_scale}
+                       if _TAPE_LAYOUT is not None and _TAPE_LAYOUT.vertical_scale != 1.0 else {}),
                     "allCaps": True,
                     "leftIndent": 0,
                     "rightIndent": 0,
@@ -270,7 +303,8 @@ def build_template_4th_reference_layers(
                 },
                 "char_styles_ungrouped": _char_styles(text=text, focus_word_indices=focus_words),
                 "text_animator": _text_animator_cfg(),
-                "box_text": [900, 160],
+                "box_text": list(_TAPE_LAYOUT.box) if _TAPE_LAYOUT is not None else [900, 160],
+                **({"layout_box": _TAPE_LAYOUT.layout_box()} if _TAPE_LAYOUT is not None else {}),
             },
         }
         layers.append(layer)
