@@ -322,6 +322,20 @@ class BillingBackend:
             return True
         return await self._db.get_track_balance(int(tg_id)) > 0
 
+    async def spent_tracks(self, tg_id: int) -> list[dict[str, Any]]:
+        """Треки, списанные с лимита (`user_tracks`, общая с ботом таблица), старые первыми.
+
+        Время — ISO с таймзоной: `credits_db.list_user_tracks` отдаёт «YYYY-MM-DD HH:MM:SS»
+        без зоны, а Safari такую строку в Date не парсит.
+        """
+        pool = self._db._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT audio_hash, created_at FROM user_tracks WHERE tg_id = $1 ORDER BY created_at",
+                int(tg_id),
+            )
+        return [{"audio_hash": str(row["audio_hash"]), "created_at": _iso(row["created_at"])} for row in rows]
+
     async def claim_bonus(self, tg_id: int) -> dict[str, Any]:
         await self._db.claim_web_subscription_bonus(int(tg_id))
         return await self.snapshot(int(tg_id))

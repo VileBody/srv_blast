@@ -8,6 +8,7 @@ import type {
   AnalyticsResponse,
   Subscription,
   SavedTrack,
+  TrackUsageEntry,
   StoryboardCandidate,
   StoryboardCutsResponse,
   StoryboardPickedVideo,
@@ -324,6 +325,7 @@ export const api = {
     form.append('file', file);
     return request<{ avatarUrl: string }>('/api/profile/avatar', { method: 'POST', body: form });
   },
+  trackUsage: () => request<{ tracks: TrackUsageEntry[]; billingLinkRequired?: boolean }>('/api/profile/track-usage'),
   disconnectTiktok: () => request<{ ok: boolean }>('/api/tiktok/disconnect', { method: 'DELETE' }),
   postTiktok: (payload: Record<string, unknown>) => request<{ ok: boolean; status: string; publishId: string; mock?: boolean }>('/api/tiktok/post', { method: 'POST', body: JSON.stringify(payload) }),
   tiktokPostStatus: (publishId: string) => request<{ publishId: string; status?: string; fail_reason?: string; publicaly_available_post_id?: string[]; mock?: boolean }>(`/api/tiktok/post/${encodeURIComponent(publishId)}`)

@@ -9,6 +9,7 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { TiktokButton } from '../components/ui/TiktokButton';
 import { FigIcon } from '../components/ui/FigIcon';
 import { BillingCard } from '../components/billing/BillingCard';
+import { TrackUsageCard } from '../components/billing/TrackUsageCard';
 import { useToast } from '../contexts/ToastContext';
 import { SvgMaskIcon } from '../components/layout/SvgMaskIcon';
 import { Modal } from '../components/ui/Modal';
@@ -631,6 +632,9 @@ export function ProfilePage() {
         <span aria-hidden="true" className="mb-[39px] mt-[40px] block h-px w-full bg-[rgba(246,245,253,0.2)]" />
         <LimitRow label={t('limits.videos')} used={paidPreview ? 50 : subscription.creditsUsed} total={videosTotal} />
       </section>
+
+      {/* Расшифровка шкалы «Треки»: какой трек списан и какие отрывки из него сделаны */}
+      <TrackUsageCard />
 
       {/* «Тариф» — здесь расходятся W43 и W44. Высота по контенту: у Glow нет подписочной
           шкалы, и фиксированные 366px оставляли под составом пакета пустую полосу. */}

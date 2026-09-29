@@ -774,6 +774,21 @@ async def api_me() -> dict[str, Any]:
     return data
 
 
+@app.get("/api/profile/track-usage", tags=["profile"])
+async def api_track_usage() -> dict[str, Any]:
+    """На какие треки ушёл лимит треков и какие отрывки из них сгенерированы."""
+    spent = None
+    if RUNTIME.backend == "production":
+        try:
+            spent = await _billing_backend().spent_tracks(_telegram_chat_id())
+        except HTTPException:
+            # Без привязанного Telegram трек в проде загрузить нельзя — списаний нет.
+            return {"tracks": [], "billingLinkRequired": True, "mock": False}
+        except Exception as exc:
+            raise _production_error(exc) from exc
+    return {"tracks": store.track_usage(spent), "mock": RUNTIME.backend == "mock"}
+
+
 # ------------------------- Projects -------------------------
 
 @app.get("/api/projects", tags=["projects"])

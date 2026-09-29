@@ -243,6 +243,31 @@ export interface UserSource {
   createdAt: string;
 }
 
+/** Отрывок, сгенерированный из трека (одна генерация визарда) */
+export interface TrackUsageFragment {
+  jobId: string;
+  projectId?: string | null;
+  projectName?: string | null;
+  /** Окно отрывка в секундах трека; null — окно не задавалось */
+  from: number | null;
+  to: number | null;
+  /** Ролики без упавших: за упавшие генерации возвращаются */
+  videos: number;
+  videosFailed: number;
+  status: string;
+  createdAt?: string | null;
+}
+
+/** Трек, на который ушёл слот лимита треков */
+export interface TrackUsageEntry {
+  id: string;
+  /** null — трек загружен в Telegram-боте: имени у сайта нет */
+  name: string | null;
+  spentAt?: string | null;
+  source: 'web' | 'bot';
+  fragments: TrackUsageFragment[];
+}
+
 export interface SavedTrack {
   id: string;
   userId: string;

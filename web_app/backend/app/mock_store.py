@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from .render_job import build_render_job, variation_label
+from .render_job import _segment, build_render_job, variation_label
 
 BASE_S3 = "https://s3.twcstorage.ru/f7cef916-asset-storage/app/blast808/media/v1"
 
@@ -1097,6 +1097,80 @@ def find_track(track_id: str) -> dict[str, Any] | None:
         if item.get("id") == track_id:
             return deepcopy(item)
     return None
+
+
+def track_usage(spent: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """На что ушёл лимит треков: трек → отрывки, которые из него сгенерированы.
+
+    Лимит трека списывается ОДИН раз — при первой загрузке нового трека (по хешу аудио,
+    см. main.api_upload_track). Новые отрывки того же трека лимит треков не трогают, они
+    тратят генерации. Экран «Лимиты» показывал только «n/m использовано», и человек не
+    мог понять, куда ушли треки — отсюда этот список.
+
+    `spent` — строки `user_tracks` из общей с ботом БД (прод): они и есть счётчик
+    tracksUsed, поэтому список сверяется с ним один в один; трек, загруженный в боте,
+    приходит без имени и без отрывков сайта. Без `spent` (мок) списанием считается
+    каждая загрузка уникального трека в сайте.
+    """
+    by_hash: dict[str, dict[str, Any]] = {}
+    id_to_hash: dict[str, str] = {}
+    # saved_tracks хранятся новыми вперёд; идём от старых, чтобы дата = первая загрузка
+    for raw in reversed(ws().saved_tracks):
+        track = _track_with_identity(raw)
+        key = str(track.get("audioHash") or track["id"])
+        id_to_hash[track["id"]] = key
+        by_hash.setdefault(key, {
+            "id": track["id"],
+            "name": track.get("filename"),
+            "spentAt": track.get("createdAt"),
+            "source": "web",
+            "fragments": [],
+        })
+
+    projects = {p["id"]: p.get("name") for p in ws().projects}
+    fragments: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for job in _owned_jobs():
+        data = job.get("stageData") or {}
+        track = data.get("track") or {}
+        key = str(track.get("audioHash") or id_to_hash.get(str(track.get("id") or "")) or "")
+        if not key:
+            continue
+        videos = job.get("videos") or []
+        segment = _segment(data.get("timing"))
+        fragments[key].append({
+            "jobId": job["id"],
+            "projectId": job.get("projectId"),
+            "projectName": projects.get(job.get("projectId")),
+            "from": segment["from"] if segment else None,
+            "to": segment["to"] if segment else None,
+            # Упавшие ролики не в счёт: генерации за них возвращаются (production_monitor.refund)
+            "videos": sum(1 for video in videos if video.get("status") != "FAILED"),
+            "videosFailed": sum(1 for video in videos if video.get("status") == "FAILED"),
+            "status": job.get("status"),
+            "createdAt": job.get("createdAt"),
+        })
+
+    if spent is None:
+        entries = by_hash
+    else:
+        entries = {}
+        for row in spent:
+            key = str(row.get("audio_hash") or "")
+            known = by_hash.get(key)
+            entries[key] = {
+                "id": known["id"] if known else "bot_" + hashlib.sha256(key.encode()).hexdigest()[:12],
+                "name": known["name"] if known else None,
+                "spentAt": row.get("created_at") or (known or {}).get("spentAt"),
+                "source": "web" if known else "bot",
+                "fragments": [],
+            }
+
+    result = []
+    for key, entry in entries.items():
+        entry = deepcopy(entry)
+        entry["fragments"] = sorted(fragments.get(key, []), key=lambda item: str(item["createdAt"] or ""), reverse=True)
+        result.append(entry)
+    return sorted(result, key=lambda item: str(item["spentAt"] or ""), reverse=True)
 
 
 def previous_track() -> dict[str, Any] | None:
