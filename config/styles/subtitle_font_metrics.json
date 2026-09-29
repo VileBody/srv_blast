@@ -49,6 +49,21 @@
    "lc_advance_per_char": 61.571
   },
   {
+   "ps": "Montserrat-Bold",
+   "ok": true,
+   "cap_h": 70.0,
+   "accent_top": 90.0,
+   "desc_bottom": 14.8,
+   "advance_per_char": 65.51,
+   "x_h": 54.6,
+   "x_bottom": 0.8,
+   "body_top": 54.6,
+   "body_bottom": 0.8,
+   "lc_asc_top": 78.0,
+   "lc_desc_bottom": 20.2,
+   "lc_advance_per_char": 61.174
+  },
+  {
    "ps": "Point-SemiBold",
    "ok": true,
    "cap_h": 66.992,

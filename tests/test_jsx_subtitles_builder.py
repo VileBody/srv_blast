@@ -221,9 +221,48 @@ def test_brat_words_share_a_row_baseline_instead_of_glyph_box_centres() -> None:
 
     assert "top: mr.top" in src
     assert "bottom: mr.top + mr.height" in src
-    assert "var baselineHalfH = Math.max(ascent, descent) + pad;" in src
+    # one EVEN word-precomp height for the whole clip: every word's baseline
+    # (= precomp centre) lands on the same pixel (per-word heights drifted)
+    assert "var wordCompH = Math.max(4, 2 * Math.ceil(glyphHalfH + wordPad));" in src
+    assert "baselineHalfH" not in src
     assert 'setValue([wr.left + wr.width / 2, 0, 0])' in src
     assert "wr.top + wr.height / 2" not in src
+
+
+def test_overlay_injects_engine_style_and_always_resets_it():
+    from app.subtitle_font_layout import JaksonTextParams, brat_layout, trendy_layout
+
+    wt = word_timings_from_transcript([{"text": "бам", "t_start": 0.0, "t_end": 0.4}])
+    plain = build_jsx_subtitles_overlay(mode=SUBTITLES_MODE_BRAT_5TH, word_timings=wt, bpm=120.0)
+    assert "$.global.__BLAST_STYLE = null;" in plain
+
+    cfg = brat_layout(params=JaksonTextParams(position="left", shadow="none")).jsx_config()
+    js = build_jsx_subtitles_overlay(mode=SUBTITLES_MODE_BRAT_5TH, word_timings=wt, bpm=120.0, style_config=cfg)
+    injected = json.loads(js.split("$.global.__BLAST_STYLE = ", 1)[1].split(";\n", 1)[0])
+    assert injected["textShadow"] is False and injected["centerXFrac"] < 0.5
+    # every engine key must exist in the script CONFIG (the script throws otherwise)
+    for mode, cfg in ((SUBTITLES_MODE_BRAT_5TH, cfg),
+                      (SUBTITLES_MODE_TRENDY_5TH, trendy_layout("Point-SemiBold", accent_font="Katherine-Plus",
+                                                                params=JaksonTextParams(accent_color="#FF5FA8",
+                                                                                        shadow="none")).jsx_config())):
+        body = build_jsx_subtitles_overlay(mode=mode, word_timings=wt, bpm=120.0)
+        config_block = body.split("var CONFIG = {", 1)[1].split("\n};", 1)[0]
+        for key in cfg:
+            assert f"\n    {key}:" in config_block.replace("\r\n", "\n"), (mode, key)
+
+
+def test_brat_font_and_pairs_are_locked():
+    from app.subtitle_font_layout import JaksonTextParams, brat_layout
+
+    with pytest.raises(ValueError):
+        brat_layout(font="Point-SemiBold")
+    with pytest.raises(ValueError):
+        brat_layout(accent_font="Katherine-Plus")
+    with pytest.raises(ValueError):
+        brat_layout(params=JaksonTextParams(height="tall"))
+    with pytest.raises(ValueError):
+        brat_layout(params=JaksonTextParams(position="down"))   # только 16:9
+    assert brat_layout(params=JaksonTextParams(position="down"), render_preset="wide").jsx_config()["centerYFrac"] > 0.5
 
 
 def test_overlay_brat_can_disable_blinker_without_removing_subtitles():

@@ -734,3 +734,168 @@ def tape_layout(font: str, *, params: Optional[JaksonTextParams] = None, render_
         space_tracking=font_tuning(font).get("space_tracking"),
         accent=accent,
     )
+
+
+# ===========================================================================
+# trendy (5th template, trendy_subtitles.jsx): ОДНО слово по центру, буквы ×4
+# ===========================================================================
+# Прод: Montserrat-Bold 130 pt, verticalScale 4 (вид trendy), трекинг −55, чёрная
+# обводка 5 под заливкой, yOffsetRatio 0.346 (= полу-высота прописных Montserrat
+# на pt — центр по капу), поле 5%. Здесь то же от метрик: размер — прописные к
+# прописным эталона (скрипты — тело строчных к телу строчных), центр по Y — по
+# коробке прописных / телу строчных. Слово не влезло — JSX уменьшает (как в проде).
+# Значения уходят в CONFIG скрипта через $.global.__BLAST_STYLE.
+TRENDY_REFERENCE_FONT = "Montserrat-Bold"
+TRENDY_REF_SIZE = 130.0
+TRENDY_VERTICAL_SCALE = 4.0
+TRENDY_TRACKING = -55
+TRENDY_SCRIPT_TRACKING = 0          # у скриптов трекинг рвёт соединения букв
+# S_DropShadow trendy: soft = прод (opacity 1.14, blur 100)
+TRENDY_SHADOW_PRESETS = {"none": None, "soft": {"opacity": 1.14, "blur": 100.0}, "strong": {"opacity": 2.0, "blur": 60.0}}
+
+
+@dataclass(frozen=True)
+class TrendyWordStyle:
+    font: str
+    size: float
+    vertical_scale: float
+    tracking: float
+    y_offset_ratio: float      # position.y = центр + size·verticalScale·ratio (базовая линия ниже центра)
+    lowercase: bool
+
+
+@dataclass(frozen=True)
+class TrendyLayout:
+    base: TrendyWordStyle
+    accent: Optional[TrendyWordStyle]   # фокус-слово акцентным шрифтом пары
+    params: JaksonTextParams
+
+    def jsx_config(self) -> Dict[str, Any]:
+        align, cy = POSITION_PRESETS[self.params.position]
+        b = self.base
+        cfg: Dict[str, Any] = {
+            "font": b.font, "fontSize": b.size, "verticalScale": b.vertical_scale, "tracking": b.tracking,
+            "yOffsetRatio": b.y_offset_ratio, "uppercase": not b.lowercase,
+            "fitWidthFactor": round(1.0 - 2 * SAFE_MARGIN_X, 4), "fitHeightFactor": round(1.0 - 2 * SAFE_MARGIN_Y, 4),
+            "alignX": align, "marginX": SAFE_MARGIN_X, "centerYFrac": cy,
+            "strictFont": True,
+        }
+        shadow = TRENDY_SHADOW_PRESETS[self.params.shadow]
+        cfg["applyShadow"] = shadow is not None
+        if shadow is not None:
+            cfg["shadowOpacity"], cfg["shadowBlur"] = shadow["opacity"], shadow["blur"]
+        if self.params.accent_color:
+            cfg["focusFillColor"] = hex_to_rgb01(self.params.accent_color)
+        if self.accent is not None:
+            a = self.accent
+            cfg["accent"] = {"font": a.font, "fontSize": a.size, "verticalScale": a.vertical_scale,
+                             "tracking": a.tracking, "yOffsetRatio": a.y_offset_ratio}
+        return cfg
+
+
+def _trendy_word(m: FontMetrics, *, lowercase: bool, size: float, v: float) -> TrendyWordStyle:
+    if lowercase:
+        ratio = (m.body_top - m.body_bottom) / 2.0 / 100.0
+    else:
+        ratio = m.cap_h / 2.0 / 100.0
+    return TrendyWordStyle(font=m.ps, size=round(size, 2), vertical_scale=round(v, 4),
+                           tracking=TRENDY_SCRIPT_TRACKING if lowercase else TRENDY_TRACKING,
+                           y_offset_ratio=round(ratio, 4), lowercase=lowercase)
+
+
+def trendy_layout(font: str, *, params: Optional[JaksonTextParams] = None, render_preset: str = "vertical",
+                  accent_font: Optional[str] = None, accent_stretch: bool = True,
+                  path: Path = METRICS_PATH) -> TrendyLayout:
+    """accent_stretch — растягивать ли акцентное слово ×4 как основное (иначе
+    естественные пропорции, та же видимая высота)."""
+    params = params or JaksonTextParams()
+    params.check_render_preset(render_preset)
+    check_style_allowed(font, "trendy")
+    if params.height != "normal" and not allows_height_stretch(font):
+        raise ValueError(f"height {params.height!r} is only for serif fonts (catalog 'serif': true), got {font!r}")
+    ref = font_metrics(TRENDY_REFERENCE_FONT, path=path)
+    m = font_metrics(font, path=path)
+    v = TRENDY_VERTICAL_SCALE * HEIGHT_PRESETS[params.height]
+    lowercase = text_case(font) == "lower"
+    if lowercase:
+        m.require_lowercase()
+        ref.require_lowercase()
+        own, ref_own = m.body_top + m.body_bottom, ref.body_top + ref.body_bottom
+    else:
+        own, ref_own = m.cap_h, ref.cap_h
+    style_scale = float((font_tuning(font).get("base_scale_by_style") or {}).get("trendy", 1.0))
+    size = TRENDY_REF_SIZE * ref_own / own * SIZE_PRESETS[params.size] * style_scale
+    base = _trendy_word(m, lowercase=lowercase, size=size, v=v)
+    accent = None
+    if accent_font:
+        check_pair(font, accent_font)
+        check_style_allowed(accent_font, "trendy")
+        am = font_metrics(accent_font, path=path)
+        am.require_lowercase()
+        cap_px = m.per_pt(own, size)                 # видимая высота основного без растяжения
+        a_size = cap_px / ((am.body_top + am.body_bottom) / 100.0)
+        a_v = v if accent_stretch else 1.0
+        if not accent_stretch:
+            a_size *= v                              # та же видимая высота без растяжения
+        accent = _trendy_word(am, lowercase=True, size=a_size, v=a_v)
+    return TrendyLayout(base=base, accent=accent, params=params)
+
+
+# ===========================================================================
+# brat (5th template, brat_subtitles.jsx): шрифт фиксирован (Arial Narrow), пар нет
+# ===========================================================================
+# Настраивается: размер (ширина бокса full-justify), позиция (бокс к полю / вниз
+# для 16:9), тень, цвет (основной + акцентный на фокус-словах). Высоты нет — гротеск.
+# Тень — силуэт слов (копия компа субтитров: Fill → Minimax → Gaussian Blur),
+# прежняя плашка под строкой выключена (смотр 2026-09-30: грязное пятно).
+BRAT_FONT = "ArialNarrow"
+BRAT_BOX_W_FACTOR = 0.80
+BRAT_FONT_SIZE = 130.0
+BRAT_MIN_FONT_SIZE = 56.0
+BRAT_LAYER_SCALE = 0.80              # CONFIG.scale — видимая ширина бокса = BOX_W·0.8
+BRAT_SHADOW_PRESETS = {"none": None, "soft": {"opacity": 60, "spread": 6, "blur": 38},
+                       "strong": {"opacity": 85, "spread": 10, "blur": 30}}
+
+
+@dataclass(frozen=True)
+class BratLayout:
+    params: JaksonTextParams
+
+    def jsx_config(self) -> Dict[str, Any]:
+        align, cy = POSITION_PRESETS[self.params.position]
+        k = SIZE_PRESETS[self.params.size]
+        box_w = BRAT_BOX_W_FACTOR * k
+        visible_half = box_w * BRAT_LAYER_SCALE / 2.0
+        if align == "left":
+            cx = SAFE_MARGIN_X + visible_half
+        elif align == "right":
+            cx = 1.0 - SAFE_MARGIN_X - visible_half
+        else:
+            cx = 0.5
+        cfg: Dict[str, Any] = {
+            "boxWFactor": round(box_w, 4), "fontSize": round(BRAT_FONT_SIZE * k, 2),
+            "minFontSize": round(BRAT_MIN_FONT_SIZE * k, 2), "leading": round(BRAT_FONT_SIZE * k, 2),
+            "centerXFrac": round(cx, 4), "centerYFrac": cy, "strictFont": True,
+        }
+        shadow = BRAT_SHADOW_PRESETS[self.params.shadow]
+        cfg["textShadow"] = shadow is not None
+        if shadow is not None:
+            cfg.update({"textShadowOpacity": shadow["opacity"], "textShadowSpread": shadow["spread"],
+                        "textShadowBlur": shadow["blur"]})
+        if self.params.accent_color:
+            cfg["focusFillColor"] = hex_to_rgb01(self.params.accent_color)
+        return cfg
+
+
+def brat_layout(*, params: Optional[JaksonTextParams] = None, render_preset: str = "vertical",
+                font: Optional[str] = None, accent_font: Optional[str] = None) -> BratLayout:
+    """Смена шрифта и пары для brat запрещены (решение 2026-09-30) — ошибка, не игнор."""
+    params = params or JaksonTextParams()
+    params.check_render_preset(render_preset)
+    if font not in (None, BRAT_FONT):
+        raise ValueError(f"brat font is fixed ({BRAT_FONT}); got {font!r}")
+    if accent_font is not None:
+        raise ValueError("brat has no font pairs; accent_font must be None")
+    if params.height != "normal":
+        raise ValueError(f"brat has no height control (sans font); got {params.height!r}")
+    return BratLayout(params=params)
