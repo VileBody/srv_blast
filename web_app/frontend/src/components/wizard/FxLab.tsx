@@ -80,6 +80,9 @@ export const useFxLabStore = create<LabState>((set, get) => ({
   seeded: false,
   seed: (configs, kind) => {
     if (get().seeded) return;
+    // Прототип стартует с чистого листа: ни одного варианта, всё настраивается руками.
+    // (?fxLab=seed — старое демо с вариантами из черновика.)
+    if (new URLSearchParams(window.location.search).get('fxLab') !== 'seed') { set({ seeded: true }); return; }
     const variants: LabVariant[] = [];
     (Object.keys(configs) as HookKind[]).forEach((k) => {
       const config = configs[k];
