@@ -135,7 +135,21 @@
 .fxt-fx { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
 .fxt-demo { position: absolute; inset: 0; z-index: 4; background: #000; }
 .fxt-chip { position: absolute; left: 10px; top: 10px; padding: 5px 9px 3px; border-radius: 8px; background: rgba(8, 5, 20, .66); font-size: 11px; color: var(--fxt-t80); display: flex; align-items: center; gap: 6px; pointer-events: none; z-index: 5; }
-.fxt-chip.demo { left: auto; right: 10px; background: var(--accent); color: #fff; }
+/* пример эффекта: сверху что это и какой по счёту, по бокам листать, снизу — поставить */
+.fxt-demo-top { position: absolute; left: 10px; right: 10px; top: 10px; z-index: 2; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 4px 0 12px; border-radius: 11px; background: rgba(8, 5, 20, .66); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-size: 13px; color: var(--text); }
+.fxt-demo-top .nm { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fxt-demo-top .c { margin-left: auto; flex: none; font-size: 12px; color: var(--fxt-t60); }
+.fxt-demo-top .x { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; color: var(--fxt-t60); transition: color .15s ease, background-color .15s ease; }
+.fxt-demo-top .x:hover { color: var(--text); background: var(--fxt-t06); }
+.fxt-demo-nav { position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 44px; height: 44px; margin-top: -22px; border-radius: 50%; background: rgba(5, 1, 15, .58); color: var(--fxt-t80); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); transition: color .15s ease, transform .12s var(--fxt-ease); }
+.fxt-demo-nav:hover { color: var(--text); }
+.fxt-demo-nav:active { transform: scale(.94); }
+.fxt-demo-nav.l { left: 10px; }
+.fxt-demo-nav.r { right: 10px; }
+.fxt-demo-put { position: absolute; left: 50%; bottom: 14px; z-index: 2; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px 0 14px; border-radius: 12px; background: linear-gradient(135deg, #8b6fe6, #5f42b9); color: #fff; font-size: 14px; white-space: nowrap; box-shadow: 0 8px 22px rgba(5, 1, 15, .45); transform: translateX(-50%); transition: filter .15s ease; }
+.fxt-demo-put:hover { filter: brightness(1.1); }
+.fxt-demo-put:disabled { background: rgba(8, 5, 20, .66); color: var(--fxt-t60); box-shadow: none; cursor: default; filter: none; }
+.fxt-item.demo { border-color: var(--accent); background: var(--fxt-t06); }
 .fxt-play { position: absolute; left: 50%; top: 50%; z-index: 8; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: rgba(5, 1, 15, .6); color: var(--text); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); transform: translate(-50%, -50%); opacity: 0; transition: opacity .15s ease, filter .15s ease; }
 .fxt-play:hover { filter: brightness(1.25); }
 .fxt-stage:hover .fxt-play, .fxt-stage:focus-within .fxt-play { opacity: 1; }

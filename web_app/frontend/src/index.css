@@ -248,45 +248,72 @@
 .guide-sb-press { animation: guide-sb-press 4.4s cubic-bezier(.16, 1, .3, 1) infinite; }
 
 /*
- * Тур таймлайна v2: в каждом визуале курсор показывает само действие. Один период на
- * визуал, все слои (курсор, призрак, блок, всплывашка) делят одни и те же проценты —
- * иначе движение читается «вразнобой». Только transform/opacity.
+ * Тур таймлайна v3 — по пути человека: посмотреть → выбрать эффект → листать и поставить
+ * → переход на склейке → темп → готово. Один период на визуал, все слои делят одни и те
+ * же проценты: нажатие курсора и то, что загорается, стоят на одном кадре. Курсор
+ * появляется только на время действия. Только transform/opacity/clip-path.
  */
 .gt-cur { position: absolute; left: 0; top: 0; width: 14px; height: 16px; z-index: 5; pointer-events: none; transform-origin: 2px 2px; }
-/* 1. библиотека: ▶ → пример в превью, затем перетащить на дорожку */
-@keyframes gt1-cur { 0% { transform: translate(236px, 58px); } 14% { transform: translate(122px, 14px); } 18% { transform: translate(122px, 14px) scale(.8); } 22% { transform: translate(122px, 14px); } 40% { transform: translate(46px, 16px); } 44% { transform: translate(46px, 16px) scale(.8); } 70% { transform: translate(128px, 56px) scale(.8); } 74% { transform: translate(128px, 56px); } 92%, 100% { transform: translate(236px, 58px); } }
-@keyframes gt1-flash { 0%, 18% { opacity: 0; } 22%, 38% { opacity: 1; } 44%, 100% { opacity: 0; } }
-@keyframes gt1-ghost { 0%, 43% { opacity: 0; transform: translate(0, 0); } 45% { opacity: 1; transform: translate(0, 0); } 70% { opacity: 1; transform: translate(82px, 40px); } 74%, 100% { opacity: 0; transform: translate(82px, 40px); } }
-@keyframes gt1-land { 0%, 72% { opacity: 0; } 76%, 94% { opacity: 1; } 100% { opacity: 0; } }
-.gt1-cur { animation: gt1-cur 6s cubic-bezier(.16, 1, .3, 1) infinite; }
-.gt1-flash { animation: gt1-flash 6s linear infinite; }
-.gt1-ghost { animation: gt1-ghost 6s cubic-bezier(.16, 1, .3, 1) infinite; }
-.gt1-land { animation: gt1-land 6s linear infinite; }
-/* 2. склейки: нажать на кружок → список переходов; потянуть кружок → склейка сдвинулась */
-@keyframes gt2-cur { 0% { transform: translate(236px, 66px); } 15% { transform: translate(92px, 50px); } 19% { transform: translate(92px, 50px) scale(.8); } 23% { transform: translate(92px, 50px); } 36% { transform: translate(112px, 14px); } 40% { transform: translate(112px, 14px) scale(.8); } 44% { transform: translate(112px, 14px); } 60% { transform: translate(186px, 50px); } 64% { transform: translate(186px, 50px) scale(.8); } 80% { transform: translate(214px, 50px) scale(.8); } 84% { transform: translate(214px, 50px); } 100% { transform: translate(236px, 66px); } }
-@keyframes gt2-pop { 0%, 20% { opacity: 0; transform: translateY(4px); } 24%, 46% { opacity: 1; transform: none; } 52%, 100% { opacity: 0; transform: none; } }
-@keyframes gt2-pick { 0%, 39% { opacity: 0; } 41%, 50% { opacity: 1; } 54%, 100% { opacity: 0; } }
-@keyframes gt2-icon { 0%, 41% { opacity: 0; } 45%, 96% { opacity: 1; } 100% { opacity: 0; } }
-@keyframes gt2-move { 0%, 64% { transform: translateX(0); } 80%, 92% { transform: translateX(28px); } 100% { transform: translateX(0); } }
-@keyframes gt2-grow { 0%, 64% { transform: scaleX(1); } 80%, 92% { transform: scaleX(1.33); } 100% { transform: scaleX(1); } }
-.gt2-cur { animation: gt2-cur 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
-.gt2-pop { animation: gt2-pop 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
-.gt2-pick { animation: gt2-pick 6.4s linear infinite; }
-.gt2-icon { animation: gt2-icon 6.4s linear infinite; }
-.gt2-move { animation: gt2-move 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
-.gt2-grow { transform-origin: left center; animation: gt2-grow 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
-/* 3. хук: стоит на дропе (замок); у слоу-шаттера тянется правый край */
-@keyframes gt3-cur { 0% { transform: translate(236px, 64px); } 25% { transform: translate(160px, 38px); } 30% { transform: translate(160px, 38px) scale(.8); } 65% { transform: translate(236px, 38px) scale(.8); } 70% { transform: translate(236px, 38px); } 100% { transform: translate(236px, 64px); } }
-@keyframes gt3-grow { 0%, 30% { transform: scaleX(1); } 65%, 90% { transform: scaleX(3.1); } 100% { transform: scaleX(1); } }
-.gt3-cur { animation: gt3-cur 5s cubic-bezier(.16, 1, .3, 1) infinite; }
-.gt3-grow { transform-origin: left center; animation: gt3-grow 5s cubic-bezier(.16, 1, .3, 1) infinite; }
-/* 4. стили: перетащить на кадр, потянуть край на соседние кадры */
-@keyframes gt4-cur { 0% { transform: translate(236px, 70px); } 12% { transform: translate(30px, 12px); } 16% { transform: translate(30px, 12px) scale(.8); } 42% { transform: translate(126px, 54px) scale(.8); } 46% { transform: translate(126px, 54px); } 58% { transform: translate(176px, 56px); } 62% { transform: translate(176px, 56px) scale(.8); } 80% { transform: translate(262px, 56px) scale(.8); } 84% { transform: translate(262px, 56px); } 100% { transform: translate(236px, 70px); } }
-@keyframes gt4-ghost { 0%, 15% { opacity: 0; transform: translate(0, 0); } 17% { opacity: 1; transform: translate(0, 0); } 42% { opacity: 1; transform: translate(98px, 42px); } 46%, 100% { opacity: 0; transform: translate(98px, 42px); } }
-@keyframes gt4-land { 0%, 44% { opacity: 0; transform: scaleX(1); } 47%, 62% { opacity: 1; transform: scaleX(1); } 80%, 94% { opacity: 1; transform: scaleX(2.07); } 100% { opacity: 0; transform: scaleX(2.07); } }
-.gt4-cur { animation: gt4-cur 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
-.gt4-ghost { animation: gt4-ghost 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
-.gt4-land { transform-origin: left center; animation: gt4-land 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+/* 1. посмотреть: ▶ → playhead бежит, кадры меняются на склейках, вспышка на дропе */
+@keyframes gw-cur { 0% { transform: translate(120px, 78px); opacity: 0; } 6% { opacity: 1; } 14% { transform: translate(33.5px, 40px); } 16% { transform: translate(33.5px, 40px) scale(.8); } 19% { transform: translate(33.5px, 40px); opacity: 1; } 27%, 100% { transform: translate(64px, 66px); opacity: 0; } }
+@keyframes gw-play { 0%, 15% { opacity: 1; transform: scale(1); } 17% { opacity: 1; transform: scale(.86); } 21%, 92% { opacity: 0; transform: scale(1); } 98%, 100% { opacity: 1; transform: scale(1); } }
+@keyframes gw-ph { 0%, 20% { transform: translateX(0); opacity: 1; } 88% { transform: translateX(204px); opacity: 1; } 93% { transform: translateX(204px); opacity: 0; } 94% { transform: translateX(0); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
+@keyframes gw-s1 { 0%, 39.9% { opacity: 1; } 40%, 93.9% { opacity: 0; } 94%, 100% { opacity: 1; } }
+@keyframes gw-s2 { 0%, 39.9% { opacity: 0; } 40%, 55.6% { opacity: 1; } 55.7%, 100% { opacity: 0; } }
+@keyframes gw-s3 { 0%, 55.6% { opacity: 0; } 55.7%, 73.6% { opacity: 1; } 73.7%, 100% { opacity: 0; } }
+@keyframes gw-s4 { 0%, 73.6% { opacity: 0; } 73.7%, 93.9% { opacity: 1; } 94%, 100% { opacity: 0; } }
+@keyframes gw-flash { 0%, 55.6% { opacity: 0; } 56.4% { opacity: .85; } 62%, 100% { opacity: 0; } }
+.gw-cur { animation: gw-cur 5.6s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gw-play { animation: gw-play 5.6s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gw-ph { animation: gw-ph 5.6s linear infinite; }
+.gw-s1 { animation: gw-s1 5.6s linear infinite; }
+.gw-s2 { animation: gw-s2 5.6s linear infinite; }
+.gw-s3 { animation: gw-s3 5.6s linear infinite; }
+.gw-s4 { animation: gw-s4 5.6s linear infinite; }
+.gw-flash { animation: gw-flash 5.6s linear infinite; }
+/* 2. библиотека: нажать на строку → она подсвечена, в плеере играет этот эффект */
+@keyframes gl-cur { 0% { transform: translate(150px, 80px); opacity: 0; } 6% { opacity: 1; } 15% { transform: translate(83px, 40px); } 17% { transform: translate(83px, 40px) scale(.8); } 20% { transform: translate(83px, 40px); opacity: 1; } 30%, 100% { transform: translate(128px, 64px); opacity: 0; } }
+@keyframes gl-sel { 0%, 16.9% { opacity: 0; } 17%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
+@keyframes gl-demo { 0%, 18% { opacity: 0; } 22%, 90% { opacity: 1; } 96%, 100% { opacity: 0; } }
+@keyframes gl-shut { 0%, 30% { transform: scaleY(0); } 50%, 62% { transform: scaleY(1); } 85%, 100% { transform: scaleY(0); } }
+.gl-cur { animation: gl-cur 5s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gl-sel { animation: gl-sel 5s linear infinite; }
+.gl-demo { animation: gl-demo 5s linear infinite; }
+.gl-shut-t { transform-origin: top; animation: gl-shut 1.3s cubic-bezier(.65, 0, .35, 1) infinite; }
+.gl-shut-b { transform-origin: bottom; animation: gl-shut 1.3s cubic-bezier(.65, 0, .35, 1) infinite; }
+/* 3. плеер: › — следующий пример; «На дроп» — эффект лёг на дорожку, плеер вернулся к ролику */
+@keyframes gp-cur { 0% { transform: translate(162px, 78px); opacity: 0; } 5% { opacity: 1; } 13% { transform: translate(140px, 40px); } 15% { transform: translate(140px, 40px) scale(.8); } 17% { transform: translate(140px, 40px); } 33% { transform: translate(76px, 67px); } 35% { transform: translate(76px, 67px) scale(.8); } 38% { transform: translate(76px, 67px); opacity: 1; } 48%, 100% { transform: translate(112px, 80px); opacity: 0; } }
+@keyframes gp-rarr { 0%, 14.5% { transform: scale(1); } 15.5% { transform: scale(.84); } 17.5%, 100% { transform: scale(1); } }
+@keyframes gp-put { 0%, 34.5% { transform: scale(1); } 35.5% { transform: scale(.9); } 37.5%, 100% { transform: scale(1); } }
+@keyframes gp-a { 0%, 15% { opacity: 1; } 16%, 60% { opacity: 0; } 61%, 100% { opacity: 1; } }
+@keyframes gp-b { 0%, 15% { opacity: 0; } 16%, 60% { opacity: 1; } 61%, 100% { opacity: 0; } }
+@keyframes gp-demo { 0%, 37% { opacity: 1; } 44%, 88% { opacity: 0; } 96%, 100% { opacity: 1; } }
+@keyframes gp-land { 0%, 36% { clip-path: inset(0 100% 0 0); opacity: 1; } 43%, 88% { clip-path: inset(0 0 0 0); opacity: 1; } 94% { clip-path: inset(0 0 0 0); opacity: 0; } 95%, 100% { clip-path: inset(0 100% 0 0); opacity: 0; } }
+.gp-cur { animation: gp-cur 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gp-rarr { animation: gp-rarr 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gp-put { animation: gp-put 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gp-a { animation: gp-a 6.4s linear infinite; }
+.gp-b { animation: gp-b 6.4s linear infinite; }
+.gp-demo { animation: gp-demo 6.4s linear infinite; }
+.gp-land { animation: gp-land 6.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+/* 4. склейки: нажать на кружок → всплыл список → выбрать «Минимакс» → он встал в кружок */
+@keyframes gc-cur { 0% { transform: translate(240px, 22px); opacity: 0; } 5% { opacity: 1; } 14% { transform: translate(92px, 62px); } 16% { transform: translate(92px, 62px) scale(.8); } 18% { transform: translate(92px, 62px); } 32% { transform: translate(111px, 18px); } 34.5% { transform: translate(111px, 18px) scale(.8); } 37% { transform: translate(111px, 18px); opacity: 1; } 48%, 100% { transform: translate(150px, 36px); opacity: 0; } }
+@keyframes gc-press { 0%, 15.5% { transform: scale(1); } 16.5% { transform: scale(.85); } 18.5%, 100% { transform: scale(1); } }
+@keyframes gc-pop { 0%, 17% { opacity: 0; transform: translateY(4px); } 21%, 40% { opacity: 1; transform: none; } 45%, 100% { opacity: 0; transform: none; } }
+@keyframes gc-pick { 0%, 34.4% { opacity: 0; } 34.5%, 44% { opacity: 1; } 45%, 100% { opacity: 0; } }
+@keyframes gc-icon { 0%, 41% { opacity: 0; transform: scale(.6); } 46%, 90% { opacity: 1; transform: scale(1); } 96%, 100% { opacity: 0; transform: scale(1); } }
+.gc-cur { animation: gc-cur 5.6s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gc-press { animation: gc-press 5.6s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gc-pop { animation: gc-pop 5.6s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gc-pick { animation: gc-pick 5.6s linear infinite; }
+.gc-icon { animation: gc-icon 5.6s cubic-bezier(.16, 1, .3, 1) infinite; }
+/* 6. готово: нажать «Готово» → «Рецепт сохранён» */
+@keyframes gd-cur { 0% { transform: translate(150px, 80px); opacity: 0; } 6% { opacity: 1; } 18% { transform: translate(240px, 38px); } 21% { transform: translate(240px, 38px) scale(.8); } 24% { transform: translate(240px, 38px); opacity: 1; } 36%, 100% { transform: translate(200px, 68px); opacity: 0; } }
+@keyframes gd-btn { 0%, 20% { transform: scale(1); } 21.5% { transform: scale(.92); } 24%, 100% { transform: scale(1); } }
+@keyframes gd-toast { 0%, 23% { opacity: 0; transform: translateY(4px); } 28%, 86% { opacity: 1; transform: none; } 94%, 100% { opacity: 0; transform: none; } }
+.gd-cur { animation: gd-cur 4.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gd-btn { animation: gd-btn 4.4s cubic-bezier(.16, 1, .3, 1) infinite; }
+.gd-toast { animation: gd-toast 4.4s cubic-bezier(.16, 1, .3, 1) infinite; }
 /* 0. варианты (прототип): открыть список, выбрать другой, «+» — новый */
 @keyframes gt0-cur { 0% { transform: translate(236px, 70px); } 14% { transform: translate(70px, 12px); } 18% { transform: translate(70px, 12px) scale(.8); } 22% { transform: translate(70px, 12px); } 40% { transform: translate(70px, 58px); } 44% { transform: translate(70px, 58px) scale(.8); } 48% { transform: translate(70px, 58px); } 70% { transform: translate(178px, 12px); } 74% { transform: translate(178px, 12px) scale(.8); } 78% { transform: translate(178px, 12px); } 100% { transform: translate(236px, 70px); } }
 @keyframes gt0-menu { 0%, 18% { opacity: 0; transform: translateY(-4px); } 22%, 46% { opacity: 1; transform: none; } 50%, 100% { opacity: 0; transform: none; } }
@@ -302,7 +329,9 @@
 @media (prefers-reduced-motion: reduce) {
   .action-guide-enter,
   .guide-mode-reveal, .guide-mode-frame, .guide-track-piece,
-  .gt-cur, .gt0-cur, .gt0-menu, .gt0-a, .gt0-b, .gt0-plus, .gt1-cur, .gt1-flash, .gt1-ghost, .gt1-land, .gt2-cur, .gt2-pop, .gt2-pick, .gt2-icon, .gt2-move, .gt2-grow, .gt3-cur, .gt3-grow, .gt4-cur, .gt4-ghost, .gt4-land,
+  .gt-cur, .gt0-cur, .gt0-menu, .gt0-a, .gt0-b, .gt0-plus,
+  .gw-cur, .gw-play, .gw-ph, .gw-s1, .gw-s2, .gw-s3, .gw-s4, .gw-flash, .gl-cur, .gl-sel, .gl-demo, .gl-shut-t, .gl-shut-b,
+  .gp-cur, .gp-rarr, .gp-put, .gp-a, .gp-b, .gp-demo, .gp-land, .gc-cur, .gc-press, .gc-pop, .gc-pick, .gc-icon, .gd-cur, .gd-btn, .gd-toast,
   .guide-tl-sweep, .guide-tl-drag, .guide-tl-land, .guide-sb-a, .guide-sb-b, .guide-sb-press,
   .guide-fit-drag, .guide-fit-select, .guide-fit-grow, .guide-fit-grow-label,
   .guide-hook-icon-a, .guide-hook-icon-b, .guide-hook-icon-c, .guide-hook-shake,
@@ -312,6 +341,7 @@
   .guide-track-handle-right, .guide-track-drop-pill, .guide-track-fill-move, .guide-cursor-blink,
   .guide-mode-off-fade, .guide-mode-on-fade { animation: none; }
   .action-guide-enter, .guide-mode-reveal, .guide-mode-frame, .guide-track-piece { opacity: 1; transform: none; }
+  .gt-cur { visibility: hidden; }
   .guide-hook-icon-a { opacity: 1; }
   .guide-hook-icon-b, .guide-hook-icon-c { opacity: 0; }
   .guide-pool-digit-4 { opacity: 1; }

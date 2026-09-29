@@ -723,20 +723,22 @@
       "videoOnly": "Choose a video file for the Video option"
     },
     "fxTimeline": {
-      "guideLibraryTitle": "Effects library",
-      "guideLibraryText": "Press <play>▶</play> to see an example in the preview on the right. If it fits, drag the row onto a lane below or press <plus>+</plus>.",
-      "guideCutsTitle": "Shots and cuts",
-      "guideCutsText": "Each block is a shot. Click the circle between shots to pick a transition. Drag the circle to move the cut.",
+      "guideLibraryTitle": "Pick an effect",
+      "guideLibraryText": "Click any row in the library — its example starts playing in the preview on the right.",
+      "guideCutsTitle": "Change the transition between shots",
+      "guideCutsText": "Click the circle between two shots — a list of transitions with an example opens. Pick one and it goes on that cut.",
       "guidePaceTitle": "Cut frequency",
       "guidePaceText": "«Sparser», «Auto» or «Denser» — how often the shot changes. «Auto» is exactly what the render computes from the track tempo.",
       "guideNext": "Next",
       "guideDismiss": "Got it",
-      "guideVariantsTitle": "Recipe variants",
-      "guideVariantsText": "Everything you change on the timeline belongs to the selected variant. Switch in the list; «+» adds a new variant.",
-      "guideHookTitle": "The hook sits on the drop",
-      "guideHookText": "The hook is pinned to the drop and cannot be moved — the drop is chosen on the FX step. Slow shutter lets you drag its right edge.",
-      "guideStylesTitle": "Styles on shots",
-      "guideStylesText": "Drag a style from the library onto the «Style» lane — it lands on a shot. Drag its edge to cover the neighbouring shots."
+      "guideVariantsTitle": "Which variant you are editing",
+      "guideVariantsText": "Everything you change on the timeline belongs to the variant in this button. Open the list to switch; «+» adds a new variant.",
+      "guideWatchTitle": "Watch what you already have",
+      "guideWatchText": "Press ▶ on the preview or Space — the video plays with the track: shots, the hook on the drop, transitions and styles, just like the render.",
+      "guidePlayerTitle": "Browse and add it",
+      "guidePlayerText": "Arrows ‹ › or ← → switch to the neighbouring effects. Like one? Press the button below: it lands on the lane and the preview goes back to your video.",
+      "guideDoneTitle": "Done — everything is saved",
+      "guideDoneText": "Edits save on their own. Press «Done» to go back to FX — you can reopen the timeline any time."
     }
   },
   "chip": {
