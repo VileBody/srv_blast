@@ -72,6 +72,55 @@ REF_LINE_CHARS_TWO_GROUPS = 13
 DESC_CHARS = frozenset("ДЦЩ")
 ACCENT_CHARS = frozenset("ЙЁ")
 
+# ---------------------------------------------------------------------------
+# Пользовательские параметры текста (визард) — именованные пресеты. Числа живут
+# ТОЛЬКО здесь, на стороне рендера; фронт шлёт имена.
+# ---------------------------------------------------------------------------
+# размер: только МЕНЬШЕ авто-максимума jakson (авто уже максимально крупный)
+SIZE_PRESETS = {"auto": 1.0, "m": 0.9, "s": 0.8}
+# позиция: (выравнивание по X, центр группы по Y в долях высоты кадра)
+POSITION_PRESETS = {
+    "center": ("center", 0.50),
+    "up": ("center", 0.36),
+    "down": ("center", 0.64),
+    "left": ("left", 0.50),
+    "right": ("right", 0.50),
+}
+# тень (Sapphire S_DropShadow): soft = прод-значения
+SHADOW_PRESETS = {"none": None, "soft": {"opacity": 2.0, "blur": 60.0}, "strong": {"opacity": 4.0, "blur": 34.0}}
+# обводка под заливкой: толщина в долях высоты прописных (масштабно-инвариантно)
+OUTLINE_PRESETS = {"none": 0.0, "thin": 0.07, "thick": 0.14}
+JUSTIFICATION_CODES = {"left": "7413", "right": "7414", "center": "7415"}
+
+
+def hex_to_rgb01(value: str) -> list:
+    s = str(value or "").strip().lstrip("#")
+    if len(s) != 6:
+        raise ValueError(f"color must be #RRGGBB, got {value!r}")
+    return [round(int(s[i:i + 2], 16) / 255.0, 5) for i in (0, 2, 4)]
+
+
+@dataclass(frozen=True)
+class JaksonTextParams:
+    """Выбор пользователя для jakson. Неизвестный пресет — ошибка (No Fallback)."""
+
+    size: str = "auto"
+    position: str = "center"
+    shadow: str = "soft"
+    outline: str = "none"
+    outline_color: str = "#000000"
+    accent_color: Optional[str] = None      # None — белый, как основной
+    hook_color: Optional[str] = None        # TYPE_4; None — прод-красный
+
+    def __post_init__(self) -> None:
+        for name, table in (("size", SIZE_PRESETS), ("position", POSITION_PRESETS),
+                            ("shadow", SHADOW_PRESETS), ("outline", OUTLINE_PRESETS)):
+            if getattr(self, name) not in table:
+                raise ValueError(f"unknown {name} preset {getattr(self, name)!r} (allowed: {sorted(table)})")
+        for name in ("outline_color", "accent_color", "hook_color"):
+            if getattr(self, name) is not None:
+                hex_to_rgb01(getattr(self, name))
+
 
 @dataclass(frozen=True)
 class FontMetrics:
@@ -194,6 +243,27 @@ class JaksonLayout:
     gap_type1: float
     line_gap_mult: float = 1.0
     accent: Optional[AccentLayout] = None
+    params: JaksonTextParams = JaksonTextParams()
+
+    @property
+    def align_x(self) -> str:
+        return POSITION_PRESETS[self.params.position][0]
+
+    @property
+    def center_y_frac(self) -> float:
+        return POSITION_PRESETS[self.params.position][1]
+
+    @property
+    def justification_code(self) -> str:
+        return JUSTIFICATION_CODES[self.align_x]
+
+    @property
+    def stroke_px(self) -> float:
+        return round(OUTLINE_PRESETS[self.params.outline] * self.cap_h_base, 2)
+
+    @property
+    def shadow(self) -> Optional[Dict[str, float]]:
+        return SHADOW_PRESETS[self.params.shadow]
 
     def leading_for(self, text: str, *, type1: bool, accent_word: Optional[str] = None) -> float:
         """Интервал для конкретного текста (строки разделены символом CR, как в AE).
@@ -229,6 +299,8 @@ class JaksonLayout:
             "baseline_last": float(max(0, n_lines - 1)) * leading,
             "margin_x": self.margin_x,
             "margin_y": self.margin_y,
+            "align_x": self.align_x,
+            "center_y": self.center_y_frac,
         }
 
 
@@ -254,21 +326,22 @@ def accent_layout(accent_font: str, *, cap_h_base: float, path: Path = METRICS_P
 
 
 def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_font: Optional[str] = None,
-                  path: Path = METRICS_PATH) -> JaksonLayout:
+                  params: Optional[JaksonTextParams] = None, path: Path = METRICS_PATH) -> JaksonLayout:
     if accent_font:
         check_pair(font_base, accent_font)
     ref = font_metrics(REFERENCE_FONT, path=path)
     base = font_metrics(font_base, path=path)
     focus = font_metrics(font_focus or font_base, path=path)
 
-    # 1) размеры по видимой высоте прописных (Point = эталон)
-    k = ref.cap_h / base.cap_h
+    params = params or JaksonTextParams()
+    # 1) размеры по видимой высоте прописных (Point = эталон) × пресет размера
+    k = ref.cap_h / base.cap_h * SIZE_PRESETS[params.size]
     size_base = round(REF_SIZE_BASE * k, 2)
     size_line2 = round(REF_SIZE_LINE2 * k, 2)
-    size_focus_base = round(REF_SIZE_BASE * ref.cap_h / focus.cap_h, 2)
+    size_focus_base = round(REF_SIZE_BASE * ref.cap_h / focus.cap_h * SIZE_PRESETS[params.size], 2)
 
     # 2) межстрочный: доля зазора из прод-раскладки Point
-    ref_cap80 = ref.per_pt(ref.cap_h, REF_SIZE_BASE)
+    ref_cap80 = ref.per_pt(ref.cap_h, REF_SIZE_BASE)   # доли зазора — от прод-раскладки (без пресета)
     gap_single = (REF_LEADING_SINGLE - ref_cap80) / ref_cap80
     gap_type1 = (REF_LEADING_TYPE1 - ref.per_pt(ref.cap_h, REF_SIZE_LINE2)) / ref_cap80
 
@@ -301,6 +374,7 @@ def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_fo
         gap_type1=gap_type1,
         line_gap_mult=float(font_tuning(font_base).get("line_gap_mult", 1.0)),
         accent=accent_layout(accent_font, cap_h_base=cap_h_base, path=path) if accent_font else None,
+        params=params,
     )
 
 

@@ -5,7 +5,7 @@ import math
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
-from app.subtitle_font_layout import JaksonLayout
+from app.subtitle_font_layout import JaksonLayout, hex_to_rgb01
 from core.video_timing import AE_FPS
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
 
@@ -62,6 +62,15 @@ def apply_font_layout(layout: Optional[JaksonLayout]) -> None:
     RENDER["size_line2"] = layout.size_line2
     RENDER["size_focus"] = round(_RENDER_DEFAULTS["size_focus"] * layout.size_base / _RENDER_DEFAULTS["size_base"], 2)
     RENDER["leading"] = layout.leading_single
+    if layout.params.hook_color:
+        RENDER["color_red"] = hex_to_rgb01(layout.params.hook_color)
+
+
+def _type4_position() -> List[float]:
+    """TYPE_4 (ударное слово) — по центру X; по Y — там же, где группа строк."""
+    if _LAYOUT is None:
+        return [540, 960, 0]
+    return [RENDER["comp_w"] / 2.0, round(RENDER["comp_h"] * _LAYOUT.center_y_frac, 2), 0]
 
 
 def _type1_leading() -> float:
@@ -135,7 +144,7 @@ def base_transforms(anchor=None, position=None, scale=None) -> Dict:
 def text_base_dict(font=None, fill_color=None, italic=False,
                    apply_stroke=False, stroke_color=None, font_size=None) -> Dict:
     """Возвращает text_base."""
-    return {
+    tb = {
         "font":             font or RENDER["font_base"],
         "fontSize":         font_size or RENDER["size_base"],
         "applyFill":        not apply_stroke,
@@ -154,9 +163,20 @@ def text_base_dict(font=None, fill_color=None, italic=False,
         "spaceBefore":      0,
         "spaceAfter":       0,
     }
+    if _LAYOUT is not None:
+        tb["justificationCode"] = _LAYOUT.justification_code
+        # пользовательская обводка — только у слоёв с заливкой (TYPE_5 outline-слой свой)
+        if not apply_stroke and _LAYOUT.stroke_px > 0:
+            tb.update({
+                "applyStroke": True,
+                "strokeWidth": _LAYOUT.stroke_px,
+                "strokeColor": hex_to_rgb01(_LAYOUT.params.outline_color),
+                "strokeOverFill": False,
+            })
+    return tb
 
 
-def s_drop_shadow() -> Dict:
+def s_drop_shadow(opacity: float = 2.0, blur: float = 60.0) -> Dict:
     """Sapphire S_DropShadow — мягкая тень субтитра.
 
     Индексы свойств сняты дампом реального текстового слоя; значения — по
@@ -164,8 +184,8 @@ def s_drop_shadow() -> Dict:
     """
     return {
         "0050": prop("S_DropShadow-0050", [0, 0, 0, 1]),  # Shadow Color (чёрный)
-        "0051": prop("S_DropShadow-0051", 2.0),           # Shadow Opacity
-        "0052": prop("S_DropShadow-0052", 60),            # Shadow Blur
+        "0051": prop("S_DropShadow-0051", opacity),       # Shadow Opacity
+        "0052": prop("S_DropShadow-0052", blur),          # Shadow Blur
         "0053": prop("S_DropShadow-0053", 0),             # Shift X
         "0054": prop("S_DropShadow-0054", 0),             # Shift Y
         "0055": prop("S_DropShadow-0055", 1.0),           # Fg Opacity
@@ -568,6 +588,8 @@ def build_char_styles_accent(text: str, focus_word: str, accent: Any, *, visible
                     "tracking": accent.tracking,
                     "baselineShift": accent.baseline_shift,
                 })
+            if is_focus and visible == "accent" and _LAYOUT is not None and _LAYOUT.params.accent_color:
+                entry["fillColor"] = hex_to_rgb01(_LAYOUT.params.accent_color)
             if is_focus != (visible == "accent"):
                 entry["applyFill"] = False
             styles.append(entry)
@@ -705,7 +727,10 @@ class LayerFactory:
             "ADBE Posterize Time":    posterize_time(),
         }
         eff = dict(eff)
-        eff.setdefault("S_DropShadow", s_drop_shadow())  # тень на всех TYPE_1..6 (только текст)
+        if _LAYOUT is None:
+            eff.setdefault("S_DropShadow", s_drop_shadow())  # тень на всех TYPE_1..6 (только текст)
+        elif _LAYOUT.shadow is not None:
+            eff.setdefault("S_DropShadow", s_drop_shadow(**_LAYOUT.shadow))
 
         return {
             "name":             name,
@@ -1088,7 +1113,7 @@ class LayerFactory:
             "source_rect":      {},
             "props": {
                 "tf_anchor":   prop("ADBE Anchor Point",  [540, 960, 0]),
-                "tf_position": prop("ADBE Position",      [540, 960, 0]),
+                "tf_position": prop("ADBE Position",      _type4_position()),
                 "tf_scale":    prop("ADBE Scale",         [100, 100, 100]),
                 "tf_rotation": prop("ADBE Rotate Z",      0),
                 "tf_opacity":  prop("ADBE Opacity",       100),
@@ -1121,7 +1146,7 @@ class LayerFactory:
             "source_rect":      {},
             "props": {
                 "tf_anchor":   prop("ADBE Anchor Point",  [540, 960, 0]),
-                "tf_position": prop("ADBE Position",      [540, 960, 0]),
+                "tf_position": prop("ADBE Position",      _type4_position()),
                 "tf_scale":    prop("ADBE Scale", keyframes=glow_scale_kfs),
                 "tf_rotation": prop("ADBE Rotate Z", 0),
                 "tf_opacity":  prop("ADBE Opacity",  40),

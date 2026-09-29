@@ -786,6 +786,8 @@
 
     function resolveJustificationByCode(code) {
       try { if (String(code) === "7415") return ParagraphJustification.CENTER_JUSTIFY; } catch(e) {}
+      try { if (String(code) === "7413") return ParagraphJustification.LEFT_JUSTIFY; } catch(e) {}
+      try { if (String(code) === "7414") return ParagraphJustification.RIGHT_JUSTIFY; } catch(e) {}
       return null;
     }
 
@@ -827,6 +829,7 @@
           try { if (base.applyStroke !== undefined) textDoc.applyStroke = !!base.applyStroke; } catch(_) {}
           try { if (base.strokeWidth !== undefined) textDoc.strokeWidth = base.strokeWidth; } catch(_) {}
           try { if (base.strokeColor !== undefined) textDoc.strokeColor = base.strokeColor; } catch(_) {}
+          try { if (base.strokeOverFill !== undefined) textDoc.strokeOverFill = !!base.strokeOverFill; } catch(_) {}
           try { if (base.tracking !== undefined) textDoc.tracking = base.tracking; } catch(_) {}
           try { if (base.leading !== undefined) textDoc.leading = base.leading; } catch(_) {}
           try { if (base.autoLeading !== undefined) textDoc.autoLeading = !!base.autoLeading; } catch(_) {}
@@ -1164,6 +1167,19 @@
       }
       var compCenterX = Number(targetComp.width) / 2.0;
       var compCenterY = Number(targetComp.height) / 2.0;
+      // позиция группы (layout_box): X по краю поля для left/right, Y — доля высоты кадра
+      if (box) {
+        // anchor ставится на край рамки текста, поэтому масштаб слоя край не сдвигает
+        var mxPx = Number(targetComp.width) * marginX;
+        if (String(box.align_x) === "left") {
+          centerX = Number(sr.left);
+          compCenterX = mxPx;
+        } else if (String(box.align_x) === "right") {
+          centerX = Number(sr.left) + Number(sr.width);
+          compCenterX = Number(targetComp.width) - mxPx;
+        }
+        if (isFinite(Number(box.center_y))) compCenterY = Number(targetComp.height) * Number(box.center_y);
+      }
 
       try {
         var tf = layer.property("ADBE Transform Group");
