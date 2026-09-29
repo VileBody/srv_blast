@@ -1,4 +1,16 @@
 import { useEffect } from 'react';
+import { create } from 'zustand';
+
+/**
+ * Сколько модалок открыто прямо сейчас. Подсказки визарда (ActionGuideOverlay) при
+ * открытой модалке молчат: иначе, например, «Выбери тип фона» ложилась поверх
+ * вопроса «Использовать те же вводные?» и перекрывала его кнопки.
+ */
+export const useModalCount = create<{ count: number; inc: () => void; dec: () => void }>((set) => ({
+  count: 0,
+  inc: () => set((s) => ({ count: s.count + 1 })),
+  dec: () => set((s) => ({ count: Math.max(0, s.count - 1) }))
+}));
 
 export function Modal({
   open,
@@ -11,6 +23,12 @@ export function Modal({
   children: React.ReactNode;
   onClose: () => void;
 }) {
+  useEffect(() => {
+    if (!open) return undefined;
+    useModalCount.getState().inc();
+    return () => useModalCount.getState().dec();
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {

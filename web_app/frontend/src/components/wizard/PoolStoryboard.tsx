@@ -186,7 +186,14 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
   });
 
   /* ── действия ── */
-  const seekShot = (k: number) => { tRef.current = bounds[k] + 0.001; setT(tRef.current); };
+  // Во время игры время ведёт звук (тик берёт его из audio.currentTime) — переход на
+  // кадр двигает и его, иначе следующий тик вернул бы кадр назад.
+  const seekTo = (v: number) => {
+    tRef.current = v; setT(v);
+    const audio = audioRef.current;
+    if (audio && recipe.window) { try { audio.currentTime = recipe.window.start + v; } catch { /* ещё не загрузился */ } }
+  };
+  const seekShot = (k: number) => seekTo(bounds[k] + 0.001);
   const step = (d: number) => { if (!shots || edit) return; seekShot((s + d + shots) % shots); };
   const allFiles = () => Object.values(storyboard.videos).flatMap((v) => v.clips.map((c) => c.fileName));
 
@@ -194,7 +201,7 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
     if (!video || !cuts) return;
     const k = s;
     setEdit({ k, orig: video, candidates: [], pos: -1, loading: true });
-    tRef.current = bounds[k] + 0.001; setT(tRef.current); setPlaying(true);
+    seekTo(bounds[k] + 0.001); setPlaying(true);
     try {
       const res = await api.storyboardAlternatives({ clipFrom: timingFrom, clipTo: timingTo, cuts, group: video.group, shot: k, seedKey: video.seedKey, exclude: allFiles(), limit: 20 });
       if (!res.candidates.length) { setEdit(null); return; }
@@ -210,7 +217,7 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
     if (pos === edit.pos) return;
     setEdit({ ...edit, pos });
     setStoryboardVideo(withClip(edit.orig, edit.k, edit.candidates[pos]));
-    tRef.current = bounds[edit.k] + 0.001; setT(tRef.current);
+    seekTo(bounds[edit.k] + 0.001);
   };
   const cancelEdit = () => { if (!edit) return; setStoryboardVideo(edit.orig); setEdit(null); };
   const doneEdit = () => {

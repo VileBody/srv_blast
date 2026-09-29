@@ -33,6 +33,9 @@
 .fxt-seg button:hover { color: var(--text); }
 .fxt-seg button[aria-pressed="true"] { background: var(--accent); color: var(--text); }
 .fxt-seg button[aria-disabled="true"] { opacity: .32; cursor: not-allowed; }
+/* переключатель длины слоу-шаттера в панели выбранного — компактный, в одну строку */
+.fxt-sel .fxt-seg { flex: none; }
+.fxt-sel .fxt-seg button { height: 26px; padding: 0 9px; font-size: 12px; white-space: nowrap; }
 .fxt-ratio { border: 1.5px solid currentColor; border-radius: 2px; display: block; }
 .fxt-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--fxt-t60); transition: color .15s ease, background-color .15s ease, transform .12s var(--fxt-ease); }
 .fxt-icon:hover { color: var(--text); background: var(--fxt-t06); }
@@ -103,8 +106,11 @@
 .fxt-ov { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
 .fxt-flash { background: #fff; mix-blend-mode: screen; }
 .fxt-trflash { background: #fff; }
-.fxt-fx { position: absolute; inset: 0; pointer-events: none; }
-.fxt-subs { position: absolute; left: 8%; right: 8%; bottom: 17%; text-align: center; font-weight: 400; font-size: clamp(14px, 6.4cqw, 34px); line-height: 1.08; text-transform: uppercase; color: #fff; text-shadow: 0 2px 12px rgba(0, 0, 0, .55); pointer-events: none; text-wrap: balance; }
+/* Слой кадров — всегда свой стек (z-index: 0): z-index кадров (1–2) не должен
+   вылезать наружу. Без этого, пока не выбран стиль (filter: none), кадры
+   перекрывали пример эффекта, вспышку на дропе и субтитры. */
+.fxt-fx { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.fxt-demo { position: absolute; inset: 0; z-index: 4; background: #000; }
 .fxt-chip { position: absolute; left: 10px; top: 10px; padding: 5px 9px 3px; border-radius: 8px; background: rgba(8, 5, 20, .66); font-size: 11px; color: var(--fxt-t80); display: flex; align-items: center; gap: 6px; pointer-events: none; z-index: 5; }
 .fxt-chip.demo { left: auto; right: 10px; background: var(--accent); color: #fff; }
 .fxt-play { position: absolute; left: 50%; top: 50%; z-index: 8; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: rgba(5, 1, 15, .6); color: var(--text); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); transform: translate(-50%, -50%); opacity: 0; transition: opacity .15s ease, filter .15s ease; }
@@ -165,6 +171,9 @@
 .fxt-clip.sb { height: 26px; background: rgba(246, 245, 253, .1); color: var(--fxt-t80); font-size: 12px; cursor: pointer; border-radius: 7px; transition: background-color .15s ease; }
 .fxt-clip.sb:hover { background: rgba(246, 245, 253, .16); }
 .fxt-clip.sb.cur { background: rgba(246, 245, 253, .2); color: var(--text); }
+/* слово на пилюлю, как на шаге «Текст»: узкие пилюли без внутренних отступов, фокус-слово — акцентом */
+.fxt-clip.sb { padding: 0 5px; }
+.fxt-clip.sb.focus { background: var(--accent-20); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent-light); }
 .fxt-clip.off { opacity: .35; }
 .fxt-clip .lab { overflow: hidden; text-overflow: ellipsis; }
 .fxt-edge { position: absolute; top: 0; bottom: 0; width: 10px; cursor: ew-resize; z-index: 2; }
@@ -174,7 +183,10 @@
 .fxt-clip:hover .fxt-edge::after, .fxt-clip.sel .fxt-edge::after { opacity: .7; }
 .fxt-clip.fr .fxt-edge::after { background: #fff; }
 .fxt-outlab { position: absolute; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--fxt-hook); white-space: nowrap; pointer-events: none; }
-.fxt-join { position: absolute; top: 50%; width: 24px; height: 24px; margin-left: -12px; margin-top: -12px; border-radius: 50%; display: grid; place-items: center; background: var(--fxt-well); color: var(--fxt-t80); box-shadow: 0 0 0 2px var(--fxt-well); z-index: 4; transition: box-shadow .15s ease, transform .12s var(--fxt-ease); }
+/* Стык: почти непрозрачная подложка + размытие под ней — кадры не просвечивают сквозь кружок. */
+.fxt-join { position: absolute; top: 50%; width: 24px; height: 24px; margin-left: -12px; margin-top: -12px; border-radius: 50%; display: grid; place-items: center; background: rgba(11, 7, 24, .88); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: var(--fxt-t80); box-shadow: 0 0 0 2px var(--fxt-well); z-index: 4; transition: box-shadow .15s ease, transform .12s var(--fxt-ease); }
+.fxt-join.none { color: var(--fxt-t60); }
+.fxt-join.none:hover { color: var(--text); }
 .fxt-join:hover { box-shadow: 0 0 0 2px var(--fxt-well), 0 0 0 3px var(--fxt-t40); }
 .fxt-join:active { transform: scale(.92); }
 .fxt-join.sel { box-shadow: 0 0 0 2px var(--fxt-well), 0 0 0 3.5px #fff; }
