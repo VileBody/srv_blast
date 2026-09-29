@@ -347,6 +347,8 @@ def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_fo
 
     params = params or JaksonTextParams()
     params.check_render_preset(render_preset)
+    if params.height != "normal" and not allows_height_stretch(font_base):
+        raise ValueError(f"height {params.height!r} is only for serif fonts (catalog 'serif': true), got {font_base!r}")
     v = HEIGHT_PRESETS[params.height]
     # 1) размеры по видимой высоте прописных (Point = эталон) × пресет размера.
     #    Растяжение по высоте (v) размер в pt НЕ меняет — ширина букв остаётся той же,
@@ -444,6 +446,11 @@ def accents_for(font_base: str, *, path: Path = CATALOG_PATH) -> List[str]:
 
 def is_pairable(font_base: str) -> bool:
     return bool(accents_for(font_base))
+
+
+def allows_height_stretch(font_base: str, *, path: Path = CATALOG_PATH) -> bool:
+    """Растяжение по высоте — только шрифтам с засечками (catalog "serif": true)."""
+    return load_catalog(path).get(font_base, {}).get("serif") is True
 
 
 def check_pair(font_base: str, accent_font: str) -> None:

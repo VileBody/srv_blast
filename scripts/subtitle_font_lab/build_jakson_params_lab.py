@@ -27,7 +27,7 @@ from app import scenes_3rd_reference_builder as jakson  # noqa: E402
 from app.project_builder import _tojson_filter  # noqa: E402
 from app.project_config import AE_PROJECT  # noqa: E402
 from app.render_plan import build_render_plan_v1  # noqa: E402
-from app.subtitle_font_layout import JaksonTextParams, check_pair, jakson_layout  # noqa: E402
+from app.subtitle_font_layout import JaksonTextParams, allows_height_stretch, check_pair, jakson_layout  # noqa: E402
 from app.text_comp import build_text_layers  # noqa: E402
 from core.subtitles_mode import SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP as MODE  # noqa: E402
 
@@ -159,6 +159,8 @@ def main() -> None:
     comps: Dict[str, Dict[str, Any]] = {}
     for pair in PAIRS:
         for group, variants in GROUPS.items():
+            if group == "02 высота" and not allows_height_stretch(pair[1]):
+                continue   # растяжение — только шрифтам с засечками
             tag, jsx, markers = _comp_jsx(env, pair, group, variants, args.metrics)
             parts.append(f"// ===== {tag} =====\n{jsx}\n")
             comps[tag] = {"pair": pair[0], "markers": markers}
