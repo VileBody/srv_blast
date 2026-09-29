@@ -29,7 +29,22 @@ import {
  *  - футер: пилюли вариантов с коротким описанием, «+» = копия текущего.
  */
 
-export const useFxLab = () => typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('fxLab');
+/**
+ * Флаг прототипа «липкий» на сессию вкладки: навигация визарда по шагам переписывает
+ * адрес и теряет `?fxLab=1`, и без памяти прототип выключался бы на первом же переходе.
+ * `?fxLab=0` выключает.
+ */
+export const useFxLab = () => {
+  if (typeof window === 'undefined') return false;
+  const param = new URLSearchParams(window.location.search).get('fxLab');
+  try {
+    if (param === '0') window.sessionStorage.removeItem('fxLab');
+    else if (param !== null) window.sessionStorage.setItem('fxLab', '1');
+    return window.sessionStorage.getItem('fxLab') === '1';
+  } catch {
+    return param !== null && param !== '0';
+  }
+};
 
 export interface LabVariant { id: string; kind: HookKind; config: HookConfig; color: string }
 const PALETTE = ['#8b6fe6', '#e38fb5', '#6fc7c0', '#e8b45f', '#9fb5ff', '#b7e27a', '#ff9a7a', '#d6a1ff'];
