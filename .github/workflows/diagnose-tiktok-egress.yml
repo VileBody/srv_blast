@@ -89,3 +89,50 @@ jobs:
                   print("=== " + host)
                   print(f"ERR {type(e).__name__}: {e}")
           PY
+      - name: CONNECT by IP (DNS resolved on ops)
+        run: |
+          set -uo pipefail
+          docker exec -i blast-web-api python - <<'PY'
+          import base64, os, socket
+          from urllib.parse import urlparse
+          from src.outbound_proxy import OUTBOUND_PROXY_URL
+          CRLF = bytes([13, 10]).decode()
+          print("container no_proxy:", {k: v for k, v in os.environ.items() if k.lower() == "no_proxy"} or "not set")
+          print("container proxy env:", sorted(k for k in os.environ if "proxy" in k.lower()) or "none")
+          u = urlparse(OUTBOUND_PROXY_URL)
+          auth = base64.b64encode(f"{u.username}:{u.password}".encode()).decode()
+          hosts = ("generativelanguage.googleapis.com", "open.tiktokapis.com", "open-upload.tiktokapis.com", "www.google.com", "api.ipify.org")
+          targets = []
+          for h in hosts:
+              try:
+                  ips = sorted({a[4][0] for a in socket.getaddrinfo(h, 443, socket.AF_INET)})
+              except Exception as e:
+                  ips = []
+                  print(h, "resolve failed on ops:", e)
+              print(h, "->", ips)
+              targets += ips[:2]
+          targets += ["1.1.1.1", "8.8.8.8"]
+          for host in targets:
+              try:
+                  s = socket.create_connection((u.hostname, u.port), timeout=15)
+                  head = [f"CONNECT {host}:443 HTTP/1.1", f"Host: {host}:443", f"Proxy-Authorization: Basic {auth}", "", ""]
+                  s.sendall(CRLF.join(head).encode())
+                  s.settimeout(15)
+                  data = b""
+                  try:
+                      while len(data) < 3000:
+                          chunk = s.recv(1024)
+                          if not chunk:
+                              break
+                          data += chunk
+                          if data[:12] in (b"HTTP/1.1 200", b"HTTP/1.0 200"):
+                              break
+                  except socket.timeout:
+                      pass
+                  s.close()
+                  print("=== " + host)
+                  print(data.decode("utf-8", "replace")[:1500])
+              except Exception as e:
+                  print("=== " + host)
+                  print(f"ERR {type(e).__name__}: {e}")
+          PY
