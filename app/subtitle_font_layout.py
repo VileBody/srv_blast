@@ -45,7 +45,8 @@ from typing import Any, Dict, List, Optional
 METRICS_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_metrics.json"
 TUNING_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_tuning.json"
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_catalog.json"
-_TUNING_KEYS = {"line_gap_mult", "space_tracking", "accent_scale", "accent_baseline_shift", "accent_space_tracking", "note"}
+_TUNING_KEYS = {"line_gap_mult", "space_tracking", "base_scale_by_style", "accent_scale", "accent_baseline_shift",
+                "accent_space_tracking", "note"}
 # Тело строчных акцента (ink «о») = высоте прописных основного и стоит по их
 # центру: акцент в балансе с капсом, росчерки уходят поверх соседнего текста.
 # (0.85 давало акцент заметно мельче и легче капса — смотр пар 2026-09-29.)
@@ -696,19 +697,17 @@ def tape_layout(font: str, *, params: Optional[JaksonTextParams] = None, render_
         own, ref_own = m.body_top + m.body_bottom, ref.body_top + ref.body_bottom
     else:
         own, ref_own = m.cap_h, ref.cap_h
-    size = TAPE_REF_SIZE * ref_own / own * SIZE_PRESETS[params.size]
+    style_scale = float((font_tuning(font).get("base_scale_by_style") or {}).get("tape", 1.0))
+    size = TAPE_REF_SIZE * ref_own / own * SIZE_PRESETS[params.size] * style_scale
     cap = m.per_pt(own, size) * v
     ref_cap = ref.per_pt(ref.cap_h, TAPE_REF_SIZE)
     gap_ratio = (TAPE_REF_LEADING - ref_cap) / ref_cap
     # line_gap_mult (AKONY ×2) — поправка jakson под строки 80/120; у tape строки
     # одного размера, там она давала слишком большой зазор (смотр 2026-09-30)
+    # строчные (скрипты): интервал по ТЕЛУ; выносные и росчерки не учитываем —
+    # им положено слегка заходить друг на друга (смотр 2026-09-30)
     leading = cap + gap_ratio * cap
-    if case == "lower":
-        # строчные: зазор по телу мал для скриптов с высокими б/д — не меньше
-        # «хвост строки 1 + верх строки 2 + просвет», иначе строки налезают
-        leading = max(leading, (m.per_pt(m.lc_desc_bottom, size) + m.per_pt(m.lc_asc_top, size)) * v
-                      + MIN_CLEARANCE_RATIO * cap)
-    adv =m.lc_advance_per_char if case == "lower" else m.advance_per_char
+    adv = m.lc_advance_per_char if case == "lower" else m.advance_per_char
     advance = m.per_pt(adv, size) + TAPE_TRACKING / 1000.0 * size
     return TapeLayout(
         font=font,
