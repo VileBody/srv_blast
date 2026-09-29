@@ -38,7 +38,11 @@
    "roles": [
     "base"
    ],
-   "category": "sans_system"
+   "category": "sans_system",
+   "excluded_styles": [
+    "trendy"
+   ],
+   "note_trendy": "2026-09-30 смотр trendy: под растяжением ×4 гротески неотличимы — в trendy только Point, Inter, Helvetica Neue"
   },
   {
    "ps": "SourceSansPro-Bold",
@@ -46,7 +50,11 @@
    "roles": [
     "base"
    ],
-   "category": "sans_system"
+   "category": "sans_system",
+   "excluded_styles": [
+    "trendy"
+   ],
+   "note_trendy": "2026-09-30 смотр trendy: под растяжением ×4 гротески неотличимы — в trendy только Point, Inter, Helvetica Neue"
   },
   {
    "ps": "DidactGothic",
@@ -55,6 +63,10 @@
     "base"
    ],
    "category": "sans_system",
+   "excluded_styles": [
+    "trendy"
+   ],
+   "note_trendy": "2026-09-30 смотр trendy: под растяжением ×4 гротески неотличимы — в trendy только Point, Inter, Helvetica Neue",
    "allowed_accents": [
     "SimphonyRegular",
     "Beryozki"

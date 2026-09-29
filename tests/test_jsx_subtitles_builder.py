@@ -251,6 +251,16 @@ def test_overlay_injects_engine_style_and_always_resets_it():
             assert f"\n    {key}:" in config_block.replace("\r\n", "\n"), (mode, key)
 
 
+def test_trendy_grotesque_pool_is_point_inter_helvetica():
+    from app.subtitle_font_layout import load_catalog, trendy_layout
+
+    allowed = [ps for ps, r in load_catalog().items()
+               if r["category"] == "sans_system" and "trendy" not in (r.get("excluded_styles") or [])]
+    assert allowed == ["Point-SemiBold", "Inter-Bold", "HelveticaNeueCyr-Bold"]
+    with pytest.raises(ValueError):
+        trendy_layout("DidactGothic")
+
+
 def test_brat_font_and_pairs_are_locked():
     from app.subtitle_font_layout import JaksonTextParams, brat_layout
 
