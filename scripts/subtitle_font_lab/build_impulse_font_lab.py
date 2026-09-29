@@ -33,7 +33,8 @@ _GROUP = {"sans_system": "01_CORE_SANS", "display": "02_DISPLAY", "editorial": "
 # эталон прода + все основные из каталога (в т.ч. скрипты: impulse строчный — им может подойти)
 FONTS = [("01_CORE_SANS", "Point Light (прод)", "Point-Light")] + [
     (_GROUP[row["category"]], row["label"], ps)
-    for ps, row in load_catalog().items() if "base" in (row.get("roles") or [])
+    for ps, row in load_catalog().items()
+    if "base" in (row.get("roles") or []) and "impulse" not in (row.get("excluded_styles") or [])
 ]
 
 # (тип, текст, длительность) — long ≤ 15–18 знаков; short ≥ 0.4 с и пауза после

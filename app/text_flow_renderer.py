@@ -1142,7 +1142,10 @@ class FlowTextLayerRenderer:
                         "spaceBefore": 0,
                         "spaceAfter": 0,
                     },
-                    "char_styles_ungrouped": [],
+                    "char_styles_ungrouped": (
+                        [{"i": ci, "tracking": lay.space_tracking} for ci, ch in enumerate(clean_text) if ch == " "]
+                        if lay is not None and lay.space_tracking is not None else []
+                    ),
                     "no_layout_pass": True,
                     "text_animator": {
                         "name": "Animator 1",

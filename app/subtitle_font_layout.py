@@ -45,7 +45,7 @@ from typing import Any, Dict, List, Optional
 METRICS_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_metrics.json"
 TUNING_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_tuning.json"
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_catalog.json"
-_TUNING_KEYS = {"line_gap_mult", "accent_scale", "accent_baseline_shift", "accent_space_tracking", "note"}
+_TUNING_KEYS = {"line_gap_mult", "space_tracking", "accent_scale", "accent_baseline_shift", "accent_space_tracking", "note"}
 # Тело строчных акцента (ink «о») = высоте прописных основного и стоит по их
 # центру: акцент в балансе с капсом, росчерки уходят поверх соседнего текста.
 # (0.85 давало акцент заметно мельче и легче капса — смотр пар 2026-09-29.)
@@ -448,6 +448,13 @@ def is_pairable(font_base: str) -> bool:
     return bool(accents_for(font_base))
 
 
+def check_style_allowed(font: str, style: str, *, path: Path = CATALOG_PATH) -> None:
+    """Шрифт, запрещённый каталогом для стиля (excluded_styles), — ошибка, не подмена."""
+    row = load_catalog(path).get(font)
+    if row is not None and style in (row.get("excluded_styles") or []):
+        raise ValueError(f"font {font!r} is excluded for subtitle style {style!r} (subtitle_font_catalog.json)")
+
+
 def allows_height_stretch(font_base: str, *, path: Path = CATALOG_PATH) -> bool:
     """Растяжение по высоте — только шрифтам с засечками (catalog "serif": true)."""
     return load_catalog(path).get(font_base, {}).get("serif") is True
@@ -492,6 +499,7 @@ class ImpulseLayout:
     advance_px: float            # px на знак при 100% масштаба слоя (с трекингом impulse)
     safe_width: float
     params: JaksonTextParams
+    space_tracking: Optional[float] = None   # ручной трекинг пробелов (tuning space_tracking)
 
     @property
     def vertical_scale(self) -> float:
@@ -533,6 +541,7 @@ def impulse_layout(font: str, *, params: Optional[JaksonTextParams] = None, rend
                    path: Path = METRICS_PATH) -> ImpulseLayout:
     params = params or JaksonTextParams()
     params.check_render_preset(render_preset)
+    check_style_allowed(font, "impulse")
     if params.height != "normal" and not allows_height_stretch(font):
         raise ValueError(f"height {params.height!r} is only for serif fonts (catalog 'serif': true), got {font!r}")
     ref = font_metrics(IMPULSE_REFERENCE_FONT, path=path)
@@ -555,4 +564,5 @@ def impulse_layout(font: str, *, params: Optional[JaksonTextParams] = None, rend
         advance_px=round(advance, 2),
         safe_width=round(1080.0 * (1.0 - 2.0 * SAFE_MARGIN_X), 2),
         params=params,
+        space_tracking=font_tuning(font).get("space_tracking"),
     )
