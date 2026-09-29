@@ -1,0 +1,54 @@
+name: Diagnose TikTok Egress
+
+# Одноразовая read-only диагностика: какими маршрутами blast-web-api (ops, Москва)
+# может достучаться до open.tiktokapis.com и с какого IP/страны он туда выходит.
+on:
+  push:
+    branches:
+      - diag/tiktok-egress
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: [self-hosted, blast-deploy-infra]
+    timeout-minutes: 10
+    steps:
+      - name: Probe routes from blast-web-api
+        run: |
+          set -uo pipefail
+          BOT_PROXY="$(docker exec tg-bot-public printenv TG_FILE_PROXY_URL 2>/dev/null || true)"
+          echo "bot proxy host: $(echo "$BOT_PROXY" | sed -E 's#//[^@]*@#//***@#')"
+          docker ps --format '{{.Names}}\t{{.Ports}}' | grep -E '18088|proxy' || true
+          docker exec -i -e BOT_PROXY="$BOT_PROXY" blast-web-api python - <<'PY'
+          import json, os, urllib.request, urllib.error
+          from src.outbound_proxy import OUTBOUND_PROXY_URL
+          routes = {"direct": "", "shared": OUTBOUND_PROXY_URL, "bot": os.environ.get("BOT_PROXY", ""),
+                    "host18088": "http://172.18.0.1:18088"}
+          checks = [
+              ("ip", "GET", "https://ipinfo.io/json"),
+              ("tiktok", "POST", "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"),
+              ("gemini", "GET", "https://generativelanguage.googleapis.com/"),
+          ]
+          for name, proxy in routes.items():
+              if name != "direct" and not proxy:
+                  print(f"{name}: not configured"); continue
+              h = urllib.request.ProxyHandler({"http": proxy, "https": proxy} if proxy else {})
+              op = urllib.request.build_opener(h)
+              for label, method, url in checks:
+                  req = urllib.request.Request(url, data=b"{}" if method == "POST" else None, method=method,
+                                               headers={"Content-Type": "application/json"})
+                  try:
+                      with op.open(req, timeout=15) as r:
+                          body = r.read(300).decode("utf-8", "replace")
+                          code = r.status
+                  except urllib.error.HTTPError as e:
+                      code, body = e.code, e.read(200).decode("utf-8", "replace")
+                  except Exception as e:
+                      code, body = "ERR", f"{type(e).__name__}: {e}"
+                  if label == "ip" and code == 200:
+                      d = json.loads(body); body = f"{d.get('ip')} {d.get('country')} {d.get('org')}"
+                  print(f"{name:9} {label:7} {code} {body[:160]!r}")
+          PY
