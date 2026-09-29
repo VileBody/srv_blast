@@ -260,3 +260,66 @@ def test_chunk_upload_streams_the_body_so_a_slow_link_does_not_time_out(monkeypa
     monkeypatch.setattr(module, "_opener", lambda proxy="": Opener())
     module.init_direct_post_file("token", {"privacy_level": "SELF_ONLY"}, video, "socks5h://p:1")
     assert sent == [(True, "6000000", 6_000_000, 120)]
+
+
+def test_file_upload_runs_in_background_and_status_says_sending(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    # Заливка через прокси идёт минуты: POST отвечает сразу после init, файл льётся в фоне,
+    # а статус до конца заливки — наш SENDING (шаг 1 на странице), потом — ответ TikTok.
+    import importlib
+    import sys
+    import threading
+
+    from tests.test_web_asr_preview import _env
+
+    _env(monkeypatch)
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            sys.modules.pop(name, None)
+    main = importlib.import_module("app.main")
+    api = main.tiktok_api
+
+    video_file = tmp_path / "v.mp4"
+    video_file.write_bytes(b"x" * 1000)
+    cleanup = tmp_path / "tmpdir"
+    cleanup.mkdir()
+    release = threading.Event()
+    uploaded = threading.Event()
+
+    monkeypatch.setattr(api, "init_file_upload", lambda token, info, path, proxy: {"publish_id": "pub_ok", "upload_url": "https://up/u"})
+
+    def slow_upload(url, path, proxy):
+        release.wait(5)
+        uploaded.set()
+        return {"transfer": [{"chunk": 1, "status": 201}], "upload_host": "up"}
+
+    monkeypatch.setattr(api, "upload_file_chunks", slow_upload)
+    monkeypatch.setattr(main, "_tiktok_ready", lambda cfg=None: True)
+    monkeypatch.setattr(main, "_access_token", lambda: "token")
+    monkeypatch.setattr(api, "fetch_publish_status", lambda token, pid, proxy="": {"status": "PROCESSING_DOWNLOAD"})
+
+    video: dict = {}
+    started = main._start_file_upload("token", {}, video_file, "", video, cleanup=cleanup)
+    assert started == {"publish_id": "pub_ok", "status": "SENDING"}
+    assert main.api_tiktok_post_status("pub_ok")["status"] == "SENDING"
+    release.set()
+    assert uploaded.wait(5)
+    for _ in range(250):  # поток сначала пишет состояние, потом удаляет временную копию
+        if main._TIKTOK_UPLOADS["pub_ok"]["state"] == "uploaded" and not cleanup.exists():
+            break
+        threading.Event().wait(0.02)
+    assert main.api_tiktok_post_status("pub_ok")["status"] == "PROCESSING_DOWNLOAD"
+    assert video["tiktokTransfer"]["chunks"][0]["status"] == 201
+    assert not cleanup.exists()  # временную копию ролика убрали
+
+    def broken_upload(url, path, proxy):
+        raise api.TikTokApiError("route_unavailable", "TikTok unreachable (proxy): timed out", 502)
+
+    monkeypatch.setattr(api, "init_file_upload", lambda token, info, path, proxy: {"publish_id": "pub_bad", "upload_url": "https://up/u"})
+    monkeypatch.setattr(api, "upload_file_chunks", broken_upload)
+    main._start_file_upload("token", {}, video_file, "", {})
+    for _ in range(50):
+        if main._TIKTOK_UPLOADS["pub_bad"]["state"] == "failed":
+            break
+        threading.Event().wait(0.02)
+    failed = main.api_tiktok_post_status("pub_bad")
+    assert (failed["status"], failed["fail_reason"]) == ("FAILED", "route_unavailable")

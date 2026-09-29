@@ -470,10 +470,13 @@ export function TikTokPostPage() {
         rights
       });
       if (initialized.status !== 'PUBLISH_COMPLETE') {
-        setProgress({ step: 2, startedAt: Date.now() });
+        // SENDING — файл ещё льётся с нашего сервера в TikTok (шаг 1), дальше обработка у TikTok
+        let sending = initialized.status === 'SENDING';
+        if (!sending) setProgress({ step: 2, startedAt: Date.now() });
         let complete = false;
-        // обработка у TikTok идёт от десятков секунд до нескольких минут — ждём до 5 минут
-        for (let attempt = 0; attempt < 200; attempt += 1) {
+        // обработка у TikTok идёт от десятков секунд до нескольких минут — ждём до 5 минут;
+        // заливка с нашего сервера в этот лимит не входит (у неё свой таймаут на сервере)
+        for (let attempt = 0; attempt < 200; ) {
           await new Promise((resolve) => window.setTimeout(resolve, 1500));
           const current = await api.tiktokPostStatus(initialized.publishId);
           if (current.status === 'PUBLISH_COMPLETE') {
@@ -481,6 +484,12 @@ export function TikTokPostPage() {
             break;
           }
           if (current.status === 'FAILED') throw new Error(current.fail_reason || t('tiktok.postError'));
+          if (current.status === 'SENDING') continue;
+          if (sending) {
+            sending = false;
+            setProgress({ step: 2, startedAt: Date.now() });
+          }
+          attempt += 1;
         }
         if (!complete) throw new Error(t('tiktok.postError'));
       }

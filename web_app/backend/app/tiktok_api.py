@@ -295,8 +295,14 @@ def chunk_plan(size: int) -> tuple[int, int]:
 
 def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_path: str | Path, proxy: str = "") -> dict[str, Any]:
     """Initialize FILE_UPLOAD and stream the already-rendered MP4 unchanged."""
-    path = Path(video_path)
-    size = path.stat().st_size
+    data = init_file_upload(access_token, post_info, video_path, proxy)
+    data.update(upload_file_chunks(data["upload_url"], video_path, proxy))
+    return data
+
+
+def init_file_upload(access_token: str, post_info: dict[str, Any], video_path: str | Path, proxy: str = "") -> dict[str, Any]:
+    """Только init: publish_id и upload_url. Сам файл — upload_file_chunks (у сайта — в фоне)."""
+    size = Path(video_path).stat().st_size
     if size <= 0:
         raise ValueError("Video file is empty")
     chunk_size, total_chunks = chunk_plan(size)
@@ -309,9 +315,16 @@ def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_pa
             "total_chunk_count": total_chunks,
         },
     }, proxy)
-    upload_url = data.get("upload_url")
-    if not upload_url:
+    if not data.get("upload_url"):
         raise TikTokApiError("missing_upload_url", "TikTok did not return an upload URL")
+    return data
+
+
+def upload_file_chunks(upload_url: str, video_path: str | Path, proxy: str = "") -> dict[str, Any]:
+    """Залить файл по upload_url тем же планом чанков, что ушёл в init."""
+    path = Path(video_path)
+    size = path.stat().st_size
+    chunk_size, total_chunks = chunk_plan(size)
     transfer: list[dict[str, Any]] = []
     with path.open("rb") as source:
         offset = 0
@@ -344,9 +357,7 @@ def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_pa
             except OSError as exc:
                 raise _route_error(exc, proxy) from exc
             offset = end + 1
-    data["transfer"] = transfer
-    data["upload_host"] = urllib.parse.urlparse(upload_url).hostname
-    return data
+    return {"transfer": transfer, "upload_host": urllib.parse.urlparse(upload_url).hostname}
 
 
 def fetch_publish_status(access_token: str, publish_id: str, proxy: str = "") -> dict[str, Any]:
