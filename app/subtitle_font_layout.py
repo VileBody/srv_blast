@@ -40,11 +40,12 @@ import json
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 METRICS_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_metrics.json"
 TUNING_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_tuning.json"
-_TUNING_KEYS = {"line_gap_mult", "pairable", "accent_scale", "accent_baseline_shift", "accent_space_tracking", "note"}
+CATALOG_PATH = Path(__file__).resolve().parents[1] / "config" / "styles" / "subtitle_font_catalog.json"
+_TUNING_KEYS = {"line_gap_mult", "accent_scale", "accent_baseline_shift", "accent_space_tracking", "note"}
 # Тело строчных акцента (ink «о») = высоте прописных основного и стоит по их
 # центру: акцент в балансе с капсом, росчерки уходят поверх соседнего текста.
 # (0.85 давало акцент заметно мельче и легче капса — смотр пар 2026-09-29.)
@@ -255,7 +256,7 @@ def accent_layout(accent_font: str, *, cap_h_base: float, path: Path = METRICS_P
 def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_font: Optional[str] = None,
                   path: Path = METRICS_PATH) -> JaksonLayout:
     if accent_font:
-        check_pairable(font_base)
+        check_pair(font_base, accent_font)
     ref = font_metrics(REFERENCE_FONT, path=path)
     base = font_metrics(font_base, path=path)
     focus = font_metrics(font_focus or font_base, path=path)
@@ -303,12 +304,59 @@ def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_fo
     )
 
 
+# ---------------------------------------------------------------------------
+# Каталог и правила пар (config/styles/subtitle_font_catalog.json)
+# ---------------------------------------------------------------------------
+
+def load_catalog(path: Path = CATALOG_PATH) -> Dict[str, Dict[str, Any]]:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    cats = set(raw.get("categories") or {})
+    out: Dict[str, Dict[str, Any]] = {}
+    for row in raw.get("fonts") or []:
+        ps = str(row["ps"])
+        if ps in out:
+            raise RuntimeError(f"duplicate font {ps!r} in {path}")
+        if row.get("category") not in cats:
+            raise RuntimeError(f"font {ps!r}: unknown category {row.get('category')!r} in {path}")
+        for c in row.get("pairs_with_categories") or []:
+            if c not in cats:
+                raise RuntimeError(f"font {ps!r}: unknown pairs_with category {c!r} in {path}")
+        out[ps] = dict(row)
+    return out
+
+
+def pair_block_reason(font_base: str, accent_font: str, *, path: Path = CATALOG_PATH) -> Optional[str]:
+    """None — пара разрешена; иначе человекочитаемая причина запрета."""
+    cat = load_catalog(path)
+    base, acc = cat.get(font_base), cat.get(accent_font)
+    if base is None or "base" not in (base.get("roles") or []):
+        return f"{font_base!r} is not a base font in the catalog"
+    if acc is None or "accent" not in (acc.get("roles") or []):
+        return f"{accent_font!r} is not an accent font in the catalog"
+    if base.get("category") == "script":
+        return f"{font_base!r} is a script used as base — accents are disabled"
+    if base.get("pairable") is False:
+        return f"{font_base!r} is self-sufficient (pairable=false)"
+    allowed = base.get("allowed_accents")
+    if allowed is not None and accent_font not in allowed:
+        return f"{font_base!r} allows only accents {allowed}"
+    if base.get("category") not in (acc.get("pairs_with_categories") or []):
+        return f"{accent_font!r} does not pair with category {base.get('category')!r}"
+    return None
+
+
+def accents_for(font_base: str, *, path: Path = CATALOG_PATH) -> List[str]:
+    """Акценты, которые фронт показывает для выбранного основного (пусто → блок скрыт)."""
+    return [ps for ps, row in load_catalog(path).items()
+            if "accent" in (row.get("roles") or []) and pair_block_reason(font_base, ps, path=path) is None]
+
+
 def is_pairable(font_base: str) -> bool:
-    """Самодостаточные основные (AKONY, Kudry): фронт не показывает блок акцентов."""
-    return font_tuning(font_base).get("pairable") is not False
+    return bool(accents_for(font_base))
 
 
-def check_pairable(font_base: str) -> None:
-    """Акцент к «непарному» шрифту — ошибка на границе, не молчаливая подмена."""
-    if not is_pairable(font_base):
-        raise RuntimeError(f"font {font_base!r} is not pairable with an accent font (subtitle_font_tuning.json)")
+def check_pair(font_base: str, accent_font: str) -> None:
+    """Запрещённая пара — ошибка на границе, не молчаливая подмена (No Fallback)."""
+    reason = pair_block_reason(font_base, accent_font)
+    if reason:
+        raise RuntimeError(f"font pair not allowed: {reason} (subtitle_font_catalog.json)")
