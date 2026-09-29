@@ -17,6 +17,7 @@ import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 import { TimelineButtonGuideVisual, useFxTimelineOpen, useTimelineGuideAvailable } from './timelineGuides';
+import { LabTypeList, useFxLab } from './FxLab';
 
 // Таймлайн сам берёт каталоги эффектов отсюда — статический импорт дал бы цикл модулей.
 const FxTimeline = lazy(() => import('./FxTimeline').then((m) => ({ default: m.FxTimeline })));
@@ -28,7 +29,7 @@ const FxTimeline = lazy(() => import('./FxTimeline').then((m) => ({ default: m.F
  * настройка в рабочей зоне; «Эффекты» — шаги с подтверждением галочкой.
  */
 
-const HOOK_TYPES: { kind: HookKind; icon: string; iconW: number; iconH: number; hint: string }[] = [
+export const HOOK_TYPES: { kind: HookKind; icon: string; iconW: number; iconH: number; hint: string }[] = [
   { kind: 'none', icon: '/assets/figma/icon-bolt.svg', iconW: 15, iconH: 18, hint: 'wizard.fx.hintNoHook' },
   { kind: 'warmup', icon: '/assets/figma/hook-sound.svg', iconW: 16, iconH: 18, hint: 'wizard.fx.hintSound' },
   { kind: 'object', icon: '/assets/figma/hook-object.svg', iconW: 18, iconH: 18, hint: 'wizard.fx.hintObject' },
@@ -233,11 +234,11 @@ export function SlowShutterExtendToggle({ config, onPick }: { config: HookConfig
   );
 }
 
-function selectedStyles(config: HookConfig): string[] {
+export function selectedStyles(config: HookConfig): string[] {
   return config.effectStyles?.length ? config.effectStyles : (config.effectStyle ? [config.effectStyle] : []);
 }
 
-function toggleStyle(config: HookConfig, option?: string): Partial<HookConfig> {
+export function toggleStyle(config: HookConfig, option?: string): Partial<HookConfig> {
   if (!option) return {};
   const current = selectedStyles(config);
   const next = current.includes(option) ? current.filter((style) => style !== option) : [...current, option];
@@ -270,7 +271,7 @@ export function previewIdFor(key: keyof HookConfig, value?: string): string | un
   return item ? `${prefix}__${item.manifestId}` : undefined;
 }
 
-function configuredPreviewId(kind: HookKind, config: HookConfig, active?: HookStep): string | undefined {
+export function configuredPreviewId(kind: HookKind, config: HookConfig, active?: HookStep): string | undefined {
   if (active) {
     const selected = previewIdFor(active.key, config[active.key] as string | undefined);
     if (selected) return selected;
@@ -430,6 +431,7 @@ export function StageHooks() {
   const [customDrop, setCustomDrop] = useState(false);
   const [dropError, setDropError] = useState(false);
   const [hint, setHint] = useState<HookKind | null>(null);
+  const fxLab = useFxLab();
 
   // Кандидаты ВНЕ отрывка не предлагаем: выбрав такой, человек упирался в неактивное
   // «Продолжить» без объяснения (dropReady в визарде требует дроп внутри окна).
@@ -557,7 +559,7 @@ export function StageHooks() {
 
       {/* Список типов: строки 620×80, скролл уходит под градиентные фейды (Figma Rectangle 771/772) */}
       <div ref={typeGuideTargetRef} className="relative mt-[12px] min-h-0 flex-1 max-md:mt-[8px]">
-        <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px] max-md:gap-[10px] max-md:py-0" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
+        {fxLab ? <LabTypeList locked={!hooks.dropTime} /> : <div className="no-scrollbar flex h-full flex-col gap-[20px] overflow-y-auto py-[16px] max-md:gap-[10px] max-md:py-0" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
           {HOOK_TYPES.map((item) => {
             const active = hooks.kind === item.kind;
             const configured = hookPills(hooks).some((pill) => pill.kind === item.kind);
@@ -605,7 +607,7 @@ export function StageHooks() {
               </button>
             );
           })}
-        </div>
+        </div>}
       </div>
 
       <ActionGuideOverlay
@@ -632,7 +634,7 @@ export function StageHooks() {
  * прозрачность, сквозь них виден реальный фон → всегда в тон, при любом фоне.
  * Слева фейд у 0; справа встаёт перед кнопкой подтверждения (`rightGap`).
  */
-function ChipRow({ options, value, values, onPick, rightGap = 0, edgePad = 0 }: {
+export function ChipRow({ options, value, values, onPick, rightGap = 0, edgePad = 0 }: {
   options: string[];
   value?: string;
   values?: string[];

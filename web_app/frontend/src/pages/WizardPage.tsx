@@ -16,6 +16,7 @@ import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
 import { hasTrackInput, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { useStoryboardBusy } from '../components/wizard/storyboardData';
+import { LabWorkZone, useFxLab } from '../components/wizard/FxLab';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
 import { dropToSeconds, timingToSeconds, usePlaybackUrl } from '../components/wizard/useFragmentAudio';
@@ -670,6 +671,8 @@ export function WizardPage() {
   // «Продолжить» подсвечивается только при непустом выборе; кликабельность — отдельно
   // «Пул»: генерация ждёт раскадровку и склейки выбранного темпа (см. PoolStoryboard).
   const storyboardBusy = useStoryboardBusy((s) => s.busy);
+  // Прототип вариантов FX (?fxLab=1): рабочая зона и список типов из FxLab.tsx.
+  const fxLab = useFxLab();
   const ready = useMemo(() => {
     if (stage === 1) return trackReady && timingReady && !segmentInvalid && state.lyrics.trim().length > 0;
     if (stage === 2) return backgroundVariations(state.background) > 0;
@@ -806,7 +809,7 @@ export function WizardPage() {
       ) : stage === 2 ? (
         <BackgroundWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
       ) : stage === 3 ? (
-        <HooksWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
+        fxLab ? <LabWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} /> : <HooksWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
       ) : stage === 4 ? (
         <SubtitlesWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
       ) : (
