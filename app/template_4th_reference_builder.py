@@ -166,24 +166,35 @@ def _focus_word_indices(*, text: str, tokens: List[Any]) -> set[int]:
     return out
 
 
-def _char_styles(*, text: str, focus_word_indices: set[int]) -> List[Dict[str, Any]]:
+def _char_styles(*, text: str, focus_word_indices: set[int], visible: str | None = None) -> List[Dict[str, Any]]:
+    """visible=None — один слой; "base"/"accent" — пара на двух слоях с одинаковой
+    раскладкой (чужие буквы applyFill=false): росчерки акцента ложатся поверх."""
     styles: List[Dict[str, Any]] = []
     word_idx = 0
+    lay = _TAPE_LAYOUT
+    acc = lay.accent if lay is not None else None
     for i, ch in enumerate(text):
         if ch in (" ", "\r"):
+            near_focus = acc is not None and (word_idx in focus_word_indices or (word_idx + 1) in focus_word_indices)
             word_idx += 1
-            if _TAPE_LAYOUT is not None and _TAPE_LAYOUT.space_tracking is not None:
-                styles.append({"i": i, "tracking": _TAPE_LAYOUT.space_tracking})
+            if ch == " " and near_focus:
+                styles.append({"i": i, "tracking": acc.space_tracking})
+            elif lay is not None and lay.space_tracking is not None:
+                styles.append({"i": i, "tracking": lay.space_tracking})
             continue
         is_focus = word_idx in focus_word_indices
-        lay = _TAPE_LAYOUT
         entry = {
             "i": i,
             "font": lay.font if lay is not None else _FONT_NAME,
             "fillColor": list((lay.focus_rgb if lay is not None else _FOCUS_RED) if is_focus else _WHITE),
         }
-        if lay is not None and lay.faux_italic:
+        if is_focus and acc is not None:
+            entry.update({"font": acc.font, "fontSize": acc.size, "tracking": acc.tracking,
+                          "baselineShift": acc.baseline_shift, "verticalScale": 1.0, "fauxItalic": False})
+        elif lay is not None and lay.faux_italic:
             entry["fauxItalic"] = True   # вид tape держится на наклоне
+        if visible is not None and is_focus != (visible == "accent"):
+            entry["applyFill"] = False
         styles.append(entry)
     return styles
 
@@ -247,14 +258,18 @@ def build_template_4th_reference_layers(
             continue
         focus_words = _focus_word_indices(text=text, tokens=list(seg.tokens or []))
         if _TAPE_LAYOUT is not None:
-            # строки режет рендер (≤ 2), регистр — по шрифту (скрипты строчными)
+            # строки режет рендер (≤ 2), регистр — по шрифту (скрипты строчными);
+            # акцентные фокус-слова — строчными (скрипт в капсе не читается)
             if _TAPE_LAYOUT.case == "lower":
                 text = text.lower()
-            text = _TAPE_LAYOUT.break_lines(text)
+            if _TAPE_LAYOUT.accent is not None and focus_words:
+                text = " ".join(w.lower() if i in focus_words else w for i, w in enumerate(text.split(" ")))
+            text = _TAPE_LAYOUT.break_lines(text, focus_words)
 
         # --- Основной слой субтитра в Text-компе ---
+        layer_name = text.replace(chr(13), " ")   # AE режет имя слоя на переносе строки
         layer = {
-            "name": text,
+            "name": layer_name,
             "type": "text",
             "in_point": float(seg.in_point),
             "out_point": float(seg.out_point),
@@ -297,7 +312,8 @@ def build_template_4th_reference_layers(
                     "justificationCode": _TAPE_LAYOUT.justification_code if _TAPE_LAYOUT is not None else "7415",
                     **({"verticalScale": _TAPE_LAYOUT.vertical_scale}
                        if _TAPE_LAYOUT is not None and _TAPE_LAYOUT.vertical_scale != 1.0 else {}),
-                    "allCaps": _TAPE_LAYOUT is None or _TAPE_LAYOUT.case == "upper",
+                    # текст уже в нужном регистре; allCaps только в проде (иначе съест строчный акцент)
+                    "allCaps": _TAPE_LAYOUT is None,
                     "leftIndent": 0,
                     "rightIndent": 0,
                     "firstLineIndent": 0,
@@ -310,6 +326,19 @@ def build_template_4th_reference_layers(
                 **({"box_text": [900, 160]} if _TAPE_LAYOUT is None else {"layout_box": _TAPE_LAYOUT.layout_box()}),
             },
         }
+        if _TAPE_LAYOUT is not None and _TAPE_LAYOUT.accent is not None and focus_words:
+            from app.scenes_3rd_reference_builder import accent_separation_shadow
+            import copy
+            accent_layer = copy.deepcopy(layer)
+            accent_layer["name"] = layer_name + " · акцент"
+            accent_layer["effects"]["0003:ADBE Drop Shadow"] = accent_separation_shadow()
+            accent_layer["text_data"]["char_styles_ungrouped"] = _char_styles(
+                text=text, focus_word_indices=focus_words, visible="accent")
+            accent_layer["text_data"]["layout_follow"] = layer_name
+            layer["text_data"]["char_styles_ungrouped"] = _char_styles(
+                text=text, focus_word_indices=focus_words, visible="base")
+            # шаблон создаёт слои с конца массива: base → accent (сверху)
+            layers.append(accent_layer)
         layers.append(layer)
         z -= 1
 

@@ -641,19 +641,28 @@ class TapeLayout:
     case: str                 # "upper" | "lower" (скрипты)
     params: JaksonTextParams
     space_tracking: Optional[float] = None
+    accent: Optional[AccentLayout] = None     # фокус-слова акцентным шрифтом пары
 
-    def break_lines(self, text: str) -> str:
+    def _word_w(self, word: str, is_focus: bool) -> float:
+        adv = self.accent.advance_px if (is_focus and self.accent is not None) else self.advance_px
+        return len(word) * adv
+
+    def break_lines(self, text: str, focus_idx: Optional[set] = None) -> str:
         """1 строка, если влезает в ширину tape; иначе 2 по границе слов,
-        с минимальной шириной самой длинной строки."""
+        с минимальной шириной самой длинной строки (акцентные слова шире)."""
+        focus_idx = focus_idx or set()
         words = text.split(" ")
-        if len(words) < 2 or len(text) * self.advance_px <= TAPE_BOX_W:
+        widths = [self._word_w(w, i in focus_idx) for i, w in enumerate(words)]
+        space = self.advance_px
+        total = sum(widths) + space * (len(words) - 1)
+        if len(words) < 2 or total <= TAPE_BOX_W:
             return text
         best, best_w = text, float("inf")
         for k in range(1, len(words)):
-            a, b = " ".join(words[:k]), " ".join(words[k:])
-            w = max(len(a), len(b)) * self.advance_px
-            if w < best_w:
-                best, best_w = a + "\r" + b, w
+            wa = sum(widths[:k]) + space * (k - 1)
+            wb = sum(widths[k:]) + space * (len(words) - k - 1)
+            if max(wa, wb) < best_w:
+                best, best_w = " ".join(words[:k]) + "\r" + " ".join(words[k:]), max(wa, wb)
         return best
 
     @property
@@ -680,7 +689,7 @@ class TapeLayout:
 
 
 def tape_layout(font: str, *, params: Optional[JaksonTextParams] = None, render_preset: str = "vertical",
-                path: Path = METRICS_PATH) -> TapeLayout:
+                accent_font: Optional[str] = None, path: Path = METRICS_PATH) -> TapeLayout:
     params = params or JaksonTextParams()
     params.check_render_preset(render_preset)
     check_style_allowed(font, "tape")
@@ -709,6 +718,11 @@ def tape_layout(font: str, *, params: Optional[JaksonTextParams] = None, render_
     leading = cap + gap_ratio * cap
     adv = m.lc_advance_per_char if case == "lower" else m.advance_per_char
     advance = m.per_pt(adv, size) + TAPE_TRACKING / 1000.0 * size
+    accent = None
+    if accent_font:
+        check_pair(font, accent_font)
+        check_style_allowed(accent_font, "tape")
+        accent = accent_layout(accent_font, cap_h_base=cap, path=path)
     return TapeLayout(
         font=font,
         size=round(size, 2),
@@ -718,4 +732,5 @@ def tape_layout(font: str, *, params: Optional[JaksonTextParams] = None, render_
         case=case,
         params=params,
         space_tracking=font_tuning(font).get("space_tracking"),
+        accent=accent,
     )
