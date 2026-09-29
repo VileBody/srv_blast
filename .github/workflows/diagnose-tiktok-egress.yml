@@ -16,123 +16,38 @@ jobs:
     runs-on: [self-hosted, blast-deploy-infra]
     timeout-minutes: 10
     steps:
-      - name: Probe routes from blast-web-api
+      - name: Throughput through the TikTok proxy
         run: |
           set -uo pipefail
-          BOT_PROXY="$(docker exec tg-bot-public printenv TG_FILE_PROXY_URL 2>/dev/null || true)"
-          echo "bot proxy host: $(echo "$BOT_PROXY" | sed -E 's#//[^@]*@#//***@#')"
-          docker ps --format '{{.Names}}\t{{.Ports}}' | grep -E '18088|proxy' || true
-          docker exec -i -e BOT_PROXY="$BOT_PROXY" blast-web-api python - <<'PY'
-          import json, os, urllib.request, urllib.error
-          from src.outbound_proxy import OUTBOUND_PROXY_URL
-          routes = {"direct": "", "shared": OUTBOUND_PROXY_URL, "bot": os.environ.get("BOT_PROXY", ""),
-                    "host18088": "http://172.18.0.1:18088"}
-          checks = [
-              ("ip", "GET", "https://ipinfo.io/json"),
-              ("tiktok", "POST", "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"),
-              ("gemini", "GET", "https://generativelanguage.googleapis.com/"),
-          ]
-          for name, proxy in routes.items():
-              if name != "direct" and not proxy:
-                  print(f"{name}: not configured"); continue
-              h = urllib.request.ProxyHandler({"http": proxy, "https": proxy} if proxy else {})
-              op = urllib.request.build_opener(h)
-              for label, method, url in checks:
-                  req = urllib.request.Request(url, data=b"{}" if method == "POST" else None, method=method,
-                                               headers={"Content-Type": "application/json"})
+          docker exec -i blast-web-api python - <<'PY'
+          import os, socket, time, urllib.request
+          from app import tiktok_api
+          from src.outbound_proxy import TIKTOK_PUBLISH_PROXY_URL as P
+          blob = os.urandom(3_000_000)
+          for label, proxy in (("direct", ""), ("socks", P)):
+              op = tiktok_api._opener(proxy)
+              for size in (200_000, 1_000_000, 3_000_000):
+                  req = urllib.request.Request("https://speed.cloudflare.com/__up", data=blob[:size], method="POST",
+                                               headers={"Content-Type": "application/octet-stream"})
+                  t = time.time()
                   try:
-                      with op.open(req, timeout=15) as r:
-                          body = r.read(300).decode("utf-8", "replace")
-                          code = r.status
-                  except urllib.error.HTTPError as e:
-                      code, body = e.code, e.read(200).decode("utf-8", "replace")
+                      with op.open(req, timeout=60) as r:
+                          r.read()
+                      dt = time.time() - t
+                      print(f"{label:6} up   {size/1e6:.1f}MB {dt:6.1f}s {size/dt/1e3:8.0f} KB/s")
                   except Exception as e:
-                      code, body = "ERR", f"{type(e).__name__}: {e}"
-                  if label == "ip" and code == 200:
-                      d = json.loads(body); body = f"{d.get('ip')} {d.get('country')} {d.get('org')}"
-                  print(f"{name:9} {label:7} {code} {body[:160]!r}")
-          PY
-      - name: Raw CONNECT through the shared proxy
-        run: |
-          set -uo pipefail
-          docker exec -i blast-web-api python - <<'PY'
-          import base64, os, socket
-          from urllib.parse import urlparse
-          from src.outbound_proxy import OUTBOUND_PROXY_URL
-          CRLF = bytes([13, 10]).decode()
-          print("container no_proxy:", {k: v for k, v in os.environ.items() if k.lower() == "no_proxy"} or "not set")
-          print("container proxy env:", sorted(k for k in os.environ if "proxy" in k.lower()) or "none")
-          u = urlparse(OUTBOUND_PROXY_URL)
-          auth = base64.b64encode(f"{u.username}:{u.password}".encode()).decode()
-          hosts = ("generativelanguage.googleapis.com", "open.tiktokapis.com", "open-upload.tiktokapis.com", "www.google.com", "api.ipify.org")
-          for host in hosts:
+                      print(f"{label:6} up   {size/1e6:.1f}MB FAIL after {time.time()-t:.1f}s: {type(e).__name__}: {e}")
+              t = time.time()
               try:
-                  s = socket.create_connection((u.hostname, u.port), timeout=15)
-                  head = [f"CONNECT {host}:443 HTTP/1.1", f"Host: {host}:443", f"Proxy-Authorization: Basic {auth}", "", ""]
-                  s.sendall(CRLF.join(head).encode())
-                  s.settimeout(15)
-                  data = b""
-                  try:
-                      while len(data) < 3000:
-                          chunk = s.recv(1024)
-                          if not chunk:
-                              break
-                          data += chunk
-                          if data[:12] in (b"HTTP/1.1 200", b"HTTP/1.0 200"):
-                              break
-                  except socket.timeout:
-                      pass
-                  s.close()
-                  print("=== " + host)
-                  print(data.decode("utf-8", "replace")[:1500])
+                  with op.open("https://speed.cloudflare.com/__down?bytes=3000000", timeout=60) as r:
+                      n = len(r.read())
+                  dt = time.time() - t
+                  print(f"{label:6} down {n/1e6:.1f}MB {dt:6.1f}s {n/dt/1e3:8.0f} KB/s")
               except Exception as e:
-                  print("=== " + host)
-                  print(f"ERR {type(e).__name__}: {e}")
+                  print(f"{label:6} down FAIL after {time.time()-t:.1f}s: {type(e).__name__}: {e}")
           PY
-      - name: CONNECT by IP (DNS resolved on ops)
-        run: |
-          set -uo pipefail
-          docker exec -i blast-web-api python - <<'PY'
-          import base64, os, socket
-          from urllib.parse import urlparse
-          from src.outbound_proxy import OUTBOUND_PROXY_URL
-          CRLF = bytes([13, 10]).decode()
-          print("container no_proxy:", {k: v for k, v in os.environ.items() if k.lower() == "no_proxy"} or "not set")
-          print("container proxy env:", sorted(k for k in os.environ if "proxy" in k.lower()) or "none")
-          u = urlparse(OUTBOUND_PROXY_URL)
-          auth = base64.b64encode(f"{u.username}:{u.password}".encode()).decode()
-          hosts = ("generativelanguage.googleapis.com", "open.tiktokapis.com", "open-upload.tiktokapis.com", "www.google.com", "api.ipify.org")
-          targets = []
-          for h in hosts:
-              try:
-                  ips = sorted({a[4][0] for a in socket.getaddrinfo(h, 443, socket.AF_INET)})
-              except Exception as e:
-                  ips = []
-                  print(h, "resolve failed on ops:", e)
-              print(h, "->", ips)
-              targets += ips[:2]
-          targets += ["1.1.1.1", "8.8.8.8"]
-          for host in targets:
-              try:
-                  s = socket.create_connection((u.hostname, u.port), timeout=15)
-                  head = [f"CONNECT {host}:443 HTTP/1.1", f"Host: {host}:443", f"Proxy-Authorization: Basic {auth}", "", ""]
-                  s.sendall(CRLF.join(head).encode())
-                  s.settimeout(15)
-                  data = b""
-                  try:
-                      while len(data) < 3000:
-                          chunk = s.recv(1024)
-                          if not chunk:
-                              break
-                          data += chunk
-                          if data[:12] in (b"HTTP/1.1 200", b"HTTP/1.0 200"):
-                              break
-                  except socket.timeout:
-                      pass
-                  s.close()
-                  print("=== " + host)
-                  print(data.decode("utf-8", "replace")[:1500])
-              except Exception as e:
-                  print("=== " + host)
-                  print(f"ERR {type(e).__name__}: {e}")
-          PY
+          echo "=== MTU towards the proxy"
+          ip route get 23.236.155.186 || true
+          for s in 1472 1400 1300 1200 1000; do
+            if ping -c1 -W3 -M do -s $s 23.236.155.186 >/dev/null 2>&1; then echo "ping DF size=$s ok"; else echo "ping DF size=$s FAIL"; fi
+          done
