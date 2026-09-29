@@ -798,6 +798,11 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
     onDemo(list[(i + dir + list.length) % list.length]);
   };
   const placeDemo = () => { if (!demo) return; addFromLib(demo); closeDemo(); };
+  const openTourDemo = () => {
+    const kind: LibKind = tab === 'hook' && !hooksOn ? 'trans' : tab;
+    const list = DEMO_LISTS[kind];
+    onDemo(list.find((x) => kind === 'hook' && x.label === activeHookLabel) ?? list[0]);
+  };
   const addAndBack = useCallback((item: LibItem) => { addFromLib(item); setDemo(null); }, [addFromLib]);
   // Листаем стрелками — строка в библиотеке едет следом, чтобы было видно, где ты.
   useEffect(() => { if (demo) rootRef.current?.querySelector('.fxt-item.demo')?.scrollIntoView({ block: 'nearest' }); }, [demo]);
@@ -1099,9 +1104,10 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
             text={tr(`wizard.fxTimeline.guide${key}Text`)}
             dismissLabel={tr(last ? 'wizard.fxTimeline.guideDismiss' : 'wizard.fxTimeline.guideNext')}
             progressLabel={tr('wizard.guideProgress', { current: i + 1, total: tour.length })}
-            // «Дальше» на выборе эффекта без открытого примера — шаг про плеер тоже
-            // пропускаем: иначе он всплыл бы посреди следующих шагов при первом примере.
-            onDismiss={() => { finishStep(id); if (id === 'library' && !demo) finishStep('player'); }}
+            // «Дальше» на выборе эффекта сам открывает пример (хук ролика или первый в разделе),
+            // иначе шаг 4 про плеер было бы не на чем показать и он выпадал. «Дальше» на плеере
+            // возвращает превью к ролику — шаги про склейки и темп ждут закрытого примера.
+            onDismiss={() => { finishStep(id); if (id === 'library' && !demo) openTourDemo(); if (id === 'player') setDemo(null); }}
             variant="visual"
             shell="track-top"
             visual={visual}
