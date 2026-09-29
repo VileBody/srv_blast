@@ -1,4 +1,4 @@
-import { ReactNode, useLayoutEffect, useRef, useState } from 'react';
+import { CSSProperties, ReactNode, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 
@@ -9,15 +9,29 @@ import { useTranslation } from 'react-i18next';
  * Иконка сворачивания — 20×20 в правом верхнем углу (40,40).
  * Рендерим порталом в body: в макете зона лежит поверх всех карточек, а не внутри них.
  */
+/** Композиция одной карточкой (экран постинга): габарит на 1440 и масштаб как у колонок. */
+export interface FullscreenCard {
+  width: number;
+  height: number;
+  node: ReactNode;
+}
+
 export function FullscreenZone({
   onCollapse,
   left,
   right,
+  card,
   responsiveScale = false
 }: {
   onCollapse: () => void;
-  left: ReactNode;
-  right: ReactNode;
+  left?: ReactNode;
+  right?: ReactNode;
+  /*
+   * Вместо двух колонок — одна карточка. Монтируется ОДИН раз: колонки рендерятся дважды
+   * (десктоп + мобилка, одна копия скрыта), а у карточки внутри живой <video> с ref —
+   * с двумя копиями ref уезжал на скрытую. Раскладку под lg карточка решает сама (CSS).
+   */
+  card?: FullscreenCard;
   responsiveScale?: boolean;
 }) {
   const { t } = useTranslation();
@@ -61,7 +75,21 @@ export function FullscreenZone({
       </button>
 
       {/* 80px сверху/снизу дают точную композицию 905px; на низком окне зона скроллится, а не обрезает колонки. */}
-      {responsiveScale ? (
+      {card ? (
+        <div
+          className="relative shrink-0 lg:h-[var(--fz-h)] lg:w-[var(--fz-w)] max-lg:w-full max-lg:px-[8px] max-lg:pb-[24px] max-lg:pt-[72px]"
+          style={{ '--fz-w': `${card.width * scale}px`, '--fz-h': `${card.height * scale}px` } as CSSProperties}
+        >
+          <div
+            className="lg:absolute lg:left-0 lg:top-0 lg:origin-top-left lg:[transform:scale(var(--fz-scale))]"
+            style={{ '--fz-scale': scale } as CSSProperties}
+          >
+            <div className="lg:h-[var(--fz-card-h)] lg:w-[var(--fz-card-w)]" style={{ '--fz-card-w': `${card.width}px`, '--fz-card-h': `${card.height}px` } as CSSProperties}>
+              {card.node}
+            </div>
+          </div>
+        </div>
+      ) : responsiveScale ? (
         <>
           <div className="relative shrink-0 max-lg:hidden" style={{ width: 783 * scale, height: 745 * scale }}>
             <div className="absolute left-0 top-0 flex h-[745px] w-[783px] gap-[20px]" style={{ transform: `scale(${scale})`, transformOrigin: 'top left' }}>

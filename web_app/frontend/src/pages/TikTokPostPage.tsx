@@ -1,4 +1,4 @@
-import { PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -8,18 +8,22 @@ import { cn } from '../lib/cn';
 import { FullscreenZone } from '../components/ui/FullscreenZone';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { useWizardStore } from '../stores/wizardStore';
+import './TikTokPostPage.css';
 
 /*
- * Предпост в TikTok (Figma W52 → W54 → W55 → W56 → W57 → W58) в каркасе фуллскрин-зоны.
+ * Выкладка в TikTok. Слева форма, справа ролик на всю высоту, обложка выбирается внутри плеера.
  * Состав формы продиктован content-sharing-guidelines TikTok: аккаунт+аватар, кэпшен,
- * селектор приватности БЕЗ дефолта, тумблеры взаимодействий и подтверждение прав.
+ * приватность БЕЗ дефолта, тумблеры взаимодействий выключены, раскрытие рекламы,
+ * подтверждение прав на каждую публикацию и ссылка на Music Usage Confirmation.
  *
- * Состояния: draft (W52 пусто / W54 валидно) → uploading (W55) → posted (W56 «Видео в Тик-Токе»,
- * затем W57 «к следующему видео») → следующий ролик сбрасывает форму (W58) и сдвигает дату на +1 день.
+ * Кнопка публикации не бывает немой серой: если чего-то не хватает, она подсвечивает пропуски
+ * у самих полей и ведёт к первому. Состояния: draft → uploading → posted (ссылка на пост +
+ * переход к следующему невыложенному ролику, после последнего — в аналитику).
  */
 
 type PostStage = 'draft' | 'uploading' | 'posted';
 type Privacy = 'all' | 'followers' | 'friends' | 'self';
+type Requirement = 'caption' | 'privacy' | 'brand' | 'rights';
 
 const PRIVACY_ORDER: Privacy[] = ['all', 'followers', 'friends', 'self'];
 const PRIVACY_API_VALUE: Record<Privacy, string> = {
@@ -28,160 +32,52 @@ const PRIVACY_API_VALUE: Record<Privacy, string> = {
   friends: 'MUTUAL_FOLLOW_FRIENDS',
   self: 'SELF_ONLY'
 };
-/** Пока кнопка «Видео в Тик-Токе» держит статус, потом сменяется на «к следующему видео» (W56→W57) */
-const POSTED_STATUS_MS = 2500;
 const COVER_FRAME_COUNT = 8;
+const CAPTION_MAX = 2200;
+/** Габарит карточки на 1440: высота фуллскрин-зоны, ролик 9:16 на всю высоту справа */
+const CARD_SIZE = { width: 960, height: 745 };
+const MUSIC_USAGE_URL = 'https://www.tiktok.com/legal/page/global/music-usage-confirmation/en';
+const BRANDED_POLICY_URL = 'https://www.tiktok.com/legal/page/global/bc-policy/en';
 
-/** Тумблер 24×12 (Figma 764:3856) */
-function MiniToggle({ checked, onChange, label, disabled = false }: { checked: boolean; onChange: (v: boolean) => void; label: string; disabled?: boolean }) {
+function Icon({ children, className = 'i' }: { children: ReactNode; className?: string }) {
+  return <svg viewBox="0 0 24 24" className={className} aria-hidden="true">{children}</svg>;
+}
+const ICONS = {
+  left: <path d="M14.5 6 8.5 12l6 6" />,
+  right: <path d="M9.5 6l6 6-6 6" />,
+  check: <path d="M5 12.5 9.5 17 19 7.5" />,
+  comment: <path d="M4.5 6.5a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H11l-4.5 3.5v-3.5h0a2 2 0 0 1-2-2z" />,
+  duet: <><rect x="3.5" y="5" width="7.5" height="14" rx="1.8" /><rect x="13" y="5" width="7.5" height="14" rx="1.8" /></>,
+  stitch: <><rect x="4" y="4.5" width="16" height="15" rx="2" /><path d="M12 4.5v15M8 9.5l2 2.5-2 2.5" /></>,
+  brand: <path d="M4 10v4a1 1 0 0 0 1 1h2l6 4V5L7 9H5a1 1 0 0 0-1 1zM17 9a4 4 0 0 1 0 6" />,
+  copy: <><rect x="8.5" y="8.5" width="11" height="11" rx="2" /><path d="M15.5 8.5v-2a2 2 0 0 0-2-2h-7a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h2" /></>,
+  ext: <path d="M13.5 5H19v5.5M19 5l-8 8M17 14v4a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 5 18V8.5A1.5 1.5 0 0 1 6.5 7H10" />
+};
+
+function Switch({ checked, onChange, labelledBy, disabled = false }: { checked: boolean; onChange: (v: boolean) => void; labelledBy: string; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
-      aria-label={label}
+      aria-labelledby={labelledBy}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={cn(
-        'relative h-[12px] w-[24px] shrink-0 rounded-full transition-colors',
-        checked ? 'bg-accent-light' : 'bg-[rgba(246,245,253,0.3)]',
-        disabled && 'cursor-not-allowed opacity-50'
-      )}
-    >
-      <span className={cn('absolute top-[1px] h-[10px] w-[10px] rounded-full bg-[#f6f5fd] transition-all', checked ? 'left-[13px]' : 'left-[1px]')} />
-    </button>
+      className="ttp-switch"
+    />
   );
 }
 
-/** Радио приватности (Figma 764:3876): кружок 12, выбранный — залит accent */
-function PrivacyRadio({ checked }: { checked: boolean }) {
-  return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        'flex h-[12px] w-[12px] shrink-0 items-center justify-center rounded-full border transition-colors',
-        checked ? 'border-accent-light' : 'border-[rgba(246,245,253,0.5)]'
-      )}
-    >
-      {checked && <span className="h-[6px] w-[6px] rounded-full bg-accent-light" />}
-    </span>
-  );
-}
+const CheckMark = () => <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5 9.5 17 19 7.5" /></svg>;
 
-/** Чекбокс прав (Figma 764:3892), 20×20 r5. `size` — компактный вариант для служебных галок */
-function RightsCheckbox({ checked, onChange, label, size = 20, disabled = false }: { checked: boolean; onChange: (v: boolean) => void; label: string; size?: number; disabled?: boolean }) {
-  return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={() => onChange(!checked)}
-      className={cn('flex min-w-0 items-center gap-[10px] text-left', disabled && 'cursor-not-allowed opacity-50')}
-    >
-      <span
-        style={{ width: size, height: size }}
-        className={cn(
-          'flex shrink-0 items-center justify-center rounded-[5px] border transition-colors',
-          checked ? 'border-accent-light bg-accent-light' : 'border-[rgba(246,245,253,0.5)]'
-        )}
-      >
-        {checked && (
-          <svg viewBox="0 0 12 10" width={size * 0.55} height={size * 0.45} fill="none" aria-hidden="true">
-            <path d="M1 5l3.2 3.2L11 1.4" stroke="#05010f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        )}
-      </span>
-      <span className="truncate leading-none text-text-80" style={{ fontSize: size >= 20 ? 16 : 15 }}>{label}</span>
-    </button>
-  );
-}
+const fmtTime = (sec: number) => {
+  const safe = Number.isFinite(sec) && sec > 0 ? Math.floor(sec) : 0;
+  return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, '0')}`;
+};
 
 /*
- * Пикер кадра обложки (правка заказчика): КАДРЫ СТАТИЧНЫ — равномерно разложены по всей ширине
- * пила и не двигаются. Движется САМА обводка-курсор: её тянут драгом/колесом или ставят кликом
- * по кадру, вместе с ней меняется фокус-кадр обложки (принцип курсора в баре прогресса).
- */
-function CoverPicker({ src, poster, frames, value, onChange }: { src?: string | null; poster?: string | null; frames?: VideoFrame[]; value: number | null; onChange: (frame: number) => void }) {
-  const stripRef = useRef<HTMLDivElement>(null);
-  const dragging = useRef(false);
-  const selected = value ?? 0;
-  const frameW = 100 / COVER_FRAME_COUNT;
-
-  // индекс кадра под курсором мыши — по X внутри пила
-  const frameAtX = (clientX: number): number => {
-    const strip = stripRef.current;
-    if (!strip) return selected;
-    const rect = strip.getBoundingClientRect();
-    return Math.max(0, Math.min(COVER_FRAME_COUNT - 1, Math.floor(((clientX - rect.left) / rect.width) * COVER_FRAME_COUNT)));
-  };
-
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    dragging.current = true;
-    stripRef.current?.setPointerCapture(event.pointerId);
-    onChange(frameAtX(event.clientX));
-  };
-  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!dragging.current) return;
-    const f = frameAtX(event.clientX);
-    if (f !== value) onChange(f);
-  };
-  const onPointerEnd = () => { dragging.current = false; };
-
-  return (
-    <div
-      ref={stripRef}
-      className="relative flex h-[60px] cursor-pointer overflow-hidden rounded-r15 bg-[rgba(20,14,36,0.88)] backdrop-blur-[15px] active:cursor-grabbing"
-      onWheel={(event) => {
-        event.preventDefault();
-        const dir = (Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX) > 0 ? 1 : -1;
-        onChange(Math.max(0, Math.min(COVER_FRAME_COUNT - 1, selected + dir)));
-      }}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerEnd}
-      onPointerCancel={onPointerEnd}
-    >
-      {Array.from({ length: COVER_FRAME_COUNT }, (_, frame) => {
-        // кадр с бэка (готовая раскадровка), иначе — прежняя перемотка <video> как фолбэк
-        const ready = frames?.[frame]?.url;
-        return (
-          <div key={frame} aria-hidden="true" className="relative h-[60px] shrink-0 overflow-hidden" style={{ width: `${frameW}%` }}>
-            {ready ? (
-              <img src={ready} alt="" className="h-full w-full object-cover" />
-            ) : src ? (
-              <video
-                src={src}
-                poster={poster ?? undefined}
-                muted
-                playsInline
-                preload="metadata"
-                onLoadedMetadata={(event) => {
-                  const duration = event.currentTarget.duration;
-                  if (Number.isFinite(duration) && duration > 0) event.currentTarget.currentTime = Math.min(duration - 0.05, (duration * frame) / (COVER_FRAME_COUNT - 1));
-                }}
-                className="h-full w-full object-cover"
-              />
-            ) : poster ? <img src={poster} alt="" className="h-full w-full object-cover" /> : <span className="block h-full w-full bg-grad-soft-20" />}
-          </div>
-        );
-      })}
-      {/* обводка-курсор — двигается по кадрам, отвечает за выбор. Радиус = радиусу контейнера
-          (r15), иначе родитель с overflow-hidden обрезает более острые углы курсора у краёв */}
-      <span
-        className="pointer-events-none absolute top-0 h-[60px] rounded-r15 shadow-[inset_0_0_0_2px_var(--accent-light)] transition-[left] duration-150"
-        style={{ left: `${selected * frameW}%`, width: `${frameW}%` }}
-        aria-hidden="true"
-      />
-    </div>
-  );
-}
-
-/*
- * Хештег-подсказки. Кнопка «#» раньше просто дописывала решётку — толку ноль.
- * Берём базовый набор из словаря + слова из названия проекта и чипов ролика
- * (фон / стиль субтитров / хук): это единственные осмысленные слова, которые
- * у фронта есть без похода в TikTok за трендами.
+ * Хештег-подсказки: базовый набор из словаря + слова из названия проекта и чипов ролика
+ * (фон / хук) — единственные осмысленные слова, которые у фронта есть без похода в TikTok за трендами.
  */
 function toHashtag(raw: string): string {
   return raw
@@ -205,7 +101,104 @@ function hashtagSuggestions(base: string[], sources: (string | undefined | null)
     if (/\s/.test(value)) value.split(/\s+/).forEach((word) => push(toHashtag(word)));
   });
   base.forEach((word) => push(toHashtag(word)));
-  return out.slice(0, 8);
+  return out.slice(0, 6);
+}
+
+/*
+ * Лента кадров обложки внутри плеера. Кадры статичны, двигается рамка: её тянут, ставят
+ * кликом или стрелками. Выбранный кадр сразу показывается во весь ролик (seek в плеере).
+ */
+function CoverStrip({
+  frames,
+  src,
+  poster,
+  value,
+  onChange,
+  onDone,
+  active,
+  stripRef,
+  label
+}: {
+  frames?: VideoFrame[];
+  src?: string | null;
+  poster?: string | null;
+  value: number;
+  onChange: (frame: number) => void;
+  onDone: () => void;
+  active: boolean;
+  stripRef: RefObject<HTMLDivElement>;
+  label: string;
+}) {
+  const frameAtX = (clientX: number): number => {
+    const rect = stripRef.current?.getBoundingClientRect();
+    if (!rect) return value;
+    return Math.max(0, Math.min(COVER_FRAME_COUNT - 1, Math.floor(((clientX - rect.left) / rect.width) * COVER_FRAME_COUNT)));
+  };
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    onChange(frameAtX(event.clientX));
+  };
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    const frame = frameAtX(event.clientX);
+    if (frame !== value) onChange(frame);
+  };
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' || event.key === 'Escape') {
+      event.preventDefault();
+      onDone();
+      return;
+    }
+    const delta = ({ ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1, Home: -COVER_FRAME_COUNT, End: COVER_FRAME_COUNT } as Record<string, number>)[event.key];
+    if (delta === undefined) return;
+    event.preventDefault();
+    onChange(Math.max(0, Math.min(COVER_FRAME_COUNT - 1, value + delta)));
+  };
+  const selectedUrl = frames?.[value]?.url;
+
+  return (
+    <div
+      ref={stripRef}
+      className="ttp-strip"
+      role="slider"
+      tabIndex={active ? 0 : -1}
+      aria-label={label}
+      aria-valuemin={1}
+      aria-valuemax={COVER_FRAME_COUNT}
+      aria-valuenow={value + 1}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onKeyDown={onKeyDown}
+    >
+      {Array.from({ length: COVER_FRAME_COUNT }, (_, frame) => {
+        // кадр с бэка (готовая раскадровка), иначе — перемотка <video> как фолбэк
+        const ready = frames?.[frame]?.url;
+        return (
+          <span key={frame} aria-hidden="true">
+            {ready ? (
+              <img src={ready} alt="" />
+            ) : src ? (
+              <video
+                src={src}
+                poster={poster ?? undefined}
+                muted
+                playsInline
+                preload="metadata"
+                onLoadedMetadata={(event) => {
+                  const duration = event.currentTarget.duration;
+                  if (Number.isFinite(duration) && duration > 0) event.currentTarget.currentTime = Math.min(duration - 0.05, (duration * frame) / (COVER_FRAME_COUNT - 1));
+                }}
+                style={{ width: '100%', height: '100%', objectFit: 'cover', position: 'static', pointerEvents: 'none' }}
+              />
+            ) : poster ? <img src={poster} alt="" /> : null}
+          </span>
+        );
+      })}
+      <span className="ttp-sel" style={{ '--c': value } as CSSProperties} aria-hidden="true">
+        {selectedUrl && <img src={selectedUrl} alt="" />}
+      </span>
+    </div>
+  );
 }
 
 export function TikTokPostPage() {
@@ -245,15 +238,13 @@ export function TikTokPostPage() {
     }));
   }, [projectQuery.data, qaPost, batchId]);
 
-  // ?video=N — постинг конкретной строки из батча (иконка TikTok в строке, Figma W36)
+  // ?video=N — постинг конкретной строки из батча (иконка TikTok в строке)
   const explicitIndex = params.get('video');
   const [index, setIndex] = useState(() => Math.max(0, Number(explicitIndex ?? 0) || 0));
-  // ссылка без ?video (например «Выложить» с дашборда) должна открывать первый НЕвыложенный
-  // ролик, а не первый по списку. Один раз на загрузку батча — иначе после публикации
-  // эффект перекидывал бы на следующий прямо из экрана «Видео в Тик-Токе».
+  // ссылка без ?video (например «Выложить» с дашборда) открывает первый НЕвыложенный ролик.
+  // Один раз на загрузку батча — иначе после публикации эффект перекидывал бы на следующий сам.
   const autoPicked = useRef(false);
   const [stage, setStage] = useState<PostStage>(() => qaPost === 'uploading' ? 'uploading' : qaPost === 'posted' || qaPost === 'next' ? 'posted' : 'draft');
-  const [showNext, setShowNext] = useState(qaPost === 'next');
   const [caption, setCaption] = useState(qaPost && qaPost !== 'empty' ? 'Новый сниппет уже в TikTok' : '');
   const [privacy, setPrivacy] = useState<Privacy | null>(qaPost && qaPost !== 'empty' ? 'all' : null);
   // TikTok requires every interaction to be enabled manually; none is preselected.
@@ -263,61 +254,75 @@ export function TikTokPostPage() {
   const [commercialContent, setCommercialContent] = useState(false);
   const [brandOrganic, setBrandOrganic] = useState(false);
   const [brandContent, setBrandContent] = useState(false);
-  // По умолчанию первый кадр (0) уже выбран как обложка → можно публиковать, не «дёргая» пикер.
-  const [coverFrame, setCoverFrame] = useState<number | null>(qaPost && qaPost !== 'empty' ? 3 : 0);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  // Первый кадр уже выбран как обложка: публиковать можно, не открывая пикер.
+  const [coverFrame, setCoverFrame] = useState(qaPost && qaPost !== 'empty' ? 3 : 0);
+  const [covering, setCovering] = useState(false);
   const [rights, setRights] = useState(Boolean(qaPost && qaPost !== 'empty'));
+  // пропуски подсвечиваем только после попытки опубликовать, а не на пустой форме
+  const [tried, setTried] = useState(false);
   const [postError, setPostError] = useState('');
+  const [postUrl, setPostUrl] = useState<string | null>(null);
   /*
-   * Реальный ход публикации по шагам, а не бесконечная «Загрузка»: 1 — наш сервер передаёт
-   * файл в TikTok (запрос /api/tiktok/post), 2 — TikTok обрабатывает ролик (статус из
-   * publish/status/fetch), 3 — опубликовано. Секундомер показывает, что процесс живой.
+   * Реальный ход публикации по шагам: 1 — наш сервер передаёт файл в TikTok, 2 — TikTok
+   * обрабатывает ролик (publish/status/fetch), 3 — опубликовано. Секундомер — что процесс живой.
    */
   const [progress, setProgress] = useState<{ step: 1 | 2 | 3; startedAt: number } | null>(null);
   const [clock, setClock] = useState(() => Date.now());
-  const [previewPlaying, setPreviewPlaying] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const [playhead, setPlayhead] = useState({ current: 0, duration: 0 });
   /*
-   * 4.1: описание для каждого ролика батча писалось с нуля — на батче 5+ это главный тормоз.
-   * Галка переносит описание, приватность и тумблеры на следующий ролик; подтверждение прав
+   * Перенос описания, приватности и тумблеров на следующие ролики батча. Подтверждение прав
    * НЕ переносим — по гайдлайнам TikTok его надо подтверждать на каждую публикацию.
    */
   const [applyToAll, setApplyToAll] = useState(false);
-  const [tagsOpen, setTagsOpen] = useState(false);
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const fieldsRef = useRef<HTMLDivElement>(null);
+  const captionRef = useRef<HTMLTextAreaElement>(null);
+  const privacyRef = useRef<HTMLDivElement>(null);
+  const brandRef = useRef<HTMLDivElement>(null);
+  const rightsRef = useRef<HTMLButtonElement>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  const coverButtonRef = useRef<HTMLButtonElement>(null);
 
   const video = videos[index];
-  const postedCount = videos.filter(isVideoPosted).length;
-  /* Текущий ролик считаем выложенным независимо от свежести кэша проекта: иначе сразу после
-     публикации кнопка успевала показать «к следующему видео», хотя следующего уже нет. */
-  const batchDone = videos.every((item, position) => position === index || isVideoPosted(item));
+  // уже выложенный ролик (пришли по ?video=N или стрелкой) показываем выложенным, а не пустой формой
+  const shownStage: PostStage = stage === 'draft' && video && isVideoPosted(video) ? 'posted' : stage;
+  const creator = creatorQuery.data;
   const suggestions = hashtagSuggestions(
     t('tiktok.hashtagBase').split(','),
     [projectQuery.data?.project.name, video?.source, video?.hook],
     caption
   );
-  // Раскадровка под пикер обложки: кадры приходят с бэка и кладутся в стейт запроса,
-  // вместо восьми <video>, перематывающих один и тот же файл.
+  // Раскадровка под пикер обложки приходит с бэка — вместо восьми <video>, перематывающих один файл.
   const framesQuery = useQuery({
     queryKey: ['video-frames', video?.id, COVER_FRAME_COUNT],
     queryFn: () => api.videoFrames(video?.id ?? '', COVER_FRAME_COUNT),
-    enabled: Boolean(video?.id) && video?.status === 'COMPLETED',
+    enabled: Boolean(video?.id) && video?.status === 'COMPLETED' && !qaPost,
     staleTime: 5 * 60_000
   });
+  const frames = framesQuery.data?.frames;
 
-  // Требования гайдлайнов: без прав и без явного выбора приватности публиковать нельзя
-  const brandTypeValid = !commercialContent || brandOrganic || brandContent;
-  const valid = caption.trim().length > 0 && privacy !== null && coverFrame !== null && rights && brandTypeValid;
-
+  // Требования гайдлайнов: без описания, явной приватности, типа рекламы и прав публиковать нельзя
+  const missing: Requirement[] = [
+    !caption.trim() && 'caption' as const,
+    privacy === null && 'privacy' as const,
+    commercialContent && !brandOrganic && !brandContent && 'brand' as const,
+    !rights && 'rights' as const
+  ].filter((item): item is Requirement => Boolean(item));
   /*
-   * Чего не хватает для публикации. Раньше кнопка просто стояла серой: четыре независимых
-   * условия и ни одной подсказки — юзер не понимал, что не выбрал приватность.
+   * Раскрытие рекламы без выбранного типа — по гайдлайнам TikTok кнопка публикации заблокирована
+   * (с подсказкой), а не «ведёт к пропуску», как остальные поля. Причину показываем сразу.
    */
-  const missing = [
-    !caption.trim().length && t('tiktok.needCaption'),
-    privacy === null && t('tiktok.needPrivacy'),
-    coverFrame === null && t('tiktok.needCover'),
-    !rights && t('tiktok.needRights'),
-    !brandTypeValid && t('tiktok.needBrandType')
-  ].filter(Boolean) as string[];
+  const brandIncomplete = missing.includes('brand');
+  const invalid = (item: Requirement) => ((tried || item === 'brand') && missing.includes(item) ? '' : undefined);
+
+  const nextUnposted = (): number => {
+    for (let i = index + 1; i < videos.length; i += 1) if (!isVideoPosted(videos[i])) return i;
+    for (let i = 0; i < index; i += 1) if (!isVideoPosted(videos[i])) return i;
+    return -1;
+  };
+  const remaining = videos.filter((item, position) => position !== index && !isVideoPosted(item)).length;
 
   useEffect(() => {
     if (autoPicked.current || explicitIndex !== null || videos.length === 0) return;
@@ -326,25 +331,22 @@ export function TikTokPostPage() {
     if (first > 0) setIndex(first);
   }, [explicitIndex, videos]);
 
-  // W56 → W57: статус «Видео в Тик-Токе» сменяется кнопкой перехода к следующему ролику
+  // выбранный кадр обложки сразу показываем во весь плеер
   useEffect(() => {
-    if (stage !== 'posted') return;
-    const timer = setTimeout(() => setShowNext(true), POSTED_STATUS_MS);
-    return () => clearTimeout(timer);
-  }, [stage]);
-
-  useEffect(() => {
-    if (coverFrame === null) return;
     const element = videoRef.current;
     if (!element || !Number.isFinite(element.duration) || element.duration <= 0) return;
     element.currentTime = Math.min(element.duration - 0.05, (element.duration * coverFrame) / (COVER_FRAME_COUNT - 1));
   }, [coverFrame, video?.id]);
 
   useEffect(() => {
-    if (creatorQuery.data?.comment_disabled) setComments(false);
-    if (creatorQuery.data?.duet_disabled) setDuet(false);
-    if (creatorQuery.data?.stitch_disabled) setStitch(false);
-  }, [creatorQuery.data?.comment_disabled, creatorQuery.data?.duet_disabled, creatorQuery.data?.stitch_disabled]);
+    if (covering) stripRef.current?.focus({ preventScroll: true });
+  }, [covering]);
+
+  useEffect(() => {
+    if (creator?.comment_disabled) setComments(false);
+    if (creator?.duet_disabled) setDuet(false);
+    if (creator?.stitch_disabled) setStitch(false);
+  }, [creator?.comment_disabled, creator?.duet_disabled, creator?.stitch_disabled]);
 
   useEffect(() => {
     if (commercialContent) return;
@@ -357,10 +359,17 @@ export function TikTokPostPage() {
   }, [brandContent, privacy]);
 
   useEffect(() => {
-    const allowed = creatorQuery.data?.privacy_level_options;
+    const allowed = creator?.privacy_level_options;
     if (!privacy || !allowed?.length) return;
     if (!allowed.includes(PRIVACY_API_VALUE[privacy])) setPrivacy(null);
-  }, [creatorQuery.data?.privacy_level_options, privacy]);
+  }, [creator?.privacy_level_options, privacy]);
+
+  // секундомер публикации; стоял после ранних return — ломал порядок хуков при смене экрана
+  useEffect(() => {
+    if (!progress || progress.step === 3) return;
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [progress]);
 
   const startBatch = () => {
     resetWizard(id);
@@ -409,31 +418,13 @@ export function TikTokPostPage() {
         <h2 className="text-[24px] font-[350] leading-[29px] text-text-80">{t('projectDetail.previewVideo')}</h2>
         <div className="dash-panel-white mt-[28px] min-h-0 flex-1 overflow-hidden">
           {(video?.downloadUrl || video?.thumbnailUrl) && (
-          <video
-            ref={videoRef}
-            src={video.downloadUrl ?? undefined}
-            poster={video.thumbnailUrl ?? undefined}
-            muted
-            playsInline
-            preload="metadata"
-            onLoadedMetadata={(event) => {
-              if (coverFrame === null || !Number.isFinite(event.currentTarget.duration)) return;
-              event.currentTarget.currentTime = Math.min(event.currentTarget.duration - 0.05, (event.currentTarget.duration * coverFrame) / (COVER_FRAME_COUNT - 1));
-            }}
-            className="h-full w-full object-cover"
-          />
-        )}
+            <video src={video.downloadUrl ?? undefined} poster={video.thumbnailUrl ?? undefined} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+          )}
         </div>
       </div>
     );
     return <FullscreenZone responsiveScale onCollapse={() => navigate(`/app/projects/${id}`)} left={connect} right={preview} />;
   }
-
-  useEffect(() => {
-    if (!progress || progress.step === 3) return;
-    const timer = window.setInterval(() => setClock(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [progress]);
 
   /** Ошибка TikTok человеческими словами: код из fail_reason или из ответа нашего API. */
   const explainFailure = (error: unknown): string => {
@@ -444,10 +435,17 @@ export function TikTokPostPage() {
     return code ? t('tiktok.failReason.other', { reason: code }) : t('tiktok.postError');
   };
 
+  const user = meQuery.data?.user;
+  const handle = creator?.creator_username ?? creator?.creator_nickname ?? meQuery.data?.tiktok?.handle ?? user?.artistNick ?? user?.name ?? '';
+  const creatorAvatar = creator?.creator_avatar_url ?? user?.avatarUrl;
+  const profileUrl = handle ? `https://www.tiktok.com/@${handle}` : 'https://www.tiktok.com/';
+  const postLink = postUrl ?? (video?.tiktokPostIds?.[0] ? `${profileUrl}/video/${video.tiktokPostIds[0]}` : profileUrl);
+
   const submit = async () => {
-    if (!valid || stage !== 'draft') return;
+    if (missing.length || shownStage !== 'draft') return;
     setStage('uploading');
     setPostError('');
+    setCovering(false);
     setProgress({ step: 1, startedAt: Date.now() });
     setClock(Date.now());
     videoRef.current?.pause();
@@ -462,25 +460,27 @@ export function TikTokPostPage() {
         stitch,
         brandOrganic,
         brandContent,
-        cover: coverFrame !== null,
+        cover: true,
         coverFrame,
-        coverTimestampMs: coverFrame !== null && videoRef.current && Number.isFinite(videoRef.current.duration)
+        coverTimestampMs: videoRef.current && Number.isFinite(videoRef.current.duration)
           ? Math.max(0, Math.round((videoRef.current.duration * 1000 * coverFrame) / (COVER_FRAME_COUNT - 1)))
           : 0,
         rights
       });
+      let postId: string | undefined;
       if (initialized.status !== 'PUBLISH_COMPLETE') {
         // SENDING — файл ещё льётся с нашего сервера в TikTok (шаг 1), дальше обработка у TikTok
         let sending = initialized.status === 'SENDING';
         if (!sending) setProgress({ step: 2, startedAt: Date.now() });
         let complete = false;
-        // обработка у TikTok идёт от десятков секунд до нескольких минут — ждём до 5 минут;
+        // обработка у TikTok — от десятков секунд до нескольких минут: ждём до 5 минут;
         // заливка с нашего сервера в этот лимит не входит (у неё свой таймаут на сервере)
         for (let attempt = 0; attempt < 200; ) {
           await new Promise((resolve) => window.setTimeout(resolve, 1500));
           const current = await api.tiktokPostStatus(initialized.publishId);
           if (current.status === 'PUBLISH_COMPLETE') {
             complete = true;
+            postId = current.publicaly_available_post_id?.[0];
             break;
           }
           if (current.status === 'FAILED') throw new Error(current.fail_reason || t('tiktok.postError'));
@@ -493,6 +493,7 @@ export function TikTokPostPage() {
         }
         if (!complete) throw new Error(t('tiktok.postError'));
       }
+      setPostUrl(postId ? `${profileUrl}/video/${postId}` : null);
       setProgress({ step: 3, startedAt: Date.now() });
       setStage('posted');
       // без этого «выложено N из M» и пропуск уже выложенных считались по устаревшему проекту
@@ -504,28 +505,18 @@ export function TikTokPostPage() {
     }
   };
 
-  /** W58: следующий ролик — форма сбрасывается (или переносится целиком, если стоит «применить ко всем»).
-      Уже опубликованные ролики пропускаем (после «Выложить все» не предлагаем их снова). */
-  const nextVideo = () => {
-    let next = index + 1;
-    while (next < videos.length && isVideoPosted(videos[next])) next += 1;
-    if (next >= videos.length) {
-      /*
-       * Выложен последний ролик батча — ведём в аналитику, а не в список проектов.
-       * Дальше человеку нужен вывод «что прострелило», а не витрина: в списке он всё равно
-       * шёл искать статистику руками. Проект передаём явно — разбор считается по проекту.
-       */
-      navigate(batchDone ? `/app/stats?project=${id}` : `/app/projects/${id}`);
-      return;
-    }
+  /** Переход на другой ролик: форма сбрасывается (или переносится целиком при «те же настройки»). */
+  const goTo = (next: number) => {
     setIndex(next);
     setStage('draft');
     setProgress(null);
-    setPreviewPlaying(false);
-    setShowNext(false);
+    setPlaying(false);
+    setPlayhead({ current: 0, duration: 0 });
+    setCovering(false);
     setCoverFrame(0);
-    setTagsOpen(false);
+    setTried(false);
     setPostError('');
+    setPostUrl(null);
     if (!applyToAll) {
       setCaption('');
       setPrivacy(null);
@@ -538,334 +529,386 @@ export function TikTokPostPage() {
     }
     // права подтверждаем на каждый ролик отдельно — требование гайдлайнов TikTok
     setRights(false);
+    fieldsRef.current?.scrollTo({ top: 0 });
   };
 
-  const user = meQuery.data?.user;
-  const handle = creatorQuery.data?.creator_username ?? creatorQuery.data?.creator_nickname ?? meQuery.data?.tiktok?.handle ?? user?.artistNick ?? user?.name ?? '';
-  const creatorAvatar = creatorQuery.data?.creator_avatar_url ?? user?.avatarUrl;
+  /*
+   * После публикации — к следующему НЕвыложенному ролику (с начала батча, если впереди пусто).
+   * Всё выложено — в аналитику: дальше человеку нужен вывод «что прострелило», а не витрина.
+   */
+  const toNext = () => {
+    const next = nextUnposted();
+    if (next < 0) {
+      navigate(`/app/stats?project=${id}`);
+      return;
+    }
+    goTo(next);
+  };
 
-  const left = (
-    <div className="card-2 no-scrollbar flex h-full flex-col overflow-y-auto px-[28px] pb-[40px] pt-[28px]">
-      {/* аккаунт (Figma 764:3888): аватар 40 + @ник. Справа — прогресс выкладки батча:
-          при пяти роликах человек терял счёт, какой он сейчас публикует. */}
-      <div className="flex h-[40px] shrink-0 items-center gap-[16px]">
-        <span className="h-[40px] w-[40px] shrink-0 overflow-hidden rounded-full bg-accent-20">
-          {creatorAvatar && <img src={creatorAvatar} alt="" className="h-full w-full object-cover" />}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-[24px] font-[350] leading-none text-text">@{handle}</span>
-        {videos.length > 1 && (
-          <span
-            className="shrink-0 whitespace-nowrap rounded-[10px] bg-grad-soft-20 px-[10px] py-[6px] text-[14px] leading-none text-text-80"
-            title={t('tiktok.videoOfBatch', { n: index + 1, total: videos.length })}
-          >
-            {t('tiktok.batchProgress', { done: postedCount, total: videos.length })}
-          </span>
-        )}
-      </div>
+  /* Кнопка всегда нажимается: если чего-то не хватает, подсвечиваем пропуски и ведём к первому. */
+  const onAction = () => {
+    if (shownStage === 'uploading') return;
+    if (shownStage === 'posted') {
+      toNext();
+      return;
+    }
+    if (!missing.length) {
+      void submit();
+      return;
+    }
+    setTried(true);
+    const first = missing[0];
+    const smooth = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (first === 'rights') {
+      rightsRef.current?.focus();
+      return;
+    }
+    const target = first === 'caption'
+      ? captionRef.current
+      : first === 'privacy'
+        ? privacyRef.current?.querySelector<HTMLElement>('button[tabindex="0"]')
+        : brandRef.current?.querySelector<HTMLElement>('.ttp-check');
+    target?.closest('.ttp-field')?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto', block: 'nearest' });
+    target?.focus({ preventScroll: true });
+  };
 
-      {/* описание 334×147 r15 grad-soft-10 + кнопка «#» 30×30 r5 в правом нижнем углу */}
-      <div className="relative mt-[20px] h-[147px] shrink-0 rounded-r15 bg-grad-soft-10 p-[20px] transition focus-within:shadow-[inset_0_0_0_1px_var(--accent-light)]">
-        <textarea
-          value={caption}
-          onChange={(e) => setCaption(e.target.value)}
-          readOnly={stage !== 'draft'}
-          placeholder={t('tiktok.captionPlaceholder')}
-          aria-label={t('tiktok.caption')}
-          className={cn('no-scrollbar h-full w-full resize-none rounded-r10 bg-transparent pr-[40px] text-[16px] leading-normal text-text outline-none placeholder:text-text', stage !== 'draft' && 'cursor-default')}
-        />
-        {/* после нажатия «Выложить» описание больше не редактируется */}
-        {stage === 'draft' && (
-          <>
-            <button
-              type="button"
-              onClick={() => setTagsOpen((open) => !open)}
-              aria-label={t('tiktok.addHashtag')}
-              aria-expanded={tagsOpen}
-              className={cn(
-                'absolute bottom-[20px] right-[20px] h-[30px] w-[30px] rounded-[5px] bg-grad-soft-20 text-[16px] leading-none text-text-80 transition hover:text-text',
-                tagsOpen && 'text-text shadow-[inset_0_0_0_1px_var(--accent-light)]'
-              )}
-            >
-              #
-            </button>
-            {/* подсказки хештегов: свои слова (название трека, фон, хук) + базовый набор */}
-            {tagsOpen && (
-              <div className="absolute bottom-[58px] right-0 z-[3] w-[334px] rounded-r10 bg-[#2b2145] p-[14px] shadow-soft">
-                <p className="text-[13px] leading-none text-text-60">{t('tiktok.hashtagsTitle')}</p>
-                <div className="mt-[10px] flex flex-wrap gap-[8px]">
-                  {suggestions.length === 0 && <span className="text-[14px] leading-none text-text-60">{t('tiktok.hashtagsEmpty')}</span>}
-                  {suggestions.map((tag) => (
-                    <button
-                      key={tag}
-                      type="button"
-                      onClick={() => setCaption((c) => `${c.replace(/\s+$/, '')}${c.trim() ? ' ' : ''}#${tag} `)}
-                      className="rounded-[5px] bg-grad-soft-20 px-[10px] py-[6px] text-[14px] leading-none text-text-80 transition hover:text-text"
-                    >
-                      #{tag}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </>
-        )}
-      </div>
+  const togglePlay = () => {
+    const element = videoRef.current;
+    if (!element || covering) return;
+    if (element.paused) void element.play();
+    else element.pause();
+  };
+  const openCover = (open: boolean) => {
+    if (open && shownStage !== 'draft') return;
+    videoRef.current?.pause();
+    setCovering(open);
+    if (!open) window.setTimeout(() => coverButtonRef.current?.focus({ preventScroll: true }), 0);
+  };
 
-      {/* перенос настроек на весь батч — главный ускоритель выкладки */}
-      {videos.length > 1 && (
-        <div className="mt-[14px] flex h-[20px] shrink-0 items-center">
-          <RightsCheckbox checked={applyToAll} onChange={setApplyToAll} label={t('tiktok.applyToAll')} size={16} />
-          <span className="ml-[8px] shrink-0 cursor-help text-[13px] leading-none text-text-40" title={t('tiktok.applyToAllHint')} aria-hidden="true">?</span>
-        </div>
-      )}
-
-      {/* приватность 334×175 — без предвыбранного значения (требование TikTok).
-          Отступы симметричны (padding 20 сверху/снизу, зазор заголовок↔список ≈ 18):
-          leading-[19px] у заголовка не даёт 2-й строке раздувать блок и толкать список вниз. */}
-      <div className="mt-[20px] flex h-[187px] shrink-0 flex-col rounded-r15 bg-grad-soft-10 p-[20px]" role="radiogroup" aria-label={t('tiktok.privacyTitle')}>
-        <p className="w-[228px] text-[16px] leading-[19px] text-text">{t('tiktok.privacyTitle')}</p>
-        <div className="mt-[18px] flex flex-col gap-[10px]">
-          {PRIVACY_ORDER.map((value) => (
-            (() => {
-              const apiValue = PRIVACY_API_VALUE[value];
-              const accountUnavailable = Boolean(creatorQuery.data?.privacy_level_options?.length) && !creatorQuery.data!.privacy_level_options.includes(apiValue);
-              const brandedPrivate = value === 'self' && brandContent;
-              const unavailable = accountUnavailable || brandedPrivate;
-              return (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={privacy === value}
-              onClick={() => !unavailable && setPrivacy(value)}
-              disabled={unavailable}
-              title={brandedPrivate ? t('tiktok.brandedPrivateUnavailable') : undefined}
-              className={cn('flex h-[20px] items-center justify-between text-[16px] leading-none text-text-80 transition hover:text-text', unavailable && 'cursor-not-allowed opacity-35')}
-            >
-              {t(`tiktok.privacy.${value}`)}
-              <PrivacyRadio checked={privacy === value} />
-            </button>
-              );
-            })()
-          ))}
-        </div>
-      </div>
-
-      {/* Все interaction controls обязательны для Direct Post review. */}
-      <div className="relative mt-[20px] h-[174px] shrink-0 rounded-r15 bg-grad-soft-10 p-[20px]">
-        <p className="text-[16px] leading-none text-text">{t('tiktok.privacySettings')}</p>
-        <div className="mt-[20px] flex flex-col gap-[17px]">
-          <div className={cn('flex items-start justify-between gap-[10px]', creatorQuery.data?.comment_disabled && 'opacity-50')}>
-            <span className="flex items-start gap-[10px]">
-              <span className="relative mt-px h-[12px] w-[15px] shrink-0 overflow-hidden"><img src="/assets/figma/tt-privacy-icons.svg" width="15" height="44" alt="" aria-hidden className="absolute left-0 top-0 max-w-none" /></span>
-              <span className="text-[16px] leading-none text-text-80">{t('tiktok.allowComments')}</span>
-            </span>
-            <MiniToggle checked={creatorQuery.data?.comment_disabled ? false : comments} onChange={setComments} label={t('tiktok.allowComments')} disabled={Boolean(creatorQuery.data?.comment_disabled) || stage !== 'draft'} />
-          </div>
-          <div className={cn('flex items-start justify-between gap-[10px]', creatorQuery.data?.duet_disabled && 'opacity-50')}>
-            <span className="flex items-start gap-[10px]">
-              <span className="relative mt-px h-[18px] w-[15px] shrink-0 overflow-hidden"><img src="/assets/figma/tt-privacy-icons.svg" width="15" height="44" alt="" aria-hidden className="absolute left-0 top-[-26px] max-w-none" /></span>
-              <span className="w-[199px] text-[16px] leading-[19px] text-text-80">{t('tiktok.allowDuet')}</span>
-            </span>
-            <MiniToggle checked={creatorQuery.data?.duet_disabled ? false : duet} onChange={setDuet} label={t('tiktok.allowDuet')} disabled={Boolean(creatorQuery.data?.duet_disabled) || stage !== 'draft'} />
-          </div>
-          <div className={cn('flex items-start justify-between gap-[10px]', creatorQuery.data?.stitch_disabled && 'opacity-50')}>
-            <span className="flex items-start gap-[10px]">
-              <span className="h-[15px] w-[15px] shrink-0" aria-hidden="true" />
-              <span className="text-[16px] leading-none text-text-80">{t('tiktok.allowStitch')}</span>
-            </span>
-            <MiniToggle checked={creatorQuery.data?.stitch_disabled ? false : stitch} onChange={setStitch} label={t('tiktok.allowStitch')} disabled={Boolean(creatorQuery.data?.stitch_disabled) || stage !== 'draft'} />
-          </div>
-        </div>
-      </div>
-
-      {/* TikTok Commercial Content Disclosure: off by default; once enabled,
-          at least one disclosure type is mandatory and both may be selected. */}
-      <div className="mt-[20px] shrink-0 rounded-r15 bg-grad-soft-10 p-[20px]">
-        <div className="flex items-start justify-between gap-[12px]">
-          <span className="max-w-[250px] text-[16px] leading-[19px] text-text">{t('tiktok.commercialTitle')}</span>
-          <MiniToggle checked={commercialContent} onChange={setCommercialContent} label={t('tiktok.commercialTitle')} disabled={stage !== 'draft'} />
-        </div>
-        {commercialContent && (
-          <div className="mt-[18px] flex flex-col gap-[16px] border-t border-border pt-[16px]">
-            <div>
-              <RightsCheckbox checked={brandOrganic} onChange={setBrandOrganic} label={t('tiktok.yourBrand')} size={16} disabled={stage !== 'draft'} />
-              {brandOrganic && <p className="ml-[26px] mt-[7px] text-[13px] leading-[16px] text-text-60">{t('tiktok.yourBrandHint')}</p>}
-            </div>
-            <div>
-              <RightsCheckbox
-                checked={brandContent}
-                onChange={(checked) => {
-                  setBrandContent(checked);
-                  if (checked && privacy === 'self') setPrivacy(null);
-                }}
-                label={t('tiktok.brandedContent')}
-                size={16}
-                disabled={stage !== 'draft'}
-              />
-              {brandContent && <p className="ml-[26px] mt-[7px] text-[13px] leading-[16px] text-text-60">{t('tiktok.brandedContentHint')}</p>}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Время публикации 334×39. Поля «21:00 | 15/07» были обманом: бэк их не читал,
-          а TikTok Content Posting API отложенной публикации не даёт — ролик уходит сразу.
-          Оставили честную строку-статус вместо редактируемого расписания. */}
-      <div className="mt-[20px] flex h-[39px] shrink-0 items-center justify-between rounded-r15 bg-grad-soft-10 px-[20px]" title={t('tiktok.publishNowHint')}>
-        <span className="text-[16px] leading-none text-text-80">{t('tiktok.publishTime')}</span>
-        <span className="text-[16px] leading-none text-text">{t('tiktok.publishNow')}</span>
-      </div>
-
-      <div className="mt-[20px] shrink-0">
-        <RightsCheckbox checked={rights} onChange={setRights} label={t('tiktok.rights')} />
-        {postError && <p role="alert" className="mt-[10px] text-[13px] leading-[16px] text-[#ff8f9a]">{postError}</p>}
-      </div>
-    </div>
-  );
+  const privacyChoice = (value: Privacy) => {
+    const accountUnavailable = Boolean(creator?.privacy_level_options?.length) && !creator!.privacy_level_options.includes(PRIVACY_API_VALUE[value]);
+    const brandedPrivate = value === 'self' && brandContent;
+    return { unavailable: accountUnavailable || brandedPrivate, brandedPrivate };
+  };
+  const onPrivacyKey = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = ({ ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 } as Record<string, number>)[event.key];
+    if (step === undefined || shownStage !== 'draft') return;
+    event.preventDefault();
+    const enabled = PRIVACY_ORDER.filter((value) => !privacyChoice(value).unavailable);
+    if (!enabled.length) return;
+    const current = Math.max(0, enabled.indexOf(privacy ?? enabled[0]));
+    const next = enabled[(current + step + enabled.length) % enabled.length];
+    setPrivacy(next);
+    privacyRef.current?.querySelector<HTMLElement>(`[data-value="${next}"]`)?.focus();
+  };
+  const privacyIndex = privacy ? PRIVACY_ORDER.indexOf(privacy) : -1;
+  const rovingPrivacy = privacy ?? PRIVACY_ORDER.find((value) => !privacyChoice(value).unavailable);
 
   const previewSrc = video?.playbackUrl ?? video?.downloadUrl ?? undefined;
+  const chips = [video?.source, video?.subtitleStyle, video?.hook].filter(Boolean) as string[];
+  const nextIndex = shownStage === 'posted' ? nextUnposted() : -1;
+  const draft = shownStage === 'draft';
+  const interactions = [
+    { key: 'comments', icon: ICONS.comment, label: t('tiktok.comments'), hint: '', value: comments, set: setComments, off: Boolean(creator?.comment_disabled) },
+    { key: 'duet', icon: ICONS.duet, label: t('tiktok.duet'), hint: t('tiktok.duetHint'), value: duet, set: setDuet, off: Boolean(creator?.duet_disabled) },
+    { key: 'stitch', icon: ICONS.stitch, label: t('tiktok.stitch'), hint: t('tiktok.stitchHint'), value: stitch, set: setStitch, off: Boolean(creator?.stitch_disabled) }
+  ];
 
-  const right = (
-    <div className="flex h-full flex-col">
-      <div className="group relative h-[600px] shrink-0 overflow-hidden rounded-r15 bg-grad-soft-10">
-        {/*
-          Настоящий ролик, а не картинка: раньше здесь стояла только обложка из thumbnailUrl
-          (у рендеров её нет) и кнопка Play, которая ничего не запускала, а videoRef висел
-          ни на чём — поэтому и выбранный кадр обложки не уходил в TikTok (таймкод был 0).
-        */}
+  const card = (
+    <main className={cn('ttp', !draft && 'locked')} aria-label={t('tiktok.screenTitle')}>
+      <header className="ttp-top">
+        <div className="ttp-batch">
+          {videos.length > 1 && (
+            <button type="button" className="ttp-nav" onClick={() => goTo(index - 1)} disabled={index === 0 || shownStage === 'uploading'} aria-label={t('tiktok.prevVideo')}>
+              <Icon>{ICONS.left}</Icon>
+            </button>
+          )}
+          <span className="ttp-title num">{videos.length > 1 ? t('tiktok.videoOfBatch', { n: index + 1, total: videos.length }) : t('tiktok.screenTitle')}</span>
+          {videos.length > 1 && (
+            <>
+              <button type="button" className="ttp-nav" onClick={() => goTo(index + 1)} disabled={index === videos.length - 1 || shownStage === 'uploading'} aria-label={t('tiktok.nextVideoAria')}>
+                <Icon>{ICONS.right}</Icon>
+              </button>
+              <span className="ttp-dots" aria-hidden="true">
+                {videos.map((item, position) => (
+                  <span key={item.id} className={cn('ttp-dot', position === index ? 'current' : isVideoPosted(item) && 'posted')} />
+                ))}
+              </span>
+            </>
+          )}
+        </div>
+        {/* аккаунт, куда уйдёт ролик — обязательный элемент гайдлайнов */}
+        <div className="ttp-account" title={t('tiktok.accountHint')}>
+          <span className="ttp-avatar">{creatorAvatar && <img src={creatorAvatar} alt="" />}</span>
+          <span className="ttp-handle">@{handle}</span>
+        </div>
+      </header>
+
+      <section className={cn('ttp-media', playing && 'playing', covering && 'covering')} aria-label={t('tiktok.videoAndCover')} onKeyDown={(event) => { if (event.key === 'Escape' && covering) openCover(false); }}>
         {previewSrc ? (
           <video
             key={video?.id}
             ref={videoRef}
             src={previewSrc}
-            poster={video?.thumbnailUrl ?? framesQuery.data?.frames?.[coverFrame ?? 0]?.url ?? undefined}
+            poster={video?.thumbnailUrl ?? frames?.[coverFrame]?.url ?? undefined}
             playsInline
             preload="metadata"
             onLoadedMetadata={(event) => {
-              if (coverFrame === null || !Number.isFinite(event.currentTarget.duration)) return;
-              event.currentTarget.currentTime = Math.min(event.currentTarget.duration - 0.05, (event.currentTarget.duration * coverFrame) / (COVER_FRAME_COUNT - 1));
+              const duration = event.currentTarget.duration;
+              setPlayhead({ current: 0, duration: Number.isFinite(duration) ? duration : 0 });
+              if (Number.isFinite(duration) && duration > 0) event.currentTarget.currentTime = Math.min(duration - 0.05, (duration * coverFrame) / (COVER_FRAME_COUNT - 1));
             }}
-            onPlay={() => setPreviewPlaying(true)}
-            onPause={() => setPreviewPlaying(false)}
-            onEnded={() => setPreviewPlaying(false)}
-            onClick={(event) => { if (!event.currentTarget.paused) event.currentTarget.pause(); }}
-            className="h-full w-full cursor-pointer object-cover"
+            onTimeUpdate={(event) => setPlayhead({ current: event.currentTarget.currentTime, duration: event.currentTarget.duration || 0 })}
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onEnded={() => setPlaying(false)}
+            onClick={togglePlay}
           />
-        ) : video?.thumbnailUrl ? <img src={video.thumbnailUrl} alt="" className="h-full w-full object-cover" /> : null}
-
-        {stage !== 'posted' && previewSrc && !previewPlaying && (
-          <button
-            type="button"
-            aria-label={t('common.play')}
-            onClick={() => { void videoRef.current?.play(); }}
-            className="absolute left-1/2 top-1/2 flex h-[60px] w-[60px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-[rgba(5,1,15,0.6)] transition hover:bg-[rgba(5,1,15,0.8)]"
-          >
-            <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="#f6f5fd" /></svg>
+        ) : video?.thumbnailUrl ? <img src={video.thumbnailUrl} alt="" /> : null}
+        <div className="ttp-shade" />
+        <div className="ttp-meta">
+          {shownStage === 'posted' && <span className="posted"><Icon>{ICONS.check}</Icon>{t('tiktok.onTiktok')}</span>}
+          {chips.map((chip) => <span key={chip}>{chip}</span>)}
+        </div>
+        {previewSrc && (
+          <button type="button" className="ttp-play" onClick={togglePlay} aria-label={playing ? t('common.pause') : t('common.play')} tabIndex={covering ? -1 : 0}>
+            {playing ? (
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>
+            ) : (
+              <svg viewBox="0 0 24 24" className="ic-play" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z" /></svg>
+            )}
           </button>
         )}
-
-        {/* W52: «Выбери обложку» → W54: «Обложка выбрана»; 293×60 r15, отступы 40 */}
-        {stage === 'draft' && !previewPlaying && (
-          <div className="absolute inset-x-[40px] bottom-[40px]">
-            <CoverPicker src={video?.downloadUrl} poster={video?.thumbnailUrl} frames={framesQuery.data?.frames} value={coverFrame} onChange={setCoverFrame} />
+        <div className="ttp-bar" aria-hidden={covering}>
+          <div className="ttp-track"><i style={{ '--t': playhead.duration ? Math.min(1, playhead.current / playhead.duration) : 0 } as CSSProperties} /></div>
+          <span className="ttp-time num">{fmtTime(playhead.current)} / {fmtTime(playhead.duration)}</span>
+          <button ref={coverButtonRef} type="button" className="ttp-cover-btn" onClick={() => openCover(true)} disabled={!draft} tabIndex={covering ? -1 : 0}>
+            <span className="ttp-mini">{frames?.[coverFrame]?.url && <img src={frames[coverFrame].url!} alt="" />}</span>
+            {t('tiktok.cover')}
+          </button>
+        </div>
+        <div className="ttp-picker" aria-hidden={!covering}>
+          <div className="ttp-picker-head">
+            <span>{t('tiktok.coverHint')}</span>
+            <button type="button" className="ttp-done" onClick={() => openCover(false)} tabIndex={covering ? 0 : -1}>{t('tiktok.coverDone')}</button>
           </div>
-        )}
+          <CoverStrip
+            frames={frames}
+            src={video?.downloadUrl}
+            poster={video?.thumbnailUrl}
+            value={coverFrame}
+            onChange={setCoverFrame}
+            onDone={() => openCover(false)}
+            active={covering}
+            stripRef={stripRef}
+            label={t('tiktok.cover')}
+          />
+        </div>
+      </section>
 
-        {/* W56: ссылка на опубликованное видео */}
-        {stage === 'posted' && (
-          <a
-            href={video?.downloadUrl ?? '#'}
-            target="_blank"
-            rel="noreferrer"
-            className="absolute left-1/2 top-1/2 flex h-[45px] w-[208px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-r15 bg-accent-light pb-px text-[24px] font-[350] leading-none text-text transition hover:brightness-110"
+      <div className="ttp-fields" ref={fieldsRef}>
+        <div className="ttp-field" data-invalid={invalid('caption')}>
+          <div className="ttp-field-head">
+            <label className="ttp-label" htmlFor="ttp-caption">{t('tiktok.captionLabel')}</label>
+            {tried && missing.includes('caption')
+              ? <span className="ttp-err">{t('tiktok.errCaption')}</span>
+              : caption.length > CAPTION_MAX - 200 && <span className="ttp-hint num">{caption.length} / {CAPTION_MAX}</span>}
+          </div>
+          <textarea
+            id="ttp-caption"
+            ref={captionRef}
+            value={caption}
+            maxLength={CAPTION_MAX}
+            onChange={(event) => setCaption(event.target.value)}
+            readOnly={!draft}
+            placeholder={t('tiktok.captionPlaceholder')}
+          />
+          {draft && suggestions.length > 0 && (
+            <div className="ttp-tags" aria-label={t('tiktok.hashtagsTitle')}>
+              {suggestions.map((tag) => (
+                <button key={tag} type="button" className="ttp-tag" onClick={() => { setCaption((c) => `${c.replace(/\s+$/, '')}${c.trim() ? ' ' : ''}#${tag} `); captionRef.current?.focus(); }}>
+                  + #{tag}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* приватность без предвыбранного значения — требование TikTok */}
+        <div className="ttp-field" data-invalid={invalid('privacy')}>
+          <div className="ttp-field-head">
+            <span className="ttp-label" id="ttp-privacy-label">{t('tiktok.privacyLabel')}</span>
+            <span className="ttp-err">{t('tiktok.errPrivacy')}</span>
+          </div>
+          <div
+            ref={privacyRef}
+            className="ttp-seg"
+            role="radiogroup"
+            aria-labelledby="ttp-privacy-label"
+            data-picked={privacyIndex >= 0 ? '' : undefined}
+            onKeyDown={onPrivacyKey}
           >
-            {t('tiktok.openVideo')}
-          </a>
+            <span
+              className="ttp-seg-thumb"
+              aria-hidden="true"
+              style={{ '--i': Math.max(0, privacyIndex), '--c2': Math.max(0, privacyIndex) % 2, '--r2': Math.floor(Math.max(0, privacyIndex) / 2) } as CSSProperties}
+            />
+            {PRIVACY_ORDER.map((value) => {
+              const { unavailable, brandedPrivate } = privacyChoice(value);
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  role="radio"
+                  data-value={value}
+                  aria-checked={privacy === value}
+                  tabIndex={value === rovingPrivacy ? 0 : -1}
+                  disabled={unavailable}
+                  title={brandedPrivate ? t('tiktok.brandedPrivateUnavailable') : unavailable ? t('tiktok.privacyUnavailable') : undefined}
+                  onClick={() => setPrivacy(value)}
+                >
+                  {t(`tiktok.privacy.${value}`)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* все interaction controls выключены по умолчанию — обязательное условие Direct Post */}
+        <div className="ttp-field">
+          <div className="ttp-field-head"><span className="ttp-label">{t('tiktok.allowTitle')}</span></div>
+          <div className="ttp-rows">
+            {interactions.map((item) => (
+              <div key={item.key} className={cn('ttp-row', item.off && 'off')}>
+                <Icon>{item.icon}</Icon>
+                <span className="txt" id={`ttp-${item.key}`}>
+                  {item.label}
+                  {(item.off || item.hint) && <span className="sub">{item.off ? t('tiktok.disabledInApp') : item.hint}</span>}
+                </span>
+                <Switch checked={item.off ? false : item.value} onChange={item.set} labelledBy={`ttp-${item.key}`} disabled={item.off || !draft} />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Commercial Content Disclosure: выключено по умолчанию; включено — нужен хотя бы один тип */}
+        <div className="ttp-field" ref={brandRef} data-invalid={invalid('brand')}>
+          <div className="ttp-rows">
+            <div className="ttp-row">
+              <Icon>{ICONS.brand}</Icon>
+              <span className="txt" id="ttp-brand">{t('tiktok.brandTitle')}<span className="sub">{t('tiktok.brandHint')}</span></span>
+              <Switch
+                checked={commercialContent}
+                onChange={(on) => {
+                  setCommercialContent(on);
+                  // раскрытые варианты иначе уезжают под строку действия — докручиваем после анимации
+                  if (on) window.setTimeout(() => brandRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 240);
+                }}
+                labelledBy="ttp-brand"
+                disabled={!draft}
+              />
+            </div>
+            <div className="ttp-disclose" data-open={commercialContent ? '' : undefined}>
+              <div>
+                <div className="ttp-inner">
+                  <button type="button" className="ttp-check" role="checkbox" aria-checked={brandOrganic} tabIndex={commercialContent ? 0 : -1} onClick={() => setBrandOrganic((v) => !v)}>
+                    <span className="ttp-box"><CheckMark /></span>
+                    <span>{t('tiktok.yourBrand')}<span className="sub">{t('tiktok.yourBrandHint')}</span></span>
+                  </button>
+                  <button
+                    type="button"
+                    className="ttp-check"
+                    role="checkbox"
+                    aria-checked={brandContent}
+                    tabIndex={commercialContent ? 0 : -1}
+                    onClick={() => {
+                      const checked = !brandContent;
+                      setBrandContent(checked);
+                      if (checked && privacy === 'self') setPrivacy(null);
+                    }}
+                  >
+                    <span className="ttp-box"><CheckMark /></span>
+                    <span>{t('tiktok.brandedContent')}<span className="sub">{t('tiktok.brandedContentHint')}</span></span>
+                  </button>
+                  <span className="ttp-err">{t('tiktok.errBrand')}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* перенос настроек на остаток батча — главный ускоритель выкладки */}
+        {remaining > 0 && (
+          <div className="ttp-carry">
+            <Icon>{ICONS.copy}</Icon>
+            <span className="txt" id="ttp-carry">{remaining === 1 ? t('tiktok.carryNext') : t('tiktok.carry', { count: remaining })}</span>
+            <Switch checked={applyToAll} onChange={setApplyToAll} labelledBy="ttp-carry" disabled={!draft} />
+          </div>
         )}
       </div>
 
-      {/* кнопка состояния 373×60 r15 grad-soft-20; активная — border 1px accent (W52 → W54) */}
-      {showNext ? (
+      <div className="ttp-foot">
+        <div className="ttp-foot-left ttp-swap" key={shownStage} aria-live="polite">
+          {shownStage === 'posted' ? (
+            <div className="ttp-status">
+              <span className="ok"><Icon>{ICONS.check}</Icon></span>
+              <span>
+                {t('tiktok.postedLine', { n: index + 1 })}{' '}
+                <a href={postLink} target="_blank" rel="noreferrer">{t('tiktok.openInTiktok')}<Icon>{ICONS.ext}</Icon></a>
+              </span>
+            </div>
+          ) : shownStage === 'uploading' ? (
+            <span>{progress?.step === 2 ? t('tiktok.processingNote') : t('tiktok.sendingNote')}</span>
+          ) : (
+            <>
+              {postError && <p role="alert" className="ttp-alert">{postError}</p>}
+              <div className="ttp-rights" data-invalid={invalid('rights')}>
+                <button ref={rightsRef} type="button" className="ttp-box" role="checkbox" aria-checked={rights} aria-labelledby="ttp-rights-text" onClick={() => setRights((v) => !v)}>
+                  <CheckMark />
+                </button>
+                <span id="ttp-rights-text">
+                  {t('tiktok.rightsLead')}{' '}
+                  {brandContent && (
+                    <>
+                      <a href={BRANDED_POLICY_URL} target="_blank" rel="noreferrer">{t('tiktok.brandedPolicyLink')}</a> {t('tiktok.and')}{' '}
+                    </>
+                  )}
+                  <a href={MUSIC_USAGE_URL} target="_blank" rel="noreferrer">{t('tiktok.musicConsentLink')}</a>
+                </span>
+              </div>
+            </>
+          )}
+        </div>
         <button
           type="button"
-          onClick={nextVideo}
-            className="mt-[12px] flex h-[60px] shrink-0 items-center justify-center gap-[16px] rounded-r15 border border-accent-light bg-grad-soft-20 text-[24px] font-[350] leading-none text-text-80 transition hover:text-text"
+          onClick={onAction}
+          disabled={draft && brandIncomplete}
+          title={draft && brandIncomplete ? t('tiktok.errBrand') : undefined}
+          aria-disabled={shownStage === 'uploading' || undefined}
+          className={cn('ttp-act', shownStage === 'uploading' ? 'busy' : shownStage === 'posted' || !missing.length ? 'primary' : 'pending')}
         >
-          {batchDone ? t('tiktok.toStats') : t('tiktok.nextVideo')}
-          <img src="/assets/figma/pd-arrow-right.svg" width="25" height="15" alt="" aria-hidden />
-        </button>
-      ) : (
-        <>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={stage !== 'draft' || !valid}
-            aria-describedby={missing.length ? 'publish-missing' : undefined}
-            title={missing.length ? `${t('tiktok.needTitle')} ${missing.join(', ')}` : undefined}
-            className={cn(
-              'relative mt-[12px] flex h-[60px] shrink-0 items-center justify-center gap-[12px] overflow-hidden rounded-r15 bg-grad-soft-20 text-[24px] font-[350] leading-none text-text-80 transition',
-              stage === 'draft' && valid && 'border border-accent-light hover:text-text',
-              stage === 'draft' && !valid && 'cursor-not-allowed'
-            )}
-          >
-            {stage === 'uploading' && progress && (
-              // три сегмента по реальным шагам: пройденные залиты, текущий пульсирует
-              <span aria-hidden="true" className="absolute inset-x-[14px] bottom-[8px] flex gap-[6px]">
-                {[1, 2, 3].map((step) => (
-                  <span
-                    key={step}
-                    className={cn(
-                      'h-[4px] flex-1 rounded-full',
-                      step < progress.step ? 'bg-accent-light' : step === progress.step ? 'animate-pulse bg-accent-light/70' : 'bg-[rgba(246,245,253,0.12)]'
-                    )}
-                  />
-                ))}
-              </span>
-            )}
-            <img
-              src={stage === 'draft' ? '/assets/figma/tt-publish-arrow.svg' : stage === 'uploading' ? '/assets/figma/tt-uploading.svg' : '/assets/figma/tt-posted.svg'}
-              width="30"
-              height="30"
-              alt=""
-              aria-hidden
-            />
-            {stage === 'draft'
-              ? t('tiktok.publish')
-              : stage === 'uploading'
-                ? progress
-                  ? `${progress.step === 1 ? t('tiktok.phaseSending') : t('tiktok.phaseProcessing')} · ${Math.max(0, Math.round((clock - progress.startedAt) / 1000))} ${t('tiktok.secondsShort')}`
-                  : t('tiktok.uploading')
-                : t('tiktok.posted')}
-          </button>
-          {stage === 'uploading' && progress && (
-            <p className="mt-[8px] shrink-0 text-center text-[13px] leading-[17px] text-text-60">
-              {t('tiktok.phaseStep', { step: progress.step, total: 3 })} · {progress.step === 1 ? t('tiktok.phaseSendingHint') : t('tiktok.phaseProcessingHint')}
-            </p>
-          )}
-          <p className="mt-[8px] shrink-0 text-center text-[12px] leading-[16px] text-text-60">
-            {t('tiktok.musicConsent')}{' '}
-            <a href="https://www.tiktok.com/legal/page/global/music-usage-confirmation/en" target="_blank" rel="noreferrer" className="text-accent-light underline decoration-accent-light/50 underline-offset-2 hover:text-text">
-              {t('tiktok.musicConsentLink')}
-            </a>
-            {brandContent && (
+          {shownStage === 'uploading' && <span className="ttp-fill" style={{ '--p': progress?.step === 2 ? 0.85 : 0.45 } as CSSProperties} />}
+          <span key={shownStage} className="ttp-swap" style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {shownStage === 'uploading' ? (
               <>
-                <span aria-hidden="true"> · </span>
-                <a href="https://www.tiktok.com/legal/page/global/bc-policy/en" target="_blank" rel="noreferrer" className="text-accent-light underline decoration-accent-light/50 underline-offset-2 hover:text-text">
-                  {t('tiktok.brandedPolicyLink')}
-                </a>
+                <span className="ttp-spin" aria-hidden="true" />
+                <span className="num">
+                  {progress
+                    ? `${progress.step === 1 ? t('tiktok.phaseSending') : t('tiktok.phaseProcessing')} · ${Math.max(0, Math.round((clock - progress.startedAt) / 1000))} ${t('tiktok.secondsShort')}`
+                    : t('tiktok.uploading')}
+                </span>
               </>
-            )}
-          </p>
-          {stage === 'draft' && missing.length > 0 && (
-            <p id="publish-missing" className="mt-[10px] shrink-0 text-center text-[15px] leading-[19px] text-text-60">
-              {t('tiktok.needTitle')} {missing.join(', ')}
-            </p>
-          )}
-        </>
-      )}
-    </div>
+            ) : shownStage === 'posted' ? (
+              <>
+                {nextIndex >= 0 ? t('tiktok.toVideo', { n: nextIndex + 1 }) : t('tiktok.toStats')}
+                <Icon>{ICONS.right}</Icon>
+              </>
+            ) : t('tiktok.publish')}
+          </span>
+        </button>
+      </div>
+    </main>
   );
 
-  return <FullscreenZone responsiveScale onCollapse={() => navigate(`/app/projects/${id}`)} left={left} right={right} />;
+  return <FullscreenZone responsiveScale onCollapse={() => navigate(`/app/projects/${id}`)} card={{ ...CARD_SIZE, node: card }} />;
 }
