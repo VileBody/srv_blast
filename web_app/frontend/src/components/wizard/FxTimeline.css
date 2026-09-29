@@ -28,6 +28,13 @@
 .fxt-proj b { font-weight: 400; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fxt-proj span { font-size: 12px; color: var(--fxt-t40); white-space: nowrap; }
 .fxt-spacer { flex: 1; }
+/* вкладки вариантов (прототип): лента с прокруткой, активная — подложка + цветная метка */
+.fxt-vtabs { display: flex; gap: 4px; min-width: 0; overflow-x: auto; scrollbar-width: none; padding: 3px; border-radius: 12px; background: var(--fxt-well); border: 1px solid var(--fxt-line); }
+.fxt-vtabs::-webkit-scrollbar { display: none; }
+.fxt-vtab { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 9px; color: var(--fxt-t60); font-size: 13px; white-space: nowrap; flex: none; transition: color .15s ease, background-color .15s ease; }
+.fxt-vtab:hover { color: var(--text); }
+.fxt-vtab[aria-selected="true"] { background: var(--fxt-raise); color: var(--text); box-shadow: inset 0 0 0 1px var(--fxt-line2); }
+.fxt-vtab i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
 .fxt-seg { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--fxt-well); border: 1px solid var(--fxt-line); }
 .fxt-seg button { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 9px; color: var(--fxt-t60); font-size: 13px; transition: color .15s ease, background-color .15s ease; }
 .fxt-seg button:hover { color: var(--text); }

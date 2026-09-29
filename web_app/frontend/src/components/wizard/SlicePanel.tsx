@@ -12,6 +12,7 @@ import { footageTypePlane } from '../../data/footageTypes';
 import { PoolStoryboard, StoryboardSlot } from './PoolStoryboard';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
+import { useFxLab, useLabPoolRows } from './FxLab';
 
 /** Мини-визуал первой подсказки пула: счётчик роликов растёт. */
 /**
@@ -183,6 +184,9 @@ export function StageSlice() {
   const fixedCount = colorGroup ? 1 : 0;
   const subtitleStyles = state.subtitles.pool;
   const hooksInPool = hookPills(state.hooks);
+  // Прототип вариантов FX (?fxLab=1): строки секции FX — варианты, стиль внутри варианта.
+  const fxLab = useFxLab();
+  const labRows = useLabPoolRows();
   const stylesInPool = selectedEffectStyles(state.hooks);
 
   useEffect(() => {
@@ -375,7 +379,22 @@ export function StageSlice() {
           </SectionCard>
         )}
 
-        {hooksInPool.length > 0 && (
+        {fxLab && (
+          <SectionCard
+            title={t('wizard.pool.fx')}
+            note={restNote(hookTarget - labRows.reduce((n, r) => n + r.count, 0), labRows.length ? t('wizard.pool.fxNote', { count: hookTarget }) : 'Настрой хотя бы один вариант на шаге FX')}
+            warn={hookTarget - labRows.reduce((n, r) => n + r.count, 0) !== 0}
+          >
+            {labRows.map((row) => (
+              <div key={row.id} className="flex items-center justify-between gap-space-3">
+                <MiniPill icon={<span className="flex items-center gap-[6px]"><i className="h-[8px] w-[8px] rounded-full" style={{ background: row.color }} />{hookKindIcon(row.kind)}</span>} label={row.label} />
+                <Stepper value={row.count} onChange={row.set} />
+              </div>
+            ))}
+          </SectionCard>
+        )}
+
+        {!fxLab && hooksInPool.length > 0 && (
           <SectionCard title={t('wizard.pool.fx')} note={restNote(hooksRest, t('wizard.pool.fxNote', { count: hookTarget }))} warn={hooksRest !== 0}>
             {hooksInPool.map((pill) => (
               <div key={pill.kind} className="flex items-center justify-between gap-space-3">
@@ -387,7 +406,7 @@ export function StageSlice() {
           </SectionCard>
         )}
 
-        {stylesInPool.length > 0 && (
+        {!fxLab && stylesInPool.length > 0 && (
           <SectionCard title={t('wizard.pool.styles')} note={restNote(stylesRest, isPhone ? '' : t('wizard.pool.stylesNote', { count: hookTarget }))} warn={stylesRest !== 0}>
             {stylesInPool.map((style) => (
               <div key={style} className="flex items-center justify-between gap-space-3">
