@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import http.client
+import io
 import json
 import secrets
 import socket
@@ -319,7 +320,10 @@ def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_pa
             length = chunk_size if index < total_chunks - 1 else size - offset
             body = source.read(length)
             end = offset + len(body) - 1
-            req = urllib.request.Request(upload_url, data=body, method="PUT", headers={
+            # Тело — файловым объектом: http.client шлёт его блоками, и таймаут считается на
+            # каждый блок (остановку передачи), а не на весь чанк одним sendall. Через прокси
+            # публикации ~100 КБ/с — чанк 10 МБ целиком в 120 с не укладывается.
+            req = urllib.request.Request(upload_url, data=io.BytesIO(body), method="PUT", headers={
                 "Content-Type": "video/mp4",
                 "Content-Length": str(len(body)),
                 "Content-Range": f"bytes {offset}-{end}/{size}",
