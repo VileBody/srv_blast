@@ -52,3 +52,41 @@ jobs:
                       d = json.loads(body); body = f"{d.get('ip')} {d.get('country')} {d.get('org')}"
                   print(f"{name:9} {label:7} {code} {body[:160]!r}")
           PY
+      - name: Raw CONNECT through the shared proxy
+        run: |
+          set -uo pipefail
+          docker exec -i blast-web-api python - <<'PY'
+          import base64, os, socket
+          from urllib.parse import urlparse
+          from src.outbound_proxy import OUTBOUND_PROXY_URL
+          print("container no_proxy:", {k: v for k, v in os.environ.items() if k.lower() == "no_proxy"} or "not set")
+          print("container proxy env:", sorted(k for k in os.environ if "proxy" in k.lower()) or "none")
+          u = urlparse(OUTBOUND_PROXY_URL)
+          auth = base64.b64encode(f"{u.username}:{u.password}".encode()).decode()
+          for host in ("generativelanguage.googleapis.com", "open.tiktokapis.com", "open-upload.tiktokapis.com", "www.google.com", "api.ipify.org"):
+              try:
+                  s = socket.create_connection((u.hostname, u.port), timeout=15)
+                  s.sendall(f"CONNECT {host}:443 HTTP/1.1
+Host: {host}:443
+Proxy-Authorization: Basic {auth}
+
+".encode())
+                  s.settimeout(15)
+                  data = b""
+                  try:
+                      while len(data) < 3000:
+                          chunk = s.recv(1024)
+                          if not chunk:
+                              break
+                          data += chunk
+                          if data.startswith(b"HTTP/1.1 200") or data.startswith(b"HTTP/1.0 200"):
+                              break
+                  except socket.timeout:
+                      pass
+                  s.close()
+                  print(f"=== {host}
+{data.decode('utf-8', 'replace')[:1500]}")
+              except Exception as e:
+                  print(f"=== {host}
+ERR {type(e).__name__}: {e}")
+          PY
