@@ -179,7 +179,10 @@ def test_overlay_brat_injects_bpm():
     assert "$.global.__BLAST_BPM = 128.0" in js
     assert "addBlinker" in js
     assert "INTERACTIVE:     false" in js
-    assert 'fx.addProperty("ADBE Drop Shadow")' not in js
+    # per-word Drop Shadow comes AFTER Minimax + Gaussian Blur (before #203 it was
+    # the first effect and got fattened/muddied by them — the "ugly shadow")
+    word_fx = js.split('var mm = fx.addProperty("ADBE Minimax");', 1)[1]
+    assert word_fx.index('fx.addProperty("ADBE Gaussian Blur 2")') < word_fx.index("addWordShadow(fx)")
     assert "addSoftShadow" not in js
     assert "transitionBlurFrames:    6" in js
     assert "transitionBlurDirection: 90" in js
@@ -239,7 +242,9 @@ def test_overlay_injects_engine_style_and_always_resets_it():
     cfg = brat_layout(params=JaksonTextParams(position="left", shadow="none")).jsx_config()
     js = build_jsx_subtitles_overlay(mode=SUBTITLES_MODE_BRAT_5TH, word_timings=wt, bpm=120.0, style_config=cfg)
     injected = json.loads(js.split("$.global.__BLAST_STYLE = ", 1)[1].split(";\n", 1)[0])
-    assert injected["textShadow"] is False and injected["centerXFrac"] < 0.5
+    assert injected["wordShadow"] is False and injected["centerXFrac"] < 0.5
+    italic = brat_layout(focus_style="italic").jsx_config()
+    assert italic["focusFont"] == "ArialNarrow-Italic"
     # every engine key must exist in the script CONFIG (the script throws otherwise)
     for mode, cfg in ((SUBTITLES_MODE_BRAT_5TH, cfg),
                       (SUBTITLES_MODE_TRENDY_5TH, trendy_layout("Point-SemiBold", accent_font="Katherine-Plus",

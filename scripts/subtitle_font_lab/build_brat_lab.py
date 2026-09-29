@@ -1,5 +1,5 @@
-"""Лаб brat (шрифт фиксирован, пар нет): тень-силуэт против прежней плашки, размер,
-позиция, цвет фокус-слов. Боевой brat_subtitles.jsx + значения движка
+"""Лаб brat (шрифт фиксирован, пар нет): курсив фокус-слова, тень под каждым словом
+против прежней плашки, цвет фокус-слов. Боевой brat_subtitles.jsx + значения движка
 (`app/subtitle_font_layout.brat_layout`), без рендера.
 
 Заодно замер: у каждого слова считается базовая линия и низ чернил в кадре; разброс
@@ -37,20 +37,18 @@ LEAD_IN = 0.3
 BPM = 120.0
 
 BASE = JaksonTextParams()
-# (группа, подпись, параметры | None = прежняя плашка, как в проде до смотра)
+# (группа, подпись, параметры | None = прежняя плашка, курсив фокус-слова)
 VARIANTS = [
-    ("01 тень", "было: плашка под строкой", None),
-    ("01 тень", "нет", replace(BASE, shadow="none")),
-    ("01 тень", "мягкая (силуэт)", replace(BASE, shadow="soft")),
-    ("01 тень", "сильная (силуэт)", replace(BASE, shadow="strong")),
-    ("02 размер", "large", BASE),
-    ("02 размер", "medium", replace(BASE, size="medium")),
-    ("02 размер", "small", replace(BASE, size="small")),
-    ("03 позиция", "center", BASE),
-    ("03 позиция", "left", replace(BASE, position="left")),
-    ("03 позиция", "right", replace(BASE, position="right")),
-    ("04 цвет", "фокус-слова розовым", replace(BASE, accent_color="#FF5FA8")),
-    ("04 цвет", "фокус-слова жёлтым", replace(BASE, accent_color="#FFD23F")),
+    ("01 фокус-слово", "как все (прод)", BASE, None),
+    ("01 фокус-слово", "Arial Narrow Italic", BASE, "italic"),
+    ("01 фокус-слово", "Arial Narrow Bold Italic", BASE, "bold_italic"),
+    ("01 фокус-слово", "наклон тем же шрифтом (faux)", BASE, "faux_italic"),
+    ("02 тень под словом", "нет", replace(BASE, shadow="none"), "italic"),
+    ("02 тень под словом", "мягкая", replace(BASE, shadow="soft"), "italic"),
+    ("02 тень под словом", "сильная", replace(BASE, shadow="strong"), "italic"),
+    ("02 тень под словом", "было: плашка под строкой", None, None),
+    ("03 курсив + цвет", "Italic + розовый", replace(BASE, accent_color="#FF5FA8"), "italic"),
+    ("03 курсив + цвет", "Bold Italic + жёлтый", replace(BASE, accent_color="#FFD23F"), "bold_italic"),
 ]
 
 
@@ -62,18 +60,17 @@ def _words() -> List[Dict[str, Any]]:
     return out
 
 
-def _variant_jsx(idx: int, group: str, label: str, params) -> Dict[str, Any]:
+def _variant_jsx(idx: int, group: str, label: str, params, focus_style) -> Dict[str, Any]:
     tag = f"{group} · {label}"
     main = f"Brat · {tag}"
     words = _words()
     dur = round(words[-1]["end"] + 0.8, 3)
     if params is None:   # прежний вид: плашка, без тени
-        style: Dict[str, Any] = {"contrastPlate": True, "textShadow": False, "strictFont": True}
+        style: Dict[str, Any] = {"contrastPlate": True, "wordShadow": False, "strictFont": True}
     else:
-        style = brat_layout(params=params).jsx_config()
+        style = brat_layout(params=params, focus_style=focus_style).jsx_config()
     # уникальные имена генерируемых компов: cleanup brat не должен снести соседний вариант
-    style.update({"textCompName": f"СУБТИТРЫ {idx:02d}", "contrastCompName": f"BRAT CONTRAST {idx:02d}",
-                  "textShadowName": f"BRAT SHADOW {idx:02d}"})
+    style.update({"textCompName": f"СУБТИТРЫ {idx:02d}", "contrastCompName": f"BRAT CONTRAST {idx:02d}"})
     body = build_jsx_subtitles_overlay(mode=MODE, word_timings=words, bpm=BPM, target_comp=main,
                                        style_config=style)
     setup = """
@@ -185,7 +182,7 @@ def main() -> None:
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
     report = str(args.out_dir / "brat_baseline_report.txt")
-    variants = [_old_script_variant()] + [_variant_jsx(i + 1, g, l, p) for i, (g, l, p) in enumerate(VARIANTS)]
+    variants = [_old_script_variant()] + [_variant_jsx(i + 1, g, l, p, fs) for i, (g, l, p, fs) in enumerate(VARIANTS)]
     parts = ["// brat lab — scripts/subtitle_font_lab/build_brat_lab.py\n" + lab.CLEAN_GUARD_JS
              + "\n$.global.__LAB_RESULTS = [];\n"]
     parts += [f"// ===== {v['tag']} =====\n{v['jsx']}" for v in variants]

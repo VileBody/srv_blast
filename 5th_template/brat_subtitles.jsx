@@ -73,15 +73,19 @@ var CONFIG = {
     transitionBlurDirection: 90,
     transitionBlurLength:    50,
 
-    // Тень по силуэту слов (смотр 2026-09-30: плашка-прямоугольник выглядела
-    // грязным пятном). Вторая копия компа «СУБТИТРЫ» под ним: Fill чёрным →
-    // Minimax (расширить контур) → Gaussian Blur → прозрачность. Повторяет буквы,
-    // раскрытие и моргачку. Только штатные эффекты, без выражений.
-    textShadow:             true,
-    textShadowName:         "BRAT SHADOW",
-    textShadowOpacity:      60,
-    textShadowSpread:       6,
-    textShadowBlur:         38,
+    // Тень под КАЖДЫМ словом (смотр 2026-09-30: плашка под строкой — грязное
+    // пятно). ADBE Drop Shadow на тексте внутри прекомпа слова — появляется вместе
+    // со словом. Opacity 0..255. Поле прекомпа (transitionBlurLength+12) вмещает
+    // distance+softness.
+    wordShadow:             true,
+    wordShadowOpacity:      150,
+    wordShadowDirection:    180,           // вниз
+    wordShadowDistance:     6,
+    wordShadowSoftness:     22,
+
+    // Фокус-слово курсивом (null = как остальные). focusFauxItalic — наклон тем же шрифтом.
+    focusFont:              null,
+    focusFauxItalic:        false,
 
     // ---- настройки текста из движка (app/subtitle_font_layout.brat_layout) ----
     strictFont:             false,         // true: ArialNarrow обязан быть в AE без подмены
@@ -138,37 +142,18 @@ function requireRealFont(ps){
     throw new Error("brat: font is substituted in AE: " + ps);
 }
 function wFocus(w){ return !!(w && w.focus); }
-function findColorProp(fx){
-    for (var i = 1; i <= fx.numProperties; i++){
-        var pr = fx.property(i);
-        try { if (pr.propertyValueType === PropertyValueType.COLOR) return pr; } catch (e) {}
-    }
-    return null;
-}
-// Тень-силуэт: копия компа субтитров под ним (см. CONFIG.textShadow).
-function addTextShadow(srcComp, tcomp){
-    var L = srcComp.layers.add(tcomp);
-    L.name = CONFIG.textShadowName;
-    L.startTime = 0;
-    L.moveToBeginning();
-    var fx = L.property("ADBE Effect Parade");
-    var fill = fx.addProperty("ADBE Fill");
-    if (!fill) throw new Error("text shadow: ADBE Fill is unavailable");
-    var col = findColorProp(fill);
-    if (!col) throw new Error("text shadow: Fill color property not found");
-    col.setValue([0, 0, 0]);
-    if (CONFIG.textShadowSpread > 0){
-        var mm = fx.addProperty("ADBE Minimax");
-        if (!mm) throw new Error("text shadow: ADBE Minimax is unavailable");
-        mm.property("ADBE Minimax-0001").setValue(2);                       // Maximum
-        mm.property("ADBE Minimax-0002").setValue(CONFIG.textShadowSpread);
-        mm.property("ADBE Minimax-0003").setValue(2);                       // Alpha and Color
-    }
-    var sgb = fx.addProperty("ADBE Gaussian Blur 2");
-    if (!sgb) throw new Error("text shadow: Gaussian Blur is unavailable");
-    sgb.property("ADBE Gaussian Blur 2-0001").setValue(CONFIG.textShadowBlur);
-    L.property("ADBE Transform Group").property("ADBE Opacity").setValue(CONFIG.textShadowOpacity);
-    return L;
+// Шрифт слова: фокус-слово — курсивом (CONFIG.focusFont / focusFauxItalic).
+function wordFont(isFocus){ return (isFocus && CONFIG.focusFont) ? CONFIG.focusFont : CONFIG.font; }
+function wordFaux(isFocus){ return !!(isFocus && CONFIG.focusFauxItalic); }
+function addWordShadow(fx){
+    var ds = fx.addProperty("ADBE Drop Shadow");
+    if (!ds) throw new Error("word shadow: ADBE Drop Shadow is unavailable");
+    ds.property("ADBE Drop Shadow-0001").setValue([0, 0, 0, 1]);
+    ds.property("ADBE Drop Shadow-0002").setValue(CONFIG.wordShadowOpacity);
+    ds.property("ADBE Drop Shadow-0003").setValue(CONFIG.wordShadowDirection);
+    ds.property("ADBE Drop Shadow-0004").setValue(CONFIG.wordShadowDistance);
+    ds.property("ADBE Drop Shadow-0005").setValue(CONFIG.wordShadowSoftness);
+    return ds;
 }
 function injectedBpm(){
     try { if (typeof $.global.__BLAST_BPM !== "undefined" && $.global.__BLAST_BPM){ var b = Number($.global.__BLAST_BPM); if (b > 0) return b; } } catch(e){}
@@ -226,8 +211,7 @@ function cleanupPreviousBrat(srcComp){
         layer = srcComp.layer(li);
         source = null;
         try { source = layer.source; } catch (eSource) {}
-        if ((source && source instanceof CompItem && isGeneratedBratCompName(source.name)) ||
-            String(layer.name) === CONFIG.textShadowName){
+        if (source && source instanceof CompItem && isGeneratedBratCompName(source.name)){
             layer.remove();
             removedLayers++;
             continue;
@@ -326,11 +310,12 @@ function addRevealAnimator(L, slice, t0){
 function blockNeedsLeft(block){
     return block.words.length < 2;
 }
-function styleText(L, justify, fontSize, fillColor){
+function styleText(L, justify, fontSize, fillColor, font, fauxItalic){
+    var want = font || CONFIG.font;
     var stProp = L.property("ADBE Text Properties").property("ADBE Text Document");
     var td = stProp.value;
     td.resetCharStyle();
-    td.font          = CONFIG.font;
+    td.font          = want;
     td.fontSize      = fontSize || CONFIG.fontSize;
     td.applyFill     = true;
     td.fillColor     = fillColor || CONFIG.fillColor;
@@ -339,36 +324,41 @@ function styleText(L, justify, fontSize, fillColor){
     try { td.autoLeading = false; } catch (eA) {}
     try { td.leading     = (fontSize || CONFIG.fontSize) * (CONFIG.leading / CONFIG.fontSize); } catch (eL) {}
     td.justification = justify || ParagraphJustification.FULL_JUSTIFY_LASTLINE_FULL;
+    if (fauxItalic) td.fauxItalic = true;
     stProp.setValue(td);
-    if (!CONFIG.strictFont) try { var chk = stProp.value; if (String(chk.font) !== CONFIG.font){ chk.font = CONFIG.fontFallback; stProp.setValue(chk); } } catch (eF) {}
+    if (!CONFIG.strictFont) try { var chk = stProp.value; if (String(chk.font) !== want){ chk.font = CONFIG.fontFallback; stProp.setValue(chk); } } catch (eF) {}
 }
 
-// Single line's words as the rendered string (for width probing).
-function lineString(line){
-    var ws = [], j;
-    for (j = 0; j < line.length; j++) ws.push(wWord(line[j]));
-    return ws.join(" ").toLowerCase();
-}
-// GLOBAL fit: measure the widest line across ALL blocks (point-text probe, no
-// wrap) and return one fontSize for the WHOLE video so the widest line fits the
-// box → no auto-wrap anywhere → every visual line keeps its 2–3 words, and the
-// subtitle size is uniform across the clip (no per-block jumping).
+// GLOBAL fit: measure the widest line across ALL blocks and return one fontSize
+// for the WHOLE video so the widest line fits the box → no auto-wrap anywhere →
+// every visual line keeps its 2–3 words, and the subtitle size is uniform across
+// the clip (no per-block jumping). Line width = sum of word widths (each in its
+// own font: the focus word may be italic) + spaces.
 function computeFitFontSize(tcomp, blocks, boxW){
     var probe = tcomp.layers.addText("x");
     var sp = probe.property("ADBE Text Properties").property("ADBE Text Document");
-    var maxW = 1, b, i;
+    function width(text, font, faux){
+        var td = sp.value;
+        td.resetCharStyle();
+        td.text = text;
+        td.font = font;
+        td.fontSize = CONFIG.fontSize;
+        td.tracking = CONFIG.tracking;
+        td.applyStroke = false;
+        if (faux) td.fauxItalic = true;
+        sp.setValue(td);
+        return probe.sourceRectAtTime(0, false).width;
+    }
+    var space = width("\u043d \u043d", CONFIG.font, false) - width("\u043d\u043d", CONFIG.font, false);
+    var maxW = 1, b, i, j;
     for (b = 0; b < blocks.length; b++){
         for (i = 0; i < blocks[b].lines.length; i++){
-            var s = lineString(blocks[b].lines[i]); if (!s.length) continue;
-            var td = sp.value;
-            td.resetCharStyle();
-            td.text = s;
-            td.font = CONFIG.font;
-            td.fontSize = CONFIG.fontSize;
-            td.tracking = CONFIG.tracking;
-            td.applyStroke = false;
-            sp.setValue(td);
-            var w = probe.sourceRectAtTime(0, false).width;
+            var line = blocks[b].lines[i], w = 0;
+            for (j = 0; j < line.length; j++){
+                var t = wWord(line[j]).toLowerCase(); if (!t.length) continue;
+                var f = wFocus(line[j]);
+                w += width(t, wordFont(f), wordFaux(f)) + (j ? space : 0);
+            }
             if (w > maxW) maxW = w;
         }
     }
@@ -515,7 +505,10 @@ function addBlinker(tcomp, spanIn, spanOut){
     var __bpm = injectedBpm(); if (__bpm) CONFIG.bpm = __bpm;
     var __fill = injectedFill(); if (__fill) CONFIG.fillColor = __fill;  // blast: custom subtitle color
     applyInjectedStyle();  // blast: настройки текста визарда (движок) — поверх прод-дефолтов
-    if (CONFIG.strictFont) requireRealFont(CONFIG.font);
+    if (CONFIG.strictFont){
+        requireRealFont(CONFIG.font);
+        if (CONFIG.focusFont) requireRealFont(CONFIG.focusFont);
+    }
     var data = injectedData();
     if (!data){
         var jf = pickFile(); if (!jf){ say("файл не выбран"); return; }
@@ -578,9 +571,11 @@ function addBlinker(tcomp, spanIn, spanOut){
         probe.name = "BRAT word measure probe";
         styleText(probe, ParagraphJustification.LEFT_JUSTIFY, fitFontSize);
         var probeSource = probe.property("ADBE Text Properties").property("ADBE Text Document");
-        function measureWord(wordText){
+        function measureWord(wordText, isFocus){
             var td = probeSource.value;
             td.text = wordText;
+            td.font = wordFont(isFocus);
+            td.fauxItalic = wordFaux(isFocus);
             probeSource.setValue(td);
             var mr = probe.sourceRectAtTime(0, false);
             return {
@@ -598,13 +593,17 @@ function addBlinker(tcomp, spanIn, spanOut){
         var glyphHalfH = 1;
         for (var gbi = 0; gbi < blocks.length; gbi++){
             for (var gw = 0; gw < blocks[gbi].words.length; gw++){
-                var gm = measureWord(wWord(blocks[gbi].words[gw]).toLowerCase());
+                var gm = measureWord(wWord(blocks[gbi].words[gw]).toLowerCase(), wFocus(blocks[gbi].words[gw]));
                 glyphHalfH = Math.max(glyphHalfH, -gm.top, gm.bottom);
             }
         }
         var wordPad = CONFIG.transitionBlurLength + 12;
         var wordCompH = Math.max(4, 2 * Math.ceil(glyphHalfH + wordPad));
         var rowX = CW * CONFIG.centerXFrac;
+        // Строб Ч/Б (Difference, авто-инверсия) — тень там не нужна
+        var __blS = ($.global && $.global.__BLAST_SUBS_BLEND) ? String($.global.__BLAST_SUBS_BLEND).toLowerCase() : "";
+        var wordShadowOn = CONFIG.wordShadow && __blS !== "difference";
+        if (CONFIG.wordShadow && !wordShadowOn) log("word shadow skipped: subtitles blend is difference (auto-invert)");
 
         var wordBlurCount = 0, plateCount = 0;
         for (var b = 0; b < blocks.length; b++){
@@ -627,7 +626,7 @@ function addBlinker(tcomp, spanIn, spanOut){
                 var line = block.lines[row]; if (!line.length) continue;
                 var metrics = [], naturalWidth = 0;
                 for (var mi = 0; mi < line.length; mi++){
-                    var metric = measureWord(wWord(line[mi]).toLowerCase());
+                    var metric = measureWord(wWord(line[mi]).toLowerCase(), wFocus(line[mi]));
                     metrics.push(metric);
                     naturalWidth += metric.width;
                 }
@@ -666,8 +665,10 @@ function addBlinker(tcomp, spanIn, spanOut){
                         L.motionBlur = false;
                         L.inPoint = 0;
                         L.outPoint = wc.duration;
+                        var isFocus = wFocus(word);
                         styleText(L, ParagraphJustification.LEFT_JUSTIFY, fitFontSize,
-                                  (wFocus(word) && CONFIG.focusFillColor) ? CONFIG.focusFillColor : null);
+                                  (isFocus && CONFIG.focusFillColor) ? CONFIG.focusFillColor : null,
+                                  wordFont(isFocus), wordFaux(isFocus));
                         var wr = L.sourceRectAtTime(0, false);
                         var wtg = L.property("ADBE Transform Group");
                         // Point-text layer space has y=0 on the baseline.  Keep
@@ -686,6 +687,7 @@ function addBlinker(tcomp, spanIn, spanOut){
                         try { mm.property("ADBE Minimax-0003").setValue(CONFIG.minimaxChannel); } catch (eC) {}
                         var gb = fx.addProperty("ADBE Gaussian Blur 2");
                         gb.property("ADBE Gaussian Blur 2-0001").setValue(CONFIG.blurRadius);
+                        if (wordShadowOn) addWordShadow(fx);
 
                         addWordDirectionalBlur(wc, wordCompDuration, wc.frameDuration,
                                                (b + 1) + "." + (row + 1) + "." + (wi + 1));
@@ -750,9 +752,6 @@ function addBlinker(tcomp, spanIn, spanOut){
                     contrastLayer.outPoint = srcComp.duration;
                     contrastLayer.moveToBeginning();
                 }
-                var __blS = ($.global && $.global.__BLAST_SUBS_BLEND) ? String($.global.__BLAST_SUBS_BLEND).toLowerCase() : "";
-                if (CONFIG.textShadow && __blS !== "difference") addTextShadow(srcComp, tcomp);
-                else if (CONFIG.textShadow) log("text shadow skipped: subtitles blend is difference (auto-invert)");
                 var nl = srcComp.layers.add(tcomp); nl.moveToBeginning();
                 // Strobe Ч/Б: Difference на вложенном компе → белый текст авто-
                 // инвертируется под мигающим Ч/Б фоном (читаем на любом сегменте).

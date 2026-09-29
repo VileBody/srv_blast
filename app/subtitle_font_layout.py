@@ -845,21 +845,31 @@ def trendy_layout(font: str, *, params: Optional[JaksonTextParams] = None, rende
 # brat (5th template, brat_subtitles.jsx): шрифт фиксирован (Arial Narrow), пар нет
 # ===========================================================================
 # Настраивается: размер (ширина бокса full-justify), позиция (бокс к полю / вниз
-# для 16:9), тень, цвет (основной + акцентный на фокус-словах). Высоты нет — гротеск.
-# Тень — силуэт слов (копия компа субтитров: Fill → Minimax → Gaussian Blur),
-# прежняя плашка под строкой выключена (смотр 2026-09-30: грязное пятно).
+# для 16:9), тень, цвет (основной + акцентный на фокус-словах), курсив фокус-слова
+# (то же семейство Arial Narrow — базовая линия та же). Высоты нет — гротеск.
+# Тень — ADBE Drop Shadow под каждым словом (внутри прекомпа слова); прежняя
+# плашка под строкой выключена (смотр 2026-09-30: грязное пятно).
 BRAT_FONT = "ArialNarrow"
 BRAT_BOX_W_FACTOR = 0.80
 BRAT_FONT_SIZE = 130.0
 BRAT_MIN_FONT_SIZE = 56.0
 BRAT_LAYER_SCALE = 0.80              # CONFIG.scale — видимая ширина бокса = BOX_W·0.8
-BRAT_SHADOW_PRESETS = {"none": None, "soft": {"opacity": 60, "spread": 6, "blur": 38},
-                       "strong": {"opacity": 85, "spread": 10, "blur": 30}}
+# Drop Shadow: opacity 0..255, distance/softness в px (до масштаба слоя 80%)
+BRAT_SHADOW_PRESETS = {"none": None, "soft": {"opacity": 150, "distance": 6, "softness": 22},
+                       "strong": {"opacity": 215, "distance": 8, "softness": 16}}
+# курсив фокус-слова: (шрифт, faux italic); None — как остальные слова (прод)
+BRAT_FOCUS_STYLES = {
+    None: (None, False),
+    "italic": ("ArialNarrow-Italic", False),
+    "bold_italic": ("ArialNarrow-BoldItalic", False),
+    "faux_italic": (None, True),
+}
 
 
 @dataclass(frozen=True)
 class BratLayout:
     params: JaksonTextParams
+    focus_style: Optional[str] = None
 
     def jsx_config(self) -> Dict[str, Any]:
         align, cy = POSITION_PRESETS[self.params.position]
@@ -878,18 +888,27 @@ class BratLayout:
             "centerXFrac": round(cx, 4), "centerYFrac": cy, "strictFont": True,
         }
         shadow = BRAT_SHADOW_PRESETS[self.params.shadow]
-        cfg["textShadow"] = shadow is not None
+        cfg["wordShadow"] = shadow is not None
         if shadow is not None:
-            cfg.update({"textShadowOpacity": shadow["opacity"], "textShadowSpread": shadow["spread"],
-                        "textShadowBlur": shadow["blur"]})
+            cfg.update({"wordShadowOpacity": shadow["opacity"], "wordShadowDistance": shadow["distance"],
+                        "wordShadowSoftness": shadow["softness"]})
+        font, faux = BRAT_FOCUS_STYLES[self.focus_style]
+        if font:
+            cfg["focusFont"] = font
+        if faux:
+            cfg["focusFauxItalic"] = True
         if self.params.accent_color:
             cfg["focusFillColor"] = hex_to_rgb01(self.params.accent_color)
         return cfg
 
 
 def brat_layout(*, params: Optional[JaksonTextParams] = None, render_preset: str = "vertical",
-                font: Optional[str] = None, accent_font: Optional[str] = None) -> BratLayout:
-    """Смена шрифта и пары для brat запрещены (решение 2026-09-30) — ошибка, не игнор."""
+                font: Optional[str] = None, accent_font: Optional[str] = None,
+                focus_style: Optional[str] = None) -> BratLayout:
+    """Смена шрифта и пары для brat запрещены (решение 2026-09-30) — ошибка, не игнор.
+    Фокус-слово можно выделить курсивом того же семейства (focus_style)."""
+    if focus_style not in BRAT_FOCUS_STYLES:
+        raise ValueError(f"unknown brat focus_style {focus_style!r} (allowed: {[k for k in BRAT_FOCUS_STYLES if k]})")
     params = params or JaksonTextParams()
     params.check_render_preset(render_preset)
     if font not in (None, BRAT_FONT):
@@ -898,4 +917,4 @@ def brat_layout(*, params: Optional[JaksonTextParams] = None, render_preset: str
         raise ValueError("brat has no font pairs; accent_font must be None")
     if params.height != "normal":
         raise ValueError(f"brat has no height control (sans font); got {params.height!r}")
-    return BratLayout(params=params)
+    return BratLayout(params=params, focus_style=focus_style)
