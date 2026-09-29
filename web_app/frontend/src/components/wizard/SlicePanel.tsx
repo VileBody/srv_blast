@@ -8,8 +8,12 @@ import { LimitsIndicator } from '../ui/LimitsIndicator';
 import { BackSquareButton } from './WizardFrame';
 import { HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
+import { footageTypePlane } from '../../data/footageTypes';
+import { PoolStoryboard, StoryboardSlot } from './PoolStoryboard';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
+import { useFxLab, useLabPoolRows, variantHookLabel } from './FxLab';
+import { selectedStyles } from './HookPanel';
 
 /** Мини-визуал первой подсказки пула: счётчик роликов растёт. */
 /**
@@ -70,6 +74,53 @@ function PoolDistributeGuideVisual() {
   );
 }
 
+/**
+ * Шаг 2 тура «Пула» в режиме вариантов: ролик = фон + субтитры + вариант FX. Слева —
+ * слоты с долями, справа — ролик, который перебирает сочетания (как «Комбинации» на экране);
+ * подсвечены ровно те фон и вариант, что сейчас в ролике.
+ */
+function PoolCombosGuideVisual() {
+  // 3 ролика: доли в каждом слоте в сумме дают 3
+  const rows: { label: string; items: { text: string; n: number; dot?: string; phase?: 'a' | 'b' }[] }[] = [
+    { label: 'Фон', items: [{ text: 'Ночной город', n: 2, phase: 'a' }, { text: 'Неон', n: 1, phase: 'b' }] },
+    { label: 'Текст', items: [{ text: 'Jakson', n: 3 }] },
+    { label: 'FX', items: [{ text: 'Молния', n: 2, dot: '#8b6fe6', phase: 'a' }, { text: 'Свайп', n: 1, dot: '#e38fb5', phase: 'b' }] }
+  ];
+  const on = 'bg-accent-20 text-white shadow-[inset_0_0_0_1px_var(--accent-light)]';
+  return (
+    <div className="relative mx-auto flex h-[84px] w-[284px] max-w-full items-center gap-[12px]" aria-hidden="true">
+      <span className="flex min-w-0 flex-1 flex-col gap-[5px]">
+        {rows.map((row, r) => (
+          <span key={row.label} className={cn('guide-mode-reveal flex h-[22px] items-center gap-[5px]', `guide-mode-delay-${r + 1}`)}>
+            <span className="w-[30px] shrink-0 text-[9px] leading-none text-white/45"><span className="inline-block translate-y-px">{row.label}</span></span>
+            {row.items.map((item) => (
+              <span key={item.text} className="relative flex h-full min-w-0 items-center gap-[4px] overflow-hidden rounded-[6px] bg-white/[0.06] px-[6px] text-[9px] leading-none text-white/70">
+                {item.phase && <i className={cn('absolute inset-0 rounded-[6px]', on, item.phase === 'a' ? 'guide-sb-a' : 'guide-sb-b')} />}
+                {!item.phase && <i className={cn('absolute inset-0 rounded-[6px]', on)} />}
+                {item.dot && <i className="relative h-[5px] w-[5px] shrink-0 rounded-full" style={{ background: item.dot }} />}
+                <span className="relative translate-y-px truncate text-white">{item.text}</span>
+                <b className="relative ml-[2px] font-[400] text-white/55"><span className="inline-block translate-y-px">{item.n}</span></b>
+              </span>
+            ))}
+          </span>
+        ))}
+      </span>
+      <span className="guide-mode-reveal guide-mode-delay-4 relative h-[84px] w-[47px] shrink-0 overflow-hidden rounded-[8px] bg-black ring-1 ring-white/10">
+        <i className="guide-sb-a absolute inset-0" style={{ background: 'linear-gradient(160deg, #3b2f6e, #120b24 70%)' }} />
+        <i className="guide-sb-b absolute inset-0" style={{ background: 'linear-gradient(200deg, #2f5a6e, #0b1a24 70%)' }} />
+        <span className="absolute inset-x-[4px] bottom-[4px] flex flex-col gap-[2px]">
+          <i className="h-[3px] w-[70%] rounded-full bg-white/45" />
+          <i className="h-[3px] w-[45%] rounded-full bg-white/30" />
+          <span className="relative h-[5px] w-[5px]">
+            <i className="guide-sb-a absolute inset-0 rounded-full" style={{ background: '#8b6fe6' }} />
+            <i className="guide-sb-b absolute inset-0 rounded-full" style={{ background: '#e38fb5' }} />
+          </span>
+        </span>
+      </span>
+    </div>
+  );
+}
+
 /*
  * Этап «Пул» (Figma W19 → W33): «Всего видео» закреплён сверху, секции скроллятся
  * под него с фейдом. Ручные значения не трогаем — показываем «нераспределено: ±N».
@@ -88,6 +139,14 @@ export function backgroundUnits(bg: WizardStateData['background']): { key: strin
     })),
     ...bg.photo.map((vibe) => ({ key: `photo:${vibe}`, labelKey: 'wizard.pool.photoUnit', name: vibe, icon: 'photo' as const, noHook: true }))
   ];
+}
+
+/**
+ * Id подсказок «Пула». В режиме вариантов FX тур свой (другие тексты и визуал шага 2) — и
+ * id свои: у старых «видел» записан у всех, кто проходил прежний тур.
+ */
+export function poolGuideId(id: 'total' | 'distribute' | 'storyboard' | 'replace', variants: boolean): string {
+  return `${variants ? 'pool2' : 'pool'}-${id}`;
 }
 
 export function compatibleHookTarget(
@@ -136,11 +195,12 @@ function SectionCard({ title, note, warn, children }: { title: string; note: str
   );
 }
 
-function MiniPill({ icon, label }: { icon: ReactNode; label: string }) {
+function MiniPill({ icon, label, trail }: { icon: ReactNode; label: string; trail?: ReactNode }) {
   return (
     <span className="mini-pill">
       <span className="mini-pill-icon" aria-hidden="true">{icon}</span>
       {label}
+      {trail}
     </span>
   );
 }
@@ -180,20 +240,29 @@ export function StageSlice() {
     : null;
   const fixedCount = colorGroup ? 1 : 0;
   const subtitleStyles = state.subtitles.pool;
-  const hooksInPool = hookPills(state.hooks);
-  const stylesInPool = selectedEffectStyles(state.hooks);
+  // Режим вариантов FX (по умолчанию): строки секции FX — варианты (стиль внутри варианта),
+  // доли — allocation.variants. Классические хуки и отдельная секция стилей в нём не участвуют.
+  const fxLab = useFxLab();
+  const labRows = useLabPoolRows();
+  const hooksInPool = fxLab ? [] : hookPills(state.hooks);
+  const stylesInPool = fxLab ? [] : selectedEffectStyles(state.hooks);
+  const fxKeys = fxLab ? labRows.map((row) => row.id) : hooksInPool.map((pill) => pill.kind);
+  const fxAlloc: Record<string, number> = fxLab ? (alloc.variants ?? {}) : alloc.hooks;
+  const fxSlice = fxLab ? 'variants' as const : 'hooks' as const;
+  // Вариант, который начали, но не довели (в пул он не попадает, а генерацию держит).
+  const labIncomplete = fxLab && state.fxVariants.some((v) => !v.draft && !labRows.some((row) => row.id === v.id));
 
   useEffect(() => {
     const unitKeys = units.map((u) => u.key);
     const known = Object.keys(alloc.background);
     const sameKeys = unitKeys.length === known.length && unitKeys.every((key) => known.includes(key));
     if (alloc.seeded && sameKeys) {
-      const hookKinds = hooksInPool.map((pill) => pill.kind);
-      const allocatedHookKinds = Object.keys(alloc.hooks);
+      const hookKinds = fxKeys;
+      const allocatedHookKinds = Object.keys(fxAlloc);
       const sameHookKinds = hookKinds.length === allocatedHookKinds.length
         && hookKinds.every((kind) => allocatedHookKinds.includes(kind));
       const hookTarget = compatibleHookTarget(state.background, alloc.background);
-      const hookSum = Object.values(alloc.hooks).reduce((sum, count) => sum + count, 0);
+      const hookSum = Object.values(fxAlloc).reduce((sum, count) => sum + count, 0);
       const allocatedStyles = Object.keys(alloc.styles ?? {});
       const sameStyles = stylesInPool.length === allocatedStyles.length
         && stylesInPool.every((style) => allocatedStyles.includes(style));
@@ -205,7 +274,7 @@ export function StageSlice() {
       if (sameHookKinds && hookSum === hookTarget && sameStyles && (!stylesInPool.length || stylesSum === hookTarget)
         && sameSubtitles && (!subtitleStyles.length || subtitleSum === unitKeys.length)) return;
       setAllocation({
-        hooks: sameHookKinds && hookSum === hookTarget ? alloc.hooks : distribute(hookKinds, hookTarget),
+        [fxSlice]: sameHookKinds && hookSum === hookTarget ? fxAlloc : distribute(hookKinds, hookTarget),
         styles: sameStyles && stylesSum === hookTarget ? alloc.styles : distribute(stylesInPool, hookTarget),
         subtitles: sameSubtitles && subtitleSum === unitKeys.length ? alloc.subtitles : distribute(subtitleStyles, unitKeys.length)
       });
@@ -216,13 +285,13 @@ export function StageSlice() {
       total: unitKeys.length + fixedCount,
       background: distribute(unitKeys, unitKeys.length),
       subtitles: distribute(subtitleStyles, unitKeys.length),
-      hooks: distribute(hooksInPool.map((p) => p.kind), units.filter((u) => !u.noHook).length),
+      [fxSlice]: distribute(fxKeys, units.filter((u) => !u.noHook).length),
       styles: distribute(stylesInPool, units.filter((u) => !u.noHook).length),
       strobeFont: alloc.strobeFont ?? subtitleStyles[0],
       colorFont: alloc.colorFont ?? subtitleStyles[0]
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [units, fixedCount, subtitleStyles.join(','), hooksInPool.map((p) => p.kind).join(','), stylesInPool.join(',')]);
+  }, [units, fixedCount, subtitleStyles.join(','), fxKeys.join(','), stylesInPool.join(',')]);
 
   const bgSum = Object.values(alloc.background).reduce((a, b) => a + b, 0);
   const bgTarget = alloc.total - fixedCount;
@@ -232,8 +301,9 @@ export function StageSlice() {
   const subsRest = bgTarget - subsSum;
 
   const hookTarget = compatibleHookTarget(state.background, alloc.background);
-  const hooksSum = Object.values(alloc.hooks).reduce((a, b) => a + b, 0);
-  const hooksRest = hookTarget - hooksSum;
+  // В режиме вариантов считаем только варианты на экране (удалённые/недонастроенные не в счёт).
+  const hooksSum = fxLab ? labRows.reduce((n, row) => n + row.count, 0) : Object.values(alloc.hooks).reduce((a, b) => a + b, 0);
+  const hooksRest = fxKeys.length ? hookTarget - hooksSum : 0;
   const stylesSum = Object.values(alloc.styles ?? {}).reduce((a, b) => a + b, 0);
   const stylesRest = stylesInPool.length ? hookTarget - stylesSum : 0;
 
@@ -250,7 +320,7 @@ export function StageSlice() {
     setAllocation({
       background,
       subtitles: distribute(subtitleStyles, backgroundTarget),
-      hooks: distribute(hooksInPool.map((pill) => pill.kind), footageTarget),
+      [fxSlice]: distribute(fxKeys, footageTarget),
       styles: distribute(stylesInPool, footageTarget)
     });
   };
@@ -268,11 +338,15 @@ export function StageSlice() {
   // на его dismissed-значение ссылается. visible=false у distribute: точный
   // пререквизит «total уже закрыт» тут не собрать (totalGuideDismissed объявлен
   // НИЖЕ) — показ отмечаем отдельно через useMarkGuideSeen после showDistributeGuide.
-  const [distributeGuideDismissed, setDistributeGuideDismissed] = useGuideDismiss('pool-distribute', hasUnallocated, false);
-  const [totalGuideDismissed, setTotalGuideDismissed] = useGuideDismiss('pool-total', !distributeGuideDismissed, true);
+  const [distributeGuideDismissed, setDistributeGuideDismissed] = useGuideDismiss(poolGuideId('distribute', fxLab), hasUnallocated, false);
+  const [totalGuideDismissed, setTotalGuideDismissed] = useGuideDismiss(poolGuideId('total', fxLab), !distributeGuideDismissed, true);
   const showTotalGuide = !totalGuideDismissed;
   const showDistributeGuide = totalGuideDismissed && !distributeGuideDismissed;
-  useMarkGuideSeen('pool-distribute', totalGuideDismissed);
+  useMarkGuideSeen(poolGuideId('distribute', fxLab), totalGuideDismissed);
+  // Шаги 3–4 — раскадровка справа (PoolStoryboard). Она есть только у футажа из вайбов,
+  // без неё серия остаётся из двух шагов.
+  const storyboardAvailable = footageTypePlane(state.background.footageType) === 'vibes' && units.some((unit) => unit.key.startsWith('footage:'));
+  const poolGuideTotal = storyboardAvailable ? 4 : 2;
 
   // Явный скролл к цели до собственного instant-scrollIntoView оверлея: без него
   // цель может остаться частично за пределами внешнего скролл-контейнера страницы,
@@ -308,9 +382,9 @@ export function StageSlice() {
         open={showTotalGuide}
         targetRef={totalGuideTargetRef}
         title={t('wizard.pool.guideTotalTitle')}
-        text={t('wizard.pool.guideTotalText')}
+        text={t(fxLab ? 'wizard.pool.guideTotalTextVariants' : 'wizard.pool.guideTotalText')}
         dismissLabel={t('wizard.pool.guideNext')}
-        progressLabel={t('wizard.guideProgress', { current: 1, total: 2 })}
+        progressLabel={t('wizard.guideProgress', { current: 1, total: poolGuideTotal })}
         onDismiss={() => setTotalGuideDismissed(true)}
         variant="visual"
         shell="track-top"
@@ -369,7 +443,24 @@ export function StageSlice() {
           </SectionCard>
         )}
 
-        {hooksInPool.length > 0 && (
+        {fxLab && (
+          <SectionCard
+            title={t('wizard.pool.fx')}
+            note={!labRows.length ? t('wizard.pool.fxNoVariants')
+              : labIncomplete ? t('wizard.pool.fxIncomplete')
+                : restNote(hooksRest, t('wizard.pool.fxNote', { count: hookTarget }))}
+            warn={!labRows.length || labIncomplete || hooksRest !== 0}
+          >
+            {labRows.map((row) => (
+              <div key={row.id} className="flex items-center justify-between gap-space-3">
+                <MiniPill icon={hookKindIcon(row.kind)} label={row.label} trail={<i className="ml-[8px] inline-block h-[8px] w-[8px] shrink-0 rounded-full" style={{ background: row.color }} aria-hidden="true" />} />
+                <Stepper value={row.count} onChange={row.set} />
+              </div>
+            ))}
+          </SectionCard>
+        )}
+
+        {!fxLab && hooksInPool.length > 0 && (
           <SectionCard title={t('wizard.pool.fx')} note={restNote(hooksRest, t('wizard.pool.fxNote', { count: hookTarget }))} warn={hooksRest !== 0}>
             {hooksInPool.map((pill) => (
               <div key={pill.kind} className="flex items-center justify-between gap-space-3">
@@ -381,7 +472,7 @@ export function StageSlice() {
           </SectionCard>
         )}
 
-        {stylesInPool.length > 0 && (
+        {!fxLab && stylesInPool.length > 0 && (
           <SectionCard title={t('wizard.pool.styles')} note={restNote(stylesRest, isPhone ? '' : t('wizard.pool.stylesNote', { count: hookTarget }))} warn={stylesRest !== 0}>
             {stylesInPool.map((style) => (
               <div key={style} className="flex items-center justify-between gap-space-3">
@@ -397,14 +488,14 @@ export function StageSlice() {
       <ActionGuideOverlay
         open={showDistributeGuide}
         targetRef={distributeGuideTargetRef}
-        title={t('wizard.pool.guideDistributeTitle')}
-        text={t('wizard.pool.guideDistributeText')}
-        dismissLabel={t('wizard.pool.guideDismiss')}
-        progressLabel={t('wizard.guideProgress', { current: 2, total: 2 })}
+        title={t(fxLab ? 'wizard.pool.guideDistributeTitleVariants' : 'wizard.pool.guideDistributeTitle')}
+        text={t(fxLab ? 'wizard.pool.guideDistributeTextVariants' : 'wizard.pool.guideDistributeText')}
+        dismissLabel={storyboardAvailable ? t('wizard.pool.guideNext') : t('wizard.pool.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 2, total: poolGuideTotal })}
         onDismiss={() => setDistributeGuideDismissed(true)}
         variant="visual"
         shell="track-top"
-        visual={<PoolDistributeGuideVisual />}
+        visual={fxLab ? <PoolCombosGuideVisual /> : <PoolDistributeGuideVisual />}
       />
     </div>
   );
@@ -452,6 +543,14 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
 
   const total = Math.max(1, alloc.total);
   const safeIndex = Math.min(index, total - 1);
+  // Режим вариантов: «хук» комбинации — id варианта, склейка и стиль берутся из него же.
+  // Порядок — как в списке вариантов: так же раскладывает ролики бэк (render_job).
+  const fxLab = useFxLab();
+  const labVariants = state.fxVariants.filter((v) => !v.draft);
+  const hookEntries: [string, number][] = fxLab
+    ? labVariants.map((v) => [v.id, alloc.variants?.[v.id] ?? 0])
+    : Object.entries(alloc.hooks);
+  const styleEntries: [string, number][] = fxLab ? [] : Object.entries(alloc.styles ?? {});
   const colorStyle = state.background.color
     ? (state.background.strobe ? alloc.strobeFont : alloc.colorFont) ?? state.subtitles.pool[0]
     : undefined;
@@ -459,8 +558,8 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
     safeIndex,
     Object.entries(alloc.background),
     Object.entries(alloc.subtitles),
-    Object.entries(alloc.hooks),
-    Object.entries(alloc.styles ?? {}),
+    hookEntries,
+    styleEntries,
     units,
     Boolean(state.background.color),
     colorStyle
@@ -469,22 +568,44 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   const bgLabel = combo.bg === '__color__'
     ? chip(state.background.strobe ? 'Строб' : 'Цвет')
     : combo.bg ? (units.find(unit => unit.key === combo.bg)?.name ?? chip(combo.bg.split(':')[1])) : undefined;
-  const hookLabel = combo.hook ? chip(HOOK_LABELS[combo.hook as HookKind]) : undefined;
-  const hookConfig = combo.hook ? state.hooks.configs[combo.hook as HookKind] : undefined;
+  const comboVariant = fxLab && combo.hook ? labVariants.find((v) => v.id === combo.hook) : undefined;
+  const comboStyle = comboVariant ? selectedStyles(comboVariant.config)[0] : combo.style;
+  const hookLabel = comboVariant ? variantHookLabel(comboVariant, chip) : combo.hook ? chip(HOOK_LABELS[combo.hook as HookKind]) : undefined;
+  const hookConfig = comboVariant ? comboVariant.config : combo.hook ? state.hooks.configs[combo.hook as HookKind] : undefined;
   const transitionLabel = hookConfig?.effectGlue ? chip(hookConfig.effectGlue) : t('wizard.pool.notSelected');
-  const styleLabel = combo.style ? chip(combo.style) : t('wizard.pool.noStyleSelected');
+  const styleLabel = comboStyle ? chip(comboStyle) : t('wizard.pool.noStyleSelected');
 
-  // Стрелки клавиатуры листают комбинации, пока фокус внутри панели
-  const onKeyDown = (event: React.KeyboardEvent) => {
-    if (total < 2) return;
-    if (event.key === 'ArrowLeft') setIndex((safeIndex - 1 + total) % total);
-    if (event.key === 'ArrowRight') setIndex((safeIndex + 1) % total);
-  };
+  /*
+   * Раскадровка: у каждого видео батча — свой вайб и свои реальные клипы по склейкам
+   * рецепта. Видео листаются пилюлей в шапке, стрелки ← → внутри — кадры видео.
+   * Раскадровка есть у футажа из вайбов; у фото, строба и своих исходников — пояснение.
+   */
+  const plane = footageTypePlane(state.background.footageType);
+  const slots: StoryboardSlot[] = useMemo(() => Array.from({ length: total }, (_, i) => {
+    const bgKey = combinationAt(
+      i, Object.entries(alloc.background), Object.entries(alloc.subtitles), hookEntries,
+      styleEntries, units, Boolean(state.background.color), colorStyle
+    ).bg;
+    if (bgKey?.startsWith('footage:') && plane === 'vibes') return { index: i + 1, group: bgKey.slice('footage:'.length) };
+    const reason = bgKey === '__color__' ? 'Строб и цвет собираются из цветовых планов — исходники не нужны'
+      : bgKey?.startsWith('photo:') ? 'Фото подберутся при генерации — раскадровка пока только для видео'
+        : bgKey?.startsWith('upload:') ? 'Своё видео — ваши клипы пойдут в том порядке, в каком загружены'
+          : bgKey?.startsWith('footage:') ? 'Раскадровка пока только для вайбов — коллекция подберётся при генерации'
+            : 'Фон этого видео ещё не распределён';
+    return { index: i + 1, reason };
+  }), [total, alloc, units, state.background.color, colorStyle, plane]);
+  const chips = [
+    { icon: combo.bg === '__color__' ? strobeIcon(14) : combo.bg?.startsWith('photo') ? photoIcon(14) : tagIcon(14), text: bgLabel ?? t('wizard.pool.notSelected'), off: !bgLabel },
+    { icon: tIcon(14), text: combo.sub ?? t('wizard.pool.notSelected'), off: !combo.sub },
+    { icon: comboVariant ? <i className="inline-block h-[8px] w-[8px] rounded-full" style={{ background: comboVariant.color }} aria-hidden="true" /> : boltIcon(14), text: hookLabel ?? t('wizard.pool.noHookSelected'), off: !hookLabel },
+    { icon: <img src="/assets/figma/combo-transition.svg" width="16" height="16" alt="" />, text: transitionLabel, off: !hookConfig?.effectGlue },
+    { icon: <img src="/assets/figma/combo-style.svg" width="16" height="16" alt="" />, text: styleLabel, off: !comboStyle }
+  ];
 
   return (
-    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full" onKeyDown={onKeyDown}>
+    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
       <div className="card-2 flex min-h-0 flex-1 flex-col px-space-6 py-space-6 max-lg:px-space-5">
-        {/* Полная конфигурация одной вариации; листать можно кнопками или клавиатурой. */}
+        {/* Одно видео батча: пилюля листает видео, внутри — его реальные клипы и замена кадров. */}
         <div className="mb-space-5 flex shrink-0 items-center justify-between gap-space-3">
           <h2 className="wizard-h whitespace-nowrap">{t('wizard.pool.combinations')}</h2>
           <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
@@ -510,29 +631,7 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-hidden rounded-r15 border border-[rgba(139,111,230,.28)] bg-grad-soft-10">
-          <div className="grid h-[52px] grid-cols-[132px_minmax(0,1fr)] max-md:grid-cols-[96px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.09)] bg-[rgba(139,111,230,.08)] px-space-5 text-[13px] uppercase tracking-[.08em] text-text-40 max-md:h-[36px] max-md:px-[14px] max-md:text-[11px]">
-            <span>{t('wizard.pool.parameter')}</span>
-            <span>{t('wizard.pool.selectedValue')}</span>
-          </div>
-          <div className="flex h-[calc(100%_-_52px)] flex-col">
-            {[
-              [t('wizard.pool.background'), bgLabel ?? t('wizard.pool.notSelected'), combo.bg === '__color__' ? strobeIcon(18) : combo.bg?.startsWith('photo') ? photoIcon(18) : tagIcon(18)],
-              [t('wizard.pool.subtitles'), combo.sub ?? t('wizard.pool.notSelected'), tIcon(18)],
-              [t('wizard.pool.hook'), hookLabel ?? t('wizard.pool.noHookSelected'), boltIcon(18)],
-              [t('wizard.pool.transition'), transitionLabel, <img key="transition" src="/assets/figma/combo-transition.svg" width="22" height="22" alt="" />],
-              [t('wizard.pool.style'), styleLabel, <img key="style" src="/assets/figma/combo-style.svg" width="22" height="22" alt="" />]
-            ].map(([label, value, icon]) => (
-              <div key={String(label)} className="grid min-h-0 flex-1 grid-cols-[132px_minmax(0,1fr)] max-md:grid-cols-[96px_minmax(0,1fr)] items-center gap-space-4 border-b border-[rgba(246,245,253,.07)] px-space-5 last:border-0 max-md:min-h-[40px] max-md:px-[14px]">
-                <span className="text-[15px] text-text-40">{label}</span>
-                <span className="flex min-w-0 items-center gap-space-3 text-[19px] text-text-80 max-md:gap-[8px] max-md:text-[14px]">
-                  <span className="flex h-[36px] w-[36px] shrink-0 items-center justify-center rounded-r10 bg-accent-20 max-md:h-[26px] max-md:w-[26px] max-md:rounded-[7px] max-md:[&>*]:scale-[.7]" aria-hidden="true">{icon}</span>
-                  <span className="truncate">{value}</span>
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
+        <PoolStoryboard slots={slots} current={safeIndex} chips={chips} />
       </div>
 
       <div className="card-2 flex h-[140px] shrink-0 items-center gap-[20px] px-space-6 py-space-6 max-lg:px-space-5">

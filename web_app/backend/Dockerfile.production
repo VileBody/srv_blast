@@ -15,6 +15,9 @@ RUN python -m pip install --upgrade pip && \
 
 COPY web_app/backend/ ./
 COPY web_app/frontend/src/data/effects-registry.json /app/web_app/frontend/src/data/effects-registry.json
+# общий зарубежный прокси: через него идёт публикация в TikTok (см. src/outbound_proxy.py)
+COPY src/__init__.py /app/src/__init__.py
+COPY src/outbound_proxy.py /app/src/outbound_proxy.py
 COPY services/__init__.py /app/services/__init__.py
 COPY services/tg_bot_public/__init__.py /app/services/tg_bot_public/__init__.py
 COPY services/tg_bot_public/credits_db.py /app/services/tg_bot_public/credits_db.py

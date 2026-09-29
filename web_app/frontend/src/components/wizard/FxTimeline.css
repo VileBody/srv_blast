@@ -1,0 +1,286 @@
+/* FX-таймлайн (полноэкранный режим шага FX). Референс — CapCut/AE:
+   плеер, линейка, playhead через все дорожки, маркер дропа, переходы на стыках. */
+.fxt {
+  --fxt-panel: #140e24; --fxt-well: #0b0718; --fxt-raise: #1d1533; --fxt-pop: #1b1430;
+  --fxt-line: rgba(246, 245, 253, .07); --fxt-line2: rgba(246, 245, 253, .13);
+  --fxt-t80: rgba(246, 245, 253, .8); --fxt-t60: rgba(246, 245, 253, .6); --fxt-t40: rgba(246, 245, 253, .4);
+  --fxt-t20: rgba(246, 245, 253, .2); --fxt-t06: rgba(246, 245, 253, .06); --fxt-t03: rgba(246, 245, 253, .03);
+  --fxt-frame: #553ba8; --fxt-frame-hover: #6247bd; --fxt-hook: #c6b6ff; --fxt-hook-ink: #170c38;
+  --fxt-hook-soft: rgba(198, 182, 255, .14); --fxt-style: #d3a068; --fxt-style-ink: #2b1906;
+  --fxt-style-soft: rgba(211, 160, 104, .15); --fxt-trans-soft: rgba(246, 245, 253, .1);
+  --fxt-ease: cubic-bezier(.23, 1, .32, 1); --fxt-ease-io: cubic-bezier(.77, 0, .175, 1);
+  --fxt-head: 164px;
+  position: fixed; inset: 0; z-index: var(--z-modal, 60); display: grid; grid-template-rows: 60px minmax(0, 1fr);
+  width: var(--app-layout-w, 100vw); height: var(--app-layout-h, 100dvh);
+  background: var(--bg, #05010f); color: var(--text, #f6f5fd); font-size: 14px; line-height: 1.4;
+}
+/* сброс кнопок — нулевой специфичности (:where), иначе он перебивал классы кнопок
+   (.fxt-back, .fxt-primary, переключатель вариантов…): пропадали фон и отступы */
+:where(.fxt) button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+.fxt button:focus-visible, .fxt [tabindex]:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+.fxt svg { display: block; flex: none; }
+.fxt .num { font-variant-numeric: tabular-nums; }
+/* Point сидит на 1px выше центра — текст в контролах опускаем */
+.fxt .tx { position: relative; top: 1px; }
+
+.fxt-top { display: flex; align-items: center; gap: 16px; padding-inline: 16px; border-bottom: 1px solid var(--fxt-line); }
+.fxt-back { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px 0 10px; border-radius: 12px; color: var(--fxt-t60); transition: color .15s ease, background-color .15s ease; }
+.fxt-back:hover { color: var(--text); background: var(--fxt-t06); }
+.fxt-proj { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.fxt-proj b { font-weight: 400; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fxt-proj span { font-size: 12px; color: var(--fxt-t40); white-space: nowrap; }
+.fxt-spacer { flex: 1; }
+/* переключатель вариантов (прототип): пилюля «● вариант ▾» + приклеенный справа «+»,
+   левый край «+» уходит под основную пилюлю. Не сжимается шапкой — длину держит подпись. */
+.fxt .fxt-vsw { position: relative; display: flex; align-items: center; flex: none; z-index: 30; }
+.fxt .fxt-vsw-main { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px 0 14px; border-radius: 12px; background: var(--fxt-raise); color: var(--text); font-size: 15px; box-shadow: inset 0 0 0 1px var(--fxt-line2); transition: box-shadow .15s ease, background-color .15s ease; }
+.fxt .fxt-vsw-main:hover { background: #231a3c; }
+.fxt .fxt-vsw-main[aria-expanded="true"] { box-shadow: inset 0 0 0 1px var(--accent-light); }
+.fxt .fxt-vsw-main .lb { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fxt .fxt-vsw-main .chev { color: var(--fxt-t60); transition: transform .15s var(--fxt-ease); }
+.fxt .fxt-vsw-main[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.fxt .fxt-vsw i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.fxt .fxt-vsw-plus { position: relative; z-index: 1; display: grid; place-items: center; height: 40px; margin-left: -12px; padding: 0 14px 0 26px; border-radius: 0 12px 12px 0; background: var(--accent-20); color: var(--text); transition: background-color .15s ease; }
+.fxt .fxt-vsw-plus:hover { background: rgba(139, 111, 230, .36); }
+.fxt .fxt-vsw-menu { position: absolute; left: 0; top: 48px; width: 340px; padding: 8px; border-radius: 14px; background: var(--fxt-pop); border: 1px solid var(--fxt-line2); box-shadow: 0 18px 40px rgba(0, 0, 0, .5); display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.fxt .fxt-vsw-item { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; height: 42px; padding: 0 14px; border-radius: 10px; color: var(--fxt-t80); font-size: 15px; text-align: left; transition: background-color .12s ease, color .12s ease; }
+.fxt .fxt-vsw-item:hover { background: var(--fxt-t06); color: var(--text); }
+.fxt .fxt-vsw-item[aria-current="true"] { background: var(--fxt-raise); color: var(--text); }
+.fxt .fxt-vsw-item .lb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fxt .fxt-vsw-item .ck { color: var(--accent-light); flex: none; }
+.fxt .fxt-vsw-sep { height: 1px; margin: 4px 6px; background: var(--fxt-line); }
+.fxt .fxt-vsw-item.new { color: var(--fxt-t80); }
+.fxt .fxt-vsw-item.new .ic { display: grid; place-items: center; width: 22px; height: 22px; margin-left: -6px; border-radius: 7px; background: var(--accent-20); color: var(--text); flex: none; }
+.fxt-seg { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--fxt-well); border: 1px solid var(--fxt-line); }
+.fxt-seg button { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px; border-radius: 9px; color: var(--fxt-t60); font-size: 13px; transition: color .15s ease, background-color .15s ease; }
+.fxt-seg button:hover { color: var(--text); }
+.fxt-seg button[aria-pressed="true"] { background: var(--accent); color: var(--text); }
+.fxt-seg button[aria-disabled="true"] { opacity: .32; cursor: not-allowed; }
+/* переключатель длины слоу-шаттера в панели выбранного — компактный, в одну строку */
+.fxt-sel .fxt-seg { flex: none; }
+.fxt-sel .fxt-seg button { height: 26px; padding: 0 9px; font-size: 12px; white-space: nowrap; }
+.fxt-ratio { border: 1.5px solid currentColor; border-radius: 2px; display: block; }
+.fxt-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--fxt-t60); transition: color .15s ease, background-color .15s ease, transform .12s var(--fxt-ease); }
+.fxt-icon:hover { color: var(--text); background: var(--fxt-t06); }
+.fxt-icon:active { transform: scale(.96); }
+.fxt-icon[aria-pressed="true"] { color: var(--accent-light); background: var(--accent-20); }
+.fxt-icon:disabled { opacity: .3; pointer-events: none; }
+.fxt-primary { display: inline-flex; align-items: center; height: 40px; padding: 0 20px; border-radius: 12px; background: linear-gradient(135deg, #8b6fe6, #5f42b9); font-size: 15px; transition: transform .12s var(--fxt-ease), filter .15s ease; }
+.fxt-primary:hover { filter: brightness(1.1); }
+.fxt-primary:active { transform: scale(.97); }
+
+.fxt-main { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr) auto; gap: 12px; padding: 12px 16px 16px; min-height: 0; }
+.fxt-panel { background: var(--fxt-panel); border-radius: 20px; min-width: 0; min-height: 0; }
+.fxt[data-format="9:16"] .fxt-lib { grid-area: 1 / 1 / 2 / 2; }
+.fxt[data-format="9:16"] .fxt-tl { grid-area: 2 / 1 / 3 / 2; }
+.fxt[data-format="9:16"] .fxt-pv { grid-area: 1 / 2 / 3 / 3; }
+.fxt[data-format="16:9"] .fxt-lib { grid-area: 1 / 1 / 2 / 2; }
+.fxt[data-format="16:9"] .fxt-pv { grid-area: 1 / 2 / 2 / 3; }
+.fxt[data-format="16:9"] .fxt-tl { grid-area: 2 / 1 / 3 / 3; }
+
+/* библиотека */
+.fxt-lib { display: flex; flex-direction: column; overflow: hidden; }
+.fxt-lib-h { display: flex; align-items: center; gap: 12px; padding: 12px 12px 12px 16px; border-bottom: 1px solid var(--fxt-line); }
+.fxt-lib-h h2 { margin: 0; font-weight: 400; font-size: 16px; }
+.fxt-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 12px; background: var(--fxt-well); }
+.fxt-tabs button { height: 30px; padding: 0 12px; border-radius: 9px; font-size: 13px; color: var(--fxt-t60); display: flex; align-items: center; gap: 6px; transition: color .15s ease, background-color .15s ease; }
+.fxt-tabs button:hover { color: var(--text); }
+.fxt-tabs button[aria-selected="true"] { background: var(--fxt-raise); color: var(--text); }
+.fxt-tabs button[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+.fxt-tabs .c { font-size: 11px; color: var(--fxt-t40); }
+.fxt-lib-b { overflow: auto; padding: 4px 12px 12px; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--fxt-t20) transparent; }
+.fxt-acc { border-bottom: 1px solid var(--fxt-line); }
+.fxt-acc:last-child { border-bottom: 0; }
+.fxt-acc-h { width: 100%; display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 4px; color: var(--fxt-t80); text-align: left; }
+.fxt-acc-h:hover { color: var(--text); }
+.fxt-acc-h .name, .fxt-acc-h .c { position: relative; top: 1px; }
+.fxt-acc-h .c { font-size: 12px; color: var(--fxt-t40); }
+.fxt-acc-h .was { font-size: 11px; line-height: 1.2; color: var(--fxt-hook); background: var(--fxt-hook-soft); padding: 4px 8px 2px; border-radius: 6px; }
+.fxt-acc-h .chev { margin-left: auto; color: var(--fxt-t40); transition: transform .2s var(--fxt-ease); }
+.fxt-acc[data-open="true"] .chev { transform: rotate(180deg); }
+.fxt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 6px; }
+.fxt-acc .fxt-grid { padding: 0 0 12px; }
+.fxt-lib-b > .fxt-grid { padding-top: 12px; }
+.fxt-item { display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 8px; border-radius: 12px; background: var(--fxt-t03); border: 1px solid transparent; cursor: grab; user-select: none; touch-action: none; transition: background-color .15s ease, border-color .15s ease; }
+.fxt-item:hover { background: var(--fxt-t06); }
+.fxt-item.on { border-color: var(--fxt-line2); }
+.fxt-item.off { opacity: .45; cursor: default; }
+.fxt-item .nm { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; position: relative; top: 1px; }
+.fxt-item .nm b { font-weight: 350; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fxt-item .nm small { font-size: 11.5px; color: var(--fxt-t40); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fxt-item .acts { margin-left: auto; display: flex; gap: 4px; flex: none; }
+.fxt-mini { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; background: var(--fxt-t06); color: var(--fxt-t80); transition: background-color .15s ease, color .15s ease, transform .12s var(--fxt-ease); }
+.fxt-mini:hover { background: var(--accent); color: var(--text); }
+.fxt-mini:active { transform: scale(.94); }
+.fxt-ic { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; flex: none; }
+.fxt-ic.k-hook { background: var(--fxt-hook-soft); color: var(--fxt-hook); }
+.fxt-ic.k-style { background: var(--fxt-style-soft); color: var(--fxt-style); }
+.fxt-ic.k-trans { background: var(--fxt-trans-soft); color: var(--fxt-t80); }
+.fxt-ic.k-frame { background: var(--accent-20); color: var(--accent-light); }
+.fxt-ic.sm { width: 24px; height: 24px; }
+.fxt-ic.on { background: var(--accent); color: #fff; }
+
+/* превью */
+.fxt-pv { display: flex; justify-content: center; background: none; border-radius: 20px; overflow: hidden; }
+.fxt-stage { position: relative; overflow: hidden; border-radius: 20px; background: #000; isolation: isolate; container-type: inline-size; }
+.fxt-stage .shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
+.fxt-stage .shot.on { opacity: 1; }
+.fxt-ph { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(255, 255, 255, .5); font-size: 12px; letter-spacing: .12em; }
+.fxt-ov { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+.fxt-flash { background: #fff; mix-blend-mode: screen; }
+.fxt-trflash { background: #fff; }
+/* Слой кадров — всегда свой стек (z-index: 0): z-index кадров (1–2) не должен
+   вылезать наружу. Без этого, пока не выбран стиль (filter: none), кадры
+   перекрывали пример эффекта, вспышку на дропе и субтитры. */
+.fxt-fx { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.fxt-demo { position: absolute; inset: 0; z-index: 4; background: #000; }
+.fxt-chip { position: absolute; left: 10px; top: 10px; padding: 5px 9px 3px; border-radius: 8px; background: rgba(8, 5, 20, .66); font-size: 11px; color: var(--fxt-t80); display: flex; align-items: center; gap: 6px; pointer-events: none; z-index: 5; }
+/* пример эффекта: сверху что это и какой по счёту, по бокам листать, снизу — поставить */
+.fxt-demo-top { position: absolute; left: 10px; right: 10px; top: 10px; z-index: 2; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 4px 0 12px; border-radius: 11px; background: rgba(8, 5, 20, .66); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-size: 13px; color: var(--text); }
+.fxt-demo-top .nm { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.fxt-demo-top .c { margin-left: auto; flex: none; font-size: 12px; color: var(--fxt-t60); }
+.fxt-demo-top .x { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; color: var(--fxt-t60); transition: color .15s ease, background-color .15s ease; }
+.fxt-demo-top .x:hover { color: var(--text); background: var(--fxt-t06); }
+.fxt-demo-nav { position: absolute; top: 50%; z-index: 2; display: grid; place-items: center; width: 44px; height: 44px; margin-top: -22px; border-radius: 50%; background: rgba(5, 1, 15, .58); color: var(--fxt-t80); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); transition: color .15s ease, transform .12s var(--fxt-ease); }
+.fxt-demo-nav:hover { color: var(--text); }
+.fxt-demo-nav:active { transform: scale(.94); }
+.fxt-demo-nav.l { left: 10px; }
+.fxt-demo-nav.r { right: 10px; }
+.fxt-demo-put { position: absolute; left: 50%; bottom: 14px; z-index: 2; display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 18px 0 14px; border-radius: 12px; background: linear-gradient(135deg, #8b6fe6, #5f42b9); color: #fff; font-size: 14px; white-space: nowrap; box-shadow: 0 8px 22px rgba(5, 1, 15, .45); transform: translateX(-50%); transition: filter .15s ease; }
+.fxt-demo-put:hover { filter: brightness(1.1); }
+.fxt-demo-put:disabled { background: rgba(8, 5, 20, .66); color: var(--fxt-t60); box-shadow: none; cursor: default; filter: none; }
+.fxt-item.demo { border-color: var(--accent); background: var(--fxt-t06); }
+.fxt-play { position: absolute; left: 50%; top: 50%; z-index: 8; display: grid; place-items: center; width: 64px; height: 64px; border-radius: 50%; background: rgba(5, 1, 15, .6); color: var(--text); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); transform: translate(-50%, -50%); opacity: 0; transition: opacity .15s ease, filter .15s ease; }
+.fxt-play:hover { filter: brightness(1.25); }
+.fxt-stage:hover .fxt-play, .fxt-stage:focus-within .fxt-play { opacity: 1; }
+@media (hover: none), (pointer: coarse) { .fxt-play { opacity: 1; } }
+
+/* таймлайн */
+.fxt-tl { display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.fxt-bar { display: flex; align-items: center; gap: 4px; height: 52px; padding: 0 10px; border-bottom: 1px solid var(--fxt-line); }
+.fxt-sep { width: 1px; height: 20px; background: var(--fxt-line2); margin: 0 6px; }
+.fxt-sel { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; font-size: 13px; color: var(--fxt-t80); overflow: hidden; }
+.fxt-sel .muted, .fxt-sel .nm, .fxt-sel .meta { position: relative; top: 1px; white-space: nowrap; }
+.fxt-sel .muted, .fxt-sel .meta { color: var(--fxt-t40); }
+.fxt-sel .meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fxt-pill { display: inline-flex; align-items: center; height: 30px; padding: 0 12px; border-radius: 9px; background: var(--fxt-t06); font-size: 12.5px; color: var(--fxt-t80); white-space: nowrap; transition: background-color .15s ease, color .15s ease, transform .12s var(--fxt-ease); }
+.fxt-pill:hover { background: var(--accent-20); color: var(--text); }
+.fxt-pill:active { transform: scale(.97); }
+.fxt-pace { display: flex; align-items: center; gap: 8px; margin-inline: 6px; }
+.fxt-pace .lbl { font-size: 12.5px; color: var(--fxt-t60); position: relative; top: 1px; }
+.fxt-pace .fxt-seg button { height: 28px; padding: 0 9px; }
+.fxt-zoom { display: flex; align-items: center; gap: 4px; }
+.fxt-zoom input { width: 96px; accent-color: var(--accent-light); }
+.fxt-body { display: flex; min-height: 0; position: relative; }
+.fxt-heads { width: var(--fxt-head); flex: none; border-right: 1px solid var(--fxt-line); background: var(--fxt-panel); z-index: 3; }
+.fxt-heads .rh { height: 30px; border-bottom: 1px solid var(--fxt-line); }
+.fxt-lh { display: flex; align-items: center; gap: 8px; padding: 0 6px 0 12px; border-bottom: 1px solid var(--fxt-line); font-size: 12.5px; color: var(--fxt-t80); }
+.fxt-lh .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; top: 1px; }
+.fxt-lh .eye { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; color: var(--fxt-t40); }
+.fxt-lh .eye:hover { color: var(--text); background: var(--fxt-t06); }
+.fxt-lh .eye[aria-pressed="false"] { color: var(--fxt-t20); }
+.fxt-lh .eye.lk { cursor: default; }
+.fxt-lh.dis .nm, .fxt-lh.dis .fxt-ic { opacity: .4; }
+.fxt-lh.h-frames, .fxt-lane.l-frames { height: 52px; }
+.fxt-lh.h-hook, .fxt-lh.h-s0, .fxt-lh.h-s1, .fxt-lh.h-subs, .fxt-lane.l-hook, .fxt-lane.l-s0, .fxt-lane.l-s1, .fxt-lane.l-subs { height: 40px; }
+.fxt-lh.h-audio, .fxt-lane.l-audio { height: 46px; }
+.fxt-scroll { flex: 1; overflow-x: auto; overflow-y: hidden; background: var(--fxt-well); scrollbar-width: none; position: relative; }
+.fxt-scroll::-webkit-scrollbar { display: none; }
+.fxt-cv { position: relative; min-width: 100%; }
+.fxt-ruler { position: relative; height: 30px; border-bottom: 1px solid var(--fxt-line); cursor: ew-resize; }
+.fxt-tick { position: absolute; bottom: 0; width: 1px; background: var(--fxt-t20); height: 5px; }
+.fxt-tick.maj { height: 9px; background: var(--fxt-t40); }
+.fxt-tlab { position: absolute; top: 5px; font-size: 10.5px; color: var(--fxt-t40); transform: translateX(-50%); pointer-events: none; }
+.fxt-lane { position: relative; border-bottom: 1px solid var(--fxt-line); }
+.fxt-lane.l-audio { border-bottom: 0; }
+.fxt-hint { position: absolute; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--fxt-t20); white-space: nowrap; pointer-events: none; }
+.fxt-lockz { position: absolute; inset: 0; background: repeating-linear-gradient(135deg, transparent 0 7px, rgba(246, 245, 253, .035) 7px 14px); }
+.fxt-clip { position: absolute; top: 50%; transform: translateY(-50%); border-radius: 8px; display: flex; align-items: center; gap: 6px; padding: 0 8px; overflow: hidden; white-space: nowrap; user-select: none; touch-action: none; }
+.fxt-clip .lab, .fxt-clip .n, .fxt-clip .d { position: relative; top: 1px; }
+.fxt-clip.fr { height: 38px; padding: 0 16px 0 14px; background: var(--fxt-frame); color: var(--fxt-t80); font-size: 12px; cursor: pointer; transition: background-color .15s ease; }
+.fxt-clip.fr:hover { background: var(--fxt-frame-hover); }
+.fxt-clip.fr .n { color: var(--text); }
+.fxt-clip.fr .d { margin-left: auto; color: var(--fxt-t60); }
+.fxt-clip.fr.cur { background: #6448c4; }
+.fxt-clip.sel { box-shadow: inset 0 0 0 2px #fff; }
+.fxt-clip.hk { height: 28px; background: var(--fxt-hook); color: var(--fxt-hook-ink); font-size: 12px; cursor: pointer; }
+.fxt-clip.st { height: 28px; background: var(--fxt-style); color: var(--fxt-style-ink); font-size: 12px; cursor: grab; }
+.fxt-clip.sb { height: 26px; background: rgba(246, 245, 253, .1); color: var(--fxt-t80); font-size: 12px; cursor: pointer; border-radius: 7px; transition: background-color .15s ease; }
+.fxt-clip.sb:hover { background: rgba(246, 245, 253, .16); }
+.fxt-clip.sb.cur { background: rgba(246, 245, 253, .2); color: var(--text); }
+/* слово на пилюлю, как на шаге «Текст»: узкие пилюли без внутренних отступов, фокус-слово — акцентом */
+.fxt-clip.sb { padding: 0 5px; }
+.fxt-clip.sb.focus { background: var(--accent-20); color: var(--text); box-shadow: inset 0 0 0 1px var(--accent-light); }
+.fxt-clip.off { opacity: .35; }
+.fxt-clip .lab { overflow: hidden; text-overflow: ellipsis; }
+.fxt-edge { position: absolute; top: 0; bottom: 0; width: 10px; cursor: ew-resize; z-index: 2; }
+.fxt-edge.l { left: 0; } .fxt-edge.r { right: 0; }
+.fxt-edge::after { content: ""; position: absolute; top: 50%; width: 3px; height: 14px; border-radius: 2px; background: currentColor; opacity: 0; transform: translateY(-50%); transition: opacity .15s ease; }
+.fxt-edge.l::after { left: 3px; } .fxt-edge.r::after { right: 3px; }
+.fxt-clip:hover .fxt-edge::after, .fxt-clip.sel .fxt-edge::after { opacity: .7; }
+.fxt-clip.fr .fxt-edge::after { background: #fff; }
+.fxt-outlab { position: absolute; top: 50%; transform: translateY(-50%); font-size: 12px; color: var(--fxt-hook); white-space: nowrap; pointer-events: none; }
+/* Стык: почти непрозрачная подложка + размытие под ней — кадры не просвечивают сквозь кружок. */
+.fxt-join { position: absolute; top: 50%; width: 24px; height: 24px; margin-left: -12px; margin-top: -12px; border-radius: 50%; display: grid; place-items: center; background: rgba(11, 7, 24, .88); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: var(--fxt-t80); box-shadow: 0 0 0 2px var(--fxt-well); z-index: 4; transition: box-shadow .15s ease, transform .12s var(--fxt-ease); }
+.fxt-join.none { color: var(--fxt-t60); }
+.fxt-join.none:hover { color: var(--text); }
+.fxt-join:hover { box-shadow: 0 0 0 2px var(--fxt-well), 0 0 0 3px var(--fxt-t40); }
+.fxt-join:active { transform: scale(.92); }
+.fxt-join.sel { box-shadow: 0 0 0 2px var(--fxt-well), 0 0 0 3.5px #fff; }
+.fxt-join.target { box-shadow: 0 0 0 2px var(--fxt-well), 0 0 0 3.5px var(--accent-light); transform: scale(1.15); }
+.fxt-dropline { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed rgba(198, 182, 255, .55); pointer-events: none; z-index: 5; }
+.fxt-dropflag { position: absolute; top: 6px; height: 18px; padding: 0 7px 0 5px; border-radius: 6px; background: var(--fxt-hook); color: var(--fxt-hook-ink); font-size: 10.5px; display: flex; align-items: center; gap: 4px; transform: translateX(-50%); white-space: nowrap; z-index: 6; pointer-events: none; }
+.fxt-dropflag span { position: relative; top: 1px; }
+.fxt-phl { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1.5px solid #fff; pointer-events: none; z-index: 7; }
+.fxt-phl::before { content: ""; position: absolute; top: 0; left: -6.75px; width: 12px; height: 14px; background: #fff; clip-path: polygon(0 0, 100% 0, 100% 60%, 50% 100%, 0 60%); }
+.fxt-snapl { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid var(--accent-light); pointer-events: none; z-index: 6; }
+.fxt-place { position: absolute; border-radius: 8px; border: 1.5px dashed var(--fxt-t60); background: var(--fxt-t06); pointer-events: none; z-index: 3; }
+.fxt-place.hk { border-color: var(--fxt-hook); background: var(--fxt-hook-soft); }
+.fxt-place.st { border-color: var(--fxt-style); background: var(--fxt-style-soft); }
+.fxt-place.bad { border-color: #ef4444; background: rgba(239, 68, 68, .1); }
+.fxt-place .why { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); font-size: 11px; color: var(--fxt-t80); white-space: nowrap; }
+.fxt-beat { position: absolute; top: 4px; width: 3px; height: 3px; border-radius: 50%; background: var(--fxt-t20); transform: translateX(-50%); }
+.fxt-beat.down { background: var(--fxt-t40); }
+.fxt-lane.over { background: var(--fxt-t03); }
+.fxt-toast { position: absolute; left: 50%; bottom: 14px; transform: translate(-50%, 8px); padding: 9px 14px 7px; border-radius: 10px; background: var(--fxt-pop); border: 1px solid var(--fxt-line2); font-size: 12.5px; color: var(--fxt-t80); opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s var(--fxt-ease); z-index: 20; white-space: nowrap; }
+.fxt-toast.show { opacity: 1; transform: translate(-50%, 0); }
+.fxt-ghost { position: fixed; left: 0; top: 0; z-index: 70; pointer-events: none; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px 0 4px; border-radius: 10px; background: var(--fxt-pop); border: 1px solid var(--fxt-line2); box-shadow: 0 12px 30px rgba(0, 0, 0, .45); font-size: 13px; transform: translate(-50%, -50%); }
+.fxt-pop { position: fixed; z-index: 70; width: 264px; padding: 10px; border-radius: 16px; background: var(--fxt-pop); border: 1px solid var(--fxt-line2); box-shadow: 0 24px 60px rgba(0, 0, 0, .55); transform-origin: 50% 100%; animation: fxt-pop-in .18s var(--fxt-ease); }
+@keyframes fxt-pop-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+.fxt-pop .mstage { position: relative; overflow: hidden; border-radius: 10px; background: #000; margin: 0 auto 10px; }
+.fxt-pop h3 { margin: 2px 4px 8px; font-weight: 400; font-size: 13px; color: var(--fxt-t60); }
+.fxt-opt { width: 100%; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 6px; border-radius: 10px; font-size: 13.5px; color: var(--fxt-t80); text-align: left; transition: background-color .12s ease; }
+.fxt-opt:hover { background: var(--fxt-t06); color: var(--text); }
+.fxt-opt[aria-pressed="true"] { background: var(--accent-20); color: var(--text); }
+.fxt-opt .ck { margin-left: auto; color: var(--accent-light); }
+.fxt-cutpop .mstage .mnone { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 0 42px; text-align: center; font-size: 12px; line-height: 1.3; color: var(--fxt-t60); background: var(--fxt-well); }
+.fxt-cutpop .mtop { position: absolute; left: 6px; right: 6px; top: 6px; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 5px 8px 4px; border-radius: 8px; background: rgba(5, 1, 15, .62); backdrop-filter: blur(8px); font-size: 11.5px; }
+.fxt-cutpop .mtop .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.fxt-cutpop .mtop .c { flex: none; color: var(--fxt-t60); }
+.fxt-cutpop .mnav { position: absolute; top: 50%; display: grid; place-items: center; width: 30px; height: 30px; margin-top: -15px; border-radius: 50%; background: rgba(5, 1, 15, .62); color: var(--fxt-t80); backdrop-filter: blur(8px); transition: color .12s ease, transform .12s ease; }
+.fxt-cutpop .mnav:hover { color: var(--text); }
+.fxt-cutpop .mnav:active { transform: scale(.94); }
+.fxt-cutpop .mnav.l { left: 6px; }
+.fxt-cutpop .mnav.r { right: 6px; }
+.fxt-cutpop .mstate { position: absolute; left: 50%; bottom: 8px; display: inline-flex; align-items: center; gap: 5px; max-width: calc(100% - 12px); padding: 4px 9px 3px; border-radius: 8px; background: rgba(5, 1, 15, .62); backdrop-filter: blur(8px); font-size: 11px; color: var(--fxt-t60); white-space: nowrap; transform: translateX(-50%); transition: color .15s ease, background-color .15s ease; }
+.fxt-cutpop .mstate.on { color: var(--text); background: rgba(95, 66, 185, .78); }
+/* три строки на виду, остальное — скроллом (переходов станет больше) */
+.fxt-cutpop .opts { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; max-height: 124px; overflow-y: auto; overscroll-behavior: contain; scroll-snap-type: y proximity; scrollbar-width: thin; scrollbar-color: var(--fxt-line2) transparent; }
+.fxt-cutpop .opts .fxt-opt { scroll-snap-align: start; min-width: 0; }
+.fxt-cutpop .opts .fxt-opt .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fxt-cutpop .opts .fxt-opt:focus-visible { outline-offset: -2px; }
+.fxt-cutpop .opts .fxt-opt.browsed { box-shadow: inset 0 0 0 1px var(--fxt-line2); color: var(--text); }
+.fxt-pop .foot { display: flex; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--fxt-line); }
+.fxt-pop .foot .fxt-pill { flex: 1; justify-content: center; }
+.fxt-tip { position: fixed; left: 0; top: 0; z-index: 80; max-width: 280px; padding: 6px 10px 4px; border-radius: 8px; background: var(--fxt-pop); border: 1px solid var(--fxt-line2); box-shadow: 0 10px 28px rgba(0, 0, 0, .4); font-size: 11.5px; line-height: 1.3; color: var(--fxt-t80); pointer-events: none; opacity: 0; transform: translateY(var(--ty, 3px)); transition: opacity .12s ease, transform .15s var(--fxt-ease); }
+.fxt-tip.show { opacity: 1; transform: none; }
+.fxt-tip.inst { transition: none; }
+@media (max-width: 1023px) {
+  .fxt { overflow: auto; height: auto; min-height: 100dvh; }
+  .fxt-main { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
+  .fxt .fxt-lib, .fxt .fxt-pv, .fxt .fxt-tl { grid-area: auto; }
+  .fxt-pv { order: 1; } .fxt-lib { order: 2; max-height: 420px; } .fxt-tl { order: 3; }
+  .fxt-bar { flex-wrap: wrap; height: auto; padding-block: 8px; }
+  .fxt { --fxt-head: 104px; }
+}
+@media (prefers-reduced-motion: reduce) { .fxt *, .fxt *::before, .fxt *::after { transition-duration: 0s !important; animation-duration: 0s !important; } }

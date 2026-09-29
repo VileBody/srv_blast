@@ -13,8 +13,10 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { backgroundVariations, BackgroundWorkZone, StageBackground, type BackgroundGuideGraphic } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
-import { hasTrackInput, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
+import { hasTrackInput, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
+import { useStoryboardBusy } from '../components/wizard/storyboardData';
+import { LabWorkZone, useFxLab, useLegacyHooksToVariants } from '../components/wizard/FxLab';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
 import { dropToSeconds, timingToSeconds, usePlaybackUrl } from '../components/wizard/useFragmentAudio';
@@ -617,12 +619,22 @@ export function WizardPage() {
   const selectedHooks = hookPills(state.hooks);
   const selectedStyles = selectedEffectStyles(state.hooks);
   const hookTarget = compatibleHookTarget(state.background, state.allocation.background);
+  // Режим вариантов FX (по умолчанию; ?fxLab=0 — классический шаг): хуки — это варианты (fxVariants), доли — allocation.variants.
+  // Классические hooks.configs/allocation.hooks/styles в этом режиме не участвуют.
+  const fxLab = useFxLab();
+  useLegacyHooksToVariants(fxLab);
+  const labVariants = state.fxVariants.filter((v) => !v.draft);
+  const labVariantsComplete = labVariants.length > 0 && labVariants.every((v) => hookComplete(v.kind, v.config));
+  const labAllocSum = labVariants.reduce((sum, v) => sum + (state.allocation.variants?.[v.id] ?? 0), 0);
+  const fxAllocBalanced = fxLab
+    ? (labVariants.length === 0 ? labAllocSum === 0 : labAllocSum === hookTarget)
+    : (selectedHooks.length === 0 ? allocHooksSum === 0 : allocHooksSum === hookTarget)
+      && (selectedStyles.length === 0 ? allocStylesSum === 0 : allocStylesSum === hookTarget);
   const allocBalanced =
     state.allocation.total > 0 &&
     allocBgSum === state.allocation.total - fixedColorCount &&
     (state.subtitles.pool.length === 0 || allocSubsSum === state.allocation.total - fixedColorCount) &&
-    (selectedHooks.length === 0 ? allocHooksSum === 0 : allocHooksSum === hookTarget) &&
-    (selectedStyles.length === 0 ? allocStylesSum === 0 : allocStylesSum === hookTarget);
+    fxAllocBalanced;
   const safeVideosToGenerate = Math.max(1, state.allocation.total);
 
   // Трек и текст — обязательные вводные: без них рендерить lyric-video нечего.
@@ -667,14 +679,21 @@ export function WizardPage() {
   }, [setStage, stage, trackReady]);
 
   // «Продолжить» подсвечивается только при непустом выборе; кликабельность — отдельно
+  // «Пул»: генерация ждёт раскадровку и склейки выбранного темпа (см. PoolStoryboard).
+  const storyboardBusy = useStoryboardBusy((s) => s.busy);
   const ready = useMemo(() => {
     if (stage === 1) return trackReady && timingReady && !segmentInvalid && state.lyrics.trim().length > 0;
     if (stage === 2) return backgroundVariations(state.background) > 0;
+    // Варианты: все должны быть настроены (у недонастроенного на шаге FX метка «настроить»),
+    // дроп нужен, если хоть один вариант — не «Без хука».
+    if (stage === 3 && fxLab) return labVariantsComplete && (!labVariants.some((v) => v.kind !== 'none') || dropReady);
     if (stage === 3) return configuredHookCount > 0 && (!configuredHooksNeedDrop || dropReady);
     if (stage === 4) return state.subtitles.pool.length > 0;
-    if (stage === 5) return allocBalanced && trackReady;
+    // Недонастроенный вариант мог появиться после «Пула» (вернулись на FX и добавили копию) —
+    // бэк его не примет, поэтому генерация ждёт, пока его настроят или удалят.
+    if (stage === 5) return allocBalanced && trackReady && !storyboardBusy && (!fxLab || labVariantsComplete);
     return false;
-  }, [allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.lyrics, state.subtitles.pool, timingReady, trackReady]);
+  }, [storyboardBusy, allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.lyrics, state.subtitles.pool, timingReady, trackReady, fxLab, labVariants, labVariantsComplete]);
 
   const canContinue = useMemo(() => {
     return ready;
@@ -803,7 +822,7 @@ export function WizardPage() {
       ) : stage === 2 ? (
         <BackgroundWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
       ) : stage === 3 ? (
-        <HooksWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
+        fxLab ? <LabWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} /> : <HooksWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
       ) : stage === 4 ? (
         <SubtitlesWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
       ) : (

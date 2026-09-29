@@ -6,7 +6,9 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import tempfile
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -23,6 +25,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import mock_store as store
 from . import analytics, asr_preview, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
 from . import render_job as render_job_builder
+from . import effect_map
+from . import storyboard as storyboard_svc
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
 
@@ -360,6 +364,38 @@ class SubmitPayload(BaseModel):
     stageData: dict[str, Any] = Field(default_factory=dict)
     videosToGenerate: int = 1
     idempotencyKey: str | None = None
+
+
+class StoryboardCutsPayload(BaseModel):
+    trackId: str = ""
+    clipFrom: str = ""
+    clipTo: str = ""
+    dropTime: str = ""
+
+
+class StoryboardVideoPayload(BaseModel):
+    index: int = Field(ge=1)
+    group: str = Field(min_length=1)
+    seedKey: str = Field(min_length=1, max_length=200)
+    pins: dict[int, str] = Field(default_factory=dict)
+
+
+class StoryboardPickPayload(BaseModel):
+    clipFrom: str = ""
+    clipTo: str = ""
+    cuts: list[float] = Field(default_factory=list, max_length=400)
+    videos: list[StoryboardVideoPayload] = Field(min_length=1, max_length=100)
+
+
+class StoryboardAlternativesPayload(BaseModel):
+    clipFrom: str = ""
+    clipTo: str = ""
+    cuts: list[float] = Field(default_factory=list, max_length=400)
+    group: str = Field(min_length=1)
+    shot: int = Field(ge=0)
+    seedKey: str = Field(min_length=1, max_length=200)
+    exclude: list[str] = Field(default_factory=list, max_length=2000)
+    limit: int = Field(default=12, ge=1, le=50)
 
 
 class AsrStartPayload(BaseModel):
@@ -738,6 +774,21 @@ async def api_me() -> dict[str, Any]:
         "subscriptionBonuses": True,
     }
     return data
+
+
+@app.get("/api/profile/track-usage", tags=["profile"])
+async def api_track_usage() -> dict[str, Any]:
+    """На какие треки ушёл лимит треков и какие отрывки из них сгенерированы."""
+    spent = None
+    if RUNTIME.backend == "production":
+        try:
+            spent = await _billing_backend().spent_tracks(_telegram_chat_id())
+        except HTTPException:
+            # Без привязанного Telegram трек в проде загрузить нельзя — списаний нет.
+            return {"tracks": [], "billingLinkRequired": True, "mock": False}
+        except Exception as exc:
+            raise _production_error(exc) from exc
+    return {"tracks": store.track_usage(spent), "mock": RUNTIME.backend == "mock"}
 
 
 # ------------------------- Projects -------------------------
@@ -1272,6 +1323,123 @@ async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> 
     return {"status": "COMPLETED", "bpm": float(result.get("bpm") or 0.0), "drops": drops, "mock": False}
 
 
+def _storyboard_window(clip_from: str, clip_to: str) -> tuple[float, float]:
+    start = render_job_builder.mmss_seconds(clip_from)
+    end = render_job_builder.mmss_seconds(clip_to)
+    if start is None or end is None or end <= start:
+        raise HTTPException(status_code=422, detail="Сначала выбери отрывок трека")
+    return float(start), float(end)
+
+
+def _storyboard_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, HTTPException):
+        return exc
+    if isinstance(exc, storyboard_svc.StoryboardError):
+        return HTTPException(status_code=422, detail=str(exc))
+    return _production_error(exc)
+
+
+@app.post("/api/wizard/storyboard/cuts", tags=["wizard"])
+async def api_storyboard_cuts(payload: StoryboardCutsPayload) -> dict[str, Any]:
+    """Склейки отрывка по темпу трека — те же, что поставит рендер.
+
+    «Авто» = ровно разбиение рендера (онсеты/биты, склейка на дропе); «реже» и
+    «чаще» пересчитаны от той же сетки битов (оркестратор, `/storyboard/cuts`).
+    """
+    start, end = _storyboard_window(payload.clipFrom, payload.clipTo)
+    drop = effect_map.parse_mmssms(payload.dropTime) if payload.dropTime else None
+    if drop is not None and not (start <= drop <= end):
+        # Дроп из другого отрывка: без него склейки разошлись бы с тем, что увидит рендер.
+        raise HTTPException(status_code=422, detail="Дроп вне отрывка — выбери дроп заново на шаге FX")
+    if RUNTIME.backend != "production":
+        return {"status": "COMPLETED", "clipStart": start, "clipEnd": end, **storyboard_svc.mock_cuts(start=start, end=end, drop=drop), "mock": True}
+    track = store.saved_track(str(payload.trackId or "")) or {}
+    audio_s3_url = str(track.get("s3Key") or "").strip()
+    if not audio_s3_url:
+        raise HTTPException(status_code=422, detail="Сначала загрузи трек")
+    try:
+        res = await run_in_threadpool(
+            _production_backend().storyboard_cuts,
+            audio_s3_url=audio_s3_url, clip_start_sec=start, clip_end_sec=end, user_drop_t=drop,
+        )
+    except Exception as exc:
+        raise _storyboard_error(exc) from exc
+    return {
+        "status": "COMPLETED",
+        "clipStart": res.get("clip_start_abs", start),
+        "clipEnd": res.get("clip_end_abs", end),
+        "bpm": res.get("bpm"),
+        "dropT": res.get("drop_t"),
+        "beats": res.get("beats_abs") or [],
+        "cuts": res.get("cuts_by_pace") or {},
+        "mock": False,
+    }
+
+
+@app.post("/api/wizard/storyboard/pick", tags=["wizard"])
+async def api_storyboard_pick(payload: StoryboardPickPayload) -> dict[str, Any]:
+    """Реальные исходники для каждого видео батча по склейкам рецепта.
+
+    Видео одного вайба подбираются одной пачкой — клипы между ними не повторяются
+    (если вайбу не хватает клипов, повторы помечаются в `repeats`, а не прячутся).
+    В ответе у каждого видео закреплённый план — он уйдёт в рендер как есть.
+    """
+    start, end = _storyboard_window(payload.clipFrom, payload.clipTo)
+    cuts = sorted(float(c) for c in payload.cuts)
+    if RUNTIME.backend != "production":
+        try:
+            vibes = [v for v in store.VIBES]
+            return {**storyboard_svc.mock_pick(vibes=vibes, start=start, end=end, cuts=cuts,
+                                               videos=[v.model_dump() for v in payload.videos]), "mock": True}
+        except Exception as exc:
+            raise _storyboard_error(exc) from exc
+    by_group: dict[str, list[StoryboardVideoPayload]] = {}
+    for video in payload.videos:
+        by_group.setdefault(video.group, []).append(video)
+    out: dict[int, dict[str, Any]] = {}
+    try:
+        for group, videos in by_group.items():
+            res = await run_in_threadpool(
+                _production_backend().storyboard_pick,
+                group_name=group, clip_start_abs=start, clip_end_abs=end, switch_points_abs=cuts,
+                videos=[{"seed_key": v.seedKey, "pins": {str(k): n for k, n in v.pins.items()}} for v in videos],
+            )
+            for video, picked in zip(videos, res.get("videos") or [], strict=True):
+                out[video.index] = {
+                    "index": video.index,
+                    "group": group,
+                    "clips": [storyboard_svc.clip_view(c) for c in picked.get("clips") or []],
+                    "repeats": list(picked.get("repeats") or []),
+                    "plan": picked.get("plan"),
+                }
+    except Exception as exc:
+        raise _storyboard_error(exc) from exc
+    return {"videos": [out[v.index] for v in payload.videos], "mock": False}
+
+
+@app.post("/api/wizard/storyboard/alternatives", tags=["wizard"])
+async def api_storyboard_alternatives(payload: StoryboardAlternativesPayload) -> dict[str, Any]:
+    """Варианты замены одного кадра: тот же пул и порядок, что у подбора."""
+    start, end = _storyboard_window(payload.clipFrom, payload.clipTo)
+    cuts = sorted(float(c) for c in payload.cuts)
+    try:
+        if RUNTIME.backend != "production":
+            return {**storyboard_svc.mock_alternatives(vibes=list(store.VIBES), group=payload.group, seed_key=payload.seedKey,
+                                                       shot=payload.shot, exclude=payload.exclude, limit=payload.limit), "mock": True}
+        res = await run_in_threadpool(
+            _production_backend().storyboard_alternatives,
+            group_name=payload.group, clip_start_abs=start, clip_end_abs=end, switch_points_abs=cuts,
+            interval_idx=payload.shot, seed_key=payload.seedKey, exclude_file_names=payload.exclude, limit=payload.limit,
+        )
+    except Exception as exc:
+        raise _storyboard_error(exc) from exc
+    return {"candidates": [
+        {"fileName": c.get("file_name"), "previewUrl": c.get("preview_url"),
+         "previewOffset": c.get("preview_offset_sec") or 0.0, "tags": list(c.get("tags") or [])}
+        for c in res.get("candidates") or []
+    ], "mock": False}
+
+
 def _asr_inputs(clip_from: str, clip_to: str, fragment: str, lyrics: str, track_id: str = "") -> tuple[dict[str, Any], float, float, str] | None:
     """Вводные примерки: трек + окно + текст. Нет чего-то → примерять нечего."""
     start = render_job_builder.mmss_seconds(clip_from)
@@ -1546,14 +1714,11 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     bg["uploads"] = list(dict.fromkeys(item["id"] for item in sources))
     bg["sourceAssets"] = sources
     by_url = {item["s3Key"]: item for item in owned}
-    hooks = stage_data.get("hooks") or {}
-    configs = hooks.get("configs") or {}
-    selected_hook_families = render_job_builder.selected_hook_families(stage_data)
-    for family in ("sound", "warmup"):
-        if family not in selected_hook_families:
+    # Прогрев: файл должен принадлежать проекту, метаданные берём с сервера. В режиме
+    # вариантов FX прогревов может быть несколько (по одному на вариант).
+    for family, cfg in render_job_builder.selected_hook_configs(stage_data):
+        if family not in ("sound", "warmup"):
             continue
-        cfg = configs.get(family)
-        if not cfg: continue
         video = cfg.get("warmupKind") == "video"
         url = cfg.get("videoUrl" if video else "soundUrl")
         asset = by_url.get(url)
@@ -1578,13 +1743,18 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         if payload.videosToGenerate > credits_left:
             analytics.track("limit_hit", store.current_user_id(), {"limit": "videos", "left": credits_left})
             raise HTTPException(status_code=402, detail=f"Доступно {credits_left} генераций")
-    job = store.create_job(
-        project_id,
-        stage_data,
-        payload.videosToGenerate,
-        payload.idempotencyKey,
-        enqueue_mock=RUNTIME.backend == "mock",
-    )
+    try:
+        job = store.create_job(
+            project_id,
+            stage_data,
+            payload.videosToGenerate,
+            payload.idempotencyKey,
+            enqueue_mock=RUNTIME.backend == "mock",
+        )
+    except ValueError as exc:
+        # Раскладка батча не сошлась (пул, варианты FX, устаревшая раскадровка) — это
+        # ошибка вводных, которую человек может поправить, а не 500.
+        raise HTTPException(422, detail=str(exc)) from exc
     if RUNTIME.backend == "production":
         live_job = store.JOBS[job["id"]]
         try:
@@ -1967,6 +2137,50 @@ def api_tiktok_callback(request: Request, code: str | None = None, state: str | 
     )
 
 
+# Заливка файла в TikTok идёт в фоне: через прокси публикации ~100 КБ/с, и держать
+# POST открытым минуты нельзя — такой запрос рвут VPN, мобильная сеть и браузеры
+# («Failed to fetch»). Пока файл льётся, статус публикации — наш SENDING. Воркер один
+# (--workers 1), поэтому хватает словаря в памяти.
+_TIKTOK_UPLOADS: dict[str, dict[str, Any]] = {}
+
+
+def _upload_in_background(publish_id: str, upload_url: str, path: Path, proxy: str, video: dict[str, Any], cleanup: Path | None) -> None:
+    state = _TIKTOK_UPLOADS[publish_id]
+    try:
+        result = tiktok_api.upload_file_chunks(upload_url, path, proxy)
+        transfer = {"host": result.get("upload_host"), "chunks": result.get("transfer") or []}
+        video["tiktokTransfer"] = transfer
+        state.update(state="uploaded", transfer=transfer)
+        logger.info("tiktok file upload %s: %s", publish_id, transfer)
+    except tiktok_api.TikTokApiError as exc:
+        state.update(state="failed", code=exc.code, message=str(exc))
+        logger.warning("tiktok file upload %s failed: %s %s", publish_id, exc.code, exc)
+    except Exception as exc:  # noqa: BLE001 — любой сбой заливки должен стать FAILED, а не вечным SENDING
+        state.update(state="failed", code="upload_failed", message=f"{type(exc).__name__}: {exc}")
+        logger.exception("tiktok file upload %s crashed", publish_id)
+    finally:
+        if cleanup is not None:
+            shutil.rmtree(cleanup, ignore_errors=True)
+
+
+def _start_file_upload(token: str, post_info: dict[str, Any], path: Path, proxy: str, video: dict[str, Any], cleanup: Path | None = None) -> dict[str, Any]:
+    try:
+        data = tiktok_api.init_file_upload(token, post_info, path, proxy)
+    except BaseException:
+        if cleanup is not None:
+            shutil.rmtree(cleanup, ignore_errors=True)
+        raise
+    publish_id = str(data["publish_id"])
+    _TIKTOK_UPLOADS[publish_id] = {"state": "sending"}
+    threading.Thread(
+        target=_upload_in_background,
+        args=(publish_id, str(data["upload_url"]), path, proxy, video, cleanup),
+        name=f"tiktok-upload-{publish_id}",
+        daemon=True,
+    ).start()
+    return {"publish_id": publish_id, "status": "SENDING"}
+
+
 @app.post("/api/tiktok/post", tags=["tiktok"])
 def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     if store.TIKTOK is None:
@@ -2049,18 +2263,19 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
             return {"ok": True, "status": "PUBLISH_COMPLETE", "publishId": publish_id, "mock": True}
 
         if cfg.upload_source == "PULL_FROM_URL":
-            result = tiktok_api.init_direct_post_pull(token, post_info, str(video_url))
+            result = tiktok_api.init_direct_post_pull(token, post_info, str(video_url), cfg.publish_proxy)
         elif str(video_url).startswith("/static/"):
             local_path = STATIC_DIR / str(video_url).removeprefix("/static/")
-            result = tiktok_api.init_direct_post_file(token, post_info, local_path)
+            result = _start_file_upload(token, post_info, local_path, cfg.publish_proxy, video)
         elif RUNTIME.production:
-            with tempfile.TemporaryDirectory(prefix="blast-tiktok-") as temp_dir:
-                local_path = Path(temp_dir) / f"{payload.videoId}.mp4"
-                try:
-                    _production_backend().download_video(str(video_url), local_path)
-                except Exception as exc:
-                    raise _production_error(exc) from exc
-                result = tiktok_api.init_direct_post_file(token, post_info, local_path)
+            temp_dir = Path(tempfile.mkdtemp(prefix="blast-tiktok-"))  # удалит фоновая заливка
+            local_path = temp_dir / f"{payload.videoId}.mp4"
+            try:
+                _production_backend().download_video(str(video_url), local_path)
+            except Exception as exc:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                raise _production_error(exc) from exc
+            result = _start_file_upload(token, post_info, local_path, cfg.publish_proxy, video, cleanup=temp_dir)
         else:
             raise HTTPException(
                 status_code=422,
@@ -2074,8 +2289,9 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     except tiktok_api.TikTokApiError as exc:
         raise HTTPException(status_code=exc.status or 502, detail={"code": exc.code, "message": str(exc)}) from exc
     publish_id = result.get("publish_id")
-    video.update({"tiktokPublishId": publish_id, "tiktokStatus": "PROCESSING_UPLOAD"})
-    return {"ok": True, "status": "PROCESSING_UPLOAD", "publishId": publish_id, "mock": False}
+    status = result.get("status") or "PROCESSING_UPLOAD"  # SENDING — файл ещё льётся с нашего сервера
+    video.update({"tiktokPublishId": publish_id, "tiktokStatus": status})
+    return {"ok": True, "status": status, "publishId": publish_id, "mock": False}
 
 
 @app.get("/api/tiktok/post/{publish_id}", tags=["tiktok"])
@@ -2084,8 +2300,13 @@ def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
         if RUNTIME.production:
             raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         return {"publishId": publish_id, "status": "PUBLISH_COMPLETE", "mock": True}
+    upload = _TIKTOK_UPLOADS.get(publish_id)
+    if upload and upload["state"] == "sending":
+        return {"publishId": publish_id, "status": "SENDING", "mock": False}
+    if upload and upload["state"] == "failed":
+        return {"publishId": publish_id, "status": "FAILED", "fail_reason": upload.get("code"), "message": upload.get("message"), "mock": False}
     try:
-        result = tiktok_api.fetch_publish_status(_access_token(), publish_id)
+        result = tiktok_api.fetch_publish_status(_access_token(), publish_id, tiktok_config.load().publish_proxy)
     except tiktok_api.TikTokApiError as exc:
         raise HTTPException(status_code=exc.status or 502, detail={"code": exc.code, "message": str(exc)}) from exc
     status = result.get("status")

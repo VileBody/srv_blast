@@ -22,7 +22,8 @@ load_dotenv()
 # а не меняем маршрутизацию S3 под огнём.
 #
 # Когда вернётся доступ к серверному .env — убрать этот блок и хранить прокси там.
-_PROXY_URL = "http://FazPoo:U6WHvC@45.153.20.238:10506"
+# Адрес живёт в src/outbound_proxy.py — им же пользуется публикация в TikTok на сайте.
+from src.outbound_proxy import OUTBOUND_PROXY_URL as _PROXY_URL
 for _pk in ("OUTBOUND_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ[_pk] = _PROXY_URL
 

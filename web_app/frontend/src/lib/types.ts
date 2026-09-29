@@ -194,6 +194,8 @@ export interface VideoVersion {
   /** проставляется бэком после успешной публикации в TikTok */
   postedAt?: string | null;
   tiktokStatus?: string | null;
+  /** id опубликованного поста — для ссылки «Открыть» (TikTok отдаёт его не всегда) */
+  tiktokPostIds?: string[] | null;
   metrics?: {
     view_count: number;
     like_count: number;
@@ -243,6 +245,31 @@ export interface UserSource {
   createdAt: string;
 }
 
+/** Отрывок, сгенерированный из трека (одна генерация визарда) */
+export interface TrackUsageFragment {
+  jobId: string;
+  projectId?: string | null;
+  projectName?: string | null;
+  /** Окно отрывка в секундах трека; null — окно не задавалось */
+  from: number | null;
+  to: number | null;
+  /** Ролики без упавших: за упавшие генерации возвращаются */
+  videos: number;
+  videosFailed: number;
+  status: string;
+  createdAt?: string | null;
+}
+
+/** Трек, на который ушёл слот лимита треков */
+export interface TrackUsageEntry {
+  id: string;
+  /** null — трек загружен в Telegram-боте: имени у сайта нет */
+  name: string | null;
+  spentAt?: string | null;
+  source: 'web' | 'bot';
+  fragments: TrackUsageFragment[];
+}
+
 export interface SavedTrack {
   id: string;
   userId: string;
@@ -270,6 +297,42 @@ export interface Vibe {
     renderPreset?: string;
     bgMode?: string;
   };
+}
+
+/** Склейки отрывка по темпу: «auto» — ровно разбиение рендера, остальные — от той же сетки битов. */
+export interface StoryboardCutsResponse {
+  status: string;
+  clipStart: number;
+  clipEnd: number;
+  bpm: number;
+  dropT: number | null;
+  beats: number[];
+  cuts: { sparse: number[]; auto: number[]; dense: number[] };
+  mock?: boolean;
+}
+
+export interface StoryboardPickedClip {
+  fileName: string;
+  inPoint: number;
+  outPoint: number;
+  previewUrl: string | null;
+  previewOffset: number;
+  tags: string[];
+}
+
+export interface StoryboardPickedVideo {
+  index: number;
+  group: string;
+  clips: StoryboardPickedClip[];
+  repeats: number[];
+  plan: Record<string, unknown>;
+}
+
+export interface StoryboardCandidate {
+  fileName: string;
+  previewUrl: string | null;
+  previewOffset: number;
+  tags: string[];
 }
 
 export interface DropCandidate {

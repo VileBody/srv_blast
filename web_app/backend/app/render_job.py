@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import effect_map as em
+from . import storyboard as storyboard_plans
 
 SCHEMA = "blast.render_job/1"
 OUTPUT_DEFAULT = {
@@ -112,6 +113,64 @@ def _resolve_hook(kind: str | None, cfg: dict[str, Any], bg_glue_id: str | None,
         resolved["device"] = em.map_thought(cfg.get("thought"))
     # sound — отдельный шаг воркера, собственного run_job-хука не даёт
     return resolved, family_script
+
+
+HOOK_KINDS = {"none", "warmup", "sound", "object", "effects", "motion", "thought"}
+# Своё поле каждого типа хука — то, без чего вариант «не настроен» (зеркало hookComplete на фронте).
+_VARIANT_OWN_FIELD = {"object": "object", "effects": "effectHook", "motion": "motion", "thought": "thought",
+                      "warmup": "sound", "sound": "sound"}
+
+
+def fx_variants(stage_data: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Варианты FX (режим вариантов шага FX) — провалидированные, в порядке визарда.
+
+    Вариант = тип хука + ОДНА его настройка (хук · склейка · стиль); у одного типа их может
+    быть несколько, поэтому это не hooks.configs[kind]. None — классический режим.
+    Недонастроенный вариант — явная ошибка (No Fallback): иначе ролик тихо ушёл бы без хука.
+    """
+    raw = stage_data.get("fxVariants")
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError("Варианты FX повреждены — открой шаг FX и сохрани их заново")
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict) or not item.get("id") or not isinstance(item.get("config"), dict):
+            raise ValueError("Вариант FX повреждён — открой шаг FX и настрой его заново")
+        vid, kind, cfg = str(item["id"]), str(item.get("kind") or ""), dict(item["config"])
+        if vid in seen:
+            raise ValueError(f"Вариант FX {vid} повторяется")
+        seen.add(vid)
+        if kind not in HOOK_KINDS:
+            raise ValueError(f"Неизвестный тип хука у варианта FX: {kind!r}")
+        own = _VARIANT_OWN_FIELD.get(kind)
+        styles = cfg.get("effectStyles") or ([cfg["effectStyle"]] if cfg.get("effectStyle") else [])
+        if (own and not cfg.get(own)) or not cfg.get("effectGlue") or (kind != "none" and not styles):
+            raise ValueError("Один из вариантов FX не настроен до конца — открой шаг FX и заверши его")
+        # Стиль у варианта ровно один: рендер читает effectStyle.
+        if styles:
+            cfg["effectStyle"] = styles[-1]
+        out.append({"id": vid, "kind": kind, "config": cfg})
+    return out
+
+
+def _variant_sequence(variants: list[dict[str, Any]], alloc: dict[str, Any], target: int) -> list[dict[str, Any]]:
+    """Ролики по вариантам: доли из allocation.variants, порядок — как в списке вариантов
+    (так же раскладывает «Комбинации» на фронте). Нет долей — поровну."""
+    by_id = {v["id"]: v for v in variants}
+    counts = alloc.get("variants") or {}
+    stale = [k for k, n in counts.items() if k not in by_id and isinstance(n, (int, float)) and n > 0]
+    if stale:
+        raise ValueError("Распределение содержит удалённый вариант FX. Пересобери пул.")
+    if not counts:
+        counts = distribute([v["id"] for v in variants], target)
+    seq = [by_id[vid] for vid in _expand({v["id"]: int(counts.get(v["id"]) or 0) for v in variants})]
+    if len(seq) != target:
+        raise ValueError(
+            f"Пул вариантов FX содержит {len(seq)} вариаций, а совместимых вертикальных фонов — {target}"
+        )
+    return seq
 
 
 def _split_bg_key(key: str, default_mode: str) -> tuple[str, str]:
@@ -221,8 +280,14 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         raise ValueError(
             f"Пул субтитров содержит {len(sub_seq)} вариаций вместо {non_color_total}"
         )
-    hook_keys = _slice_keys(alloc.get("hooks") or {}, hook_fallback)
     hook_target = sum(1 for _, _, _, allowed in expanded_backgrounds if allowed)
+    # Режим вариантов FX: хуки/стили раскладываются вариантами, классические срезы пусты.
+    variants = fx_variants(stage_data)
+    variant_seq = _variant_sequence(variants, alloc, hook_target) if variants else []
+    if variants is not None:
+        hook_fallback, style_fallback = [], []
+        alloc = {**alloc, "hooks": {}, "styles": {}}
+    hook_keys = _slice_keys(alloc.get("hooks") or {}, hook_fallback)
     hook_seq = _expand(alloc.get("hooks") or distribute(hook_keys, hook_target)) if hook_keys else []
     if hook_keys and len(hook_seq) != hook_target:
         raise ValueError(
@@ -259,10 +324,15 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
             style = sub_seq[subtitle_index] if sub_seq else sub_fallback[0]
             subtitle_index += 1
         compatible_index = hook_index
-        v_kind = hook_seq[compatible_index] if hook_allowed and hook_seq else None
+        variant = variant_seq[compatible_index] if hook_allowed and variant_seq else None
+        if variant is not None:
+            v_kind = variant["kind"]
+            cfg = dict(variant["config"])
+        else:
+            v_kind = hook_seq[compatible_index] if hook_allowed and hook_seq else None
+            cfg = dict(configs.get(v_kind) or {}) if v_kind else {}
         if hook_allowed:
             hook_index += 1
-        cfg = dict(configs.get(v_kind) or {}) if v_kind else {}
         if hook_allowed and style_seq:
             cfg["effectStyle"] = style_seq[compatible_index]
         resolved, family_script = _resolve_hook(v_kind, cfg, bg_glue_id, bg_style_id)
@@ -315,6 +385,8 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
             },
             "hook": {
                 "family": v_kind,
+                # id варианта FX (режим вариантов) — по нему «Комбинации» и статус сверяются с шагом FX
+                "variantId": variant["id"] if variant is not None else None,
                 "dropTime": drop,
                 "resolved": resolved,
                 "family_script": family_script,
@@ -324,6 +396,10 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
                           "style": branding.get("style")},
             "sound": {"userSound": (cfg.get("sound") if v_kind in {"sound", "warmup"} else None)},
         })
+
+    # Раскадровка «Пула»: закреплённые склейки+клипы по видео (см. storyboard.py).
+    storyboard_plans.attach_to_variations(variations, stage_data.get("storyboard"), _segment(stage_data.get("timing")),
+                                          stage_data.get("timeline"))
 
     return {
         "schema": SCHEMA,
@@ -339,11 +415,36 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         "lyrics": {"full": stage_data.get("lyrics") or "", "fragment": stage_data.get("fragment")},
         "output": {**OUTPUT_DEFAULT, "s3Prefix": f"videos/{user_id}/{batch_id}"},
         "variations": variations,
+        # Склейки рецепта таймлайна (темп «реже/чаще» или ручные) — для видео без
+        # раскадровки; None, когда это «авто» (его рендер и так считает сам).
+        "recipe": storyboard_plans.recipe_cuts(stage_data.get("timeline"), _segment(stage_data.get("timing"))),
     }
+
+
+def selected_hook_configs(stage_data: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """(тип, конфиг) каждого хука, который реально уйдёт в ролики — ссылки на словари из
+    stage_data: submit дописывает в них метаданные загруженных файлов (прогрев).
+
+    Режим вариантов: конфиг каждого варианта с долей > 0; классический — hooks.configs
+    выбранных типов."""
+    raw = stage_data.get("fxVariants")
+    if isinstance(raw, list):
+        counts = (stage_data.get("allocation") or {}).get("variants") or {}
+        return [
+            (str(item.get("kind")), item["config"])
+            for item in raw
+            if isinstance(item, dict) and isinstance(item.get("config"), dict)
+            and (not counts or (counts.get(item.get("id")) or 0) > 0)
+        ]
+    configs = (stage_data.get("hooks") or {}).get("configs") or {}
+    return [(family, configs[family]) for family in sorted(selected_hook_families(stage_data))
+            if isinstance(configs.get(family), dict)]
 
 
 def selected_hook_families(stage_data: dict[str, Any]) -> set[str]:
     """Hook configs that will actually be expanded into batch variations."""
+    if isinstance(stage_data.get("fxVariants"), list):
+        return {family for family, _ in selected_hook_configs(stage_data)}
     hooks = stage_data.get("hooks") or {}
     allocated = (stage_data.get("allocation") or {}).get("hooks") or {}
     selected = {

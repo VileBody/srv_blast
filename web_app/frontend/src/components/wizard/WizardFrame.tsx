@@ -135,7 +135,8 @@ export function PillsFooter({
   nextLabel,
   dragScroll
 }: {
-  pills: { key: string; label: string; icon: ReactNode }[];
+  /** trail — метка после подписи (варианты FX: цвет варианта) */
+  pills: { key: string; label: string; icon: ReactNode; trail?: ReactNode }[];
   activeKey?: string;
   emptyLabel: string;
   onPill: (key: string) => void;
@@ -194,6 +195,7 @@ export function PillsFooter({
               >
                 <span className="pool-pill-count">{pill.icon}</span>
                 {pill.label}
+                {pill.trail}
               </button>
             ))
           )}
