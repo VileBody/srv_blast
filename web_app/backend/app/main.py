@@ -6,7 +6,9 @@ import json
 import logging
 import os
 import secrets
+import shutil
 import tempfile
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -2135,6 +2137,50 @@ def api_tiktok_callback(request: Request, code: str | None = None, state: str | 
     )
 
 
+# Заливка файла в TikTok идёт в фоне: через прокси публикации ~100 КБ/с, и держать
+# POST открытым минуты нельзя — такой запрос рвут VPN, мобильная сеть и браузеры
+# («Failed to fetch»). Пока файл льётся, статус публикации — наш SENDING. Воркер один
+# (--workers 1), поэтому хватает словаря в памяти.
+_TIKTOK_UPLOADS: dict[str, dict[str, Any]] = {}
+
+
+def _upload_in_background(publish_id: str, upload_url: str, path: Path, proxy: str, video: dict[str, Any], cleanup: Path | None) -> None:
+    state = _TIKTOK_UPLOADS[publish_id]
+    try:
+        result = tiktok_api.upload_file_chunks(upload_url, path, proxy)
+        transfer = {"host": result.get("upload_host"), "chunks": result.get("transfer") or []}
+        video["tiktokTransfer"] = transfer
+        state.update(state="uploaded", transfer=transfer)
+        logger.info("tiktok file upload %s: %s", publish_id, transfer)
+    except tiktok_api.TikTokApiError as exc:
+        state.update(state="failed", code=exc.code, message=str(exc))
+        logger.warning("tiktok file upload %s failed: %s %s", publish_id, exc.code, exc)
+    except Exception as exc:  # noqa: BLE001 — любой сбой заливки должен стать FAILED, а не вечным SENDING
+        state.update(state="failed", code="upload_failed", message=f"{type(exc).__name__}: {exc}")
+        logger.exception("tiktok file upload %s crashed", publish_id)
+    finally:
+        if cleanup is not None:
+            shutil.rmtree(cleanup, ignore_errors=True)
+
+
+def _start_file_upload(token: str, post_info: dict[str, Any], path: Path, proxy: str, video: dict[str, Any], cleanup: Path | None = None) -> dict[str, Any]:
+    try:
+        data = tiktok_api.init_file_upload(token, post_info, path, proxy)
+    except BaseException:
+        if cleanup is not None:
+            shutil.rmtree(cleanup, ignore_errors=True)
+        raise
+    publish_id = str(data["publish_id"])
+    _TIKTOK_UPLOADS[publish_id] = {"state": "sending"}
+    threading.Thread(
+        target=_upload_in_background,
+        args=(publish_id, str(data["upload_url"]), path, proxy, video, cleanup),
+        name=f"tiktok-upload-{publish_id}",
+        daemon=True,
+    ).start()
+    return {"publish_id": publish_id, "status": "SENDING"}
+
+
 @app.post("/api/tiktok/post", tags=["tiktok"])
 def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     if store.TIKTOK is None:
@@ -2220,15 +2266,16 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
             result = tiktok_api.init_direct_post_pull(token, post_info, str(video_url), cfg.publish_proxy)
         elif str(video_url).startswith("/static/"):
             local_path = STATIC_DIR / str(video_url).removeprefix("/static/")
-            result = tiktok_api.init_direct_post_file(token, post_info, local_path, cfg.publish_proxy)
+            result = _start_file_upload(token, post_info, local_path, cfg.publish_proxy, video)
         elif RUNTIME.production:
-            with tempfile.TemporaryDirectory(prefix="blast-tiktok-") as temp_dir:
-                local_path = Path(temp_dir) / f"{payload.videoId}.mp4"
-                try:
-                    _production_backend().download_video(str(video_url), local_path)
-                except Exception as exc:
-                    raise _production_error(exc) from exc
-                result = tiktok_api.init_direct_post_file(token, post_info, local_path, cfg.publish_proxy)
+            temp_dir = Path(tempfile.mkdtemp(prefix="blast-tiktok-"))  # удалит фоновая заливка
+            local_path = temp_dir / f"{payload.videoId}.mp4"
+            try:
+                _production_backend().download_video(str(video_url), local_path)
+            except Exception as exc:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                raise _production_error(exc) from exc
+            result = _start_file_upload(token, post_info, local_path, cfg.publish_proxy, video, cleanup=temp_dir)
         else:
             raise HTTPException(
                 status_code=422,
@@ -2242,10 +2289,9 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     except tiktok_api.TikTokApiError as exc:
         raise HTTPException(status_code=exc.status or 502, detail={"code": exc.code, "message": str(exc)}) from exc
     publish_id = result.get("publish_id")
-    transfer = {"host": result.get("upload_host"), "chunks": result.get("transfer") or []}
-    logger.info("tiktok file upload %s: %s", publish_id, transfer)
-    video.update({"tiktokPublishId": publish_id, "tiktokStatus": "PROCESSING_UPLOAD", "tiktokTransfer": transfer})
-    return {"ok": True, "status": "PROCESSING_UPLOAD", "publishId": publish_id, "transfer": transfer, "mock": False}
+    status = result.get("status") or "PROCESSING_UPLOAD"  # SENDING — файл ещё льётся с нашего сервера
+    video.update({"tiktokPublishId": publish_id, "tiktokStatus": status})
+    return {"ok": True, "status": status, "publishId": publish_id, "mock": False}
 
 
 @app.get("/api/tiktok/post/{publish_id}", tags=["tiktok"])
@@ -2254,6 +2300,11 @@ def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
         if RUNTIME.production:
             raise HTTPException(status_code=503, detail={"code": "tiktok_not_configured"})
         return {"publishId": publish_id, "status": "PUBLISH_COMPLETE", "mock": True}
+    upload = _TIKTOK_UPLOADS.get(publish_id)
+    if upload and upload["state"] == "sending":
+        return {"publishId": publish_id, "status": "SENDING", "mock": False}
+    if upload and upload["state"] == "failed":
+        return {"publishId": publish_id, "status": "FAILED", "fail_reason": upload.get("code"), "message": upload.get("message"), "mock": False}
     try:
         result = tiktok_api.fetch_publish_status(_access_token(), publish_id, tiktok_config.load().publish_proxy)
     except tiktok_api.TikTokApiError as exc:
