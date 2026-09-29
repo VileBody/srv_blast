@@ -272,6 +272,42 @@ export interface Vibe {
   };
 }
 
+/** Склейки отрывка по темпу: «auto» — ровно разбиение рендера, остальные — от той же сетки битов. */
+export interface StoryboardCutsResponse {
+  status: string;
+  clipStart: number;
+  clipEnd: number;
+  bpm: number;
+  dropT: number | null;
+  beats: number[];
+  cuts: { sparse: number[]; auto: number[]; dense: number[] };
+  mock?: boolean;
+}
+
+export interface StoryboardPickedClip {
+  fileName: string;
+  inPoint: number;
+  outPoint: number;
+  previewUrl: string | null;
+  previewOffset: number;
+  tags: string[];
+}
+
+export interface StoryboardPickedVideo {
+  index: number;
+  group: string;
+  clips: StoryboardPickedClip[];
+  repeats: number[];
+  plan: Record<string, unknown>;
+}
+
+export interface StoryboardCandidate {
+  fileName: string;
+  previewUrl: string | null;
+  previewOffset: number;
+  tags: string[];
+}
+
 export interface DropCandidate {
   time: string;
   seconds: number;

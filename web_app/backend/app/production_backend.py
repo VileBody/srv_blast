@@ -361,6 +361,59 @@ class ProductionBackend:
             )
         return dict(response.json())
 
+    def storyboard_selector(self, group_name: str) -> dict[str, str]:
+        """Точный слот (theme, tags_group) вайба — тот же, что уходит в рендер."""
+        selector = dict(self.config.selector_by_mode.get("footage", {}).get(group_name) or {})
+        if not selector.get("rotationTheme") or not selector.get("rotationTagsGroup"):
+            raise ProductionBackendError(f"exact rotation selector required for footage {group_name!r}")
+        return selector
+
+    def _storyboard_post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        response = self._http.post(f"{self.config.orchestrator_url}{path}", json=body)
+        if response.status_code == 422:
+            # отказ подбора осмысленный (мало клипов, клип короче кадра) — отдаём как есть
+            raise ProductionBackendError(str(response.json().get("detail") or "storyboard rejected"))
+        if response.status_code >= 300:
+            raise ProductionBackendError(f"orchestrator {path} failed status={response.status_code}")
+        return dict(response.json())
+
+    def storyboard_cuts(self, *, audio_s3_url: str, clip_start_sec: float, clip_end_sec: float,
+                        user_drop_t: float | None) -> dict[str, Any]:
+        return self._storyboard_post("/storyboard/cuts", {
+            "audio_s3_url": str(audio_s3_url),
+            "clip_start_sec": float(clip_start_sec),
+            "clip_end_sec": float(clip_end_sec),
+            "user_drop_t": user_drop_t,
+        })
+
+    def storyboard_pick(self, *, group_name: str, clip_start_abs: float, clip_end_abs: float,
+                        switch_points_abs: list[float], videos: list[dict[str, Any]]) -> dict[str, Any]:
+        selector = self.storyboard_selector(group_name)
+        return self._storyboard_post("/storyboard/pick", {
+            "rotation_theme": selector["rotationTheme"],
+            "rotation_tags_group": selector["rotationTagsGroup"],
+            "clip_start_abs": float(clip_start_abs),
+            "clip_end_abs": float(clip_end_abs),
+            "switch_points_abs": [float(p) for p in switch_points_abs],
+            "videos": videos,
+        })
+
+    def storyboard_alternatives(self, *, group_name: str, clip_start_abs: float, clip_end_abs: float,
+                                switch_points_abs: list[float], interval_idx: int, seed_key: str,
+                                exclude_file_names: list[str], limit: int) -> dict[str, Any]:
+        selector = self.storyboard_selector(group_name)
+        return self._storyboard_post("/storyboard/alternatives", {
+            "rotation_theme": selector["rotationTheme"],
+            "rotation_tags_group": selector["rotationTagsGroup"],
+            "clip_start_abs": float(clip_start_abs),
+            "clip_end_abs": float(clip_end_abs),
+            "switch_points_abs": [float(p) for p in switch_points_abs],
+            "interval_idx": int(interval_idx),
+            "seed_key": seed_key,
+            "exclude_file_names": list(exclude_file_names),
+            "limit": int(limit),
+        })
+
     def start_asr_preview(
         self,
         *,
@@ -1226,6 +1279,23 @@ class ProductionBackend:
             if sum(float(item["duration"]) for item in custom_sources) + 0.001 < needed:
                 raise ProductionBackendError(f"Исходников недостаточно: нужно {needed:.1f} с. Добавьте видео.")
             payload["custom_footage_sources"] = [{"url": item["s3Key"], "width": item["width"], "height": item["height"], "duration": item["duration"]} for item in custom_sources]
+        footage_plan = background.get("footagePlan")
+        if footage_plan:
+            # Раскадровка «Пула»: рендер ставит ровно эти клипы на ровно эти склейки
+            # (оркестратор проверит окно и инвентарь — расхождение = явная ошибка).
+            if custom_sources or bg_mode != "footage" or not selector.get("rotationTheme"):
+                raise ProductionBackendError("раскадровка применима только к футажу из вайба")
+            payload["footage_plan"] = footage_plan
+        recipe = render_job.get("recipe")
+        if recipe and not footage_plan and not custom_sources:
+            # Склейки таймлайна для видео, клипы которого рендер подбирает сам. У плана
+            # раскадровки склейки свои, а своё видео идёт клипами встык — им не шлём.
+            payload["pinned_cuts"] = {
+                "version": 1,
+                "clip_start_abs": float(recipe["clipStartAbs"]),
+                "clip_end_abs": float(recipe["clipEndAbs"]),
+                "switch_points_abs": [float(p) for p in recipe["switchPointsAbs"]],
+            }
         return {key: value for key, value in payload.items() if value is not None and value != ""}
 
 

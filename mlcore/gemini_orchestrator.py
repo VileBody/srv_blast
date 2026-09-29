@@ -2531,6 +2531,148 @@ def _log_footage_interval_picker_diagnostics(
             )
 
 
+def load_footage_exclude_file_names(*, logger: logging.Logger) -> List[str]:
+    """Clips the picker must never use: the per-job env list plus the operator
+    blacklist file. Shared with the storyboard (``services.orchestrator.
+    storyboard_api``) so its picks and the render's plan check honour it too."""
+    exclude_file_names: List[str] = []
+    seen_excluded: set[str] = set()
+
+    # Source 1: inline JSON list via env var (per-job overrides).
+    exclude_raw = (os.environ.get("FOOTAGE_EXCLUDE_FILE_NAMES_JSON") or "").strip()
+    if exclude_raw:
+        try:
+            parsed = json.loads(exclude_raw)
+        except Exception as e:
+            raise RuntimeError(f"Invalid FOOTAGE_EXCLUDE_FILE_NAMES_JSON: {e!r}") from e
+        if not isinstance(parsed, list):
+            raise RuntimeError("FOOTAGE_EXCLUDE_FILE_NAMES_JSON must be a JSON list")
+        for it in parsed:
+            name = str(it or "").strip()
+            if not name or name in seen_excluded:
+                continue
+            seen_excluded.add(name)
+            exclude_file_names.append(name)
+
+    # Source 2: persistent blacklist file (FOOTAGE_BLACKLIST_PATH).
+    blacklist_path = (os.environ.get("FOOTAGE_BLACKLIST_PATH") or "").strip()
+    if blacklist_path:
+        bl_file = Path(blacklist_path)
+        if bl_file.exists():
+            try:
+                bl_data = json.loads(bl_file.read_text(encoding="utf-8"))
+                if isinstance(bl_data, list):
+                    for it in bl_data:
+                        name = str(it or "").strip()
+                        if not name or name in seen_excluded:
+                            continue
+                        seen_excluded.add(name)
+                        exclude_file_names.append(name)
+                else:
+                    logger.warning("footage_blacklist_invalid path=%s (expected JSON list)", blacklist_path)
+            except Exception as e:
+                logger.warning("footage_blacklist_load_error path=%s err=%r", blacklist_path, e)
+        else:
+            logger.warning("footage_blacklist_missing path=%s", blacklist_path)
+    return exclude_file_names
+
+
+def collection_interval_cap(assets: List[Dict[str, Any]]) -> float:
+    """Longest shot a collection can fill: its shortest pre-cut clip, minus a
+    frame of slack (a clip exactly as long as the interval is a rounding error
+    away from not fitting). 0 when no durations are known."""
+    durs = [float(a.get("duration_sec") or 0.0) for a in assets if float(a.get("duration_sec") or 0.0) > 0.0]
+    return max(0.5, min(durs) - 0.05) if durs else 0.0
+
+
+def pinned_cuts_from_env(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    fast_start_seconds: float,
+    bpm: Optional[float],
+    interval_cap_sec: float,
+    logger: logging.Logger,
+) -> Optional[SwitchTimingPayload]:
+    """The timeline's cuts (``PINNED_CUTS_JSON``) as the job's switch points, or
+    None without them. Clips are still picked by the build. A collection keeps
+    its hard ceiling: a shot longer than its shortest clip is split on the same
+    rule as generated cuts (logged) — no clip could cover it otherwise."""
+    raw = (os.environ.get("PINNED_CUTS_JSON") or "").strip()
+    if not raw:
+        return None
+    from mlcore.storyboard_plan import validate_cuts
+
+    points = validate_cuts(json.loads(raw), clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs)
+    if interval_cap_sec > 0.0:
+        from mlcore.switch_timing_deterministic import enforce_max_interval
+
+        before = len(points)
+        points = enforce_max_interval(
+            points, clip_start=clip_start_abs, clip_end=clip_end_abs, max_interval_sec=interval_cap_sec,
+        )
+        if len(points) != before:
+            logger.info("pinned_cuts_collection_split cuts=%d -> %d (cap=%.2fs)", before, len(points), interval_cap_sec)
+    duration = float(clip_end_abs) - float(clip_start_abs)
+    logger.info("pinned_cuts cuts=%d window=%.3f..%.3f (timeline recipe)", len(points), float(clip_start_abs), float(clip_end_abs))
+    return SwitchTimingPayload.model_validate(
+        {
+            "clip_start_abs": clip_start_abs,
+            "clip_end_abs": clip_end_abs,
+            "fast_start_seconds": min(float(fast_start_seconds), max(0.0, duration)),
+            "bpm": float(bpm) if bpm else None,
+            "switch_points_abs": points,
+        }
+    )
+
+
+def pinned_footage_plan_from_env(
+    *,
+    clip_start_abs: float,
+    clip_end_abs: float,
+    fast_start_seconds: float,
+    bpm: Optional[float],
+    style_rotation_payload: Optional[FootageStyleRotation],
+    mapped_assets: List[Dict[str, Any]],
+    logger: logging.Logger,
+) -> Optional[Tuple[SwitchTimingPayload, FootageSelectionPayload]]:
+    """The storyboard's pinned plan (``FOOTAGE_PLAN_JSON``) as the job's switch
+    points and footage selection, or None when the job has no plan.
+
+    Same rule as the storyboard: every clip is in this slot's pool, is not
+    blacklisted and covers its shot — the plan comes from the browser. Any
+    mismatch raises; the build never silently re-picks."""
+    raw = (os.environ.get("FOOTAGE_PLAN_JSON") or "").strip()
+    if not raw:
+        return None
+    from mlcore.storyboard_plan import slot_pool, validate_plan
+
+    if style_rotation_payload is None:
+        raise RuntimeError("footage_plan requires the exact-slot style rotation (theme + tags_group)")
+    points, selection = validate_plan(
+        json.loads(raw),
+        clip_start_abs=clip_start_abs,
+        clip_end_abs=clip_end_abs,
+        pool_by_name=slot_pool(style_rotation_payload.subgroups, mapped_assets),
+        excluded_file_names=load_footage_exclude_file_names(logger=logger),
+    )
+    duration = float(clip_end_abs) - float(clip_start_abs)
+    switch_payload = SwitchTimingPayload.model_validate(
+        {
+            "clip_start_abs": clip_start_abs,
+            "clip_end_abs": clip_end_abs,
+            "fast_start_seconds": min(float(fast_start_seconds), max(0.0, duration)),
+            "bpm": float(bpm) if bpm else None,
+            "switch_points_abs": points,
+        }
+    )
+    logger.info(
+        "footage_plan_pinned shots=%d window=%.3f..%.3f (cuts+picks from storyboard)",
+        len(selection.clips), float(clip_start_abs), float(clip_end_abs),
+    )
+    return switch_payload, selection
+
+
 def build_all_via_gemini_one_call(
     *,
     progress_cb: Optional[Callable[[str], None]] = None,
@@ -4573,6 +4715,33 @@ def build_all_via_gemini_one_call(
 
     timing_analysis_payload: Stage2TimingAnalysisPayload | None = None
     timing_cuts_payload: Stage2TimingCutsPayload | None = None
+    # Pinned storyboard (web «Пул»): the user approved these exact cuts and
+    # clips. Use them verbatim instead of generating cuts and picking clips —
+    # a re-pick would not reproduce the preview (the picker's cooldown moves
+    # with every render). Mismatch with this job is an explicit failure.
+    plan_selection: Optional[FootageSelectionPayload] = None
+    _pinned = pinned_footage_plan_from_env(
+        clip_start_abs=clip_start_abs,
+        clip_end_abs=clip_end_abs,
+        fast_start_seconds=float(fast_start_seconds),
+        bpm=bpm,
+        style_rotation_payload=style_rotation_payload,
+        mapped_assets=mapped_picker_assets,
+        logger=logger,
+    )
+    if _pinned is not None:
+        switch_payload, plan_selection = _pinned
+    else:
+        _pinned_cuts = pinned_cuts_from_env(
+            clip_start_abs=clip_start_abs,
+            clip_end_abs=clip_end_abs,
+            fast_start_seconds=float(fast_start_seconds),
+            bpm=bpm,
+            interval_cap_sec=collection_interval_cap(picker_assets) if _collection_plane else 0.0,
+            logger=logger,
+        )
+        if _pinned_cuts is not None:
+            switch_payload = _pinned_cuts
     if switch_payload is None:
         # hook_aware: generate footage cut timings DETERMINISTICALLY from the
         # measured onsets (kick-driven, rhythm-locked) — no Stage2 timing LLM
@@ -4597,27 +4766,17 @@ def build_all_via_gemini_one_call(
             # outright ("no asset can cover interval"). Capping the hold keeps the
             # cuts musical (still chosen on beats, just sooner).
             _timing_params = None
-            _interval_cap = 0.0
-            if _collection_plane:
-                _durs = [
-                    float(a.get("duration_sec") or 0.0)
-                    for a in picker_assets
-                    if float(a.get("duration_sec") or 0.0) > 0.0
-                ]
-                if _durs:
-                    from mlcore.switch_timing_deterministic import SwitchTimingParams
+            _interval_cap = collection_interval_cap(picker_assets) if _collection_plane else 0.0
+            if _interval_cap > 0.0:
+                from mlcore.switch_timing_deterministic import SwitchTimingParams
 
-                    # Leave a frame of slack: a clip exactly as long as the
-                    # interval is a rounding error away from not fitting.
-                    _interval_cap = max(0.5, min(_durs) - 0.05)
-                    _defaults = SwitchTimingParams()
-                    if _interval_cap < _defaults.max_hold_sec:
-                        _timing_params = SwitchTimingParams(max_hold_sec=_interval_cap)
-                        logger.info(
-                            "stage2_collection_interval_cap max_hold=%.2fs "
-                            "(shortest clip %.2fs, pool=%d)",
-                            _interval_cap, min(_durs), len(_durs),
-                        )
+                _defaults = SwitchTimingParams()
+                if _interval_cap < _defaults.max_hold_sec:
+                    _timing_params = SwitchTimingParams(max_hold_sec=_interval_cap)
+                    logger.info(
+                        "stage2_collection_interval_cap max_hold=%.2fs (pool=%d)",
+                        _interval_cap, len(picker_assets),
+                    )
             _det = generate_switch_points(
                 onsets_classified=_onsets,
                 beats=[float(b) for b in hook_analysis.beats],
@@ -4782,45 +4941,7 @@ def build_all_via_gemini_one_call(
     if switch_payload is None:
         raise RuntimeError("Stage2 failed: switch timing payload is empty")
 
-    exclude_file_names: List[str] = []
-    seen_excluded: set[str] = set()
-
-    # Source 1: inline JSON list via env var (per-job overrides).
-    exclude_raw = (os.environ.get("FOOTAGE_EXCLUDE_FILE_NAMES_JSON") or "").strip()
-    if exclude_raw:
-        try:
-            parsed = json.loads(exclude_raw)
-        except Exception as e:
-            raise RuntimeError(f"Invalid FOOTAGE_EXCLUDE_FILE_NAMES_JSON: {e!r}") from e
-        if not isinstance(parsed, list):
-            raise RuntimeError("FOOTAGE_EXCLUDE_FILE_NAMES_JSON must be a JSON list")
-        for it in parsed:
-            name = str(it or "").strip()
-            if not name or name in seen_excluded:
-                continue
-            seen_excluded.add(name)
-            exclude_file_names.append(name)
-
-    # Source 2: persistent blacklist file (FOOTAGE_BLACKLIST_PATH).
-    blacklist_path = (os.environ.get("FOOTAGE_BLACKLIST_PATH") or "").strip()
-    if blacklist_path:
-        bl_file = Path(blacklist_path)
-        if bl_file.exists():
-            try:
-                bl_data = json.loads(bl_file.read_text(encoding="utf-8"))
-                if isinstance(bl_data, list):
-                    for it in bl_data:
-                        name = str(it or "").strip()
-                        if not name or name in seen_excluded:
-                            continue
-                        seen_excluded.add(name)
-                        exclude_file_names.append(name)
-                else:
-                    logger.warning("footage_blacklist_invalid path=%s (expected JSON list)", blacklist_path)
-            except Exception as e:
-                logger.warning("footage_blacklist_load_error path=%s err=%r", blacklist_path, e)
-        else:
-            logger.warning("footage_blacklist_missing path=%s", blacklist_path)
+    exclude_file_names: List[str] = load_footage_exclude_file_names(logger=logger)
 
     if exclude_file_names:
         logger.info(
@@ -4875,6 +4996,13 @@ def build_all_via_gemini_one_call(
             _bg_mode_picker,
             len(footage_payload.clips),
             placeholder_name,
+        )
+    elif plan_selection is not None:
+        footage_payload = plan_selection
+        _record_footage_usage(
+            _usage_bucket_id,
+            [str(c.file_name) for c in plan_selection.clips],
+            logger=logger,
         )
     else:
         footage_payload, interval_diag = pick_footage_clips_by_intervals_deterministic(

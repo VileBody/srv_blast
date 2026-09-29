@@ -23,6 +23,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import mock_store as store
 from . import analytics, asr_preview, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
 from . import render_job as render_job_builder
+from . import effect_map
+from . import storyboard as storyboard_svc
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
 
@@ -360,6 +362,38 @@ class SubmitPayload(BaseModel):
     stageData: dict[str, Any] = Field(default_factory=dict)
     videosToGenerate: int = 1
     idempotencyKey: str | None = None
+
+
+class StoryboardCutsPayload(BaseModel):
+    trackId: str = ""
+    clipFrom: str = ""
+    clipTo: str = ""
+    dropTime: str = ""
+
+
+class StoryboardVideoPayload(BaseModel):
+    index: int = Field(ge=1)
+    group: str = Field(min_length=1)
+    seedKey: str = Field(min_length=1, max_length=200)
+    pins: dict[int, str] = Field(default_factory=dict)
+
+
+class StoryboardPickPayload(BaseModel):
+    clipFrom: str = ""
+    clipTo: str = ""
+    cuts: list[float] = Field(default_factory=list, max_length=400)
+    videos: list[StoryboardVideoPayload] = Field(min_length=1, max_length=100)
+
+
+class StoryboardAlternativesPayload(BaseModel):
+    clipFrom: str = ""
+    clipTo: str = ""
+    cuts: list[float] = Field(default_factory=list, max_length=400)
+    group: str = Field(min_length=1)
+    shot: int = Field(ge=0)
+    seedKey: str = Field(min_length=1, max_length=200)
+    exclude: list[str] = Field(default_factory=list, max_length=2000)
+    limit: int = Field(default=12, ge=1, le=50)
 
 
 class AsrStartPayload(BaseModel):
@@ -1270,6 +1304,123 @@ async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> 
         if len(drops) == 3:
             break
     return {"status": "COMPLETED", "bpm": float(result.get("bpm") or 0.0), "drops": drops, "mock": False}
+
+
+def _storyboard_window(clip_from: str, clip_to: str) -> tuple[float, float]:
+    start = render_job_builder.mmss_seconds(clip_from)
+    end = render_job_builder.mmss_seconds(clip_to)
+    if start is None or end is None or end <= start:
+        raise HTTPException(status_code=422, detail="Сначала выбери отрывок трека")
+    return float(start), float(end)
+
+
+def _storyboard_error(exc: Exception) -> HTTPException:
+    if isinstance(exc, HTTPException):
+        return exc
+    if isinstance(exc, storyboard_svc.StoryboardError):
+        return HTTPException(status_code=422, detail=str(exc))
+    return _production_error(exc)
+
+
+@app.post("/api/wizard/storyboard/cuts", tags=["wizard"])
+async def api_storyboard_cuts(payload: StoryboardCutsPayload) -> dict[str, Any]:
+    """Склейки отрывка по темпу трека — те же, что поставит рендер.
+
+    «Авто» = ровно разбиение рендера (онсеты/биты, склейка на дропе); «реже» и
+    «чаще» пересчитаны от той же сетки битов (оркестратор, `/storyboard/cuts`).
+    """
+    start, end = _storyboard_window(payload.clipFrom, payload.clipTo)
+    drop = effect_map.parse_mmssms(payload.dropTime) if payload.dropTime else None
+    if drop is not None and not (start <= drop <= end):
+        # Дроп из другого отрывка: без него склейки разошлись бы с тем, что увидит рендер.
+        raise HTTPException(status_code=422, detail="Дроп вне отрывка — выбери дроп заново на шаге FX")
+    if RUNTIME.backend != "production":
+        return {"status": "COMPLETED", "clipStart": start, "clipEnd": end, **storyboard_svc.mock_cuts(start=start, end=end, drop=drop), "mock": True}
+    track = store.saved_track(str(payload.trackId or "")) or {}
+    audio_s3_url = str(track.get("s3Key") or "").strip()
+    if not audio_s3_url:
+        raise HTTPException(status_code=422, detail="Сначала загрузи трек")
+    try:
+        res = await run_in_threadpool(
+            _production_backend().storyboard_cuts,
+            audio_s3_url=audio_s3_url, clip_start_sec=start, clip_end_sec=end, user_drop_t=drop,
+        )
+    except Exception as exc:
+        raise _storyboard_error(exc) from exc
+    return {
+        "status": "COMPLETED",
+        "clipStart": res.get("clip_start_abs", start),
+        "clipEnd": res.get("clip_end_abs", end),
+        "bpm": res.get("bpm"),
+        "dropT": res.get("drop_t"),
+        "beats": res.get("beats_abs") or [],
+        "cuts": res.get("cuts_by_pace") or {},
+        "mock": False,
+    }
+
+
+@app.post("/api/wizard/storyboard/pick", tags=["wizard"])
+async def api_storyboard_pick(payload: StoryboardPickPayload) -> dict[str, Any]:
+    """Реальные исходники для каждого видео батча по склейкам рецепта.
+
+    Видео одного вайба подбираются одной пачкой — клипы между ними не повторяются
+    (если вайбу не хватает клипов, повторы помечаются в `repeats`, а не прячутся).
+    В ответе у каждого видео закреплённый план — он уйдёт в рендер как есть.
+    """
+    start, end = _storyboard_window(payload.clipFrom, payload.clipTo)
+    cuts = sorted(float(c) for c in payload.cuts)
+    if RUNTIME.backend != "production":
+        try:
+            vibes = [v for v in store.VIBES]
+            return {**storyboard_svc.mock_pick(vibes=vibes, start=start, end=end, cuts=cuts,
+                                               videos=[v.model_dump() for v in payload.videos]), "mock": True}
+        except Exception as exc:
+            raise _storyboard_error(exc) from exc
+    by_group: dict[str, list[StoryboardVideoPayload]] = {}
+    for video in payload.videos:
+        by_group.setdefault(video.group, []).append(video)
+    out: dict[int, dict[str, Any]] = {}
+    try:
+        for group, videos in by_group.items():
+            res = await run_in_threadpool(
+                _production_backend().storyboard_pick,
+                group_name=group, clip_start_abs=start, clip_end_abs=end, switch_points_abs=cuts,
+                videos=[{"seed_key": v.seedKey, "pins": {str(k): n for k, n in v.pins.items()}} for v in videos],
+            )
+            for video, picked in zip(videos, res.get("videos") or [], strict=True):
+                out[video.index] = {
+                    "index": video.index,
+                    "group": group,
+                    "clips": [storyboard_svc.clip_view(c) for c in picked.get("clips") or []],
+                    "repeats": list(picked.get("repeats") or []),
+                    "plan": picked.get("plan"),
+                }
+    except Exception as exc:
+        raise _storyboard_error(exc) from exc
+    return {"videos": [out[v.index] for v in payload.videos], "mock": False}
+
+
+@app.post("/api/wizard/storyboard/alternatives", tags=["wizard"])
+async def api_storyboard_alternatives(payload: StoryboardAlternativesPayload) -> dict[str, Any]:
+    """Варианты замены одного кадра: тот же пул и порядок, что у подбора."""
+    start, end = _storyboard_window(payload.clipFrom, payload.clipTo)
+    cuts = sorted(float(c) for c in payload.cuts)
+    try:
+        if RUNTIME.backend != "production":
+            return {**storyboard_svc.mock_alternatives(vibes=list(store.VIBES), group=payload.group, seed_key=payload.seedKey,
+                                                       shot=payload.shot, exclude=payload.exclude, limit=payload.limit), "mock": True}
+        res = await run_in_threadpool(
+            _production_backend().storyboard_alternatives,
+            group_name=payload.group, clip_start_abs=start, clip_end_abs=end, switch_points_abs=cuts,
+            interval_idx=payload.shot, seed_key=payload.seedKey, exclude_file_names=payload.exclude, limit=payload.limit,
+        )
+    except Exception as exc:
+        raise _storyboard_error(exc) from exc
+    return {"candidates": [
+        {"fileName": c.get("file_name"), "previewUrl": c.get("preview_url"),
+         "previewOffset": c.get("preview_offset_sec") or 0.0, "tags": list(c.get("tags") or [])}
+        for c in res.get("candidates") or []
+    ], "mock": False}
 
 
 def _asr_inputs(clip_from: str, clip_to: str, fragment: str, lyrics: str, track_id: str = "") -> tuple[dict[str, Any], float, float, str] | None:
