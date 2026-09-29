@@ -17,7 +17,7 @@ import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 import { TimelineButtonGuideVisual, useFxTimelineOpen, useTimelineGuideAvailable } from './timelineGuides';
-import { LabTypeList, useFxLab } from './FxLab';
+import { fxLabGuideId, LabTypeList, useFxLab, useFxLabStore, useFxLabTourProgress } from './FxLab';
 
 // Таймлайн сам берёт каталоги эффектов отсюда — статический импорт дал бы цикл модулей.
 const FxTimeline = lazy(() => import('./FxTimeline').then((m) => ({ default: m.FxTimeline })));
@@ -406,14 +406,32 @@ export function StageHooks() {
   // (пусто/не пусто), теперь оба не гейтятся задачей и без явной
   // последовательности пересекаются. Показ отмечаем отдельно после
   // showTypeGuide (см. ниже), когда dropGuideDismissed уже посчитан.
-  const [typeGuideDismissed, setTypeGuideDismissed] = useGuideDismiss('hook-type', Boolean(hooks.dropTime) && !hooks.kind, false);
-  const [dropGuideDismissed, setDropGuideDismissed] = useGuideDismiss('hook-drop', !hooks.dropTime && !typeGuideDismissed, true);
+  // Прототип вариантов FX (?fxLab=1): тот же дроп и тип, но как шаги 1–2 его общего тура
+  // (свои id и нумерация — см. FX_LAB_TOUR).
+  const fxLab = useFxLab();
+  const labProgress = useFxLabTourProgress();
+  const typeGuideId = fxLab ? fxLabGuideId('type') : 'hook-type';
+  const dropGuideId = fxLab ? fxLabGuideId('drop') : 'hook-drop';
+  // Вариантов прототипа в hooks.kind нет — «тип ещё не выбран» там = ни одного варианта.
+  const labVariantCount = useFxLabStore((state) => state.variants.length);
+  const [typeGuideDismissed, setTypeGuideDismissed] = useGuideDismiss(typeGuideId, Boolean(hooks.dropTime) && (fxLab ? labVariantCount === 0 : !hooks.kind), false);
+  const [dropGuideDismissed, setDropGuideDismissed] = useGuideDismiss(dropGuideId, !hooks.dropTime && !typeGuideDismissed, true);
   const fxTimelineOpen = useFxTimelineOpen((state) => state.open);
   const showDropGuide = !dropGuideDismissed && !fxTimelineOpen;
   // Четвёртый шаг (кнопка «Таймлайн») есть только там, где есть сама кнопка.
   const hookGuideTotal = useTimelineGuideAvailable() ? 4 : 3;
   const showTypeGuide = Boolean(hooks.dropTime) && dropGuideDismissed && !typeGuideDismissed && !fxTimelineOpen;
-  useMarkGuideSeen('hook-type', Boolean(hooks.dropTime) && dropGuideDismissed);
+  useMarkGuideSeen(typeGuideId, Boolean(hooks.dropTime) && dropGuideDismissed);
+  // В прототипе шаг закрывается самим действием, как в туре таймлайна: выбрал дроп
+  // (сменил, а не пришёл с уже выбранным) — шаг 1 пройден; завёл первый вариант — шаг 2.
+  const prevDropRef = useRef(hooks.dropTime);
+  const prevVariantCountRef = useRef(labVariantCount);
+  useEffect(() => {
+    if (fxLab && showDropGuide && hooks.dropTime && hooks.dropTime !== prevDropRef.current) setDropGuideDismissed(true);
+    if (fxLab && showTypeGuide && labVariantCount > prevVariantCountRef.current) setTypeGuideDismissed(true);
+    prevDropRef.current = hooks.dropTime;
+    prevVariantCountRef.current = labVariantCount;
+  });
   useScrollGuideIntoView(showDropGuide, dropGuideTargetRef);
   useScrollGuideIntoView(showTypeGuide, typeGuideTargetRef);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
@@ -431,7 +449,6 @@ export function StageHooks() {
   const [customDrop, setCustomDrop] = useState(false);
   const [dropError, setDropError] = useState(false);
   const [hint, setHint] = useState<HookKind | null>(null);
-  const fxLab = useFxLab();
 
   // Кандидаты ВНЕ отрывка не предлагаем: выбрав такой, человек упирался в неактивное
   // «Продолжить» без объяснения (dropReady в визарде требует дроп внутри окна).
@@ -548,7 +565,7 @@ export function StageHooks() {
         title={t('wizard.fx.guideDropTitle')}
         text={t('wizard.fx.guideDropText')}
         dismissLabel={t('wizard.fx.guideNext')}
-        progressLabel={t('wizard.guideProgress', { current: 1, total: hookGuideTotal })}
+        progressLabel={fxLab ? labProgress('drop') : t('wizard.guideProgress', { current: 1, total: hookGuideTotal })}
         onDismiss={() => setDropGuideDismissed(true)}
         variant="visual"
         shell="track-top"
@@ -616,7 +633,7 @@ export function StageHooks() {
         title={t('wizard.fx.guideTypeTitle')}
         text={t('wizard.fx.guideTypeText')}
         dismissLabel={t('wizard.fx.guideNext')}
-        progressLabel={t('wizard.guideProgress', { current: 2, total: hookGuideTotal })}
+        progressLabel={fxLab ? labProgress('type') : t('wizard.guideProgress', { current: 2, total: hookGuideTotal })}
         onDismiss={() => setTypeGuideDismissed(true)}
         variant="visual"
         shell="track-top"

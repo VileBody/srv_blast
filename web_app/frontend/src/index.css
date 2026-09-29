@@ -255,7 +255,7 @@
  */
 .gt-cur { position: absolute; left: 0; top: 0; width: 14px; height: 16px; z-index: 5; pointer-events: none; transform-origin: 2px 2px; }
 /* 1. посмотреть: ▶ → playhead бежит, кадры меняются на склейках, вспышка на дропе */
-@keyframes gw-cur { 0% { transform: translate(120px, 78px); opacity: 0; } 6% { opacity: 1; } 14% { transform: translate(33.5px, 40px); } 16% { transform: translate(33.5px, 40px) scale(.8); } 19% { transform: translate(33.5px, 40px); opacity: 1; } 27%, 100% { transform: translate(64px, 66px); opacity: 0; } }
+@keyframes gw-cur { 0% { transform: translate(160px, 78px); opacity: 0; } 6% { opacity: 1; } 14% { transform: translate(246.5px, 40px); } 16% { transform: translate(246.5px, 40px) scale(.8); } 19% { transform: translate(246.5px, 40px); opacity: 1; } 27%, 100% { transform: translate(214px, 66px); opacity: 0; } }
 @keyframes gw-play { 0%, 15% { opacity: 1; transform: scale(1); } 17% { opacity: 1; transform: scale(.86); } 21%, 92% { opacity: 0; transform: scale(1); } 98%, 100% { opacity: 1; transform: scale(1); } }
 @keyframes gw-ph { 0%, 20% { transform: translateX(0); opacity: 1; } 88% { transform: translateX(204px); opacity: 1; } 93% { transform: translateX(204px); opacity: 0; } 94% { transform: translateX(0); opacity: 0; } 100% { transform: translateX(0); opacity: 1; } }
 @keyframes gw-s1 { 0%, 39.9% { opacity: 1; } 40%, 93.9% { opacity: 0; } 94%, 100% { opacity: 1; } }

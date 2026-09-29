@@ -13,7 +13,7 @@ import { emptyTimeline, HOOK_LABELS, HookConfig, HookKind, hookComplete, Timelin
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
-import { useFxTimelineOpen } from './timelineGuides';
+import { TimelineButtonGuideVisual, useFxTimelineOpen, useTimelineGuideAvailable } from './timelineGuides';
 import {
   ChipRow, HOOK_TYPES, HookStep,
   hookSteps, previewIdFor, selectedStyles
@@ -198,6 +198,22 @@ export function useVariantLabel() {
 const iconOf = (kind: HookKind) => HOOK_TYPES.find((item) => item.kind === kind)!;
 const guideShell = { variant: 'visual' as const, shell: 'track-top' as const };
 
+/*
+ * Тур шага FX в прототипе — одна цепочка на обе колонки: дроп → тип → варианты → док →
+ * футер → кнопка «Таймлайн» (последнего шага нет там, где нет кнопки). Id со своим
+ * префиксом: у старых hook-drop / hook-type «видел» уже записан у всех, кто проходил
+ * прежний тур, и на новом маршруте они молча не показывались.
+ */
+export const FX_LAB_TOUR = ['drop', 'type', 'variants', 'dock', 'footer', 'timeline'] as const;
+export type FxLabTourStep = typeof FX_LAB_TOUR[number];
+export const fxLabGuideId = (step: FxLabTourStep) => `fx2-${step}`;
+export function useFxLabTourProgress() {
+  const { t } = useTranslation();
+  const withTimeline = useTimelineGuideAvailable();
+  const total = withTimeline ? FX_LAB_TOUR.length : FX_LAB_TOUR.length - 1;
+  return (step: FxLabTourStep) => t('wizard.guideProgress', { current: FX_LAB_TOUR.indexOf(step) + 1, total });
+}
+
 /* ── мини-визуалы подсказок (язык тот же: появление по очереди, одна анимация) ── */
 
 function VariantsGuideVisual() {
@@ -261,11 +277,13 @@ export function LabTypeList({ locked }: { locked: boolean }) {
   const [hint, setHint] = useState<HookKind | null>(null);
   const openRef = useRef<HTMLDivElement>(null);
 
-  // Подсказка 1/3: появляется, когда у раскрытого типа есть вариант.
+  // Шаг «Варианты»: у раскрытого типа уже есть вариант, а подсказка про тип закрыта.
   const hasOpen = Boolean(lab.expanded && lab.variants.some((v) => v.kind === lab.expanded));
-  const [variantsGuideDismissed, setVariantsGuideDismissed] = useGuideDismiss('fxlab-variants', false);
-  const showVariantsGuide = hasOpen && !variantsGuideDismissed;
-  useMarkGuideSeen('fxlab-variants', showVariantsGuide);
+  const typeDismissed = useGuideLiveDismissed(fxLabGuideId('type'));
+  const progress = useFxLabTourProgress();
+  const [variantsGuideDismissed, setVariantsGuideDismissed] = useGuideDismiss(fxLabGuideId('variants'), false);
+  const showVariantsGuide = hasOpen && typeDismissed && !variantsGuideDismissed;
+  useMarkGuideSeen(fxLabGuideId('variants'), showVariantsGuide);
 
   return (
     <>
@@ -345,7 +363,7 @@ export function LabTypeList({ locked }: { locked: boolean }) {
         title="Варианты хука"
         text="У одного типа может быть несколько вариантов — у каждого своя склейка и свой стиль. В «Пуле» каждый вариант получает свою долю роликов."
         dismissLabel="Дальше"
-        progressLabel="Шаг 1 из 3"
+        progressLabel={progress('variants')}
         onDismiss={() => setVariantsGuideDismissed(true)}
         visual={<VariantsGuideVisual />}
         {...guideShell}
@@ -419,21 +437,28 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  // Подсказки 2–3: после «Варианты хука» (левая панель — поэтому её живой dismissed).
-  const variantsDismissed = useGuideLiveDismissed('fxlab-variants');
-  const [footGuideDismissed, setFootGuideDismissed] = useGuideDismiss('fxlab-footer', false);
-  const [dockGuideDismissed, setDockGuideDismissed] = useGuideDismiss('fxlab-dock', false);
+  // Шаги «Док» → «Футер» → «Таймлайн»: после «Вариантов» (левая панель — поэтому её живой dismissed).
+  const progress = useFxLabTourProgress();
+  const variantsDismissed = useGuideLiveDismissed(fxLabGuideId('variants'));
+  const [footGuideDismissed, setFootGuideDismissed] = useGuideDismiss(fxLabGuideId('footer'), false);
+  const [dockGuideDismissed, setDockGuideDismissed] = useGuideDismiss(fxLabGuideId('dock'), false);
+  const [timelineGuideDismissed, setTimelineGuideDismissed] = useGuideDismiss(fxLabGuideId('timeline'), false);
+  const timelineGuideAvailable = useTimelineGuideAvailable();
+  const timelineButtonRef = useRef<HTMLButtonElement>(null);
   const showDockGuide = Boolean(v) && variantsDismissed && !dockGuideDismissed && !timelineOpen;
   const showFootGuide = Boolean(v) && variantsDismissed && dockGuideDismissed && !footGuideDismissed && !timelineOpen;
-  useMarkGuideSeen('fxlab-dock', showDockGuide);
-  useMarkGuideSeen('fxlab-footer', showFootGuide);
+  const showTimelineGuide = timelineGuideAvailable && Boolean(v) && footGuideDismissed && !timelineGuideDismissed && !timelineOpen;
+  useMarkGuideSeen(fxLabGuideId('dock'), showDockGuide);
+  useMarkGuideSeen(fxLabGuideId('footer'), showFootGuide);
+  useMarkGuideSeen(fxLabGuideId('timeline'), showTimelineGuide);
 
   // Таймлайн — на том же варианте; на время работы вариант «одалживается» в стор визарда.
   useEffect(() => () => { if (useFxLabStore.getState().snapshot) useFxLabStore.getState().endTimeline(); }, []);
   // общий флаг «таймлайн открыт»: по нему молчат подсказки шага FX (в т.ч. реактивация по простою)
   const setTimelineFlag = useFxTimelineOpen((s) => s.setOpen);
   useEffect(() => () => setTimelineFlag(false), [setTimelineFlag]);
-  const openTimeline = () => { lab.beginTimeline(); setTimelineOpen(true); setTimelineFlag(true); };
+  // Открыл таймлайн — шаг про кнопку пройден действием.
+  const openTimeline = () => { if (!timelineGuideDismissed) setTimelineGuideDismissed(true); lab.beginTimeline(); setTimelineOpen(true); setTimelineFlag(true); };
   const closeTimeline = () => { lab.endTimeline(); setTimelineOpen(false); setTimelineFlag(false); };
 
   const pick = (option?: string) => {
@@ -459,7 +484,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
       <div className="card-2 flex min-h-0 flex-1 flex-col gap-space-5 px-space-6 py-space-6 max-lg:px-space-5">
         <div className="flex shrink-0 items-center justify-between gap-space-3">
           <h2 className="wizard-h whitespace-nowrap">{t('wizard.workZone')}</h2>
-          <button type="button" onClick={openTimeline}
+          <button ref={timelineButtonRef} type="button" onClick={openTimeline}
             className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 disabled:opacity-40">
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true"><path d="M2 5h16M2 10h16M2 15h16M6 3v4m5 1v4m4 1v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
             <span className="translate-y-px">{t('wizard.fx.timeline')}</span>
@@ -567,7 +592,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
         title="Сначала посмотри примеры"
         text="Стрелки на видео листают примеры: эффекты, склейки, стили. Понравилось — выбери это в ленте ниже."
         dismissLabel="Дальше"
-        progressLabel="Шаг 2 из 3"
+        progressLabel={progress('dock')}
         onDismiss={() => setDockGuideDismissed(true)}
         visual={<DockGuideVisual />}
         {...guideShell}
@@ -577,10 +602,21 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
         targetRef={footRef}
         title="Все варианты батча"
         text="Здесь переключаешься между вариантами. «+» делает копию текущего — поменяй в ней стиль или склейку."
-        dismissLabel="Понятно"
-        progressLabel="Шаг 3 из 3"
+        dismissLabel={timelineGuideAvailable ? 'Дальше' : 'Понятно'}
+        progressLabel={progress('footer')}
         onDismiss={() => setFootGuideDismissed(true)}
         visual={<FooterGuideVisual />}
+        {...guideShell}
+      />
+      <ActionGuideOverlay
+        open={showTimelineGuide}
+        targetRef={timelineButtonRef}
+        title={t('wizard.fx.guideTimelineTitle')}
+        text={t('wizard.fx.guideTimelineText')}
+        dismissLabel={t('wizard.fx.guideDismiss')}
+        progressLabel={progress('timeline')}
+        onDismiss={() => setTimelineGuideDismissed(true)}
+        visual={<TimelineButtonGuideVisual />}
         {...guideShell}
       />
     </aside>
@@ -615,7 +651,7 @@ function LabVariantSwitcher() {
       {open && (
         <div className="fxt-vsw-menu" role="listbox" aria-label="Варианты">
           {lab.variants.map((x) => (
-            <button key={x.id} type="button" role="option" aria-selected={x.id === lab.activeId} aria-current={x.id === lab.activeId} className="fxt-vsw-item" onClick={() => { lab.switchTimeline(x.id); setOpen(false); }}>
+            <button key={x.id} type="button" role="option" aria-selected={x.id === lab.activeId} aria-current={x.id === lab.activeId} className="fxt-vsw-item" title={label(x)} onClick={() => { lab.switchTimeline(x.id); setOpen(false); }}>
               <i style={{ background: x.color }} /><span className="lb tx">{label(x)}</span>
               {x.id === lab.activeId && check}
             </button>

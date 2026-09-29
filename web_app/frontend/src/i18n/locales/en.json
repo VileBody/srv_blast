@@ -726,7 +726,7 @@
       "guideLibraryTitle": "Pick an effect",
       "guideLibraryText": "Click any row in the library — its example starts playing in the preview on the right.",
       "guideCutsTitle": "Change the transition between shots",
-      "guideCutsText": "Click the circle between two shots — a list of transitions with an example opens. Pick one and it goes on that cut.",
+      "guideCutsText": "Click the circle between two shots — a window with an example opens. Browse with the arrows or pick from the list: the transition goes on that cut right away.",
       "guidePaceTitle": "Cut frequency",
       "guidePaceText": "«Sparser», «Auto» or «Denser» — how often the shot changes. «Auto» is exactly what the render computes from the track tempo.",
       "guideNext": "Next",

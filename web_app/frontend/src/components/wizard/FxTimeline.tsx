@@ -302,6 +302,78 @@ const DEMO_LISTS: Record<LibKind, LibItem[]> = {
 };
 const KIND_LABEL: Record<LibKind, string> = { hook: 'Хук', trans: 'Переход', style: 'Стиль' };
 
+/* ── переход на склейке: мини-превью со стрелками + короткий список ──
+      Выбор сразу ложится на склейку и не закрывает окно — можно сравнить несколько.
+      Стрелки листают примеры; на котором человек остановился (DWELL), тот и встаёт. ── */
+const CUT_DWELL_MS = 650;
+function CutPopover({ index, current, left, bottom, onApply, onApplyAll }: {
+  index: number; current: string; left: number; bottom: number;
+  onApply: (label: string) => void; onApplyAll: (label: string) => void;
+}) {
+  const [shown, setShown] = useState(current);
+  const pending = useRef<string | null>(null);
+  const timer = useRef(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  const flush = () => { window.clearTimeout(timer.current); if (pending.current !== null) { onApply(pending.current); pending.current = null; } };
+  // Другая склейка — начинаем с её перехода; незавершённый выбор прошлой успевает встать.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setShown(current); return flush; }, [index]);
+  const pick = (label: string) => { window.clearTimeout(timer.current); pending.current = null; setShown(label); if (label !== current) onApply(label); };
+  const browse = (dir: 1 | -1) => {
+    const i = GLUES.indexOf(shown);
+    const next = GLUES[(i + dir + GLUES.length) % GLUES.length];
+    // фокус-рамка кликнутой раньше строки уехала бы за край списка и торчала полоской
+    if (listRef.current?.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+    setShown(next);
+    window.clearTimeout(timer.current);
+    pending.current = next;
+    timer.current = window.setTimeout(flush, CUT_DWELL_MS);
+  };
+  // ← → листают примеры, пока открыто окно (а не двигают playhead таймлайна).
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      e.preventDefault(); e.stopImmediatePropagation();
+      browse(e.key === 'ArrowRight' ? 1 : -1);
+    };
+    window.addEventListener('keydown', key, true);
+    return () => window.removeEventListener('keydown', key, true);
+  });
+  // Список показывает три строки — листаемая строка всегда в виду.
+  useEffect(() => {
+    const list = listRef.current;
+    const row = list?.querySelector<HTMLElement>(`[data-glue="${CSS.escape(shown)}"]`);
+    if (!list || !row) return;
+    const top = row.offsetTop - list.offsetTop;
+    if (top < list.scrollTop) list.scrollTo({ top, behavior: 'smooth' });
+    else if (top + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTo({ top: top + row.offsetHeight - list.clientHeight, behavior: 'smooth' });
+  }, [shown]);
+  const idx = GLUES.indexOf(shown);
+  const settled = shown === current && pending.current === null;
+  return (
+    <div className="fxt-pop fxt-cutpop" role="dialog" aria-label={`Переход на склейке ${index + 1}`} style={{ left, bottom }} onPointerDown={(e) => e.stopPropagation()}>
+      <div className="mstage" style={{ width: 169, height: 300 }}>
+        {shown === NO_GLUE
+          ? <div className="mnone"><Glyph name="t_none" size={28} /><span className="tx">Жёсткая склейка — без эффекта</span></div>
+          : <EffectPreview key={shown} previewId={previewIdFor('effectGlue', shown)} />}
+        <div className="mtop"><span className="nm tx">{shown}</span><span className="c tx num">{idx + 1}/{GLUES.length}</span></div>
+        <button type="button" className="mnav l" aria-label="Предыдущий переход" data-tip="Предыдущий · ←" onClick={() => browse(-1)}><Glyph name="back" size={16} sw={2} /></button>
+        <button type="button" className="mnav r" aria-label="Следующий переход" data-tip="Следующий · →" onClick={() => browse(1)}><Glyph name="fwd" size={16} sw={2} /></button>
+        <span className={`mstate${settled ? ' on' : ''}`}>{settled && <Glyph name="check" size={12} sw={2} />}<span className="tx">{settled ? `На склейке ${index + 1}` : 'Пример'}</span></span>
+      </div>
+      <h3>Переход на склейке {index + 1}</h3>
+      <div ref={listRef} className="opts" role="listbox" aria-label="Переходы">
+        {GLUES.map((label) => (
+          <button key={label} type="button" role="option" data-glue={label} className={`fxt-opt${label === shown && label !== current ? ' browsed' : ''}`} aria-selected={label === current} aria-pressed={label === current} onClick={() => pick(label)}>
+            <Ic kind="trans" label={label} on={label === current} size={26} /><span className="tx">{label}</span>{label === current && <span className="ck"><Glyph name="check" size={16} sw={2} /></span>}
+          </button>
+        ))}
+      </div>
+      <div className="foot"><button type="button" className="fxt-pill" onClick={() => { flush(); onApplyAll(pending.current ?? shown); }}><span className="tx">Текущий ко всем склейкам</span></button></div>
+    </div>
+  );
+}
+
 /** tabs — необязательный элемент в шапке (прототип вариантов FX: переключатель вариантов). */
 export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: React.ReactNode }) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -496,6 +568,13 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
     say('На этом кадре уже два стиля — это максимум');
   };
   const setTransition = (i: number, label: string) => { remember(); setTimeline({ transitions: { ...timeline.transitions, [i]: label } }); };
+  // В окне склейки переходы перебирают подряд — в историю это одна правка на открытие окна.
+  const popEdited = useRef<number | null>(null);
+  const setCutTransition = (i: number, label: string) => {
+    if (popEdited.current !== i) { remember(); popEdited.current = i; }
+    const { transitions } = useWizardStore.getState().timeline;
+    setTimeline({ transitions: { ...transitions, [i]: label } });
+  };
   const setTransitionAll = (label: string) => {
     remember();
     setTimeline({ transitions: Object.fromEntries(cuts.map((_, i) => [i, label])) });
@@ -945,7 +1024,7 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
                     const label = transitionAt(i);
                     return (
                       <button key={`j${i}`} type="button" className={`fxt-join${label === NO_GLUE ? ' none' : ''}${sel?.type === 'cut' && sel.i === i ? ' sel' : ''}${place && 'join' in place && place.join === i ? ' target' : ''}`} style={{ left: tx(c) }} aria-label={`Склейка ${i + 1}: ${label}`}
-                        onClick={(e) => { setSel({ type: 'cut', i }); seek(Math.max(0, c - 0.5)); const z = zoomScale(); const r = e.currentTarget.getBoundingClientRect(); setPop({ i, x: (r.left + r.width / 2) / z, y: r.top / z }); }}>
+                        onClick={(e) => { setSel({ type: 'cut', i }); popEdited.current = null; seek(Math.max(0, c - 0.5)); const z = zoomScale(); const r = e.currentTarget.getBoundingClientRect(); setPop({ i, x: (r.left + r.width / 2) / z, y: r.top / z }); }}>
                         {label === NO_GLUE ? <Glyph name="plus" size={12} sw={2} /> : <Ic kind="trans" label={label} on size={24} />}
                       </button>
                     );
@@ -996,22 +1075,10 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
       {ghost && <div className="fxt-ghost" style={{ left: ghost.x, top: ghost.y }}><Ic kind={ghost.item.kind} label={ghost.item.label} on size={26} /><span className="tx">{ghost.item.label}</span></div>}
 
       {pop && (() => {
-        const cur = transitionAt(pop.i);
         const vw = window.innerWidth / zoomScale(); const vh = window.innerHeight / zoomScale();
-        const left = clamp(pop.x - 132, 8, vw - 272);
         return (
-          <div className="fxt-pop" role="dialog" aria-label={`Переход на склейке ${pop.i + 1}`} style={{ left, bottom: Math.max(8, vh - pop.y + 10) }} onPointerDown={(e) => e.stopPropagation()}>
-            <div className="mstage" style={{ width: 169, height: 300 }}>
-              <EffectPreview previewId={previewIdFor('effectGlue', cur)} />
-            </div>
-            <h3>Переход на склейке {pop.i + 1}</h3>
-            {GLUES.map((label) => (
-              <button key={label} type="button" className="fxt-opt" aria-pressed={label === cur} onClick={() => { setTransition(pop.i, label); setPop(null); }}>
-                <Ic kind="trans" label={label} on={label === cur} size={26} /><span className="tx">{label}</span>{label === cur && <span className="ck"><Glyph name="check" size={16} sw={2} /></span>}
-              </button>
-            ))}
-            <div className="foot"><button type="button" className="fxt-pill" onClick={() => { setTransitionAll(cur); setPop(null); }}><span className="tx">Текущий ко всем склейкам</span></button></div>
-          </div>
+          <CutPopover index={pop.i} current={transitionAt(pop.i)} left={clamp(pop.x - 132, 8, vw - 272)} bottom={Math.max(8, vh - pop.y + 10)}
+            onApply={(label) => setCutTransition(pop.i, label)} onApplyAll={(label) => { setTransitionAll(label); setPop(null); }} />
         );
       })()}
 

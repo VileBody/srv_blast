@@ -100,26 +100,27 @@ export function TimelineVariantsGuideVisual() {
   );
 }
 
-/** 1. Посмотреть: ▶ в превью — playhead бежит по таймлайну, кадры меняются, на дропе вспышка. */
+/** 1. Посмотреть: ▶ в превью — playhead бежит по таймлайну, кадры меняются, на дропе вспышка.
+ *  Раскладка как на экране таймлайна: дорожки слева, превью справа. */
 export function TimelineWatchGuideVisual() {
   const shots = ['linear-gradient(160deg, #3b2f6e, #120b24 70%)', 'linear-gradient(200deg, #6a3f58, #1a0d1c 70%)', 'linear-gradient(170deg, #2f5a6e, #0b1a24 70%)', 'linear-gradient(190deg, #6e5a2f, #241a0b 70%)'];
   return (
     <Box h={84}>
-      <span className="absolute left-[12px] top-0 h-[84px] w-[47px] overflow-hidden rounded-[8px] bg-black ring-1 ring-white/10">
+      <DropFlag x={109} top={0} />
+      <span className="absolute left-[2px] top-[20px] flex h-[16px] w-[204px] gap-[2px]">
+        {[60, 44, 52, 42].map((w, i) => <i key={i} className="shrink-0 rounded-[4px]" style={{ width: w, background: FRAME }} />)}
+      </span>
+      <i className="absolute left-[108px] top-[13px] h-[64px] w-[2px] rounded-full bg-[#c6b6ff]/70" />
+      <i className="absolute left-[110px] top-[42px] h-[12px] w-[30px] rounded-[4px]" style={{ background: HOOK }} />
+      <i className="absolute left-[110px] top-[60px] h-[12px] w-[96px] rounded-[4px]" style={{ background: STYLE }} />
+      <i className="gw-ph absolute left-[1px] top-[13px] h-[64px] w-[2px] rounded-full bg-white shadow-[0_0_0_1px_rgba(5,1,15,.35)]" />
+      <span className="absolute left-[225px] top-0 h-[84px] w-[47px] overflow-hidden rounded-[8px] bg-black ring-1 ring-white/10">
         {shots.map((bg, i) => <i key={i} className={`gw-s${i + 1} absolute inset-0`} style={{ background: bg }} />)}
         <i className="gw-flash absolute inset-0 bg-white" />
         <span className="absolute inset-0 flex items-center justify-center">
           <span className="gw-play flex h-[22px] w-[22px] items-center justify-center rounded-full bg-[rgba(5,1,15,.6)] pl-px text-white ring-1 ring-white/20"><PlayTri /></span>
         </span>
       </span>
-      <DropFlag x={185} top={0} />
-      <span className="absolute left-[78px] top-[20px] flex h-[16px] w-[204px] gap-[2px]">
-        {[60, 44, 52, 42].map((w, i) => <i key={i} className="shrink-0 rounded-[4px]" style={{ width: w, background: FRAME }} />)}
-      </span>
-      <i className="absolute left-[184px] top-[13px] h-[64px] w-[2px] rounded-full bg-[#c6b6ff]/70" />
-      <i className="absolute left-[186px] top-[42px] h-[12px] w-[30px] rounded-[4px]" style={{ background: HOOK }} />
-      <i className="absolute left-[186px] top-[60px] h-[12px] w-[96px] rounded-[4px]" style={{ background: STYLE }} />
-      <i className="gw-ph absolute left-[77px] top-[13px] h-[64px] w-[2px] rounded-full bg-white shadow-[0_0_0_1px_rgba(5,1,15,.35)]" />
       <Cursor className="gw-cur" />
     </Box>
   );
