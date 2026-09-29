@@ -249,6 +249,8 @@ export function StageSlice() {
   const fxKeys = fxLab ? labRows.map((row) => row.id) : hooksInPool.map((pill) => pill.kind);
   const fxAlloc: Record<string, number> = fxLab ? (alloc.variants ?? {}) : alloc.hooks;
   const fxSlice = fxLab ? 'variants' as const : 'hooks' as const;
+  // Вариант, который начали, но не довели (в пул он не попадает, а генерацию держит).
+  const labIncomplete = fxLab && state.fxVariants.some((v) => !v.draft && !labRows.some((row) => row.id === v.id));
 
   useEffect(() => {
     const unitKeys = units.map((u) => u.key);
@@ -444,8 +446,10 @@ export function StageSlice() {
         {fxLab && (
           <SectionCard
             title={t('wizard.pool.fx')}
-            note={labRows.length ? restNote(hooksRest, t('wizard.pool.fxNote', { count: hookTarget })) : t('wizard.pool.fxNoVariants')}
-            warn={!labRows.length || hooksRest !== 0}
+            note={!labRows.length ? t('wizard.pool.fxNoVariants')
+              : labIncomplete ? t('wizard.pool.fxIncomplete')
+                : restNote(hooksRest, t('wizard.pool.fxNote', { count: hookTarget }))}
+            warn={!labRows.length || labIncomplete || hooksRest !== 0}
           >
             {labRows.map((row) => (
               <div key={row.id} className="flex items-center justify-between gap-space-3">

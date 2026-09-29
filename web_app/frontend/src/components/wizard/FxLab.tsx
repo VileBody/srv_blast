@@ -9,7 +9,7 @@ import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { CatalogMedia } from './CatalogPreview';
 import { useDragScroll } from './BackgroundPanel';
 import { PillsFooter } from './WizardFrame';
-import { emptyTimeline, FxVariant, HOOK_LABELS, HookConfig, HookKind, hookComplete, TimelineRecipe, useWizardStore } from '../../stores/wizardStore';
+import { emptyTimeline, FX_VARIANT_PALETTE, FxVariant, HOOK_LABELS, HookConfig, HookKind, hookComplete, TimelineRecipe, useWizardStore } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
@@ -54,7 +54,7 @@ export const useFxLab = () => {
 
 /** Вариант живёт в сторе визарда (fxVariants): переживает перезагрузку и едет на бэк. */
 export type LabVariant = FxVariant;
-const PALETTE = ['#8b6fe6', '#e38fb5', '#6fc7c0', '#e8b45f', '#9fb5ff', '#b7e27a', '#ff9a7a', '#d6a1ff'];
+const PALETTE = FX_VARIANT_PALETTE;
 const STEP_NAME: Record<string, string> = {
   sound: 'Прогрев', object: 'Объект', effectHook: 'Эффект', motion: 'Движение', thought: 'Мысль',
   effectGlue: 'Склейка', effectStyle: 'Стиль'

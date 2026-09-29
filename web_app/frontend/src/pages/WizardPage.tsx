@@ -688,7 +688,9 @@ export function WizardPage() {
     if (stage === 3 && fxLab) return labVariantsComplete && (!labVariants.some((v) => v.kind !== 'none') || dropReady);
     if (stage === 3) return configuredHookCount > 0 && (!configuredHooksNeedDrop || dropReady);
     if (stage === 4) return state.subtitles.pool.length > 0;
-    if (stage === 5) return allocBalanced && trackReady && !storyboardBusy;
+    // Недонастроенный вариант мог появиться после «Пула» (вернулись на FX и добавили копию) —
+    // бэк его не примет, поэтому генерация ждёт, пока его настроят или удалят.
+    if (stage === 5) return allocBalanced && trackReady && !storyboardBusy && (!fxLab || labVariantsComplete);
     return false;
   }, [storyboardBusy, allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.lyrics, state.subtitles.pool, timingReady, trackReady, fxLab, labVariants, labVariantsComplete]);
 

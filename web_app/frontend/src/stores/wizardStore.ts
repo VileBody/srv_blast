@@ -175,6 +175,9 @@ export const emptyStoryboard = (): StoryboardState => ({ key: '', videos: {} });
  * (склейки и темп общие на батч и живут в timeline); draft — создан из таймлайна, хук ещё
  * не выбран: в пул и на бэк не идёт.
  */
+/** Цвета вариантов FX: точка варианта в списке, пилюлях и «Комбинациях». */
+export const FX_VARIANT_PALETTE = ['#8b6fe6', '#e38fb5', '#6fc7c0', '#e8b45f', '#9fb5ff', '#b7e27a', '#ff9a7a', '#d6a1ff'];
+
 export interface FxVariant { id: string; kind: HookKind; config: HookConfig; color: string; recipe?: TimelineRecipe; draft?: boolean }
 
 export interface WizardStateData {
@@ -548,7 +551,10 @@ export const useWizardStore = create<WizardStore>()(
           })(),
           hooks: migrateHooks({ ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) }),
           subtitles: { ...fresh.subtitles, ...((raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {}) },
-          fxVariants: Array.isArray(raw.fxVariants) ? (raw.fxVariants as FxVariant[]) : [],
+          // Серверная копия едет без цвета (он только для экрана) — раздаём заново.
+          fxVariants: Array.isArray(raw.fxVariants)
+            ? (raw.fxVariants as FxVariant[]).map((v, i) => ({ ...v, color: v.color ?? FX_VARIANT_PALETTE[i % FX_VARIANT_PALETTE.length] }))
+            : [],
           allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },
           timeline: { ...fresh.timeline, ...((raw.timeline as Partial<TimelineRecipe>) ?? {}) },
           asr: (() => {

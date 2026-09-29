@@ -629,6 +629,7 @@
       "subsNote": "For {{count}} videos",
       "fxNote": "For {{count}} videos with footage",
       "fxNoVariants": "Set up at least one variant on the FX step",
+      "fxIncomplete": "One of the variants isn’t finished — complete or remove it on the FX step",
       "stylesNote": "One per {{count}} footage videos",
       "parameter": "Parameter",
       "selectedValue": "Selected",
