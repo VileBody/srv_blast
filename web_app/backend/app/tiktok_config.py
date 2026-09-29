@@ -83,8 +83,8 @@ def _publish_proxy() -> str:
 
     TikTok не принимает загрузку нового контента с российских IP, а сервер сайта в Москве:
     публикация напрямую проходит init и загрузку, но падает у TikTok с `internal`. Поэтому
-    по умолчанию — тот же прокси, что у LLM (src/outbound_proxy.py). `direct` — без прокси,
-    для запуска вне России.
+    по умолчанию — зарубежный прокси публикации из src/outbound_proxy.py (http:// или
+    socks5h://). `direct` — без прокси, для запуска вне России.
     """
     value = os.getenv("TIKTOK_PUBLISH_PROXY", "").strip()
     if value.lower() == "direct":
@@ -92,10 +92,10 @@ def _publish_proxy() -> str:
     if value:
         return value
     try:
-        from src.outbound_proxy import OUTBOUND_PROXY_URL
+        from src.outbound_proxy import TIKTOK_PUBLISH_PROXY_URL
     except ImportError as exc:  # образ собран без общего модуля — это ошибка сборки, не молчим
         raise RuntimeError("tiktok_config: src/outbound_proxy.py is missing; set TIKTOK_PUBLISH_PROXY") from exc
-    return OUTBOUND_PROXY_URL
+    return TIKTOK_PUBLISH_PROXY_URL
 
 
 def load() -> TiktokConfig:
