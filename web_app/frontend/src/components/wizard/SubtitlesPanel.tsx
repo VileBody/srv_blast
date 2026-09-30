@@ -54,13 +54,14 @@ function SubtitleTextGuideVisual() {
         {['Jakson', 'Brat'].map((name, index) => (
           <span key={name} className="relative flex h-[26px] w-[62px] items-center justify-center overflow-hidden rounded-[7px] border border-white/15 text-[11px] leading-none text-text-60">
             <span className={cn('absolute inset-0 rounded-[7px] bg-accent-20 shadow-[inset_0_0_0_1px_var(--accent-light)]', index === 0 ? 'guide-style-a' : 'guide-style-b')} />
-            <span className="action-guide-optical-text relative">{name}</span>
+            {/* Point сидит высоко: для 11px хватает 1px (3px из action-guide-optical-text — для кнопок) */}
+            <span className="relative translate-y-[1px]">{name}</span>
           </span>
         ))}
       </div>
       <div className="relative h-[58px] flex-1 overflow-hidden rounded-[9px] bg-black/30">
         <span className="guide-style-a absolute inset-0 flex items-center justify-center gap-[5px] px-[6px] text-[15px] font-bold uppercase leading-none tracking-[-0.02em] text-white">
-          <span className="action-guide-optical-text">не уйду</span> <span className="text-[19px] font-normal normal-case text-accent-light" style={{ fontFamily: '"blast-PrincessDiana", "blast-Katherine-Plus", cursive' }}>отсюда</span>
+          <span className="translate-y-[1px]">не уйду</span> <span className="text-[19px] font-normal normal-case text-accent-light" style={{ fontFamily: '"blast-PrincessDiana", "blast-Katherine-Plus", cursive' }}>отсюда</span>
         </span>
         <span className="guide-style-b absolute inset-0 flex items-center justify-center gap-[6px] px-[6px] text-[16px] lowercase leading-none text-white"
           style={{ fontFamily: '"Arial Narrow", Arial, sans-serif', letterSpacing: '-0.02em' }}>
