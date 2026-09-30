@@ -285,7 +285,7 @@ def test_file_upload_runs_in_background_and_status_says_sending(monkeypatch: pyt
     release = threading.Event()
     uploaded = threading.Event()
 
-    monkeypatch.setattr(api, "init_file_upload", lambda token, info, path, proxy: {"publish_id": "pub_ok", "upload_url": "https://up/u"})
+    monkeypatch.setattr(api, "init_file_upload", lambda token, info, path, proxy, **kw: {"publish_id": "pub_ok", "upload_url": "https://up/u"})
 
     def slow_upload(url, path, proxy):
         release.wait(5)
@@ -314,7 +314,7 @@ def test_file_upload_runs_in_background_and_status_says_sending(monkeypatch: pyt
     def broken_upload(url, path, proxy):
         raise api.TikTokApiError("route_unavailable", "TikTok unreachable (proxy): timed out", 502)
 
-    monkeypatch.setattr(api, "init_file_upload", lambda token, info, path, proxy: {"publish_id": "pub_bad", "upload_url": "https://up/u"})
+    monkeypatch.setattr(api, "init_file_upload", lambda token, info, path, proxy, **kw: {"publish_id": "pub_bad", "upload_url": "https://up/u"})
     monkeypatch.setattr(api, "upload_file_chunks", broken_upload)
     main._start_file_upload("token", {}, video_file, "", {})
     for _ in range(50):
@@ -323,3 +323,25 @@ def test_file_upload_runs_in_background_and_status_says_sending(monkeypatch: pyt
         threading.Event().wait(0.02)
     failed = main.api_tiktok_post_status("pub_bad")
     assert (failed["status"], failed["fail_reason"]) == ("FAILED", "route_unavailable")
+
+
+def test_draft_upload_goes_to_the_inbox_endpoint_without_post_info(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    # Upload (video.upload): TikTok кладёт ролик в inbox, подпись и приватность человек ставит в приложении
+    module = _module(monkeypatch)
+    video = tmp_path / "v.mp4"
+    video.write_bytes(b"x" * 1000)
+    calls = []
+    monkeypatch.setattr(module, "_json_request", lambda url, token, body, proxy="": calls.append((url, body)) or
+                        {"publish_id": "p", "upload_url": "https://up/u"})
+    module.init_file_upload("token", {"title": "x"}, video, "", draft=True)
+    module.init_file_upload("token", {"title": "x"}, video, "")
+    (draft_url, draft_body), (direct_url, direct_body) = calls
+    assert draft_url == module.INBOX_INIT_URL and "post_info" not in draft_body
+    assert direct_url == module.DIRECT_POST_INIT_URL and direct_body["post_info"] == {"title": "x"}
+
+
+def test_video_upload_scope_is_always_requested(monkeypatch: pytest.MonkeyPatch) -> None:
+    # серверный TIKTOK_SCOPES мог остаться старым — черновики без video.upload не работают
+    monkeypatch.setenv("TIKTOK_SCOPES", "user.info.basic,video.publish,video.list")
+    scopes = _load_config(monkeypatch, "*").scopes.split(",")
+    assert scopes == ["user.info.basic", "video.publish", "video.list", "video.upload"]

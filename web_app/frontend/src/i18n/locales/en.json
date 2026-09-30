@@ -1054,7 +1054,8 @@
       "picture_size_check_failed": "TikTok didn't accept the frame size.",
       "frame_rate_check_failed": "TikTok didn't accept the frame rate.",
       "auth_removed": "TikTok access was revoked — please reconnect the account.",
-      "other": "TikTok rejected the video: {{reason}}"
+      "other": "TikTok rejected the video: {{reason}}",
+      "scope_not_authorized": "Reconnect TikTok in your profile to allow sending drafts."
     },
     "screenTitle": "Post to TikTok",
     "prevVideo": "Previous video",
@@ -1089,7 +1090,14 @@
     "rightsLead": "I own the music and video and agree to TikTok's",
     "and": "and",
     "toVideo": "Video {{n}}",
-    "carryNext": "Same settings for the next video"
+    "carryNext": "Same settings for the next video",
+    "modeLabel": "How to send",
+    "modeDirect": "Post now",
+    "modeDrafts": "Send to drafts",
+    "draftsNote": "The video goes to your TikTok inbox as a draft. Open the notification in the TikTok app to add a caption, choose who can view it and post.",
+    "draftsFootNote": "You'll finish the post in the TikTok app",
+    "sendToDrafts": "Send to TikTok drafts",
+    "draftsSentLine": "Video {{n}} is in your TikTok inbox — open the notification in the TikTok app to finish posting."
   },
   "profile": {
     "update": "Update",
