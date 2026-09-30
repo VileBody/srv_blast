@@ -8,6 +8,7 @@ import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { api } from '../../lib/api';
+import { Button, Pager } from '../ui/kit';
 
 /*
  * Общая оболочка батча: W36 (готовый батч) и W51 (идёт генерация) — ОДИН макет.
@@ -217,7 +218,7 @@ export function TrackCard({
   return (
     <section className="card-2 h-[240px] shrink-0 px-[40px] pb-[35px] pt-[35px] max-md:h-auto max-md:px-[20px] max-md:pb-[24px] max-md:pt-[24px]">
       <div className="flex items-start justify-between gap-[20px]">
-        <h1 className="min-w-0 truncate text-[32px] font-[400] leading-[38px] text-transparent" style={gradLight}>{title ?? t('projectDetail.trackFallback')}</h1>
+        <h1 className="min-w-0 truncate text-ui-32 font-[400] text-transparent" style={gradLight}>{title ?? t('projectDetail.trackFallback')}</h1>
         {/* Плашки «Текущий проект» здесь нет: ты и так внутри этого проекта, метка ничего
             не сообщала. Осталось только действие — сделать текущим, если он им не является. */}
         {current === false && onMakeCurrent && (
@@ -336,7 +337,7 @@ export function ProgressTrack({ done, total, minutesLeft }: { done: number; tota
         style={{ width: `${pct * 100}%` }}
       />
       {/* телефон: 13px и без переносов — «Прогресс: 0/1 видео» и «Осталось 3 минуты» в одну строку */}
-      <span className="relative z-[1] whitespace-nowrap pl-[28px] text-[16px] leading-none text-text max-md:pl-[14px] max-md:text-[13px]">{t('processing.progress', { done, total })}</span>
+      <span className="relative z-[1] whitespace-nowrap pl-[28px] text-[16px] leading-none text-text tabular-nums max-md:pl-[14px] max-md:text-[13px]">{t('processing.progress', { done, total })}</span>
       <span className="relative z-[1] ml-auto whitespace-nowrap pr-[28px] text-[16px] leading-none text-text max-md:pr-[14px] max-md:text-[13px]">
         {finished ? t('processing.allDone') : t('processing.minutesLeft', { count: minutesLeft })}
       </span>
@@ -389,36 +390,24 @@ export function GenerationsCard({
   return (
     <section data-limits-dim className="card-2 relative flex min-h-0 flex-1 flex-col overflow-hidden p-[40px] max-md:p-[20px]">
       <div className="mb-[28px] flex items-center justify-between gap-space-4 max-md:flex-col max-md:items-start max-md:gap-[10px]">
-        <h2 className="shrink-0 text-[24px] font-[400] leading-none text-transparent" style={gradLight}>{t('projectDetail.generations')}</h2>
+        <h2 className="shrink-0 text-ui-24 font-[400] text-transparent" style={gradLight}>{t('projectDetail.generations')}</h2>
         {/* Figma W36: фокус-кнопка «Выложить все» + TikTok; справа кружок лимита (W47 — поповер) */}
         <span className="flex shrink-0 items-center gap-[20px] max-md:w-full max-md:gap-[8px]">
-          <button
-            type="button"
+          <Button
+            variant="primary"
+            size="sm"
             onClick={() => postAll?.()}
             disabled={!postAll}
-            className={cn(
-              'flex h-[38px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent bg-grad-soft-20 px-[14px] text-[16px] font-[350] leading-none transition max-md:h-[30px] max-md:gap-[6px] max-md:px-[10px] max-md:text-[13px]',
-              postAll ? 'text-text-80 hover:text-text' : 'cursor-not-allowed text-text-40'
-            )}
+            icon={<FigIcon name="pd-tiktok.svg" h={16} />}
           >
-            <FigIcon name="pd-tiktok.svg" h={20} />
             {postedCount > 0 && ready.length > 0
               ? t('projectDetail.postAllProgress', { done: postedCount, total: ready.length })
               : t('projectDetail.postAll')}
-          </button>
+          </Button>
           {/* Скачивание всего батча: раньше ролики можно было забрать только по одному */}
-          <button
-            type="button"
-            onClick={downloadAll}
-            disabled={!downloadable.length}
-            className={cn(
-              'flex h-[38px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-[rgba(246,245,253,0.2)] px-[14px] text-[16px] font-[350] leading-none transition max-md:h-[30px] max-md:gap-[6px] max-md:px-[10px] max-md:text-[13px]',
-              downloadable.length ? 'text-text-80 hover:border-accent-light hover:text-text' : 'cursor-not-allowed text-text-40'
-            )}
-          >
-            <FigIcon name="pd-download.svg" h={18} />
+          <Button size="sm" onClick={downloadAll} disabled={!downloadable.length} icon={<FigIcon name="pd-download.svg" h={14} />}>
             {t('projectDetail.downloadAll')}
-          </button>
+          </Button>
           <span className="max-md:ml-auto"><LimitsIndicator offsetY={28} /></span>
         </span>
       </div>
@@ -436,9 +425,9 @@ export function GenerationsCard({
             <div className="flex h-full min-h-[160px] flex-col items-center justify-center gap-[20px] text-center">
               <p className="text-[16px] leading-[19px] text-text-60">{t('projectDetail.noGenerations')}</p>
               {onEmptyAction && (
-                <button type="button" onClick={onEmptyAction} className="flex h-[60px] items-center justify-center rounded-r15 border border-accent-light bg-grad-soft-20 px-[28px] text-[20px] font-[350] leading-none text-text-80 transition hover:text-text">
+                <Button variant="primary" size="lg" onClick={onEmptyAction}>
                   {t('projectDetail.createBatch')}
-                </button>
+                </Button>
               )}
             </div>
           ) : (
@@ -513,19 +502,11 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
   return (
     <aside className="wizard-aside card-2 flex shrink-0 flex-col p-[40px]">
       <div className="flex items-center justify-between gap-space-3">
-        <h2 className="min-w-0 truncate text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{t('projectDetail.previewVideo')}</h2>
+        <h2 className="min-w-0 truncate text-ui-24 font-[400] text-transparent" style={gradLight}>{t('projectDetail.previewVideo')}</h2>
         {/* Пилюля только когда есть что листать: на пустом проекте «1/1» обещала ролик,
             которого нет. */}
         {videos.length > 0 && (
-          <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
-            <button type="button" aria-label={t('common.prev')} onClick={() => step(-1)} disabled={total < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-              <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)', transform: 'rotate(180deg)' }} />
-            </button>
-            <span className="text-[16px] font-[350] leading-none text-accent">{current}/{total}</span>
-            <button type="button" aria-label={t('common.next')} onClick={() => step(1)} disabled={total < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-              <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)' }} />
-            </button>
-          </div>
+          <Pager index={current - 1} total={total} onPrev={() => step(-1)} onNext={() => step(1)} />
         )}
       </div>
       {/* Кадр ролика с управлением внутри: раньше здесь была пустая белая панель, и
@@ -560,15 +541,9 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
           </span>
         )}
       </PreviewPlayer>
-      <button
-        type="button"
-        onClick={onBack}
-        className="mt-[28px] flex h-[60px] items-center justify-center gap-[16px] whitespace-nowrap rounded-[15px] border-2 border-accent-light text-[24px] font-[350] leading-none text-text-80 transition hover:text-text max-md:mt-[14px] max-md:h-[44px] max-md:text-[15px]"
-        style={{ background: 'var(--grad-soft-20)' }}
-      >
+      <Button size="lg" onClick={onBack} className="mt-[28px] w-full shrink-0 max-md:mt-[14px]" iconEnd={<FigIcon name="pd-arrow-right.svg" w={20} />}>
         {t('common.toProjects')}
-        <FigIcon name="pd-arrow-right.svg" w={25} />
-      </button>
+      </Button>
     </aside>
   );
 }
@@ -601,11 +576,11 @@ export function ProcessingAside({ done, total, activeVideo, renderFormat, telegr
   return (
     <aside className="wizard-aside card-2 flex shrink-0 flex-col overflow-hidden p-[40px]">
       <div className="flex shrink-0 items-center justify-between gap-[16px]">
-        <h2 className="min-w-0 truncate text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{t('processing.asideTitle')}</h2>
+        <h2 className="min-w-0 truncate text-ui-24 font-[400] text-transparent" style={gradLight}>{t('processing.asideTitle')}</h2>
         {activeVideo && <span className="shrink-0 rounded-r10 bg-grad-soft-20 px-[12px] py-[7px] text-[14px] text-text-80">{t('processing.videoOf', { current: activeVideo.index, total })}</span>}
       </div>
 
-      <div className="no-scrollbar mt-[28px] flex min-h-0 flex-1 flex-col gap-[10px] overflow-y-auto">
+      <div className="no-scrollbar mt-[24px] flex min-h-0 flex-1 flex-col gap-[8px] overflow-y-auto">
         {steps.map((step, index) => {
           const state = index < active ? 'done' : index === active ? 'now' : 'next';
           return (
@@ -614,7 +589,7 @@ export function ProcessingAside({ done, total, activeVideo, renderFormat, telegr
               // на невысоком окне список шагов скроллится — держим текущий шаг в поле зрения
               ref={state === 'now' ? (node) => node?.scrollIntoView({ block: 'nearest' }) : undefined}
               className={cn(
-                'shrink-0 rounded-r15 px-[20px] py-[12px] transition-colors',
+                'shrink-0 rounded-r15 px-[20px] py-[10px] transition-colors',
                 state === 'now' ? 'bg-grad-soft-20 shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'bg-grad-soft-10'
               )}
             >
@@ -650,15 +625,9 @@ export function ProcessingAside({ done, total, activeVideo, renderFormat, telegr
         </span>
       </div>
 
-      <button
-        type="button"
-        onClick={onBack}
-        className="mt-[20px] flex h-[60px] shrink-0 items-center justify-center gap-[16px] whitespace-nowrap rounded-[15px] border-2 border-accent-light text-[24px] font-[350] leading-none text-text-80 transition hover:text-text"
-        style={{ background: 'var(--grad-soft-20)' }}
-      >
+      <Button size="lg" onClick={onBack} className="mt-[20px] w-full shrink-0 max-md:mt-[14px]" iconEnd={<FigIcon name="pd-arrow-right.svg" w={20} />}>
         {t('common.toProjects')}
-        <FigIcon name="pd-arrow-right.svg" w={25} />
-      </button>
+      </Button>
     </aside>
   );
 }

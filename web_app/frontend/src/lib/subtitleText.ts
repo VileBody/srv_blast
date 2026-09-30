@@ -65,7 +65,9 @@ const GENERIC: Record<SubtitleFontEntry['category'], string> = {
 export function cssFamily(font: SubtitleFontEntry | undefined, fallbackPs?: string): string {
   const ps = font?.ps ?? fallbackPs;
   if (!ps) return 'Point, Arial, sans-serif';
-  return `"blast-${ps}", ${font ? GENERIC[font.category] : 'Arial, sans-serif'}`;
+  // Point есть на сайте (self-hosted): без установленного начертания превью берёт его, а не Arial
+  const site = ps.startsWith('Point') ? 'Point, ' : '';
+  return `"blast-${ps}", ${site}${font ? GENERIC[font.category] : 'Arial, sans-serif'}`;
 }
 
 let injected = false;

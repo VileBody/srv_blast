@@ -1,4 +1,4 @@
-import { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useId, useRef, useState } from 'react';
+import { CSSProperties, ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { create } from 'zustand';
@@ -6,13 +6,11 @@ import { useChip } from '../../i18n/useChip';
 import { api } from '../../lib/api';
 import { isVideoUrl } from '../../lib/media';
 import { cn } from '../../lib/cn';
-import { cssZoom } from '../../lib/zoom';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
 import type { Vibe } from '../../lib/types';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { InlineError, queryDown } from '../ui/ErrorState';
-import { Icon } from '../ui/kit';
-import { ChipIcon, EffectPreview, previewIdFor } from './HookPanel';
+import { ChipIcon, EffectPreview, previewIdFor } from './hookCatalog';
 import { PAUSE, PLAY, PillsFooter, Svg, W12 } from './WizardFrame';
 import { useFragmentAudio } from './useFragmentAudio';
 import { SourcesModal } from './SourcesEditor';
@@ -90,7 +88,7 @@ function BackgroundModeGuideVisual() {
               <span /* ui-allow: иллюстрация гайда */ className="absolute inset-0 rounded-[8px] bg-[#6850b7] ring-1 ring-inset ring-white/30" style={{ animation: `guide-mode-on-fade 320ms cubic-bezier(.16,1,.3,1) ${iconDelays[index]}ms both` }} />
             )}
             <span className="relative z-[1]">
-              // ui-allow: иллюстрация гайда
+              {/* ui-allow: иллюстрация гайда */}
               {icon.tag ? <TagIcon color="rgba(255,255,255,.92)" size={13} /> : <SvgMaskIcon src={icon.src} style={{ width: 13, height: 13, color: 'rgba(255,255,255,.92)' }} />}
             </span>
           </span>
@@ -143,50 +141,8 @@ export const GLUE_TYPES = effectsRegistry.glue
   .filter((effect) => Boolean(effect.altId))
   .map((effect) => ({ id: effect.altId as string, label: effect.label }));
 
-/** Горизонтальный скролл: драг 1:1, колесо — плавно */
-export function useDragScroll() {
-  const ref = useRef<HTMLDivElement>(null);
-  const drag = useRef({ active: false, moved: false, startX: 0, startScroll: 0 });
-
-  const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    // тач листает лентой нативно (touch-action: pan-x) — JS-drag только для мыши
-    if (!ref.current || e.pointerType === 'touch') return;
-    drag.current = { active: true, moved: false, startX: e.clientX, startScroll: ref.current.scrollLeft };
-  };
-  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!drag.current.active || !ref.current) return;
-    const dx = e.clientX - drag.current.startX;
-    if (Math.abs(dx) > 5) {
-      // лента поехала — держим курсор за ней, даже когда он вышел за край (иначе драг рвался)
-      if (!drag.current.moved) ref.current.setPointerCapture(e.pointerId);
-      drag.current.moved = true;
-      // сдвиг мыши — визуальные пиксели, scrollLeft — пиксели ленты (визард под zoom)
-      ref.current.scrollLeft = drag.current.startScroll - dx / cssZoom(ref.current);
-    }
-  };
-  const end = () => {
-    setTimeout(() => { drag.current.active = false; drag.current.moved = false; }, 0);
-  };
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    const onWheel = (event: WheelEvent) => {
-      if (element.scrollWidth <= element.clientWidth + 1) return;
-      const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
-      if (!delta) return;
-      event.preventDefault();
-      element.scrollLeft += delta;
-    };
-    element.addEventListener('wheel', onWheel, { passive: false });
-    return () => element.removeEventListener('wheel', onWheel);
-  });
-
-  return {
-    ref,
-    moved: () => drag.current.moved,
-    handlers: { onPointerDown, onPointerMove, onPointerUp: end, onPointerLeave: end }
-  };
-}
+export { useDragScroll } from './useDragScroll';
+import { useDragScroll } from './useDragScroll';
 
 /** Скролл-зависимые горизонтальные фейды: видны только когда есть контент за краем */
 export function useScrollFades(ref: React.RefObject<HTMLDivElement>, deps: unknown[] = []) {
@@ -312,7 +268,7 @@ function TypeMenu({ label, value, options, onChange }: { label: string; value: s
 
 /* ── лента карточек: листается стрелками и драгом ── */
 const railMovedRef: { current: () => boolean } = { current: () => false };
-function Rail({ children, resetKey }: { children: ReactNode; resetKey: string }) {
+export function Rail({ children, resetKey }: { children: ReactNode; resetKey: string }) {
   const { t } = useTranslation();
   const scroll = useDragScroll();
   railMovedRef.current = scroll.moved;
@@ -341,7 +297,7 @@ function Rail({ children, resetKey }: { children: ReactNode; resetKey: string })
   );
 }
 
-function MediaCard({ item, order, format, caption, onToggle }: { item: Vibe; order: number; format: string; caption: string; onToggle: () => void }) {
+export function MediaCard({ item, order, format, caption, onToggle }: { item: Pick<Vibe, 'id' | 'name' | 'previewUrl'>; order: number; format: string; caption: string; onToggle: () => void }) {
   const [broken, setBroken] = useState(false);
   const isVideo = isVideoUrl(item.previewUrl);
   return (
@@ -468,6 +424,19 @@ function useBackgroundLists() {
     enabled: background.mode === 'photo' && Boolean(lyrics.trim())
   });
   return { background, footagePlane, vibesQuery, photosQuery };
+}
+
+/** Кадр фона для превью следующих шагов: первый выбранный футаж или фото, либо цвет. */
+export function useBackdrop(): { url?: string; isVideo?: boolean; color?: string } {
+  const { background, vibesQuery, photosQuery } = useBackgroundLists();
+  const queryClient = useQueryClient();
+  if (background.mode === 'color') return { color: background.color };
+  const names = background.mode === 'photo' ? background.photo : background.footage;
+  const known = background.mode === 'photo'
+    ? photosQuery.data?.photos ?? []
+    : [...(vibesQuery.data?.vibes ?? []), ...queryClient.getQueriesData<{ vibes?: Vibe[] }>({ queryKey: ['vibes'] }).flatMap(([, data]) => data?.vibes ?? [])];
+  const item = names.map((name) => known.find((entry) => entry.name === name)).find(Boolean);
+  return item ? { url: item.previewUrl, isVideo: isVideoUrl(item.previewUrl) } : {};
 }
 
 /** Шаг «Фон»: режимы со счётчиками, типы футажей видны сразу, лента выбора, свои исходники. */

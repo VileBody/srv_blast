@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import effect_map as em
+from . import montage as montage_edits
 from . import storyboard as storyboard_plans
 
 SCHEMA = "blast.render_job/1"
@@ -307,6 +308,8 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
     kind = hooks.get("kind")
 
     variations: list[dict[str, Any]] = []
+    # раскладка каждого видео для правок стола: подпись комбинации — как у фронта (combosOf)
+    montage_slots: list[dict[str, Any]] = []
     subtitle_index = 0
     hook_index = 0
     for i, (v_mode, group, source_plan, hook_allowed) in enumerate(expanded_backgrounds):
@@ -400,6 +403,19 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
                           "style": branding.get("style")},
             "sound": {"userSound": (cfg.get("sound") if v_kind in {"sound", "warmup"} else None)},
         })
+        montage_slots.append({
+            "sig": "|".join([bg_seq[i], style or "", variant["id"] if variant is not None else ""]),
+            "hookAllowed": hook_allowed,
+            "mode": v_mode,
+            "strobe": bool(bg.get("strobe")),
+            "custom": bool(variation_sources),
+        })
+
+    # Правки монтажного стола (только ролики, которые правили руками) — см. montage.py.
+    montage_edits.apply_montage(
+        variations, montage_slots, stage_data.get("montage"), stage_data.get("timeline"),
+        _segment(stage_data.get("timing")), subs.get("textByStyle") or {}, _resolve_hook,
+    )
 
     # Раскадровка «Пула»: закреплённые склейки+клипы по видео (см. storyboard.py).
     storyboard_plans.attach_to_variations(variations, stage_data.get("storyboard"), _segment(stage_data.get("timing")),
@@ -439,10 +455,23 @@ def selected_hook_configs(stage_data: dict[str, Any]) -> list[tuple[str, dict[st
             for item in raw
             if isinstance(item, dict) and isinstance(item.get("config"), dict)
             and (not counts or (counts.get(item.get("id")) or 0) > 0)
-        ]
+        ] + _montage_hook_configs(stage_data)
     configs = (stage_data.get("hooks") or {}).get("configs") or {}
     return [(family, configs[family]) for family in sorted(selected_hook_families(stage_data))
             if isinstance(configs.get(family), dict)]
+
+
+def _montage_hook_configs(stage_data: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Хуки, поставленные на монтажном столе (свои копии конфигов у правленых роликов):
+    прогрев оттуда тоже проходит проверку файла и получает метаданные с сервера."""
+    videos = ((stage_data.get("montage") or {}).get("videos")) or {}
+    if not isinstance(videos, dict):
+        return []
+    return [
+        (str(entry.get("kind")), entry["config"])
+        for entry in videos.values()
+        if isinstance(entry, dict) and isinstance(entry.get("config"), dict) and entry.get("kind") not in (None, "none")
+    ]
 
 
 def selected_hook_families(stage_data: dict[str, Any]) -> set[str]:

@@ -158,3 +158,43 @@ def animated_svg(item_id: str, *, aspect: str, still: bool = False) -> str:
         f'<g transform-origin="{w / 2:.0f} {h / 2:.0f}">{zoom}<rect width="{w}" height="{h}" fill="url(#bg)"/>{motif}</g>'
         "</svg>"
     )
+
+
+# ── превью стилей субтитров: строка отрывка в манере стиля, слова появляются по очереди ──
+_SUB_WORDS = ("этот", "город", "не", "уснёт")
+
+
+def _sub_words(words: list[tuple[str, dict[str, str]]], y: float, gap: float, w: int) -> str:
+    """Строка слов по центру: одна <text> c <tspan> на слово — ширину и пробелы считает сам шрифт
+    (угадывать ширину системного шрифта нельзя). Слова проявляются по очереди, цикл 3.2 с."""
+    del gap
+    spans: list[str] = []
+    for index, (text, attrs) in enumerate(words):
+        style = " ".join(f'{k}="{v}"' for k, v in attrs.items() if not k.startswith("_"))
+        spans.append(
+            f'<tspan {style} fill-opacity="0">{text}{" " if index < len(words) - 1 else ""}'
+            f'<animate attributeName="fill-opacity" values="0;1;1;0" keyTimes="0;.12;.85;1" dur="3.2s" begin="{index * 0.35:.2f}s" repeatCount="indefinite"/></tspan>'
+        )
+    return f'<text x="{w / 2:.0f}" y="{y:.0f}" text-anchor="middle" style="white-space:pre">{"".join(spans)}</text>'
+
+
+def subtitle_svg(style_id: str) -> str:
+    """4:3-превью стиля субтитров для ленты выбора стиля (мок)."""
+    w, h = 640, 480
+    bg = '<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d1535"/><stop offset="1" stop-color="#07030f"/></linearGradient></defs><rect width="640" height="480" fill="url(#bg)"/>'
+    caps = {"font-family": "Arial, sans-serif", "font-weight": "800", "font-size": "44", "fill": "#f6f5fd", "_cw": "34"}
+    if style_id == "brat":
+        bg = '<rect width="640" height="480" fill="#8ace00"/>'
+        body = _sub_words([(t, {"font-family": "'Arial Narrow', Arial, sans-serif", "font-size": "58", "fill": "#111", "_cw": "26"}) for t in _SUB_WORDS], 262, 16, w)
+    elif style_id == "jakson":
+        words = [(t.upper(), caps) for t in _SUB_WORDS[:3]] + [("уснёт", {"font-family": "'Segoe Script', 'Brush Script MT', cursive", "font-size": "58", "fill": "#ff4b4b", "_cw": "28"})]
+        body = _sub_words(words, 262, 16, w)
+    elif style_id == "impulse":
+        body = _sub_words([(t.upper(), caps) for t in _SUB_WORDS[:2]], 222, 18, w) + _sub_words([("НЕ УСНЁТ", {**caps, "font-size": "64", "fill": "#c6b6ff", "_cw": "48"})], 312, 0, w)
+    elif style_id == "tape":
+        strips = '<rect x="36" y="206" width="568" height="74" rx="4" fill="#f6f5fd" transform="rotate(-2 320 243)"/>'
+        body = strips + _sub_words([(t.upper(), {**caps, "fill": "#111", "font-size": "40", "_cw": "31"}) for t in _SUB_WORDS], 258, 14, w)
+    else:  # trendy и остальные
+        palette = ["#f6f5fd", "#ffd166", "#f6f5fd", "#7ae3ff"]
+        body = _sub_words([(t.upper(), {**caps, "fill": palette[i % 4]}) for i, t in enumerate(_SUB_WORDS)], 262, 16, w)
+    return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" preserveAspectRatio="xMidYMid slice">{bg}{body}</svg>'

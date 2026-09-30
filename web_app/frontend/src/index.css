@@ -547,6 +547,8 @@ a { color: inherit; text-decoration: none; }
 ::selection { background: var(--accent-80); color: var(--text); }
 
 :focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+/* каретка полей — из палитры, а не системная чёрная/белая */
+input, textarea, [contenteditable] { caret-color: var(--accent-light); }
 
 @media (max-width: 768px) {
   body { font-size: 14px; }
@@ -609,6 +611,12 @@ a { color: inherit; text-decoration: none; }
   /* Выбранный раздел — иконка светлеет однозначно: полный цвет (не text-60), opacity 1
      и мягкое свечение. Маска = background:currentColor, поэтому осветляем именно currentColor. */
   .sidebar-icon-active { opacity: 1 !important; }
+  /* Пункты навигации — одинаковые ячейки 52×52: шаг между иконками ровный при любой форме иконки.
+     Выбранный пункт — мягкая подложка с рамкой (как выбранный таб визарда), а не свечение. */
+  .sidebar-nav .sidebar-icon { width: 52px; height: 52px; border-radius: 15px; transition: background-color var(--t-fast), box-shadow var(--t-fast), opacity var(--t-fast); }
+  .sidebar-nav .sidebar-icon:hover { transform: none; background: var(--panel); }
+  .sidebar-nav .sidebar-icon-active { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+  .sidebar-nav .sidebar-icon-active .nav-icon-mask { filter: none; }
   .sidebar-icon-active .nav-icon-mask {
     background: var(--text);
     filter: drop-shadow(0 0 10px var(--accent-light));
@@ -686,7 +694,10 @@ a { color: inherit; text-decoration: none; }
     font-size: 24px; font-weight: 350; cursor: pointer; white-space: nowrap;
     transition: box-shadow var(--t-fast), color var(--t-fast), opacity var(--t-fast), transform var(--t-fast);
   }
-  .soft-btn:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--border-hover), 0 12px 30px rgba(5, 1, 15, .22); transform: translateY(-1px); }
+  /* hover-подъём только у мыши: на тач-экране hover срабатывает от тапа и кнопка «залипает» приподнятой */
+  @media (hover: hover) and (pointer: fine) {
+    .soft-btn:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--border-hover), 0 12px 30px rgba(5, 1, 15, .22); transform: translateY(-1px); }
+  }
   .soft-btn:active { transform: translateY(0) scale(.98); }
   .soft-btn:disabled { opacity: .45; cursor: not-allowed; }
   .soft-btn-ready { box-shadow: inset 0 0 0 1.5px var(--accent-light); color: var(--text); }

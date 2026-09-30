@@ -1573,8 +1573,11 @@ def api_demo_media(item_id: str, aspect: str = "9:16", still: int = 0) -> Respon
         raise HTTPException(status_code=404, detail="Not found")
     if aspect not in {"9:16", "16:9", "4:3"}:
         raise HTTPException(status_code=422, detail=f"Неизвестный формат превью: {aspect}")
-    svg = demo_media.animated_svg(item_id, aspect=aspect, still=bool(still))
-    return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "max-age=3600"})
+    if item_id.startswith("sub-"):
+        svg = demo_media.subtitle_svg(item_id.removeprefix("sub-"))
+    else:
+        svg = demo_media.animated_svg(item_id, aspect=aspect, still=bool(still))
+    return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/wizard/vibes", tags=["wizard"])

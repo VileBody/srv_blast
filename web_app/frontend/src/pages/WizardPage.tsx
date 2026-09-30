@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,8 +22,12 @@ import { useAsrPreview } from '../components/wizard/useAsrPreview';
 import { WizardCanvas, WizardHeaderCard } from '../components/wizard/WizardFrame';
 import { demoTrackUrl } from '../dev/demoTrack';
 import { useToast } from '../contexts/ToastContext';
-import { cn } from '../lib/cn';
 import { useWizardStore } from '../stores/wizardStore';
+import { useCombos } from '../components/wizard/montage/combos';
+import { useFxTimelineOpen } from '../components/wizard/timelineGuides';
+
+// Монтажный стол — тяжёлый полноэкранный экран «Пула»: грузится, когда его открыли
+const MontageTable = lazy(() => import('../components/wizard/montage/MontageTable').then((m) => ({ default: m.MontageTable })));
 
 function apiErrorText(error: unknown): string | undefined {
   if (!(error instanceof ApiError)) return undefined;
@@ -71,7 +75,7 @@ export function WizardPage() {
       id: 'qa-track', userId: 'user_1', s3Key: 'qa/track.mp3', filename: 'Название трека.mp3',
       durationS: 204, createdAt: '2026-07-15T00:00:00Z', expiresAt: '2026-07-22T00:00:00Z',
       // синтезированный демо-трек: у волны отрывка настоящая форма, отрывок слышно
-      localUrl: demoTrackUrl(204)
+      localUrl: import.meta.env.DEV ? demoTrackUrl(204) : undefined
     });
     state.setField('lyrics', qaGuide === 'text' ? '' : 'Я знаю — этот город не уснёт\nПока музыка ведёт нас вперёд');
     state.setField('timingFrom', qaGuide === 'timing' ? '' : '00:10:00');
@@ -353,6 +357,23 @@ export function WizardPage() {
     else submitMutation.mutate();
   };
 
+  // «Пул» и монтажный стол смотрят на одно видео батча: листалка «Комбинаций» и
+  // переключатель стола двигают один номер.
+  const [poolIndex, setPoolIndex] = useState(0);
+  const [tableOpen, setTableOpen] = useState(false);
+  const combos = useCombos();
+  const montageVideos = useWizardStore((s) => s.montage.videos);
+  const storyboardVideos = useWizardStore((s) => s.storyboard.videos);
+  const setTimelineFlag = useFxTimelineOpen((s) => s.setOpen);
+  useEffect(() => { setTimelineFlag(tableOpen && stage === 5); }, [tableOpen, stage, setTimelineFlag]);
+  // ушли с «Пула» — стол закрыт: возврат на «Пул» не должен сам открывать его поверх
+  useEffect(() => { if (stage !== 5) setTableOpen(false); }, [stage]);
+  useEffect(() => () => setTimelineFlag(false), [setTimelineFlag]);
+  const safePoolIndex = Math.min(poolIndex, Math.max(0, combos.length - 1));
+  const poolCombo = combos[safePoolIndex];
+  const poolEdited = Boolean(poolCombo && ((montageVideos[safePoolIndex]?.edited && montageVideos[safePoolIndex]?.sig === poolCombo.sig)
+    || Object.keys(storyboardVideos[poolCombo.slotIndex]?.pins ?? {}).length));
+
   /*
    * Генерировать некуда — сразу открываем создание проекта. Раньше здесь был экран
    * «Какой проект?» с кнопкой на список проектов: лишний шаг, который вёл на такой же
@@ -375,6 +396,7 @@ export function WizardPage() {
     else navigate(-1);
   };
   const busy = submitMutation.isPending || saveSessionMutation.isPending;
+
 
   // Тот же fill-height, что у Dashboard/Projects/ProjectDetail: верх контента = лого сайдбара,
   // низ = аватар. Внутри — холст по модели макета (WizardCanvas): ширина 1240, высота по месту.
@@ -442,9 +464,18 @@ export function WizardPage() {
       ) : stage === 4 ? (
         <SubtitlesWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
       ) : (
-        <SliceWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
+        // Пока открыт стол, раскадровка «Пула» под ним не живёт: у неё свой звук и свои
+        // кнопки кадра. Сама раскадровка лежит в сторе — стол работает с ней.
+        tableOpen ? <aside className="w12-col-aside" aria-hidden="true" /> : <SliceWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next}
+          index={safePoolIndex} onIndex={setPoolIndex} edited={poolEdited}
+          onOpenTimeline={(index) => { setPoolIndex(index); setTableOpen(true); }} />
       )}
     </WizardCanvas>
+    {stage === 5 && tableOpen && (
+      <Suspense fallback={null}>
+        <MontageTable index={safePoolIndex} onIndex={setPoolIndex} onClose={() => setTableOpen(false)} onGenerate={() => { if (!canContinue) { const reason = missingText(); useWizardAttempt.getState().mark(stage, reason); return reason; } void next(); return null; }} />
+      </Suspense>
+    )}
     </div>
   );
 }

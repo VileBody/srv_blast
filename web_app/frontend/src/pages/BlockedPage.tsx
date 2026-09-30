@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Button, buttonClass } from '../components/ui/kit';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -69,19 +70,14 @@ export function BlockedPage() {
         </div>
 
         <div className="mt-[28px] flex flex-wrap items-center gap-[12px]">
-          <button
-            type="button"
-            onClick={() => logoutMutation.mutate()}
-            disabled={logoutMutation.isPending}
-            className="flex h-[56px] items-center rounded-r15 bg-grad-main px-[26px] text-[18px] leading-none text-text transition hover:brightness-110 disabled:opacity-60"
-          >
-            {logoutMutation.isPending ? t('common.loading') : t('blocked.logout')}
-          </button>
+          <Button variant="primary" size="lg" onClick={() => logoutMutation.mutate()} loading={logoutMutation.isPending} disabled={logoutMutation.isPending}>
+            {t('blocked.logout')}
+          </Button>
           <a
             href={LEGAL_LINKS.offer}
             target="_blank"
             rel="noreferrer"
-            className="flex h-[56px] items-center rounded-r15 border border-accent-light bg-grad-soft-20 px-[26px] text-[17px] leading-none text-text-80 transition hover:text-text"
+            className={buttonClass({ variant: 'secondary', size: 'lg' })}
           >
             {t('blocked.rules')}
           </a>

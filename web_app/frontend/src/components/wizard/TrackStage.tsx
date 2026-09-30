@@ -8,7 +8,6 @@ import { useToast } from '../../contexts/ToastContext';
 import { useWizardStore } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss } from '../guidance/useGuideDismiss';
-import { Icon } from '../ui/kit';
 import { formatClock, formatSeconds, parseClock, snapTenth, SEGMENT_SECONDS, toStoreTiming } from './timing';
 import { timingToSeconds, usePlaybackUrl } from './useFragmentAudio';
 import { useWavePeaks } from './useWavePeaks';

@@ -172,7 +172,7 @@ function CurrentProjectCard({ active, onCreate }: { active?: Project | null; onC
     <section className="card-2 relative shrink-0 overflow-hidden p-[24px] sm:p-[32px] lg:h-[379px] lg:p-[40px] max-md:p-[20px]">
       <img src="/assets/figma/proj-lines.svg" alt="" aria-hidden className="pointer-events-none absolute right-[-378px] top-[-20px] h-[509px] w-[835px] max-w-none rotate-[-16.44deg] select-none" />
       <div className="relative">
-        <h1 className="text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{active?.name ?? t('projects.noActive')}</h1>
+        <h1 className="text-ui-32 font-[400] text-transparent" style={gradLight}>{active?.name ?? t('projects.noActive')}</h1>
         <div className="mt-[16px] flex items-center gap-[10px] max-md:mt-[8px]">
           <img src="/assets/figma/home-note.svg" width="12" height="17" alt="" aria-hidden />
           <span className="text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{active ? t('projects.currentProject') : t('projects.createFirst')}</span>
@@ -255,7 +255,7 @@ export function ProjectsPage() {
 
       <section className="card-2 relative flex min-h-[420px] flex-col overflow-hidden p-[24px] sm:p-[32px] lg:min-h-0 lg:flex-1 lg:p-[40px] max-md:min-h-0 max-md:p-[20px]">
         <div className="flex items-center justify-between gap-space-4">
-          <h2 className="text-[32px] font-[400] leading-none text-transparent" style={gradLight}>{t('projects.allProjects')}</h2>
+          <h2 className="text-ui-24 font-[400] text-transparent" style={gradLight}>{t('projects.allProjects')}</h2>
           {archivedCount > 0 && (
             <button
               type="button"

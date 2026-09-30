@@ -5,6 +5,8 @@ import { api } from '../../lib/api';
 import type { StoryboardCutsResponse } from '../../lib/types';
 import { recipeKeyOf, TimelinePace, TimelineStyleRange, useWizardStore } from '../../stores/wizardStore';
 import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
+import { footageTypePlane } from '../../data/footageTypes';
+import type { WizardStateData } from '../../stores/wizardStore';
 
 /*
  * Общие данные таймлайна FX и раскадровки «Пула».
@@ -151,4 +153,22 @@ export const useStoryboardBusy = create<{ busy: boolean; setBusy: (busy: boolean
 /** Стабильный seed видео: одинаковые вводные → одинаковый подбор; «перемешать» его сдвигает. */
 export function seedKeyFor(batchKey: string, index: number, shuffle: number): string {
   return `${batchKey}:v${index}:s${shuffle}`;
+}
+
+/**
+ * Id подсказок «Пула». В режиме вариантов FX тур свой (другие тексты и визуал шага 2) — и
+ * id свои: у старых «видел» записан у всех, кто проходил прежний тур.
+ */
+export function poolGuideId(id: 'total' | 'distribute' | 'storyboard' | 'replace' | 'timeline', variants: boolean): string {
+  return `${variants ? 'pool2' : 'pool'}-${id}`;
+}
+
+/** Раскадровка «Пула» есть только у футажа из вайбов — от неё зависит длина тура «Пула». */
+export function poolStoryboardAvailable(bg: WizardStateData['background']): boolean {
+  return footageTypePlane(bg.footageType) === 'vibes' && bg.footage.length > 0;
+}
+
+/** Тур «Пула»: всего → распределение → [раскадровка → замена кадра] → таймлайн. */
+export function poolTourTotal(bg: WizardStateData['background']): number {
+  return poolStoryboardAvailable(bg) ? 5 : 3;
 }

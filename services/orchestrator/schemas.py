@@ -66,6 +66,28 @@ class PinnedCuts(BaseModel):
     switch_points_abs: list[float] = Field(default_factory=list, max_length=400)
 
 
+# Монтажный стол веба: переход на конкретной склейке и стиль на конкретном окне.
+# Время абсолютное (секунды трека), как у pinned_cuts / footage_plan — сверяется с
+# ними при приёме, чтобы склейка человека и склейка рендера были одной и той же.
+CutTransitionIdLiteral = Literal["snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts"]
+ExtraIdLiteral = Literal[
+    "xerox", "analog_glitch", "neon_extract", "old_camera",
+    "blackwhite", "crystal_glow", "night_vision", "wave",
+]
+_CUT_MATCH_S = 0.02
+
+
+class CutTransition(BaseModel):
+    t_abs: float = Field(ge=0.0, allow_inf_nan=False)
+    transition: CutTransitionIdLiteral
+
+
+class ExtraRange(BaseModel):
+    extra: ExtraIdLiteral
+    start_abs: float = Field(ge=0.0, allow_inf_nan=False)
+    end_abs: float = Field(ge=0.0, allow_inf_nan=False)
+
+
 class SendAudioS3Request(BaseModel):
     """
     Minimal payload:
@@ -164,6 +186,11 @@ class SendAudioS3Request(BaseModel):
     # Slow-shutter trail extension (only for extendable hooks): "to_end" or
     # "after_drop:N" (N = footages after the drop). None => default duration.
     effect_hook_extend: Optional[str] = Field(default=None, max_length=24)
+    # Монтажный стол: переходы по склейкам (полное назначение ролика; пустой список
+    # = «склейки без переходов») и стили с точными окнами. Заменяют effect_transition
+    # и effect_extra — вместе их слать нельзя. Env F3_CUT_TRANSITIONS / F3_EXTRA_RANGES.
+    effect_cut_transitions: Optional[list[CutTransition]] = Field(default=None, max_length=400)
+    effect_extra_ranges: Optional[list[ExtraRange]] = Field(default=None, max_length=16)
     # F2 «Объект» packaged-combo selection. When the user picks the "Объект"
     # hook category, the bot sends the chosen shape id here. Propagated to the
     # build env as F2_SHAPE; the orchestrator emits full_edit_config["f2"] and
@@ -246,8 +273,9 @@ class SendAudioS3Request(BaseModel):
     # the photo template (cover-fit 1920×1440 + style + transition) instead of the
     # footage stack. Gated behind PHOTO_FLOW_ENABLED in the bot.
     bg_mode: Literal["footage", "solid", "solid_strobe", "photo"] = "footage"
-    # Solid color key when bg_mode == "solid": "white" or "green".
-    bg_solid_color: str = ""
+    # Solid color when bg_mode == "solid": "white" / "black" / "green" or an exact
+    # "#RRGGBB" (the web color slider). Validated in tasks.solid_background_hex.
+    bg_solid_color: str = Field(default="", max_length=16)
     # Photo flow (bg_mode == "photo") selections — two F3-style steps:
     #   photo_style      = stylization grade/look applied over the whole render
     #   photo_transition = transition between photos
@@ -303,6 +331,7 @@ class SendAudioS3Request(BaseModel):
                 raise ValueError(
                     f"effect_hook_extend must be 'to_end' or 'after_drop:N' (N>=1), got {self.effect_hook_extend!r}"
                 )
+        self._validate_montage_fx()
         # Only F3 hooks require a drop. Transitions use detected cuts and
         # whole-video extras are independent from the user's drop selection.
         if self.effect_hook and self.user_drop_t is None:
@@ -349,6 +378,43 @@ class SendAudioS3Request(BaseModel):
                     f"(requested: {', '.join(requested)})"
                 )
         return self
+
+
+    def _validate_montage_fx(self) -> None:
+        cuts_fx = self.effect_cut_transitions
+        ranges = self.effect_extra_ranges
+        if cuts_fx is None and ranges is None:
+            return
+        start, end = self.user_clip_start_sec, self.user_clip_end_sec
+        if start is None or end is None:
+            raise ValueError("effect_cut_transitions/effect_extra_ranges require the user clip window")
+        if cuts_fx is not None and self.effect_transition:
+            raise ValueError("effect_cut_transitions and effect_transition are mutually exclusive")
+        if ranges is not None and (self.effect_extra or self.effect_extra_full):
+            raise ValueError("effect_extra_ranges and effect_extra/effect_extra_full are mutually exclusive")
+        for rng in ranges or []:
+            if not (float(start) - _CUT_MATCH_S <= rng.start_abs < rng.end_abs <= float(end) + _CUT_MATCH_S):
+                raise ValueError(
+                    f"effect_extra_ranges item {rng.extra} [{rng.start_abs}, {rng.end_abs}] "
+                    f"must lie inside the clip window [{start}, {end}]"
+                )
+        if cuts_fx:
+            # Переход назначен на КОНКРЕТНУЮ склейку — значит, склейки обязаны быть
+            # закреплены: иначе рендер посчитает свои, и переход встанет не туда.
+            if self.footage_plan is not None:
+                pinned = [float(p) for p in self.footage_plan.switch_points_abs]
+            elif self.pinned_cuts is not None:
+                pinned = [float(p) for p in self.pinned_cuts.switch_points_abs]
+            else:
+                raise ValueError("effect_cut_transitions require footage_plan or pinned_cuts")
+            seen: set[float] = set()
+            for item in cuts_fx:
+                match = next((p for p in pinned if abs(p - item.t_abs) <= _CUT_MATCH_S), None)
+                if match is None:
+                    raise ValueError(f"effect_cut_transitions: t_abs={item.t_abs} is not a pinned cut")
+                if match in seen:
+                    raise ValueError(f"effect_cut_transitions: two transitions on the cut at {match}")
+                seen.add(match)
 
 
 class EnqueueJobResponse(BaseModel):

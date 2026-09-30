@@ -1,8 +1,7 @@
-import { ReactNode, useLayoutEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../lib/cn';
 import { useWizardStore } from '../../stores/wizardStore';
-import { Icon } from '../ui/kit';
 import { useWizardAttempt } from './wizardAttempt';
 import './wizard12.css';
 
@@ -21,6 +20,7 @@ export const W12 = {
   back: <path d="M20 12H5M10.5 6.5 5 12l5.5 5.5" />,
   check: <path d="M5 12.5 9.5 17 19 7.5" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  minus: <path d="M5 12h14" />,
   pencil: <path d="M15.5 5.5l3 3L9 18l-4 1 1-4z" />,
   reset: <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4" />,
   upload: <path d="M12 15V4.5M7.5 9 12 4.5 16.5 9M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15" />,
@@ -66,7 +66,7 @@ export function StageTabs() {
             disabled={index > reached}
             onClick={() => setStage(tab.stage)}
           >
-            {done ? <span className="w12-done"><Svg>{W12.check}</Svg></span> : tab.icon}
+            {done ? <span className="w12-done"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 8.4 6.9 10.6 11.4 5.6" /></svg></span> : tab.icon}
             <span className="w12-l">{t(tab.label)}</span>
           </button>
         );
@@ -105,12 +105,13 @@ export function WizardHeaderCard({ title, artist, onRename }: { title: string; a
 
 /** Строка «Назад / Продолжить». «Продолжить» не бывает мёртвым: на неготовом шаге нажатие
  *  подсвечивает пропуски, а над кнопками пишется, чего не хватает. */
-export function WizardActions({ ready, loading, onBack, onNext, nextLabel }: { ready: boolean; loading?: boolean; onBack?: () => void; onNext: () => void; nextLabel?: string }) {
+/** tone='field' — «дальше» не главное действие карточки: тон «Назад» вместо акцента. */
+export function WizardActions({ ready, loading, onBack, onNext, nextLabel, tone }: { ready: boolean; loading?: boolean; onBack?: () => void; onNext: () => void; nextLabel?: string; tone?: 'field' }) {
   const { t } = useTranslation();
   const stage = useWizardStore((state) => state.stage);
   const missing = useWizardAttempt((state) => (state.stage === stage ? state.message : ''));
   const next = (
-    <button type="button" className={cn('w12-cta', ready && 'w12-ready')} onClick={onNext} aria-busy={loading || undefined}>
+    <button type="button" className={cn('w12-cta', tone === 'field' ? 'w12-cta-field' : ready && 'w12-ready')} onClick={onNext} aria-busy={loading || undefined}>
       {loading ? <span className="spinner" aria-hidden="true" /> : <><span className="w12-l">{nextLabel ?? t('wizard.continue')}</span><Svg>{W12.arrow}</Svg></>}
     </button>
   );
@@ -161,9 +162,34 @@ export function PillsFooter({
   dragScroll?: unknown;
 }) {
   const { t } = useTranslation();
+  // Итог — одной строкой: лишние пилюли уходят за край и листаются (колесо/тач/драг скролла),
+  // край, за которым что-то есть, мягко затухает.
+  const sumRef = useRef<HTMLDivElement>(null);
+  const [fade, setFade] = useState({ left: false, right: false });
+  const sync = () => {
+    const el = sumRef.current;
+    if (!el) return;
+    setFade({ left: el.scrollLeft > 2, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 });
+  };
+  useEffect(() => {
+    sync();
+    const el = sumRef.current;
+    if (!el) return undefined;
+    const observer = new ResizeObserver(sync);
+    observer.observe(el);
+    // вертикальное колесо листает строку вбок
+    const onWheel = (event: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      event.preventDefault();
+      el.scrollLeft += event.deltaY;
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => { observer.disconnect(); el.removeEventListener('wheel', onWheel); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pills.length]);
   return (
     <div className="w12-card w12-foot-card">
-      <div className="w12-sum">
+      <div ref={sumRef} className="w12-sum" data-fade-l={fade.left || undefined} data-fade-r={fade.right || undefined} onScroll={sync}>
         {pills.length === 0 && <span className="w12-sum-empty"><span className="w12-l">{emptyLabel}</span></span>}
         {pills.map((pill) => (
           <button key={pill.key} type="button" className={cn(pill.key === activeKey && 'w12-on', pill.zero && 'w12-zero')} onClick={() => onPill(pill.key)}>

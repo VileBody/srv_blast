@@ -55,16 +55,12 @@ function useAppViewport() {
 }
 
 const baseNav = [
-  { href: '/app/projects', label: 'nav.projects', icon: '/assets/figma/nav-projects.svg', size: 37 },
-  { href: '/app/generate', label: 'nav.generate', icon: '/assets/figma/nav-generate.svg', size: 34 },
-  { href: '/app/stats', label: 'nav.stats', icon: '/assets/figma/nav-stats.svg', size: 34, locked: true }
+  // Оптически один размер: круг и квадрат — 28, лампочка уже (40×44), поэтому выше — 31
+  { href: '/app/projects', label: 'nav.projects', icon: '/assets/figma/nav-projects.svg', size: 31 },
+  { href: '/app/generate', label: 'nav.generate', icon: '/assets/figma/nav-generate.svg', size: 28 },
+  { href: '/app/stats', label: 'nav.stats', icon: '/assets/figma/nav-stats.svg', size: 28 }
 ];
 
-function navigation(isAdmin = false) {
-  return isAdmin
-    ? [...baseNav, { href: '/app/admin/analytics', label: 'nav.adminAnalytics', icon: '/assets/figma/nav-stats.svg', size: 34 }]
-    : baseNav;
-}
 
 function Avatar({ name, avatarUrl, className, onClick }: { name?: string; avatarUrl?: string; className?: string; onClick?: () => void }) {
   const { t } = useTranslation();
@@ -90,24 +86,22 @@ function Avatar({ name, avatarUrl, className, onClick }: { name?: string; avatar
   );
 }
 
-function Sidebar({ activeJobId, userName, avatarUrl, isAdmin }: { activeJobId?: string; userName?: string; avatarUrl?: string; isAdmin?: boolean }) {
+function Sidebar({ activeJobId, userName, avatarUrl }: { activeJobId?: string; userName?: string; avatarUrl?: string }) {
   const { t } = useTranslation();
   return (
     <aside className="sidebar">
       <NavLink to="/app" aria-label={t('nav.dashboard')} className="sidebar-icon !w-[60px]">
         <img src="/assets/figma/logo-star.svg" width="60" height="60" alt="Blast" />
       </NavLink>
-      <nav className="mt-[clamp(48px,calc(var(--app-layout-h,100vh)*.1),107px)] flex flex-col items-center gap-space-7">
-        {navigation(isAdmin).map((item) => (
+      <nav className="sidebar-nav mt-[clamp(48px,calc(var(--app-layout-h,100vh)*.1),107px)] flex flex-col items-center gap-[20px]">
+        {baseNav.map((item) => (
           <NavLink
             key={item.href}
             to={item.href === '/app/generate' && activeJobId ? `/app/processing/${activeJobId}` : item.href}
             aria-label={t(item.label)}
             className={({ isActive }) => cn(
               'sidebar-icon relative text-text-60 hover:text-text-80',
-              isActive && 'sidebar-icon-active text-text',
-              // locked гасит иконку, но НЕ когда раздел выбран — иначе активная выглядит неактивной
-              item.locked && !isActive && 'opacity-40'
+              isActive && 'sidebar-icon-active text-text'
             )}
           >
             {/*
@@ -167,7 +161,7 @@ function Drawer({ open, onClose, activeJobId, userName, avatarUrl }: { open: boo
         </div>
         <nav className="flex flex-col gap-space-3">
           {/* админ-аналитика — десктопный инструмент, в мобильном меню её нет */}
-          {navigation(false).map((item) => (
+          {baseNav.map((item) => (
             <NavLink
               key={item.href}
               to={item.href === '/app/generate' && activeJobId ? `/app/processing/${activeJobId}` : item.href}
@@ -247,7 +241,7 @@ export function AppShell() {
       <div className="app-scale-viewport">
         <div className="app-frame" style={frameStyle}>
           {/* Тот же выбор аватара, что в ЛК: свой, иначе из TikTok — сайдбар отставал и показывал букву */}
-          <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} isAdmin={meQuery.data?.isAdmin} />
+          <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />
         <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />
         {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />

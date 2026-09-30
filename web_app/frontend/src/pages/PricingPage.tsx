@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -97,6 +97,30 @@ function Hint({ text }: { text: string }) {
 }
 
 /** Карта тарифа 357×736 r15 (Figma 752:338). `current` — этот тариф уже куплен. */
+/** Карта тарифа — макет Figma 357×736 на абсолютных координатах. На холсте 1600×900 под
+    ленту остаётся ~666px, и кнопка цены уезжала за край ленты со скрытым скроллом. Как на
+    телефоне, карту не переверстываем, а масштабируем целиком под высоту ленты. */
+const PLAN_CARD_H = 736;
+const PLAN_CARD_W = 357;
+
+function usePlanFit() {
+  const ref = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const apply = () => {
+      const fit = Math.min(1, el.clientHeight / PLAN_CARD_H);
+      el.style.setProperty('--plan-fit', String(fit));
+      el.style.setProperty('--plan-min-w', `${Math.round(PLAN_CARD_W * fit)}px`);
+    };
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return ref;
+}
+
 function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, onBuy, busy, current }: {
   plan: Plan;
   agreed: boolean;
@@ -180,7 +204,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
       <h2 className="absolute left-[28px] top-[337px] text-[24px] font-[400] leading-normal text-text max-md:top-[306px] max-md:!text-[24px]" style={{ width: plan.titleW }}>{plan.title}</h2>
 
       {/* буллеты: шаг 42, иконка ~x=31, текст x=60 */}
-      <div className="absolute left-[28px] top-[423px] w-[301px] max-md:top-[378px]">
+      <div className="absolute left-[28px] top-[423px] w-[301px] max-md:top-[384px]">
         {plan.bullets.map((b, i) => (
           <span key={b.text} className="flex h-[30px] items-center" style={{ marginTop: i ? 12 : 0 }}>
             <span className="flex w-[32px] shrink-0 items-center justify-center">
@@ -203,16 +227,18 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
       {/* Тариф уже куплен: вместо согласия и цены — статус. Раньше купленный план ничем
           не отличался от остальных, и было непонятно, за что уже заплачено. */}
       {current ? (
-        <div className="absolute left-[28px] top-[560px] flex w-[calc(100%-56px)] items-start gap-[12px] max-md:top-[500px]">
-          <span className="mt-[5px] flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] bg-accent-light" aria-hidden="true">
+        <div className="absolute left-[28px] top-[548px] flex w-[calc(100%-56px)] items-start gap-[12px] max-md:top-[504px]">
+          {/* ui-allow: квадрат 20px по центру первой строки текста 26px — (26−20)/2 */}
+          <span className="mt-[3px] flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] bg-accent-light" aria-hidden="true">
             <svg viewBox="0 0 12 10" width="11" height="9" fill="none"><path d="M1 5l3.2 3.2L11 1.4" stroke="#05010f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </span>
-          <span className="text-[16px] font-[400] leading-[30px] text-text-80">{t('pricing.yourPlanNote')}</span>
+          <span className="text-[16px] font-[400] leading-[26px] text-text-80">{t('pricing.yourPlanNote')}</span>
         </div>
       ) : (
-      <label className={cn('absolute left-[28px] top-[560px] flex w-[calc(100%-56px)] cursor-pointer items-start gap-[12px] rounded-r10 transition max-md:top-[500px]', attention && 'bg-[rgba(139,111,230,.14)] shadow-[0_0_0_8px_rgba(139,111,230,.14)]')}>
+      <label className={cn('absolute left-[28px] top-[548px] flex w-[calc(100%-56px)] cursor-pointer items-start gap-[12px] rounded-r10 transition max-md:top-[504px]', attention && 'bg-[rgba(139,111,230,.14)] shadow-[0_0_0_8px_rgba(139,111,230,.14)]')}>
         <input type="checkbox" className="sr-only" checked={agreed} onChange={(e) => onAgree(e.target.checked)} />
-        <span className={cn('mt-[5px] flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] border border-text transition-all', agreed && 'bg-text', attention && !agreed && 'border-accent-light shadow-[0_0_14px_rgba(139,111,230,.9)]')} aria-hidden="true">
+        {/* ui-allow: квадрат 20px по центру первой строки текста 26px — (26−20)/2 */}
+        <span className={cn('mt-[3px] flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] border border-text transition-all', agreed && 'bg-text', attention && !agreed && 'border-accent-light shadow-[0_0_14px_rgba(139,111,230,.9)]')} aria-hidden="true">
           {agreed && (
             <svg viewBox="0 0 12 10" width="11" height="9" fill="none" aria-hidden="true">
               <path d="M1 5l3.2 3.2L11 1.4" stroke="#05010f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -221,7 +247,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
         </span>
         {/* Документы — настоящие ссылки: соглашаться с тем, что нельзя открыть, нельзя.
             stopPropagation, иначе клик по ссылке ещё и переключал бы чекбокс. */}
-        <span className={cn('text-[16px] font-[400] leading-[30px] text-text-80 transition-colors', attention && !agreed && 'text-text')}>
+        <span className={cn('text-[16px] font-[400] leading-[26px] text-text-80 transition-colors', attention && !agreed && 'text-text')}>
           {t('pricing.agreePrefix')}{' '}
           <a
             href={LEGAL_LINKS.policy}
@@ -247,7 +273,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
       )}
 
       {!current && plan.kind === 'subscription' && (
-        <label className="absolute left-[28px] top-[620px] flex w-[calc(100%-56px)] cursor-pointer items-center gap-[12px] max-md:top-[566px]">
+        <label className="absolute left-[28px] top-[606px] flex w-[calc(100%-56px)] cursor-pointer items-center gap-[12px] max-md:top-[562px]">
           <input type="checkbox" className="sr-only" checked={recurrentAgreed} onChange={(event) => onRecurrentAgree(event.target.checked)} />
           <span className={cn('flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] border border-text transition-all', recurrentAgreed && 'bg-text', attention && !recurrentAgreed && 'border-accent-light shadow-[0_0_14px_rgba(139,111,230,.9)]')} aria-hidden="true">
             {recurrentAgreed && (
@@ -317,6 +343,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
 export function PricingPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const plansRef = usePlanFit();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { push } = useToast();
@@ -426,7 +453,7 @@ export function PricingPage() {
         {/* Телефон: карта — фигма-макет 357×736 на абсолютных координатах; переверстать
             её нельзя без потери композиции, поэтому масштабируем целиком (zoom .8 → 286×589,
             влезает в экран), лента со snap, следующая карта выглядывает справа. */}
-        <div className="mt-[28px] grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(357px,1fr))] items-start gap-[20px] overflow-x-auto no-scrollbar max-md:-mx-[20px] max-md:mt-[14px] max-md:flex max-md:snap-x max-md:snap-mandatory max-md:scroll-pl-[20px] max-md:gap-[12px] max-md:px-[20px] max-md:[&>*]:shrink-0 max-md:[&>*]:snap-start max-md:[&>*]:[zoom:.8]">
+        <div ref={plansRef} className="mt-[28px] grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(var(--plan-min-w,357px),1fr))] md:[&>*]:[zoom:var(--plan-fit,1)] items-start gap-[20px] overflow-x-auto no-scrollbar max-md:-mx-[20px] max-md:mt-[14px] max-md:flex max-md:snap-x max-md:snap-mandatory max-md:scroll-pl-[20px] max-md:gap-[12px] max-md:px-[20px] max-md:[&>*]:shrink-0 max-md:[&>*]:snap-start max-md:[&>*]:[zoom:.8]">
           {plans.map((plan) => (
             <PlanCard
               key={plan.type}

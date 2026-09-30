@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { cssZoom } from '../../lib/zoom';
 
 /*
  * Лимиты (Figma W19+W46 — Пул; W36+W47 — батч): кружок-индикатор рядом со счётчиком,
@@ -100,12 +101,12 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
     if (!host) return;
     const ring = ringRef.current.getBoundingClientRect();
     const box = host.getBoundingClientRect();
-    // getBoundingClientRect() возвращает уже уменьшенные CSS-zoom координаты, тогда
-    // как absolute left/top внутри host задаются в его исходной системе. Без деления
-    // поповер и портированная копия кольца уезжали влево при масштабе страницы < 100%.
-    const scaleX = box.width / host.offsetWidth || 1;
-    const scaleY = box.height / host.offsetHeight || scaleX;
-    setAnchor({ host, x: (ring.left - box.left) / scaleX, y: (ring.top - box.top) / scaleY });
+    // getBoundingClientRect() — визуальные пиксели, а absolute left/top внутри host — его
+    // собственные CSS-пиксели. Делим на суммарный zoom хоста: в визарде это zoom корня ×
+    // холст WizardCanvas. Отношение box.width / offsetWidth при вложенном zoom давало ~1,
+    // и поповер уезжал вверх-влево от кружка.
+    const zoom = cssZoom(host);
+    setAnchor({ host, x: (ring.left - box.left) / zoom, y: (ring.top - box.top) / zoom });
   }, [open]);
 
   const sub = meQuery.data?.subscription;

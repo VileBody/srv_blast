@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { Button, buttonClass } from '../components/ui/kit';
 import { Link } from 'react-router-dom';
 
 // Юридические документы уехали на свою страницу (LegalPage) — здесь остались
@@ -25,11 +26,11 @@ export function SimplePage({ kind }: { kind: Kind }) {
         <p className="mt-[16px] max-w-[480px] text-[18px] font-[350] leading-[24px] text-text-60">{t(TEXT[kind])}</p>
         <div className="mt-[32px] flex flex-wrap justify-center gap-[12px]">
           {kind === 'error' && (
-            <button type="button" onClick={() => location.reload()} className="flex h-[60px] items-center rounded-r15 bg-grad-main px-[28px] text-[20px] leading-none text-text">
+            <Button variant="primary" size="lg" onClick={() => location.reload()}>
               {t('simple.refresh')}
-            </button>
+            </Button>
           )}
-          <Link className="flex h-[60px] items-center rounded-r15 border border-accent-light bg-grad-soft-20 px-[28px] text-[20px] leading-none text-text-80 transition hover:text-text" to="/app">
+          <Link className={buttonClass({ variant: kind === 'error' ? 'secondary' : 'primary', size: 'lg' })} to="/app">
             {t('simple.toHome')}
           </Link>
         </div>

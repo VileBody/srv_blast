@@ -389,11 +389,11 @@ PHOTOS: list[dict[str, Any]] = [
 ]
 
 SUBTITLE_STYLES: list[dict[str, Any]] = [
-    {"id": "brat", "name": "Brat", "previewUrl": f"{BASE_S3}/subtitles/brat/preview.jpg"},
-    {"id": "jakson", "name": "Jakson", "previewUrl": f"{BASE_S3}/subtitles/jakson/preview.jpg"},
-    {"id": "impulse", "name": "Impulse", "previewUrl": f"{BASE_S3}/subtitles/impulse/preview.jpg"},
-    {"id": "tape", "name": "Tape", "previewUrl": f"{BASE_S3}/subtitles/tape/preview.jpg"},
-    {"id": "trendy", "name": "Trendy", "previewUrl": f"{BASE_S3}/subtitles/trendy/preview.jpg"},
+    {"id": "brat", "name": "Brat", "previewUrl": "/api/wizard/demo-media/sub-brat.svg?v=3"},
+    {"id": "jakson", "name": "Jakson", "previewUrl": "/api/wizard/demo-media/sub-jakson.svg?v=3"},
+    {"id": "impulse", "name": "Impulse", "previewUrl": "/api/wizard/demo-media/sub-impulse.svg?v=3"},
+    {"id": "tape", "name": "Tape", "previewUrl": "/api/wizard/demo-media/sub-tape.svg?v=3"},
+    {"id": "trendy", "name": "Trendy", "previewUrl": "/api/wizard/demo-media/sub-trendy.svg?v=3"},
 ]
 
 DROPS: list[dict[str, Any]] = [

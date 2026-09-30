@@ -118,6 +118,8 @@ _LLM_ENV_KEYS = (
     "F3_EXTRA",
     "F3_EXTRA_FULL",
     "F3_HOOK_EXTEND",
+    "F3_CUT_TRANSITIONS",
+    "F3_EXTRA_RANGES",
     "F2_SHAPE",
     "F2_SEED",
     "F1_SOUND_URL",
@@ -1679,6 +1681,60 @@ def footage_plan_env_value(req: Dict[str, Any]) -> Optional[str]:
     return json.dumps(plan)
 
 
+_SOLID_HEX_BY_KEY = {"white": "#FFFFFF", "black": "#000000", "green": "#00FF00"}
+
+
+def solid_background_hex(value: str) -> str:
+    """bg_solid_color -> hex плоскости: имя (white/black/green) или точный «#RRGGBB»
+    (шкала цвета на сайте). Иное — явная ошибка (No Fallback)."""
+    key = str(value or "").strip().lower()
+    if key in _SOLID_HEX_BY_KEY:
+        return _SOLID_HEX_BY_KEY[key]
+    if re.fullmatch(r"#[0-9a-f]{6}", key):
+        return key.upper()
+    raise RuntimeError(
+        f"bg_mode=solid requires bg_solid_color in {sorted(_SOLID_HEX_BY_KEY)} or '#RRGGBB', got {key!r}"
+    )
+
+
+def _hex_is_light(hex_value: str) -> bool:
+    """Относительная яркость (sRGB) выше середины — белый текст на такой плоскости не читается."""
+    raw = hex_value.lstrip("#")
+    r, g, b = (int(raw[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in (r, g, b)]
+    return (0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]) > 0.4
+
+
+def montage_fx_env_values(req: Dict[str, Any]) -> Dict[str, str]:
+    """F3_CUT_TRANSITIONS / F3_EXTRA_RANGES для правок монтажного стола.
+
+    Секунды абсолютные — в клип-относительные их переводит оркестратор, когда знает
+    фактическое начало компа. Ключ в запросе есть => режим стола, даже пустой список
+    («склейки без переходов»); нет ключа => env не ставится, работает общий выбор.
+    """
+    out: Dict[str, str] = {}
+    cut_fx = req.get("effect_cut_transitions")
+    if cut_fx is not None:
+        if not isinstance(cut_fx, list):
+            raise RuntimeError(f"invalid effect_cut_transitions={cut_fx!r}")
+        out["F3_CUT_TRANSITIONS"] = json.dumps(
+            [{"t_abs": float(item["t_abs"]), "id": str(item["transition"])} for item in cut_fx],
+            ensure_ascii=False,
+        )
+    ranges = req.get("effect_extra_ranges")
+    if ranges is not None:
+        if not isinstance(ranges, list):
+            raise RuntimeError(f"invalid effect_extra_ranges={ranges!r}")
+        out["F3_EXTRA_RANGES"] = json.dumps(
+            [
+                {"id": str(item["extra"]), "start_abs": float(item["start_abs"]), "end_abs": float(item["end_abs"])}
+                for item in ranges
+            ],
+            ensure_ascii=False,
+        )
+    return out
+
+
 def pinned_cuts_env_value(req: Dict[str, Any]) -> Optional[str]:
     """PINNED_CUTS_JSON for a job, or None. Own uploaded video plays its clips
     back to back and a footage_plan already carries its cuts — cuts sent next to
@@ -1969,18 +2025,13 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     if bg_mode not in {"footage", "solid", "solid_strobe", "photo"}:
         raise RuntimeError(f"invalid bg_mode={bg_mode!r}")
     bg_solid_color_key = str(req.get("bg_solid_color") or "").strip().lower()
-    bg_solid_hex_by_key = {"white": "#FFFFFF", "black": "#000000", "green": "#00FF00"}
     if bg_mode == "solid":
-        if bg_solid_color_key not in bg_solid_hex_by_key:
-            raise RuntimeError(
-                f"bg_mode=solid requires bg_solid_color in {sorted(bg_solid_hex_by_key)}, "
-                f"got {bg_solid_color_key!r}"
-            )
+        bg_solid_hex = solid_background_hex(bg_solid_color_key)
         env["BG_MODE"] = "solid"
-        env["BG_SOLID_COLOR_HEX"] = bg_solid_hex_by_key[bg_solid_color_key]
-        # Default subtitle fill is white; flip to black on white background so
-        # text stays readable. Other bg colors leave subtitles untouched.
-        if bg_solid_color_key == "white":
+        env["BG_SOLID_COLOR_HEX"] = bg_solid_hex
+        # Default subtitle fill is white; on a light plane (white, or any light
+        # color from the web slider) flip it to black so text stays readable.
+        if _hex_is_light(bg_solid_hex):
             env["SUBTITLES_FORCE_FILL_HEX"] = "#000000"
     elif bg_mode == "solid_strobe":
         # B/W strobe bg + Difference-blend text. The auto-invert needs WHITE text,
@@ -2190,6 +2241,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
                 f"invalid effect_hook_extend={_f3_extend_raw!r}; expected 'to_end' or 'after_drop:N'"
             )
         env["F3_HOOK_EXTEND"] = _ext
+    env.update(montage_fx_env_values(req))
     # F2 «Объект» packaged-combo selection pass-through. Set => orchestrator
     # emits full_edit_config["f2"] (shape on pre-drop cuts + hook_light at
     # drop + seeded-random F3 transition on post-drop cuts) and

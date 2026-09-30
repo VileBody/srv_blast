@@ -5389,7 +5389,10 @@ def build_all_via_gemini_one_call(
     _f3_hook = (os.environ.get("F3_HOOK") or "").strip().lower()
     _f3_trans = (os.environ.get("F3_TRANSITION") or "").strip().lower()
     _f3_extra = (os.environ.get("F3_EXTRA") or "").strip().lower()
-    if _f3_hook or _f3_trans or _f3_extra:
+    # Монтажный стол: env присутствует => режим стола (пустой список — «без переходов»).
+    _f3_cuts_raw = os.environ.get("F3_CUT_TRANSITIONS")
+    _f3_ranges_raw = os.environ.get("F3_EXTRA_RANGES")
+    if _f3_hook or _f3_trans or _f3_extra or _f3_cuts_raw is not None or _f3_ranges_raw is not None:
         try:
             from mlcore.hooks.f3_effect.overlay import F3_HOOKS, F3_TRANSITIONS, F3_EXTRAS
             if _f3_hook and _f3_hook not in F3_HOOKS:
@@ -5414,12 +5417,31 @@ def build_all_via_gemini_one_call(
                 if not (_drop_rel > 0.0):
                     raise RuntimeError("standalone F3 transition/style requires a positive clip duration")
             _f3_extra_full = (os.environ.get("F3_EXTRA_FULL") or "").strip().lower() in ("1", "true", "yes")
+            # Абсолютные секунды стола -> секунды от начала компа (_cs — фактическое
+            # начало окна субтитров, то же, от которого считаются дроп и склейки).
+            from mlcore.hooks.f3_effect.overlay import montage_items_for_comp
+            _clip_len = float(full_payload.subtitles.clip.end) - _cs
+            _f3_cut_transitions, _f3_extra_ranges, _drop_c, _drop_r = montage_items_for_comp(
+                json.loads(_f3_cuts_raw) if _f3_cuts_raw is not None else None,
+                json.loads(_f3_ranges_raw) if _f3_ranges_raw is not None else None,
+                clip_start=_cs,
+                clip_len=_clip_len,
+            )
+            if _drop_c or _drop_r:
+                # Окно компа уже, чем окно стола (закреплённые склейки подрезаны под окно
+                # джобы): эффектам за краем встать не на что — видно в логе, не молча.
+                logger.warning(
+                    "f3.montage items outside comp window dropped cuts=%d ranges=%d clip_start=%.3f clip_len=%.3f job=%s",
+                    _drop_c, _drop_r, _cs, _clip_len, os.environ.get("JOB_ID") or out_dir.name,
+                )
             f3_block = {
                 "hook": _f3_hook or None,
                 "transition": _f3_trans or None,
                 "extra": _f3_extra or None,
                 "extra_full": _f3_extra_full,
                 "hook_extend": (os.environ.get("F3_HOOK_EXTEND") or "").strip().lower() or None,
+                **({"cut_transitions": _f3_cut_transitions} if _f3_cut_transitions is not None else {}),
+                **({"extra_ranges": _f3_extra_ranges} if _f3_extra_ranges is not None else {}),
                 "drop_time": _drop_rel,
                 # filled by asset_picker below; empty => visual only (silent slots)
                 "assets": {},
@@ -5445,14 +5467,49 @@ def build_all_via_gemini_one_call(
                 )
                 f3_block["assets"] = dict(_resolved.get("assets") or {})
                 f3_block["_media"] = list(_resolved.get("media") or [])
+                # Стол: у каждого перехода и стиля свой звук (и клипы у blackwhite) —
+                # подбираем по каждому id отдельно, media складываем без повторов.
+                _seen_rel = {str(m.get("relpath")) for m in f3_block["_media"] if isinstance(m, dict)}
+
+                def _merge_media(_items):
+                    for _m in _items or []:
+                        _rel = str((_m or {}).get("relpath") or "")
+                        if _rel and _rel not in _seen_rel:
+                            _seen_rel.add(_rel)
+                            f3_block["_media"].append(_m)
+
+                if _f3_cut_transitions:
+                    _t_sounds = {}
+                    for _tid in sorted({it["id"] for it in _f3_cut_transitions}):
+                        _r = _f3_resolve_assets(hook=None, transition=_tid, extra=None, seed=str(_seed))
+                        _snd = (_r.get("assets") or {}).get("transition_sound")
+                        if _snd:
+                            _t_sounds[_tid] = _snd
+                        _merge_media(_r.get("media"))
+                    f3_block["assets"]["transition_sounds"] = _t_sounds
+                if _f3_extra_ranges:
+                    _e_sounds, _e_clips = {}, {}
+                    for _eid in sorted({it["id"] for it in _f3_extra_ranges}):
+                        _r = _f3_resolve_assets(hook=None, transition=None, extra=_eid, seed=str(_seed))
+                        _a = _r.get("assets") or {}
+                        if _a.get("extra_sound"):
+                            _e_sounds[_eid] = _a["extra_sound"]
+                        if _a.get("extra_clips"):
+                            _e_clips[_eid] = list(_a["extra_clips"])
+                        _merge_media(_r.get("media"))
+                    f3_block["assets"]["extra_sounds"] = _e_sounds
+                    f3_block["assets"]["extra_clips_by"] = _e_clips
             except Exception:
                 logger.exception(
                     "f3.assets resolve failed — render without sound/logo (job=%s)",
                     os.environ.get("JOB_ID") or out_dir.name,
                 )
             logger.info(
-                "f3.fx block hook=%s trans=%s extra=%s drop_rel=%.3f slots=%d media=%d",
-                _f3_hook or "-", _f3_trans or "-", _f3_extra or "-", _drop_rel,
+                "f3.fx block hook=%s trans=%s extra=%s cuts=%s ranges=%s drop_rel=%.3f slots=%d media=%d",
+                _f3_hook or "-", _f3_trans or "-", _f3_extra or "-",
+                len(_f3_cut_transitions) if _f3_cut_transitions is not None else "-",
+                len(_f3_extra_ranges) if _f3_extra_ranges is not None else "-",
+                _drop_rel,
                 len(f3_block.get("assets") or {}), len(f3_block.get("_media") or []),
             )
         except Exception:
