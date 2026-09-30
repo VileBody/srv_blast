@@ -24,6 +24,9 @@ import './TikTokPostPage.css';
 type PostStage = 'draft' | 'uploading' | 'posted';
 type Privacy = 'all' | 'followers' | 'friends' | 'self';
 type Requirement = 'caption' | 'privacy' | 'brand' | 'rights';
+/** direct — Direct Post (video.publish); drafts — Upload в inbox TikTok (video.upload) */
+type SendMode = 'direct' | 'drafts';
+const SEND_MODES: SendMode[] = ['direct', 'drafts'];
 
 const PRIVACY_ORDER: Privacy[] = ['all', 'followers', 'friends', 'self'];
 const PRIVACY_API_VALUE: Record<Privacy, string> = {
@@ -260,6 +263,8 @@ export function TikTokPostPage() {
   const [rights, setRights] = useState(Boolean(qaPost && qaPost !== 'empty'));
   // пропуски подсвечиваем только после попытки опубликовать, а не на пустой форме
   const [tried, setTried] = useState(false);
+  const [sendMode, setSendMode] = useState<SendMode>('direct');
+  const [sentToDrafts, setSentToDrafts] = useState(false);
   const [postError, setPostError] = useState('');
   const [postUrl, setPostUrl] = useState<string | null>(null);
   /*
@@ -304,7 +309,8 @@ export function TikTokPostPage() {
   const frames = framesQuery.data?.frames;
 
   // Требования гайдлайнов: без описания, явной приватности, типа рекламы и прав публиковать нельзя
-  const missing: Requirement[] = [
+  // в черновиках подпись, приватность и согласия человек оформляет уже в приложении TikTok
+  const missing: Requirement[] = sendMode === 'drafts' ? [] : [
     !caption.trim() && 'caption' as const,
     privacy === null && 'privacy' as const,
     commercialContent && !brandOrganic && !brandContent && 'brand' as const,
@@ -450,9 +456,11 @@ export function TikTokPostPage() {
     setClock(Date.now());
     videoRef.current?.pause();
     try {
+      const toDrafts = sendMode === 'drafts';
       const initialized = await api.postTiktok({
         projectId: id,
         videoId: video?.id,
+        mode: toDrafts ? 'draft' : 'direct',
         caption: caption.trim(),
         privacy,
         comments,
@@ -468,7 +476,9 @@ export function TikTokPostPage() {
         rights
       });
       let postId: string | undefined;
-      if (initialized.status !== 'PUBLISH_COMPLETE') {
+      // SEND_TO_USER_INBOX — финал для черновика: дальше человек публикует из приложения TikTok
+      const finished = (status?: string) => status === 'PUBLISH_COMPLETE' || status === 'SEND_TO_USER_INBOX';
+      if (!finished(initialized.status)) {
         // SENDING — файл ещё льётся с нашего сервера в TikTok (шаг 1), дальше обработка у TikTok
         let sending = initialized.status === 'SENDING';
         if (!sending) setProgress({ step: 2, startedAt: Date.now() });
@@ -478,7 +488,7 @@ export function TikTokPostPage() {
         for (let attempt = 0; attempt < 200; ) {
           await new Promise((resolve) => window.setTimeout(resolve, 1500));
           const current = await api.tiktokPostStatus(initialized.publishId);
-          if (current.status === 'PUBLISH_COMPLETE') {
+          if (finished(current.status)) {
             complete = true;
             postId = current.publicaly_available_post_id?.[0];
             break;
@@ -494,6 +504,7 @@ export function TikTokPostPage() {
         if (!complete) throw new Error(t('tiktok.postError'));
       }
       setPostUrl(postId ? `${profileUrl}/video/${postId}` : null);
+      setSentToDrafts(toDrafts);
       setProgress({ step: 3, startedAt: Date.now() });
       setStage('posted');
       // без этого «выложено N из M» и пропуск уже выложенных считались по устаревшему проекту
@@ -517,6 +528,7 @@ export function TikTokPostPage() {
     setTried(false);
     setPostError('');
     setPostUrl(null);
+    setSentToDrafts(false);
     if (!applyToAll) {
       setCaption('');
       setPrivacy(null);
@@ -707,6 +719,35 @@ export function TikTokPostPage() {
       </section>
 
       <div className="ttp-fields" ref={fieldsRef}>
+        {/* Content Posting API: публикация сразу (Direct Post) или черновик в inbox TikTok (Upload) */}
+        <div className="ttp-field">
+          <div className="ttp-field-head"><span className="ttp-label" id="ttp-mode-label">{t('tiktok.modeLabel')}</span></div>
+          <div className="ttp-seg two" role="radiogroup" aria-labelledby="ttp-mode-label" data-picked="">
+            <span className="ttp-seg-thumb" aria-hidden="true" style={{ '--i': SEND_MODES.indexOf(sendMode) } as CSSProperties} />
+            {SEND_MODES.map((value) => (
+              <button
+                key={value}
+                type="button"
+                role="radio"
+                aria-checked={sendMode === value}
+                disabled={!draft}
+                onClick={() => { setSendMode(value); setTried(false); setPostError(''); }}
+              >
+                {t(value === 'direct' ? 'tiktok.modeDirect' : 'tiktok.modeDrafts')}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {sendMode === 'drafts' ? (
+          <div className="ttp-field">
+            <div className="ttp-note">
+              <Icon>{ICONS.check}</Icon>
+              <span>{t('tiktok.draftsNote')}</span>
+            </div>
+          </div>
+        ) : (
+        <>
         <div className="ttp-field" data-invalid={invalid('caption')}>
           <div className="ttp-field-head">
             <label className="ttp-label" htmlFor="ttp-caption">{t('tiktok.captionLabel')}</label>
@@ -836,6 +877,8 @@ export function TikTokPostPage() {
             </div>
           </div>
         </div>
+        </>
+        )}
 
         {/* перенос настроек на остаток батча — главный ускоритель выкладки */}
         {remaining > 0 && (
@@ -853,8 +896,12 @@ export function TikTokPostPage() {
             <div className="ttp-status">
               <span className="ok"><Icon>{ICONS.check}</Icon></span>
               <span>
-                {t('tiktok.postedLine', { n: index + 1 })}{' '}
-                <a href={postLink} target="_blank" rel="noreferrer">{t('tiktok.openInTiktok')}<Icon>{ICONS.ext}</Icon></a>
+                {sentToDrafts ? t('tiktok.draftsSentLine', { n: index + 1 }) : (
+                  <>
+                    {t('tiktok.postedLine', { n: index + 1 })}{' '}
+                    <a href={postLink} target="_blank" rel="noreferrer">{t('tiktok.openInTiktok')}<Icon>{ICONS.ext}</Icon></a>
+                  </>
+                )}
               </span>
             </div>
           ) : shownStage === 'uploading' ? (
@@ -862,6 +909,7 @@ export function TikTokPostPage() {
           ) : (
             <>
               {postError && <p role="alert" className="ttp-alert">{postError}</p>}
+              {sendMode === 'drafts' ? <span className="ttp-foot-note">{t('tiktok.draftsFootNote')}</span> : (
               <div className="ttp-rights" data-invalid={invalid('rights')}>
                 <button ref={rightsRef} type="button" className="ttp-box" role="checkbox" aria-checked={rights} aria-labelledby="ttp-rights-text" onClick={() => setRights((v) => !v)}>
                   <CheckMark />
@@ -876,6 +924,7 @@ export function TikTokPostPage() {
                   <a href={MUSIC_USAGE_URL} target="_blank" rel="noreferrer">{t('tiktok.musicConsentLink')}</a>
                 </span>
               </div>
+              )}
             </>
           )}
         </div>
@@ -903,7 +952,7 @@ export function TikTokPostPage() {
                 {nextIndex >= 0 ? t('tiktok.toVideo', { n: nextIndex + 1 }) : t('tiktok.toStats')}
                 <Icon>{ICONS.right}</Icon>
               </>
-            ) : t('tiktok.publish')}
+            ) : sendMode === 'drafts' ? t('tiktok.sendToDrafts') : t('tiktok.publish')}
           </span>
         </button>
       </div>

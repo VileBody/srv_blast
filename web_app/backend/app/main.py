@@ -442,8 +442,10 @@ class DeleteAccountPayload(BaseModel):
 class TiktokPostPayload(BaseModel):
     projectId: str
     videoId: str
+    # direct — Direct Post (video.publish); draft — Upload в inbox TikTok (video.upload)
+    mode: Literal["direct", "draft"] = "direct"
     caption: str = Field(default="", max_length=2200)
-    privacy: str
+    privacy: str = ""
     comments: bool = False
     duet: bool = False
     stitch: bool = False
@@ -2171,9 +2173,10 @@ def _upload_in_background(publish_id: str, upload_url: str, path: Path, proxy: s
             shutil.rmtree(cleanup, ignore_errors=True)
 
 
-def _start_file_upload(token: str, post_info: dict[str, Any], path: Path, proxy: str, video: dict[str, Any], cleanup: Path | None = None) -> dict[str, Any]:
+def _start_file_upload(token: str, post_info: dict[str, Any] | None, path: Path, proxy: str, video: dict[str, Any],
+                       cleanup: Path | None = None, draft: bool = False) -> dict[str, Any]:
     try:
-        data = tiktok_api.init_file_upload(token, post_info, path, proxy)
+        data = tiktok_api.init_file_upload(token, post_info, path, proxy, draft=draft)
     except BaseException:
         if cleanup is not None:
             shutil.rmtree(cleanup, ignore_errors=True)
@@ -2189,11 +2192,42 @@ def _start_file_upload(token: str, post_info: dict[str, Any], path: Path, proxy:
     return {"publish_id": publish_id, "status": "SENDING"}
 
 
+def _send_to_drafts(payload: TiktokPostPayload, video: dict[str, Any], video_url: Any, cfg: tiktok_config.TiktokConfig,
+                    token: str, ready: bool) -> dict[str, Any]:
+    """Upload (video.upload): файл уходит в inbox TikTok, человек заканчивает публикацию в приложении."""
+    logger.info("tiktok_post_settings mode=draft video=%s", payload.videoId)
+    if not ready:
+        publish_id = f"mock_tt_{uuid4().hex[:8]}"
+        video.update({"tiktokPublishId": publish_id, "tiktokStatus": "SEND_TO_USER_INBOX"})
+        return {"ok": True, "status": "SEND_TO_USER_INBOX", "publishId": publish_id, "mode": "draft", "mock": True}
+    if cfg.upload_source == "PULL_FROM_URL":
+        result = tiktok_api.init_direct_post_pull(token, None, str(video_url), cfg.publish_proxy, draft=True)
+    elif str(video_url).startswith("/static/"):
+        result = _start_file_upload(token, None, STATIC_DIR / str(video_url).removeprefix("/static/"), cfg.publish_proxy, video, draft=True)
+    elif RUNTIME.production:
+        temp_dir = Path(tempfile.mkdtemp(prefix="blast-tiktok-"))
+        local_path = temp_dir / f"{payload.videoId}.mp4"
+        try:
+            _production_backend().download_video(str(video_url), local_path)
+        except Exception as exc:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise _production_error(exc) from exc
+        result = _start_file_upload(token, None, local_path, cfg.publish_proxy, video, cleanup=temp_dir, draft=True)
+    else:
+        raise HTTPException(status_code=422, detail="FILE_UPLOAD requires a local rendered MP4 outside production")
+    publish_id = result.get("publish_id")
+    status = result.get("status") or "PROCESSING_UPLOAD"
+    video.update({"tiktokPublishId": publish_id, "tiktokStatus": status, "tiktokMode": "draft"})
+    return {"ok": True, "status": status, "publishId": publish_id, "mode": "draft", "mock": False}
+
+
 @app.post("/api/tiktok/post", tags=["tiktok"])
 def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
     if store.TIKTOK is None:
         raise HTTPException(status_code=409, detail="TikTok is not connected")
-    if not payload.rights:
+    draft = payload.mode == "draft"
+    # в черновике подпись, приватность и согласия человек оформляет уже в приложении TikTok
+    if not draft and not payload.rights:
         raise HTTPException(status_code=422, detail="Content rights must be confirmed")
     found = store.find_video(payload.videoId)
     if not found:
@@ -2211,7 +2245,7 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
         "friends": "MUTUAL_FOLLOW_FRIENDS",
         "self": "SELF_ONLY",
     }.get(payload.privacy)
-    if not privacy:
+    if not privacy and not draft:
         raise HTTPException(status_code=422, detail="Unsupported TikTok privacy level")
     cfg = tiktok_config.load()
     ready = _tiktok_ready(cfg)
@@ -2233,6 +2267,8 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
                 "duet_disabled": False,
                 "stitch_disabled": False,
             }
+        if draft:
+            return _send_to_drafts(payload, video, video_url, cfg, token, ready)
         tiktok_api.validate_video_post_settings(
             creator,
             privacy_level=privacy,
@@ -2318,17 +2354,19 @@ def api_tiktok_post_status(publish_id: str) -> dict[str, Any]:
     except tiktok_api.TikTokApiError as exc:
         raise HTTPException(status_code=exc.status or 502, detail={"code": exc.code, "message": str(exc)}) from exc
     status = result.get("status")
-    if status == "PUBLISH_COMPLETE":
+    if status in ("PUBLISH_COMPLETE", "SEND_TO_USER_INBOX"):
         for job in store.JOBS.values():
             if job.get("userId") != store.current_user_id():
                 continue
             video = next((item for item in job.get("videos", []) if item.get("tiktokPublishId") == publish_id), None)
             if video:
-                video.update({
-                    "tiktokStatus": status,
-                    "postedAt": datetime.now(timezone.utc).isoformat(),
-                    "tiktokPostIds": result.get("publicaly_available_post_id") or [],
-                })
+                now = datetime.now(timezone.utc).isoformat()
+                if status == "PUBLISH_COMPLETE":
+                    video.update({"tiktokStatus": status, "postedAt": now,
+                                  "tiktokPostIds": result.get("publicaly_available_post_id") or []})
+                else:
+                    # черновик ещё не опубликован: postedAt не ставим, ролик остаётся доступным для публикации
+                    video.update({"tiktokStatus": status, "tiktokDraftAt": now})
                 persistence.save_job(str(job["id"]))
                 break
     return {"publishId": publish_id, **result, "mock": False}
