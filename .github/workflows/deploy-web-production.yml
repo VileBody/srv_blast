@@ -9,6 +9,9 @@ on:
       - "services/tg_bot_public/credits_db.py"
       - "services/tg_bot_public/tbank_client.py"
       - "services/tg_bot_public/admin_panel.py"
+      # движок раскладки субтитров + каталог шрифтов вшиты в образ сайта
+      - "app/subtitle_font_layout.py"
+      - "config/styles/subtitle_font_*.json"
       - "infra/runners/deploy_web_production.sh"
       - "infra/runners/nginx/app.blast808.com.conf"
       - ".github/workflows/deploy-web-production.yml"

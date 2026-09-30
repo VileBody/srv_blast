@@ -60,6 +60,68 @@ export interface AsrWord {
 
 export type AsrStatus = 'IDLE' | 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
 
+export type SubtitleFocusStyle = 'italic' | 'bold_italic' | 'faux_italic';
+
+/**
+ * Визуальные параметры текста поверх выбранного стиля субтитров. Имена пресетов —
+ * числа живут на рендере (app/subtitle_font_layout.py); шрифты и пары — каталог
+ * рендера (GET /api/wizard/subtitle-fonts). Бэк приводит настройки к стилю каждой
+ * вариации и отклоняет то, что стиль не примет (docs/WIZARD_SUBTITLE_CUSTOMIZATION.md).
+ */
+export interface SubtitleTextSettings {
+  /** PostScript-имя из каталога; null — стандартный шрифт стиля (прод) */
+  font: string | null;
+  /** акцентный шрифт пары для фокус-слов; null — без пары */
+  accentFont: string | null;
+  size: 'small' | 'medium' | 'large';
+  /** растяжение букв по высоте — только шрифтам с засечками */
+  height: 'compact' | 'normal' | 'tall';
+  shadow: 'none' | 'soft' | 'strong';
+  // 'down' — только для 16:9 (рендер отклоняет его для вертикали). Обводки нет:
+  // смотр в AE 2026-09-29 — нигде не выглядит хорошо.
+  position: 'left' | 'center' | 'right' | 'down';
+  /** второй (и последний) цвет кадра: фокус/ударное слово; null — цвета стиля */
+  accentColor: string | null;
+  /** brat: фокус-слово курсивом (шрифт brat зафиксирован) */
+  focusStyle: SubtitleFocusStyle | null;
+}
+
+export const DEFAULT_SUBTITLE_TEXT_SETTINGS: SubtitleTextSettings = {
+  // large = авто-максимум (прод); medium/small — только меньше
+  font: null, accentFont: null, size: 'large', height: 'normal',
+  shadow: 'soft', position: 'center', accentColor: null, focusStyle: null
+};
+
+/** Стиль, который сейчас настраивается: выбранная вкладка, если она ещё в пуле, иначе первый в пуле. */
+export function activeTextTab(subtitles: Pick<WizardStateData['subtitles'], 'pool' | 'textTab'>): string | null {
+  return subtitles.textTab && subtitles.pool.includes(subtitles.textTab) ? subtitles.textTab : subtitles.pool[0] ?? null;
+}
+
+/** Настройки текста стиля: сохранённые поверх стандартных. */
+export function textSettingsFor(subtitles: Pick<WizardStateData['subtitles'], 'textByStyle'>, style: string | null | undefined): SubtitleTextSettings {
+  return { ...DEFAULT_SUBTITLE_TEXT_SETTINGS, ...((style && subtitles.textByStyle?.[style]) || {}) };
+}
+
+function normalizeTextByStyle(raw: unknown): Record<string, SubtitleTextSettings> {
+  if (!raw || typeof raw !== 'object') return {};
+  return Object.fromEntries(Object.entries(raw as Record<string, Partial<SubtitleTextSettings>>)
+    .map(([style, value]) => [style, { ...DEFAULT_SUBTITLE_TEXT_SETTINGS, ...(value ?? {}) }]));
+}
+
+/** Все фоны батча дают 16:9 — только тогда доступна позиция «снизу». */
+export function allBackgroundsWide(background: WizardStateData['background']): boolean {
+  // все разделы фона сразу — как backgroundVariations(): батч разворачивает их все,
+  // независимо от того, какая вкладка фона открыта сейчас
+  const formats: string[] = [];
+  for (const group of background.footage) {
+    formats.push(background.footageFormats?.[group] ?? (background.footageType === 'cine16x9' ? '16:9' : '9:16'));
+  }
+  for (const plan of background.sourceVideos ?? []) formats.push(plan.format);
+  for (let i = 0; i < background.photo.length; i++) formats.push('4:3');
+  if (background.color) formats.push('9:16');
+  return formats.length > 0 && formats.every((format) => format === '16:9');
+}
+
 /**
  * Примерка субтитров: ASR отрывка запускается сразу после шага «Трек», к шагу «Текст»
  * слова лежат на таймлайне и их можно подвинуть / пометить фокусными.
@@ -253,6 +315,15 @@ export interface WizardStateData {
   subtitles: {
     color: string;
     pool: string[];
+    /**
+     * Настройки текста ПО СТИЛЮ (ключ — имя стиля из пула, «Jakson»…): у стилей
+     * разные ограничения (скрипт основным не годится для Jakson, у Brat шрифт
+     * зафиксирован) — общие настройки блокировали бы друг друга. Нет записи —
+     * стандартные настройки стиля (прод).
+     */
+    textByStyle: Record<string, SubtitleTextSettings>;
+    /** какой стиль сейчас настраивается (вкладка блока «Настройки текста» и превью) */
+    textTab: string | null;
   };
   /** Варианты FX (режим вариантов шага FX); пусто — классический hooks.configs. */
   fxVariants: FxVariant[];
@@ -423,7 +494,7 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   reachedIndex: 0,
   background: { mode: 'footage', footage: [], footageType: DEFAULT_FOOTAGE_TYPE, uploads: [], sourceVideos: [], photo: [], photoEffects: false, photoStyle: undefined, color: undefined, strobe: false, glue: undefined },
   hooks: { dropTime: undefined, kind: undefined, configs: {} },
-  subtitles: { color: '#f6f5fd', pool: [] },
+  subtitles: { color: '#f6f5fd', pool: [], textByStyle: {}, textTab: null },
   fxVariants: [],
   allocation: { total: 0, background: {}, subtitles: {}, hooks: {}, styles: {}, variants: {}, strobeFont: undefined, colorFont: undefined, seeded: false },
   asr: emptyAsr(),
@@ -575,7 +646,11 @@ export const useWizardStore = create<WizardStore>()(
             return merged;
           })(),
           hooks: migrateHooks({ ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) }),
-          subtitles: { ...fresh.subtitles, ...((raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {}) },
+          subtitles: (() => {
+            const saved = (raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {};
+            const { text: _legacy, ...rest } = saved as Partial<WizardStateData['subtitles']> & { text?: unknown };
+            return { ...fresh.subtitles, ...rest, textByStyle: normalizeTextByStyle(rest.textByStyle) };
+          })(),
           // Серверная копия едет без цвета (он только для экрана) — раздаём заново.
           fxVariants: Array.isArray(raw.fxVariants)
             ? (raw.fxVariants as FxVariant[]).map((v, i) => ({ ...v, color: v.color ?? FX_VARIANT_PALETTE[i % FX_VARIANT_PALETTE.length] }))
@@ -641,14 +716,19 @@ export const useWizardStore = create<WizardStore>()(
     }),
     {
       name: 'blast-wizard-v4',
-      version: 3,
-      migrate: (raw: any) => {
+      version: 9,
+      migrate: (raw: any, version: number) => {
         const background = { ...raw.background };
         if (!background.sourceVideos?.length && background.uploads?.length) background.sourceVideos = [{
           id: 'source-video-legacy', format: background.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...background.uploads]
         }];
         background.sourceVideos ??= [];
-        return { ...raw, background, fxVariants: Array.isArray(raw.fxVariants) ? raw.fxVariants : [], timeline: { ...emptyTimeline(), ...(raw.timeline ?? {}) }, storyboard: raw.storyboard ?? emptyStoryboard(), hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {}, variants: raw.allocation?.variants ?? {},
+        // v9: настройки текста — по стилю (textByStyle). Прежний общий `text` (v6–v8)
+        // был только CSS-превью (рендер его не получал) — не переносим, стили
+        // стартуют со стандартных настроек.
+        const { text: _legacyText, ...subtitlesRest } = raw.subtitles ?? {};
+        void version;
+        return { ...raw, background, subtitles: { color: '#f6f5fd', pool: [], textTab: null, ...subtitlesRest, textByStyle: normalizeTextByStyle(subtitlesRest.textByStyle) }, fxVariants: Array.isArray(raw.fxVariants) ? raw.fxVariants : [], timeline: { ...emptyTimeline(), ...(raw.timeline ?? {}) }, storyboard: raw.storyboard ?? emptyStoryboard(), hooks: migrateHooks(raw.hooks ?? {}), allocation: { ...raw.allocation, styles: raw.allocation?.styles ?? {}, variants: raw.allocation?.variants ?? {},
           hooks: Object.fromEntries(Object.entries(raw.allocation?.hooks ?? {}).map(([key, value]) => [key === 'sound' ? 'warmup' : key, value])) } };
       },
       partialize: (state) => ({

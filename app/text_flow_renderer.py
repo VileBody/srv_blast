@@ -13,6 +13,25 @@ from core.subtitles_mode import (
 )
 from core.video_timing import AE_FPS, frame_duration_s, frames_to_seconds
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
+from app.subtitle_font_layout import IMPULSE_SHADOW_PRESETS, ImpulseLayout, hex_to_rgb01
+
+# Раскладка impulse от метрик шрифта (app/subtitle_font_layout.impulse_layout).
+# None → прод-числа под Point-Light как есть.
+_IMPULSE_LAYOUT: "ImpulseLayout | None" = None
+
+
+# Акцентный цвет без раскладки движка (выбран только цвет): прод-раскладка impulse, short — этим цветом.
+_ACCENT_RGB: "List[float] | None" = None
+
+
+def apply_accent_color(rgb: "List[float] | None") -> None:
+    global _ACCENT_RGB
+    _ACCENT_RGB = list(rgb) if rgb is not None else None
+
+
+def apply_impulse_layout(layout: "ImpulseLayout | None") -> None:
+    global _IMPULSE_LAYOUT
+    _IMPULSE_LAYOUT = layout
 
 
 _LOG = logging.getLogger("app.text_flow_renderer")
@@ -204,6 +223,35 @@ SCENES_PROFILES: Dict[str, LayerMotionProfile] = {
         opacity_points=[KeyframePoint(0.0, 100, "linear"), KeyframePoint(1.0, 0, "linear")],
     ),
 }
+
+
+def _impulse_font(lay: "ImpulseLayout | None", is_long: bool) -> Dict[str, Any]:
+    """Шрифт/размер/обводка/трекинг слоя impulse: прод, основной или акцент пары (short)."""
+    if lay is None:
+        return {"font": "Point-Light", "fontSize": 100, "strokeWidth": 3, "tracking": -25}
+    if not is_long and lay.accent is not None:
+        a = lay.accent
+        return {"font": a.font, "fontSize": a.size, "strokeWidth": a.stroke_px, "tracking": 0}
+    return {"font": lay.font, "fontSize": lay.size, "strokeWidth": lay.stroke_px, "tracking": -25}
+
+
+def _impulse_anchor(lay: "ImpulseLayout | None", is_long: bool) -> List[float]:
+    if lay is None:
+        return [0.564, -23.213, 0]
+    if not is_long and lay.accent is not None:
+        return [0.0, lay.accent.anchor_y, 0]
+    return [lay.anchor_x, lay.anchor_y, 0]
+
+
+def _impulse_fill(is_long: bool) -> List[float]:
+    """Не больше двух цветов: short (ударное слово) — акцентным цветом, если он выбран.
+    Обводка impulse того же цвета — это утолщение, не контур."""
+    lay = _IMPULSE_LAYOUT
+    if lay is not None and not is_long and lay.params.accent_color:
+        return hex_to_rgb01(lay.params.accent_color)
+    if lay is None and not is_long and _ACCENT_RGB is not None:
+        return list(_ACCENT_RGB)
+    return [1, 1, 1]
 
 
 class FlowTextLayerRenderer:
@@ -969,6 +1017,21 @@ class FlowTextLayerRenderer:
         return float(max(150, peak_val))
 
     def _impulse_drop_shadows(self) -> Dict[str, Any]:
+        if _IMPULSE_LAYOUT is not None:
+            stack = IMPULSE_SHADOW_PRESETS[_IMPULSE_LAYOUT.params.shadow]
+            if stack is None:
+                return {}
+            distances = (3, 0, 0)
+            return {
+                f"000{i + 1}:ADBE Drop Shadow": {
+                    "0001": _prop("ADBE Drop Shadow-0001", [0, 0, 0, 1]),
+                    "0002": _prop("ADBE Drop Shadow-0002", op),
+                    "0003": _prop("ADBE Drop Shadow-0003", 180),
+                    "0004": _prop("ADBE Drop Shadow-0004", distances[i]),
+                    "0005": _prop("ADBE Drop Shadow-0005", soft),
+                }
+                for i, (op, soft) in enumerate(stack)
+            }
         return {
             "0001:ADBE Drop Shadow": {
                 "0001": _prop("ADBE Drop Shadow-0001", [0, 0, 0, 1]),
@@ -1024,6 +1087,8 @@ class FlowTextLayerRenderer:
             dur = out_t - in_t
             total_f = int(round(dur * fps))
 
+            lay = _IMPULSE_LAYOUT
+            hold = lay.long_hold_scale(clean_text) if lay is not None else 75
             if is_long:
                 exit_t = exits[idx]
                 if exit_t is not None:
@@ -1033,7 +1098,7 @@ class FlowTextLayerRenderer:
                     scale_exit = in_t + float(total_f - 7) / fps
                     opacity_exit = in_t + float(total_f - 4) / fps
                 scale_kfs = [
-                    _kf(t=scale_exit, value=[75, 75, 100], interpolation="bezier"),
+                    _kf(t=scale_exit, value=[hold, hold, 100], interpolation="bezier"),
                     _kf(t=out_t, value=[0, 0, 100], interpolation="bezier"),
                 ]
                 opacity_kfs = [
@@ -1043,7 +1108,8 @@ class FlowTextLayerRenderer:
             else:
                 peak_f = int(round(total_f * 0.5))
                 peak_t = in_t + float(peak_f) / fps
-                peak_val = self._impulse_peak_scale(text=raw_text, dur=dur)
+                peak_val = (lay.short_peak(clean_text, dur) if lay is not None
+                            else self._impulse_peak_scale(text=raw_text, dur=dur))
                 op_in = in_t + float(total_f - 3) / fps
                 scale_kfs = [
                     _kf(t=in_t, value=[75, 75, 100], interpolation="bezier"),
@@ -1065,8 +1131,9 @@ class FlowTextLayerRenderer:
                 "adjustment_layer": False,
                 "source_rect": {},
                 "props": {
-                    "tf_anchor": _prop("ADBE Anchor Point", [0.564, -23.213, 0]),
-                    "tf_position": _prop("ADBE Position", [540, 960, 0]),
+                    "tf_anchor": _prop("ADBE Anchor Point", _impulse_anchor(lay, is_long)),
+                    "tf_position": _prop("ADBE Position",
+                                         lay.position(short=not is_long) if lay is not None else [540, 960, 0]),
                     "tf_scale": _prop("ADBE Scale", keyframes=scale_kfs),
                     "tf_rotation": _prop("ADBE Rotate Z", 0),
                     "layer_opacity": _prop("ADBE Opacity", keyframes=opacity_kfs),
@@ -1084,17 +1151,16 @@ class FlowTextLayerRenderer:
                     },
                     "layer_styles_enabled": False,
                     "text_base": {
-                        "font": "Point-Light",
-                        "fontSize": 100,
+                        **_impulse_font(lay, is_long),
                         "applyFill": True,
-                        "fillColor": [1, 1, 1],
+                        "fillColor": _impulse_fill(is_long),
                         "applyStroke": True,
-                        "strokeWidth": 3,
-                        "strokeColor": [1, 1, 1],
-                        "tracking": -25,
+                        "strokeColor": _impulse_fill(is_long),
                         "leading": 250,
                         "autoLeading": False,
-                        "justificationCode": "7415",
+                        "justificationCode": (lay.justification_code if (lay is not None and is_long) else "7415"),
+                        **({"verticalScale": lay.vertical_scale}
+                           if lay is not None and lay.vertical_scale != 1.0 and (is_long or lay.accent is None) else {}),
                         "allCaps": False,
                         "leftIndent": 0,
                         "rightIndent": 0,
@@ -1102,7 +1168,11 @@ class FlowTextLayerRenderer:
                         "spaceBefore": 0,
                         "spaceAfter": 0,
                     },
-                    "char_styles_ungrouped": [],
+                    "char_styles_ungrouped": (
+                        [{"i": ci, "tracking": lay.space_tracking} for ci, ch in enumerate(clean_text) if ch == " "]
+                        if lay is not None and lay.space_tracking is not None and (is_long or lay.accent is None)
+                        else []
+                    ),
                     "no_layout_pass": True,
                     "text_animator": {
                         "name": "Animator 1",

@@ -1,0 +1,323 @@
+{
+ "_doc": "Единый каталог шрифтов субтитров: роли, категории и правила пар. Читают рендер (app/subtitle_font_layout.py), лабы и API для фронта. Числа раскладки — subtitle_font_metrics.json (замер AE) + subtitle_font_tuning.json (ручные поправки). Правила пары: акцент разрешён к основному, если (1) основной pairable, (2) категория основного есть в accent.pairs_with_categories, (3) акцент не запрещён в base.allowed_accents (если список задан — только он). Шрифт с ролью accent можно выбрать и основным, но тогда акценты выключены. Высота (растяжение букв по вертикали, height≠normal) разрешена только шрифтам с \"serif\": true — смотр 2026-09-29: на гротесках вроде Point выглядит плохо. excluded_styles — стили субтитров, где шрифт запрещён (фронт не показывает, рендер отклоняет).",
+ "categories": {
+  "sans_system": "нейтральные гротески («системные»)",
+  "display": "плотные выразительные",
+  "editorial": "изящные: антиквы, SC, контрастные",
+  "script": "рукописные / скрипты"
+ },
+ "fonts": [
+  {
+   "ps": "Point-SemiBold",
+   "label": "Point",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system",
+   "focus_ps": "Point-ExtraBold"
+  },
+  {
+   "ps": "Point-Light",
+   "label": "Point Light (стандарт impulse)",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system",
+   "hidden": true,
+   "note": "стандартный шрифт стиля: в списке не показывается, нужен для правил пар при «стандартном для стиля»"
+  },
+  {
+   "ps": "Montserrat-BoldItalic",
+   "label": "Montserrat Bold Italic (стандарт tape)",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system",
+   "hidden": true,
+   "note": "стандартный шрифт стиля: в списке не показывается, нужен для правил пар при «стандартном для стиля»"
+  },
+  {
+   "ps": "Montserrat-Bold",
+   "label": "Montserrat Bold (стандарт trendy)",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system",
+   "hidden": true,
+   "note": "стандартный шрифт стиля: в списке не показывается, нужен для правил пар при «стандартном для стиля»"
+  },
+  {
+   "ps": "Inter-Bold",
+   "label": "Inter",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system"
+  },
+  {
+   "ps": "HelveticaNeueCyr-Bold",
+   "label": "Helvetica Neue",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system"
+  },
+  {
+   "ps": "Montserrat-SemiBold",
+   "label": "Montserrat",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system",
+   "excluded_styles": [
+    "trendy"
+   ],
+   "note_trendy": "2026-09-30 смотр trendy: под растяжением ×4 гротески неотличимы — в trendy только Point, Inter, Helvetica Neue"
+  },
+  {
+   "ps": "SourceSansPro-Bold",
+   "label": "Source Sans",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system",
+   "excluded_styles": [
+    "trendy"
+   ],
+   "note_trendy": "2026-09-30 смотр trendy: под растяжением ×4 гротески неотличимы — в trendy только Point, Inter, Helvetica Neue"
+  },
+  {
+   "ps": "DidactGothic",
+   "label": "Didact Gothic",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system",
+   "excluded_styles": [
+    "trendy"
+   ],
+   "note_trendy": "2026-09-30 смотр trendy: под растяжением ×4 гротески неотличимы — в trendy только Point, Inter, Helvetica Neue",
+   "allowed_accents": [
+    "SimphonyRegular",
+    "Beryozki"
+   ],
+   "note": "2026-09-29 смотр: со всеми остальными акцентами плохо"
+  },
+  {
+   "ps": "AKONY-Bold",
+   "label": "AKONY",
+   "roles": [
+    "base"
+   ],
+   "category": "display",
+   "pairable": false,
+   "note": "сложный и самодостаточный — блок акцентов скрыт"
+  },
+  {
+   "ps": "BebasNeueBold",
+   "label": "Bebas Neue",
+   "roles": [
+    "base"
+   ],
+   "category": "display"
+  },
+  {
+   "ps": "Kudry-WeirdHeadline",
+   "label": "Kudry",
+   "roles": [
+    "base"
+   ],
+   "category": "display",
+   "pairable": false,
+   "note": "сложный и самодостаточный — блок акцентов скрыт"
+  },
+  {
+   "ps": "Postertoastermono",
+   "label": "Postertoaster",
+   "roles": [],
+   "category": "display",
+   "note": "2026-09-29: AE не резолвит файл (Unresolvable даже после установки; name-таблица несогласована: family «Postertoaster», full «Postertoaster mono») и молча подставлял другой шрифт — метрики «как у Bebas» были подменой. Из пула убран; вернуть — только с другим файлом шрифта"
+  },
+  {
+   "ps": "Anticva-Regular",
+   "label": "Anticva",
+   "roles": [
+    "base"
+   ],
+   "category": "editorial",
+   "serif": true
+  },
+  {
+   "ps": "BazaART",
+   "label": "BazaART",
+   "roles": [
+    "base"
+   ],
+   "category": "editorial",
+   "serif": false,
+   "note": "засечки под вопросом — проверить глазами; до проверки высота (растяжение) выключена"
+  },
+  {
+   "ps": "Bergamasco",
+   "label": "Bergamasco",
+   "roles": [
+    "base"
+   ],
+   "category": "editorial",
+   "serif": true
+  },
+  {
+   "ps": "CormorantSC-Medium",
+   "label": "Cormorant SC",
+   "roles": [
+    "base"
+   ],
+   "category": "editorial",
+   "serif": true
+  },
+  {
+   "ps": "PlayfairDisplaySC-Regular",
+   "label": "Playfair Display SC",
+   "roles": [
+    "base"
+   ],
+   "category": "editorial",
+   "serif": true
+  },
+  {
+   "ps": "Katherine-Plus",
+   "label": "Katherine Plus",
+   "roles": [
+    "accent",
+    "base"
+   ],
+   "category": "script",
+   "pairs_with_categories": [
+    "sans_system",
+    "display",
+    "editorial"
+   ]
+  },
+  {
+   "ps": "SimphonyRegular",
+   "label": "Simphony",
+   "roles": [
+    "accent",
+    "base"
+   ],
+   "category": "script",
+   "pairs_with_categories": [
+    "sans_system",
+    "display",
+    "editorial"
+   ]
+  },
+  {
+   "ps": "PrincessDiana",
+   "label": "Princess Diana",
+   "roles": [
+    "accent",
+    "base"
+   ],
+   "category": "script",
+   "pairs_with_categories": [
+    "sans_system",
+    "display",
+    "editorial"
+   ]
+  },
+  {
+   "ps": "AnastasiaScript",
+   "label": "Anastasia",
+   "roles": [
+    "accent",
+    "base"
+   ],
+   "category": "script",
+   "pairs_with_categories": [
+    "sans_system",
+    "display",
+    "editorial"
+   ]
+  },
+  {
+   "ps": "DisruptorsScript-Regular",
+   "label": "Disruptors",
+   "roles": [
+    "accent",
+    "base"
+   ],
+   "category": "script",
+   "pairs_with_categories": [
+    "sans_system",
+    "display",
+    "editorial"
+   ]
+  },
+  {
+   "ps": "Beryozki",
+   "label": "Beryozki",
+   "roles": [
+    "accent",
+    "base"
+   ],
+   "category": "script",
+   "pairs_with_categories": [
+    "sans_system",
+    "display",
+    "editorial"
+   ]
+  },
+  {
+   "ps": "AuroraScript",
+   "label": "Aurora",
+   "roles": [
+    "accent",
+    "base"
+   ],
+   "category": "script",
+   "pairs_with_categories": [
+    "sans_system",
+    "display",
+    "editorial"
+   ],
+   "note": "нет прописных Ъ Ы Ь Ё — как акцент (строчными) ок, как основной — проверить"
+  },
+  {
+   "ps": "ScriptThinPen",
+   "label": "Script Thin Pen",
+   "roles": [
+    "accent",
+    "base"
+   ],
+   "category": "script",
+   "pairs_with_categories": [
+    "editorial"
+   ],
+   "note": "2026-09-29 смотр: только к изящным; к Point/Montserrat/Inter/Source и прочим системным — нет"
+  },
+  {
+   "ps": "Floriselscript-Thin",
+   "label": "Florisel",
+   "roles": [
+    "base"
+   ],
+   "category": "script",
+   "note": "2026-09-29 смотр: из пула акцентов убран — хвосты сбивают центр, ни к чему не подходит"
+  },
+  {
+   "ps": "Hello_January_script-Script",
+   "label": "Hello January",
+   "roles": [],
+   "category": "script",
+   "note": "2026-09-29/30 смотр: нечитаемый в любой роли (микроскопические строчные) — из пула убран полностью"
+  },
+  {
+   "ps": "DriveHearts",
+   "label": "Drive Hearts",
+   "roles": [],
+   "category": "script",
+   "note": "в app.fonts есть, но AE подставляет Times при наборе — переустановить, потом решить роль"
+  }
+ ]
+}

@@ -477,6 +477,9 @@ def _build_jsx_subtitles_js(
     # Difference must be set on THAT comp (the template's Текст-precomp blend
     # doesn't reach it). White text + Difference → readable on any segment.
     subs_blend = "difference" if str(os.environ.get("BG_MODE") or "").strip().lower() == "solid_strobe" else None
+    # Text settings of the wizard (font/size/position/shadow/focus) → script CONFIG.
+    from app.subtitle_text_style import accent_color_from_env, jsx_style_config, style_from_env
+    style_config = jsx_style_config(mode, style_from_env(), accent_color_from_env())
     overlay = build_jsx_subtitles_overlay(
         mode=mode,
         word_timings=list(word_timings),
@@ -484,10 +487,11 @@ def _build_jsx_subtitles_js(
         fill_hex=fill_hex,
         subs_blend=subs_blend,
         brat_blinker_enabled=brat_blinker_enabled,
+        style_config=style_config,
     )
     LOGGER.info(
-        "jsx subtitles present mode=%s words=%d bpm=%s brat_blinker_enabled=%s js_len=%d",
-        mode, len(word_timings), bpm, brat_blinker_enabled, len(overlay),
+        "jsx subtitles present mode=%s words=%d bpm=%s brat_blinker_enabled=%s text_style=%s js_len=%d",
+        mode, len(word_timings), bpm, brat_blinker_enabled, bool(style_config), len(overlay),
     )
     return overlay
 
@@ -767,11 +771,18 @@ def build_full_project(
         text_layers = []
         LOGGER.info("subtitles_mode=%s → JSX-generated subtitles (text_layers skipped)", subtitles_mode)
     else:
-        text_layers = build_text_layers(
-            full_edit_config=full_edit_config,
-            text_comp_name=text_name,
-            mine_comp_name=mine_name,
-        )
+        # Text settings of the wizard: the style's layout engine for the duration
+        # of the build (defaults → production layout untouched).
+        from app.subtitle_text_style import accent_color_from_env, applied_text_style, style_from_env
+        text_style = style_from_env()
+        if text_style is not None:
+            LOGGER.info("subtitle text style mode=%s style=%s", subtitles_mode, text_style)
+        with applied_text_style(subtitles_mode, text_style, accent_color_from_env()):
+            text_layers = build_text_layers(
+                full_edit_config=full_edit_config,
+                text_comp_name=text_name,
+                mine_comp_name=mine_name,
+            )
 
     # 2.5) F5 Cognition hook («Мысль»): если в config есть блок "f5" — добавляем
     #      TTS audio-слой + TTS subtitle-слой и вырезаем перекрытые трек-субтитры.

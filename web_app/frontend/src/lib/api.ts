@@ -18,7 +18,8 @@ import type {
   IterationAnalysis,
   Vibe,
   VideoFramesResponse,
-  WizardSession
+  WizardSession,
+  SubtitleFontCatalog
 } from './types';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
@@ -295,6 +296,7 @@ export const api = {
       method: 'POST', body: JSON.stringify({ lyrics, mediaType })
     }),
   subtitleStyles: () => request<{ status: string; styles: { id: string; name: string; previewUrl: string }[] }>('/api/wizard/subtitle-styles'),
+  subtitleFonts: () => request<SubtitleFontCatalog>('/api/wizard/subtitle-fonts'),
   wizardSession: () => request<{ session: WizardSession | null }>('/api/wizard/session'),
   saveWizardSession: (payload: { projectId?: string | null; stage: number; data: Record<string, unknown> }) =>
     request<{ session: WizardSession }>('/api/wizard/session', { method: 'POST', body: JSON.stringify(payload) }),

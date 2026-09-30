@@ -5,6 +5,7 @@ import math
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.subtitle_font_layout import JaksonLayout, hex_to_rgb01
 from core.video_timing import AE_FPS
 from mlcore.models.subtitles_flow import SubtitleFlowPlan
 
@@ -39,6 +40,42 @@ RENDER = {
 
 # Leading для TYPE_1 — пропорционален среднему между двумя размерами строк
 TYPE1_LEADING = int((RENDER["size_base"] + RENDER["size_line2"]) / 2 * 1.15)  # = 115
+
+_RENDER_DEFAULTS = dict(RENDER)
+
+# Раскладка от метрик шрифта (app/subtitle_font_layout.py). None → прод-числа
+# под Point как есть; задана → размеры/интервалы/якоря/поля из метрик.
+_LAYOUT: Optional[JaksonLayout] = None
+
+
+def apply_font_layout(layout: Optional[JaksonLayout]) -> None:
+    """Переключает билдер на раскладку шрифта (None — вернуть прод-дефолт)."""
+    global _LAYOUT
+    RENDER.clear()
+    RENDER.update(_RENDER_DEFAULTS)
+    _LAYOUT = layout
+    if layout is None:
+        return
+    RENDER["font_base"] = layout.font_base
+    RENDER["font_focus"] = layout.font_focus
+    RENDER["size_base"] = layout.size_base
+    RENDER["size_line2"] = layout.size_line2
+    RENDER["size_focus"] = round(_RENDER_DEFAULTS["size_focus"] * layout.size_base / _RENDER_DEFAULTS["size_base"], 2)
+    RENDER["leading"] = layout.leading_single
+    if layout.params.accent_color:
+        # не больше двух цветов в кадре: ударное слово TYPE_4 — тем же акцентным цветом
+        RENDER["color_red"] = hex_to_rgb01(layout.params.accent_color)
+
+
+def _type4_position() -> List[float]:
+    """TYPE_4 (ударное слово) — по центру X; по Y — там же, где группа строк."""
+    if _LAYOUT is None:
+        return [540, 960, 0]
+    return [RENDER["comp_w"] / 2.0, round(RENDER["comp_h"] * _LAYOUT.center_y_frac, 2), 0]
+
+
+def _type1_leading() -> float:
+    return _LAYOUT.leading_type1 if _LAYOUT is not None else TYPE1_LEADING
 
 
 FRAME = 1.0 / RENDER["fps"]   # ~0.04171s
@@ -108,7 +145,7 @@ def base_transforms(anchor=None, position=None, scale=None) -> Dict:
 def text_base_dict(font=None, fill_color=None, italic=False,
                    apply_stroke=False, stroke_color=None, font_size=None) -> Dict:
     """Возвращает text_base."""
-    return {
+    tb = {
         "font":             font or RENDER["font_base"],
         "fontSize":         font_size or RENDER["size_base"],
         "applyFill":        not apply_stroke,
@@ -127,9 +164,14 @@ def text_base_dict(font=None, fill_color=None, italic=False,
         "spaceBefore":      0,
         "spaceAfter":       0,
     }
+    if _LAYOUT is not None:
+        tb["justificationCode"] = _LAYOUT.justification_code
+        if _LAYOUT.vertical_scale != 1.0:
+            tb["verticalScale"] = _LAYOUT.vertical_scale
+    return tb
 
 
-def s_drop_shadow() -> Dict:
+def s_drop_shadow(opacity: float = 2.0, blur: float = 60.0) -> Dict:
     """Sapphire S_DropShadow — мягкая тень субтитра.
 
     Индексы свойств сняты дампом реального текстового слоя; значения — по
@@ -137,8 +179,8 @@ def s_drop_shadow() -> Dict:
     """
     return {
         "0050": prop("S_DropShadow-0050", [0, 0, 0, 1]),  # Shadow Color (чёрный)
-        "0051": prop("S_DropShadow-0051", 2.0),           # Shadow Opacity
-        "0052": prop("S_DropShadow-0052", 60),            # Shadow Blur
+        "0051": prop("S_DropShadow-0051", opacity),       # Shadow Opacity
+        "0052": prop("S_DropShadow-0052", blur),          # Shadow Blur
         "0053": prop("S_DropShadow-0053", 0),             # Shift X
         "0054": prop("S_DropShadow-0054", 0),             # Shift Y
         "0055": prop("S_DropShadow-0055", 1.0),           # Fg Opacity
@@ -147,6 +189,20 @@ def s_drop_shadow() -> Dict:
         "0058": prop("S_DropShadow-0058", 0),             # Invert Matte
         "0059": prop("S_DropShadow-0059", 1),             # Expand Borders
         "0200": prop("S_DropShadow-0200", 1),             # Show Shift
+    }
+
+
+def accent_separation_shadow() -> Dict:
+    """Плотная короткая тень акцентного слова пары — отделяет его от букв основного
+    шрифта, по которым идут росчерки (общая S_DropShadow мягкая и широкая, её мало).
+    Стандартный ADBE Drop Shadow: без сдвига, только ореол вокруг штриха."""
+    return {
+        "0001": prop("ADBE Drop Shadow-0001", [0, 0, 0, 1]),  # Shadow Color
+        "0002": prop("ADBE Drop Shadow-0002", 170),           # Opacity (0..255 ≈ 67%)
+        "0003": prop("ADBE Drop Shadow-0003", 0),             # Direction
+        "0004": prop("ADBE Drop Shadow-0004", 0.0),           # Distance
+        "0005": prop("ADBE Drop Shadow-0005", 14.0),          # Softness
+        "0006": prop("ADBE Drop Shadow-0006", 0),             # Shadow Only
     }
 
 
@@ -492,6 +548,55 @@ def build_char_styles(text: str, focus_word: Optional[str],
     return styles
 
 
+def _lower_focus_word(text: str, focus_word: str) -> str:
+    """Фокус-слово строчными (длина не меняется → индексы символов те же)."""
+    parts = []
+    for line in text.split("\r"):
+        parts.append(" ".join(w.lower() if w.upper() == focus_word.upper() else w for w in line.split(" ")))
+    return "\r".join(parts)
+
+
+def build_char_styles_accent(text: str, focus_word: str, accent: Any, *, visible: str) -> List[Dict]:
+    """TYPE_2 с парой шрифтов: фокус-слово — акцентный шрифт/размер/трекинг/сдвиг.
+
+    Пара рисуется ДВУМЯ слоями с одинаковой раскладкой (все символы на местах):
+    visible="base"   — основной слой, буквы акцента прозрачные (applyFill=false);
+    visible="accent" — слой акцента поверх, прозрачные буквы основного.
+    Так росчерки акцента ложатся ПОВЕРХ соседних строк (внутри одного слоя AE
+    рисует поздние буквы поверх ранних — хвост из 1-й строки уходил под 2-ю).
+    """
+    if visible not in ("base", "accent"):
+        raise ValueError(f"visible must be 'base' or 'accent', got {visible!r}")
+    styles = []
+    char_i = 0
+    words = text.replace("\r", " ").split(" ")
+    for wi, w in enumerate(words):
+        is_focus = w.upper() == focus_word.upper()
+        if is_focus and wi > 0 and text[char_i - 1] == " ":
+            styles.append({"i": char_i - 1, "tracking": accent.space_tracking})
+        for _ch in w:
+            entry: Dict = {"i": char_i, "font": RENDER["font_base"]}
+            if is_focus:
+                entry.update({
+                    "font": accent.font,
+                    "fontSize": accent.size,
+                    "tracking": accent.tracking,
+                    "baselineShift": accent.baseline_shift,
+                    # скрипт не тянем: растяжение по высоте — только для основного
+                    "verticalScale": 1.0,
+                })
+            if is_focus and visible == "accent" and _LAYOUT is not None and _LAYOUT.params.accent_color:
+                entry["fillColor"] = hex_to_rgb01(_LAYOUT.params.accent_color)
+            if is_focus != (visible == "accent"):
+                entry["applyFill"] = False
+            styles.append(entry)
+            char_i += 1
+        if is_focus and char_i < len(text) and text[char_i] == " ":
+            styles.append({"i": char_i, "tracking": accent.space_tracking})
+        char_i += 1  # пробел / \r
+    return styles
+
+
 def build_char_styles_uniform(text: str) -> List[Dict]:
     """Все символы — font_base, без переопределения fontSize (наследует text_base)."""
     styles = []
@@ -604,13 +709,25 @@ class LayerFactory:
             td["text_animator"] = animator_cfg
         if no_layout_pass:
             td["no_layout_pass"] = True
+        elif _LAYOUT is not None:
+            if "\r" in text and not td["text_base"].get("_leading_fixed"):
+                td["text_base"] = dict(td["text_base"])
+                td["text_base"]["leading"] = _LAYOUT.leading_for(text, type1=False)
+            td["text_base"].pop("_leading_fixed", None)
+            td["layout_box"] = _LAYOUT.layout_box(
+                n_lines=text.count("\r") + 1,
+                leading=float(td["text_base"]["leading"]),
+            )
 
         eff = effects_extra if effects_extra is not None else {
             "ADBE Turbulent Displace": turbulent_displace(),
             "ADBE Posterize Time":    posterize_time(),
         }
         eff = dict(eff)
-        eff.setdefault("S_DropShadow", s_drop_shadow())  # тень на всех TYPE_1..6 (только текст)
+        if _LAYOUT is None:
+            eff.setdefault("S_DropShadow", s_drop_shadow())  # тень на всех TYPE_1..6 (только текст)
+        elif _LAYOUT.shadow is not None:
+            eff.setdefault("S_DropShadow", s_drop_shadow(**_LAYOUT.shadow))
 
         return {
             "name":             name,
@@ -649,7 +766,10 @@ class LayerFactory:
 
         adj  = self.adj_layer(f"adj_{scene['id']}", t_in, t_out)
         tb   = text_base_dict()
-        tb["leading"] = TYPE1_LEADING
+        tb["leading"] = _type1_leading()
+        if _LAYOUT is not None:
+            tb["leading"] = _LAYOUT.leading_for(text, type1=True)
+            tb["_leading_fixed"] = True   # интервал уже посчитан под 80→120, не пересчитывать
         text_l = self.text_layer(
             name=text.replace("\r", " "),
             text=text,
@@ -686,23 +806,58 @@ class LayerFactory:
             kf_ease(t_out,              0, speed_in=-99.9),
         ]
 
-        char_styles = build_char_styles(text, focus, "italic")
+        accent = _LAYOUT.accent if _LAYOUT is not None else None
+        effects = {
+            "ADBE Turbulent Displace": turbulent_displace(),
+            "ADBE Posterize Time":    posterize_time(),
+            "ADBE Minimax":           minimax_exit(t_out),
+        }
         adj = self.adj_layer(f"adj_{scene['id']}", t_in, t_out)
-        text_l = self.text_layer(
-            name=text.replace("\r", " "),
-            text=text,
-            t_in=t_in, t_out=t_out,
-            reveal_kfs=rev_kfs,
-            opacity_kfs=op_kfs,
+
+        if accent is None or not focus:
+            text_l = self.text_layer(
+                name=text.replace("\r", " "),
+                text=text,
+                t_in=t_in, t_out=t_out,
+                reveal_kfs=rev_kfs,
+                opacity_kfs=op_kfs,
+                animator_cfg=text_animator_cfg(n),
+                char_styles=build_char_styles(text, focus, "italic"),
+                effects_extra=effects,
+            )
+            return [adj, text_l]
+
+        # пара шрифтов: фокус-слово — акцентным шрифтом, строчными, отдельным слоем сверху
+        text = _lower_focus_word(text, focus)
+        tb = text_base_dict()
+        tb["allCaps"] = False          # основной текст уже в верхнем регистре
+        tb["leading"] = _LAYOUT.leading_for(text, type1=False, accent_word=focus)
+        tb["_leading_fixed"] = True
+        common = dict(
+            text=text, t_in=t_in, t_out=t_out,
+            reveal_kfs=rev_kfs, opacity_kfs=op_kfs,
             animator_cfg=text_animator_cfg(n),
-            char_styles=char_styles,
-            effects_extra={
-                "ADBE Turbulent Displace": turbulent_displace(),
-                "ADBE Posterize Time":    posterize_time(),
-                "ADBE Minimax":           minimax_exit(t_out),
-            }
         )
-        return [adj, text_l]
+        base_name = text.replace("\r", " ")
+        base_l = self.text_layer(
+            name=base_name,
+            char_styles=build_char_styles_accent(text, focus, accent, visible="base"),
+            text_base=dict(tb),
+            effects_extra=dict(effects),
+            **common,
+        )
+        accent_l = self.text_layer(
+            name=base_name + " · акцент",
+            char_styles=build_char_styles_accent(text, focus, accent, visible="accent"),
+            text_base=dict(tb),
+            effects_extra={**effects, "ADBE Drop Shadow": accent_separation_shadow()},
+            **common,
+        )
+        # раскладку не считаем заново: копируем anchor/position/scale основного слоя
+        # после его финального прохода — иначе прозрачные буквы могли бы сдвинуть рамку
+        accent_l["text_data"]["layout_follow"] = base_name
+        # шаблон создаёт слои с конца массива: base → accent (сверху) → adj
+        return [adj, accent_l, base_l]
 
     def build_type3(self, scene: Dict, word_timings=None) -> List[Dict]:
         """
@@ -870,10 +1025,21 @@ class LayerFactory:
                    ease_in=[{"speed": 5.82, "influence": 95.0}] * 2 + [{"speed": 0.0, "influence": 95.0}],
                    ease_out=[{"speed": 0.0, "influence": 4.0}] * 3)
             )
-        _CHAR_PX_EST = 50
-        _MAX_W_PX    = 920
-        _est_w = len(word) * _CHAR_PX_EST
-        mine_scale = min(100, int(_MAX_W_PX / _est_w * 100)) if _est_w > _MAX_W_PX else 100
+        if _LAYOUT is not None:
+            # ширина знака и центр прописных — из метрик фокусного шрифта;
+            # поле шире с учётом глоу-копии (250%) не считаем: она размыта и 40%.
+            _max_w = RENDER["comp_w"] * (1.0 - 2.0 * _LAYOUT.margin_x)
+            _est_w = len(word) * _LAYOUT.advance_focus
+            mine_scale = min(100.0, round(_max_w / _est_w * 100.0, 2)) if _est_w > _max_w else 100
+            mine_anchor = [0, round(-_LAYOUT.cap_h_focus / 2.0, 2), 0]
+            mine_size = _LAYOUT.size_focus_base
+        else:
+            _CHAR_PX_EST = 50
+            _MAX_W_PX    = 920
+            _est_w = len(word) * _CHAR_PX_EST
+            mine_scale = min(100, int(_MAX_W_PX / _est_w * 100)) if _est_w > _MAX_W_PX else 100
+            mine_anchor = [0, -33.5, 0]
+            mine_size = RENDER["size_base"]
 
         mine_text = {
             "name":             "mine",
@@ -885,7 +1051,7 @@ class LayerFactory:
             "adjustment_layer": False,
             "source_rect":      {},
             "props": {
-                "tf_anchor":   prop("ADBE Anchor Point",  [0, -33.5, 0]),
+                "tf_anchor":   prop("ADBE Anchor Point",  mine_anchor),
                 "tf_position": prop("ADBE Position",      [540, 960, 0]),
                 "tf_scale":    prop("ADBE Scale",         [mine_scale, mine_scale, 100]),
                 "tf_rotation": prop("ADBE Rotate Z",      0),
@@ -919,10 +1085,11 @@ class LayerFactory:
                 "text_base": text_base_dict(
                     font=RENDER["font_focus"],
                     fill_color=RENDER["color_red"],
+                    font_size=mine_size,
                 ),
                 "char_styles_ungrouped": [
                     {"i": j, "font": RENDER["font_focus"],
-                     "fontSize": RENDER["size_base"]}
+                     "fontSize": mine_size}
                     for j in range(len(word))  # word уже содержит пробелы для фразы
                 ],
                 "no_text_animator": True,
@@ -943,7 +1110,7 @@ class LayerFactory:
             "source_rect":      {},
             "props": {
                 "tf_anchor":   prop("ADBE Anchor Point",  [540, 960, 0]),
-                "tf_position": prop("ADBE Position",      [540, 960, 0]),
+                "tf_position": prop("ADBE Position",      _type4_position()),
                 "tf_scale":    prop("ADBE Scale",         [100, 100, 100]),
                 "tf_rotation": prop("ADBE Rotate Z",      0),
                 "tf_opacity":  prop("ADBE Opacity",       100),
@@ -976,7 +1143,7 @@ class LayerFactory:
             "source_rect":      {},
             "props": {
                 "tf_anchor":   prop("ADBE Anchor Point",  [540, 960, 0]),
-                "tf_position": prop("ADBE Position",      [540, 960, 0]),
+                "tf_position": prop("ADBE Position",      _type4_position()),
                 "tf_scale":    prop("ADBE Scale", keyframes=glow_scale_kfs),
                 "tf_rotation": prop("ADBE Rotate Z", 0),
                 "tf_opacity":  prop("ADBE Opacity",  40),
