@@ -345,3 +345,19 @@ def test_video_upload_scope_is_always_requested(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("TIKTOK_SCOPES", "user.info.basic,video.publish,video.list")
     scopes = _load_config(monkeypatch, "*").scopes.split(",")
     assert scopes == ["user.info.basic", "video.publish", "video.list", "video.upload"]
+
+
+def test_draft_payload_accepts_null_privacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    # экран в режиме «в черновики» шлёт privacy: null — это не должно падать валидацией (422)
+    import importlib
+    import sys
+
+    from tests.test_web_asr_preview import _env
+
+    _env(monkeypatch)
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            sys.modules.pop(name, None)
+    main = importlib.import_module("app.main")
+    payload = main.TiktokPostPayload(projectId="p", videoId="v", mode="draft", privacy=None)
+    assert payload.privacy is None and payload.mode == "draft"

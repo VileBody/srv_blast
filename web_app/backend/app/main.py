@@ -445,7 +445,8 @@ class TiktokPostPayload(BaseModel):
     # direct — Direct Post (video.publish); draft — Upload в inbox TikTok (video.upload)
     mode: Literal["direct", "draft"] = "direct"
     caption: str = Field(default="", max_length=2200)
-    privacy: str = ""
+    # в черновике приватность не выбирается — экран шлёт null
+    privacy: str | None = None
     comments: bool = False
     duet: bool = False
     stitch: bool = False
@@ -2244,7 +2245,7 @@ def api_tiktok_post(payload: TiktokPostPayload) -> dict[str, Any]:
         "followers": "FOLLOWER_OF_CREATOR",
         "friends": "MUTUAL_FOLLOW_FRIENDS",
         "self": "SELF_ONLY",
-    }.get(payload.privacy)
+    }.get(payload.privacy or "")
     if not privacy and not draft:
         raise HTTPException(status_code=422, detail="Unsupported TikTok privacy level")
     cfg = tiktok_config.load()
