@@ -110,15 +110,15 @@ function normalizeTextByStyle(raw: unknown): Record<string, SubtitleTextSettings
 
 /** Все фоны батча дают 16:9 — только тогда доступна позиция «снизу». */
 export function allBackgroundsWide(background: WizardStateData['background']): boolean {
+  // все разделы фона сразу — как backgroundVariations(): батч разворачивает их все,
+  // независимо от того, какая вкладка фона открыта сейчас
   const formats: string[] = [];
-  if (background.mode === 'footage') {
-    for (const group of background.footage) {
-      formats.push(background.footageFormats?.[group] ?? (background.footageType === 'cine16x9' ? '16:9' : '9:16'));
-    }
+  for (const group of background.footage) {
+    formats.push(background.footageFormats?.[group] ?? (background.footageType === 'cine16x9' ? '16:9' : '9:16'));
   }
   for (const plan of background.sourceVideos ?? []) formats.push(plan.format);
-  if (background.mode === 'photo' && background.photo.length) formats.push('4:3');
-  if (background.mode === 'color') formats.push('9:16');
+  for (let i = 0; i < background.photo.length; i++) formats.push('4:3');
+  if (background.color) formats.push('9:16');
   return formats.length > 0 && formats.every((format) => format === '16:9');
 }
 

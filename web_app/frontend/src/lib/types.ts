@@ -535,5 +535,7 @@ export interface SubtitleFontCatalog {
   defaults: Record<string, string>;
   /** пары при «стандартном для стиля» шрифте */
   defaultAccents: Record<string, string[]>;
+  /** прод-цвет акцента стиля (нет — фокус как основной текст) */
+  accentColors: Record<string, string>;
   lockedFontStyles: string[];
 }

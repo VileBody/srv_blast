@@ -82,3 +82,28 @@ def test_build_jsx_modes_get_engine_config(monkeypatch):
     assert brat["focusFont"] == "ArialNarrow-Italic" and brat["focusFillColor"][0] == 1.0
     with pytest.raises(ValueError):
         jsx_style_config(SUBTITLES_MODE_BRAT_5TH, SubtitleTextStyle(font="Point-SemiBold"))
+
+
+def test_accent_colour_alone_keeps_production_layout(monkeypatch):
+    """Выбран только цвет: раскладка стиля прод, красятся лишь фокус-слова (review)."""
+    from app import text_flow_renderer as impulse
+
+    monkeypatch.delenv("RENDER_PRESET", raising=False)
+    with applied_text_style(SUBTITLES_MODE_TEMPLATE_4TH, None, "#FF5FA8"):
+        assert tape._TAPE_LAYOUT is None and tape._ACCENT_RGB[0] == 1.0
+        styles = tape._char_styles(text="я вернусь", focus_word_indices={1})
+        assert styles[-1]["fillColor"][0] == 1.0 and styles[0]["fillColor"] == [1, 1, 1]
+        assert impulse._impulse_fill(is_long=False)[0] == 1.0 and impulse._impulse_fill(is_long=True) == [1, 1, 1]
+    assert tape._ACCENT_RGB is None and impulse._ACCENT_RGB is None
+    assert jsx_style_config(SUBTITLES_MODE_TRENDY_5TH, None, "#FF5FA8") == {"focusFillColor": [1.0, 0.37255, 0.65882]}
+
+
+def test_hook_voice_words_are_not_focus_styled_and_follow_takes_nearest_below():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    for script in ("brat_subtitles.jsx", "trendy_subtitles.jsx"):
+        src = (root / "5th_template" / script).read_text(encoding="utf-8")
+        assert "function wFocus(w){ return !!(w && w.focus && !w.voice); }" in src
+    tpl = (root / "templates" / "project_template.j2").read_text(encoding="utf-8")
+    assert "for (var li = layer.index + 1; li <= targetComp.numLayers; li++)" in tpl

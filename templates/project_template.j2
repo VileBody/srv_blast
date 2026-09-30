@@ -1101,9 +1101,10 @@
       // оригинала — ближайшего ниже слоя с этим именем (он создан перед ним).
       if (td && td.layout_follow) {
         var src = null;
-        for (var li = 1; li <= targetComp.numLayers; li++) {
+        // имена = текст строки и повторяются в припевах — берём ближайший слой ниже
+        for (var li = layer.index + 1; li <= targetComp.numLayers; li++) {
           var cand = targetComp.layer(li);
-          if (cand !== layer && cand.name === String(td.layout_follow)) { src = cand; break; }
+          if (cand.name === String(td.layout_follow)) { src = cand; break; }
         }
         if (!src) { logLine("ERR", "layout_follow source missing=" + td.layout_follow + " layer=" + layer.name); return; }
         try {

@@ -8,7 +8,7 @@ import { useDragScroll } from './BackgroundPanel';
 import { PillsFooter } from './WizardFrame';
 import { SubtitleTextSettings, activeTextTab, allBackgroundsWide, textSettingsFor, useWizardStore } from '../../stores/wizardStore';
 import {
-  HEIGHT_SCALE, POSITION_CENTER_Y, SIZE_SCALE, STYLE_ACCENT_COLOR, accentFontsFor, baseFonts, cssFamily, findFont, fontBlockedFor, fontStyles,
+  HEIGHT_SCALE, POSITION_CENTER_Y, SIZE_SCALE, styleAccentColor, accentFontsFor, baseFonts, cssFamily, findFont, fontBlockedFor, fontStyles,
   injectFontFaces, styleIdOf
 } from '../../lib/subtitleText';
 import { SubtitleTimeline } from './SubtitleTimeline';
@@ -273,7 +273,7 @@ function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: RefObje
   const styles = tabStyle ? [tabStyle] : [];
   const pickable = fontStyles(styles, catalog);
   const hasBrat = tabStyle === 'brat';
-  const styleAccent = (tabStyle && STYLE_ACCENT_COLOR[tabStyle]) || subtitles.color;
+  const styleAccent = styleAccentColor(catalog, tabStyle, subtitles.color);
   const base = findFont(catalog, settings.font);
   const accents = accentFontsFor(catalog, base, pickable);
   const wide = allBackgroundsWide(background);
@@ -510,7 +510,7 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
   const align = textSettings.position === 'left' ? 'text-left' : textSettings.position === 'right' ? 'text-right' : 'text-center';
   const words = (caption || 'Текст появится здесь').split(/\s+/).filter(Boolean);
   const focusIndex = words.length > 1 ? words.length - 1 : -1;
-  const accentColor = textSettings.accentColor ?? ((tabStyle && STYLE_ACCENT_COLOR[tabStyle]) || subtitles.color);
+  const accentColor = textSettings.accentColor ?? styleAccentColor(catalog, tabStyle, subtitles.color);
 
   return (
     <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">

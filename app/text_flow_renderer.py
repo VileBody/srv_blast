@@ -20,6 +20,15 @@ from app.subtitle_font_layout import IMPULSE_SHADOW_PRESETS, ImpulseLayout, hex_
 _IMPULSE_LAYOUT: "ImpulseLayout | None" = None
 
 
+# Акцентный цвет без раскладки движка (выбран только цвет): прод-раскладка impulse, short — этим цветом.
+_ACCENT_RGB: "List[float] | None" = None
+
+
+def apply_accent_color(rgb: "List[float] | None") -> None:
+    global _ACCENT_RGB
+    _ACCENT_RGB = list(rgb) if rgb is not None else None
+
+
 def apply_impulse_layout(layout: "ImpulseLayout | None") -> None:
     global _IMPULSE_LAYOUT
     _IMPULSE_LAYOUT = layout
@@ -240,6 +249,8 @@ def _impulse_fill(is_long: bool) -> List[float]:
     lay = _IMPULSE_LAYOUT
     if lay is not None and not is_long and lay.params.accent_color:
         return hex_to_rgb01(lay.params.accent_color)
+    if lay is None and not is_long and _ACCENT_RGB is not None:
+        return list(_ACCENT_RGB)
     return [1, 1, 1]
 
 

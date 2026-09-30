@@ -402,7 +402,28 @@ def jakson_layout(font_base: str, font_focus: Optional[str] = None, *, accent_fo
 # Каталог и правила пар (config/styles/subtitle_font_catalog.json)
 # ---------------------------------------------------------------------------
 
+# Шрифт «стандартный для стиля» (прод) и прод-цвет акцента стиля — одна таблица
+# для сборки (app/subtitle_text_style.py) и сайта (web_app/backend/app/subtitle_text.py).
+STYLE_DEFAULT_FONTS = {
+    "jakson": "Point-SemiBold",
+    "impulse": "Point-Light",
+    "tape": "Montserrat-BoldItalic",
+    "trendy": "Montserrat-Bold",
+}
+# jakson TYPE_4 (scenes_3rd_reference_builder RENDER["color_red"]) и фокус tape; у
+# остальных стилей фокус по умолчанию — цвет основного текста
+STYLE_ACCENT_DEFAULTS = {"jakson": "#FD1614", "tape": "#E51515"}
+
+
 def load_catalog(path: Path = CATALOG_PATH) -> Dict[str, Dict[str, Any]]:
+    """Каталог (кэш по пути: правила пар дёргают его сотни раз на запрос).
+    Не мутировать — объект общий."""
+    return _load_catalog(str(path))
+
+
+@lru_cache(maxsize=4)
+def _load_catalog(path_str: str) -> Dict[str, Dict[str, Any]]:
+    path = Path(path_str)
     raw = json.loads(path.read_text(encoding="utf-8"))
     cats = set(raw.get("categories") or {})
     out: Dict[str, Dict[str, Any]] = {}

@@ -141,7 +141,8 @@ function requireRealFont(ps){
     for (var k = 0; k < found.length; k++) if (!found[k].isSubstitute) return;
     throw new Error("brat: font is substituted in AE: " + ps);
 }
-function wFocus(w){ return !!(w && w.focus); }
+// голос хука (F5/F1) помечен focus целиком — стилем фокус-слова его не красим
+function wFocus(w){ return !!(w && w.focus && !w.voice); }
 // Шрифт слова: фокус-слово — курсивом (CONFIG.focusFont / focusFauxItalic).
 function wordFont(isFocus){ return (isFocus && CONFIG.focusFont) ? CONFIG.focusFont : CONFIG.font; }
 function wordFaux(isFocus){ return !!(isFocus && CONFIG.focusFauxItalic); }

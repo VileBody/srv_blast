@@ -12,6 +12,15 @@ from app.subtitle_font_layout import TapeLayout
 _TAPE_LAYOUT: "TapeLayout | None" = None
 
 
+# Акцентный цвет без раскладки движка (выбран только цвет): прод-раскладка tape, фокус-слова — этим цветом.
+_ACCENT_RGB: "list[float] | None" = None
+
+
+def apply_accent_color(rgb: "list[float] | None") -> None:
+    global _ACCENT_RGB
+    _ACCENT_RGB = list(rgb) if rgb is not None else None
+
+
 def apply_tape_layout(layout: "TapeLayout | None") -> None:
     global _TAPE_LAYOUT
     _TAPE_LAYOUT = layout
@@ -186,7 +195,7 @@ def _char_styles(*, text: str, focus_word_indices: set[int], visible: str | None
         entry = {
             "i": i,
             "font": lay.font if lay is not None else _FONT_NAME,
-            "fillColor": list((lay.focus_rgb if lay is not None else _FOCUS_RED) if is_focus else _WHITE),
+            "fillColor": list((lay.focus_rgb if lay is not None else (_ACCENT_RGB or _FOCUS_RED)) if is_focus else _WHITE),
         }
         if is_focus and acc is not None:
             entry.update({"font": acc.font, "fontSize": acc.size, "tracking": acc.tracking,

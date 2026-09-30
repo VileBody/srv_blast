@@ -14,8 +14,14 @@ export function useScrollGuideIntoView(show: boolean, targetRef: RefObject<HTMLE
     if (!show || hasScrolledRef.current) return;
     // Флаг — когда скролл реально случился: в StrictMode эффект идёт дважды, и
     // флаг до таймера отменял скролл насовсем (cleanup гасил единственный таймер).
-    const timer = window.setTimeout(() => {
-      if (!targetRef.current) return;
+    // цель может ещё рендериться (данные грузятся) — пробуем несколько раз
+    let timer = 0;
+    let attempts = 0;
+    const tryScroll = () => {
+      if (!targetRef.current) {
+        if (++attempts < 20) timer = window.setTimeout(tryScroll, 100);
+        return;
+      }
       hasScrolledRef.current = true;
       targetRef.current.scrollIntoView({
         behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
@@ -23,7 +29,8 @@ export function useScrollGuideIntoView(show: boolean, targetRef: RefObject<HTMLE
         block,
         inline: 'nearest'
       });
-    }, 80);
+    };
+    timer = window.setTimeout(tryScroll, 80);
     return () => window.clearTimeout(timer);
   }, [show, targetRef, block]);
 }

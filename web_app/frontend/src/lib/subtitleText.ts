@@ -89,7 +89,9 @@ export function injectFontFaces(catalog: SubtitleFontCatalog | undefined): void 
 /** Те же пресеты, что у рендера (SIZE_PRESETS / HEIGHT_PRESETS / POSITION_PRESETS). */
 export const SIZE_SCALE = { large: 1, medium: 0.9, small: 0.8 } as const;
 export const HEIGHT_SCALE = { compact: 0.8, normal: 1, tall: 1.3 } as const;
-/** Прод-цвет акцента стиля (ударное/фокус-слово); нет — фокус как основной текст. */
-export const STYLE_ACCENT_COLOR: Partial<Record<SubtitleStyleId, string>> = { jakson: '#fd1614', tape: '#e51515' };
+/** Прод-цвет акцента стиля из каталога рендера; нет — фокус как основной текст. */
+export function styleAccentColor(catalog: SubtitleFontCatalog | undefined, style: SubtitleStyleId | null, textColor: string): string {
+  return (style && catalog?.accentColors?.[style]) || textColor;
+}
 
 export const POSITION_CENTER_Y = { center: 0.5, left: 0.5, right: 0.5, down: 0.64 } as const;

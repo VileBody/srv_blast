@@ -29,13 +29,6 @@ STYLE_BY_MODE = {
     "trendy_5th": "trendy",
     "brat_5th": "brat",
 }
-# шрифт «стандартный для стиля» (прод) — как в app/subtitle_text_style.py сборки
-DEFAULT_FONT_BY_STYLE = {
-    "jakson": "Point-SemiBold",
-    "impulse": "Point-Light",
-    "tape": "Montserrat-BoldItalic",
-    "trendy": "Montserrat-Bold",
-}
 SIZES = ("large", "medium", "small")
 HEIGHTS = ("compact", "normal", "tall")
 POSITIONS = ("center", "left", "right", "down")
@@ -80,9 +73,10 @@ def font_catalog() -> dict[str, Any]:
             "lowercase": eng.text_case(ps) == "lower",
         })
     # пары при «стандартном для стиля» шрифте (font = null)
-    default_accents = {style: eng.accents_for(ps) for style, ps in DEFAULT_FONT_BY_STYLE.items()}
-    return {"fonts": fonts, "defaults": DEFAULT_FONT_BY_STYLE, "defaultAccents": default_accents,
-            "lockedFontStyles": ["brat"]}
+    defaults = dict(eng.STYLE_DEFAULT_FONTS)
+    default_accents = {style: eng.accents_for(ps) for style, ps in defaults.items()}
+    return {"fonts": fonts, "defaults": defaults, "defaultAccents": default_accents,
+            "accentColors": dict(eng.STYLE_ACCENT_DEFAULTS), "lockedFontStyles": ["brat"]}
 
 
 def _choice(settings: dict[str, Any], key: str, allowed: tuple[str, ...], default: str) -> str:
@@ -152,7 +146,7 @@ def resolve(settings: dict[str, Any] | None, *, subtitles_mode: str, render_pres
 
 def _dry_run(eng: ModuleType, style: str, out: dict[str, Any], params: Any, render_preset: str) -> None:
     """Та же раскладка, что посчитает сборка, — любая ошибка всплывёт здесь."""
-    font = out.get("font") or DEFAULT_FONT_BY_STYLE.get(style)
+    font = out.get("font") or eng.STYLE_DEFAULT_FONTS.get(style)
     accent = out.get("accent_font")
     if style == "jakson":
         eng.check_style_allowed(font, "jakson")

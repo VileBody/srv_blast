@@ -102,7 +102,8 @@ function requireRealFont(ps){
     for (var k = 0; k < found.length; k++) if (!found[k].isSubstitute) return;
     throw new Error("trendy: font is substituted in AE: " + ps);
 }
-function wFocus(w){ return !!(w && w.focus); }
+// голос хука (F5/F1) помечен focus целиком — стилем фокус-слова его не красим
+function wFocus(w){ return !!(w && w.focus && !w.voice); }
 // стиль слова: основной или акцентный (фокус-слово шрифтом пары)
 function wordStyle(isFocus){
     var a = (isFocus && CONFIG.accent) ? CONFIG.accent : null;

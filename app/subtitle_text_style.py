@@ -33,14 +33,21 @@ FOCUS_HEX_ENV = "SUBTITLES_FOCUS_HEX"
 
 JAKSON_MODES = frozenset({SUBTITLES_MODE_SCENES_3RD, SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP})
 
-# шрифт «стандартный для стиля» — прод каждого стиля (эталоны движка)
-DEFAULT_FONT_BY_MODE = {
-    SUBTITLES_MODE_SCENES_3RD: "Point-SemiBold",
-    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP: "Point-SemiBold",
-    SUBTITLES_MODE_IMPULSE_2ND: "Point-Light",
-    SUBTITLES_MODE_TEMPLATE_4TH: "Montserrat-BoldItalic",
-    SUBTITLES_MODE_TRENDY_5TH: "Montserrat-Bold",
+# subtitles_mode → стиль каталога; шрифт «стандартный для стиля» — STYLE_DEFAULT_FONTS движка
+STYLE_BY_MODE = {
+    SUBTITLES_MODE_SCENES_3RD: "jakson",
+    SUBTITLES_MODE_SCENES_3RD_SINGLE_STEP: "jakson",
+    SUBTITLES_MODE_IMPULSE_2ND: "impulse",
+    SUBTITLES_MODE_TEMPLATE_4TH: "tape",
+    SUBTITLES_MODE_TRENDY_5TH: "trendy",
+    SUBTITLES_MODE_BRAT_5TH: "brat",
 }
+
+
+def _default_font(mode: str) -> Optional[str]:
+    from app.subtitle_font_layout import STYLE_DEFAULT_FONTS
+
+    return STYLE_DEFAULT_FONTS.get(STYLE_BY_MODE.get(mode, ""))
 
 
 @dataclass(frozen=True)
@@ -96,17 +103,16 @@ def _render_preset() -> str:
 def jsx_style_config(mode: str, style: Optional[SubtitleTextStyle] = None,
                      accent_color: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """trendy/brat: CONFIG-оверрайды для скрипта (None — прод)."""
-    from app.subtitle_font_layout import brat_layout, trendy_layout
+    from app.subtitle_font_layout import brat_layout, hex_to_rgb01, trendy_layout
 
     if style is None or style.is_default():
-        if accent_color is None:
-            return None
-        style = style or SubtitleTextStyle()
+        # выбран только цвет — прод-CONFIG скрипта, меняется лишь цвет фокус-слов
+        return None if accent_color is None else {"focusFillColor": hex_to_rgb01(accent_color)}
     params = _params(style, accent_color)
     if mode == SUBTITLES_MODE_TRENDY_5TH:
         if style.focus_style is not None:
             raise ValueError("focus_style is a brat-only setting")
-        font = style.font or DEFAULT_FONT_BY_MODE[mode]
+        font = style.font or _default_font(mode)
         return trendy_layout(font, params=params, render_preset=_render_preset(),
                              accent_font=style.accent_font).jsx_config()
     if mode == SUBTITLES_MODE_BRAT_5TH:
@@ -123,17 +129,25 @@ def applied_text_style(mode: str, style: Optional[SubtitleTextStyle] = None,
     from app import scenes_3rd_reference_builder as jakson
     from app import template_4th_reference_builder as tape
     from app import text_flow_renderer as impulse
-    from app.subtitle_font_layout import impulse_layout, jakson_layout, tape_layout
+    from app.subtitle_font_layout import hex_to_rgb01, impulse_layout, jakson_layout, tape_layout
 
     if style is None or style.is_default():
-        # без настроек — прод; акцентный цвет jakson прод красит сам (SUBTITLES_FOCUS_HEX)
-        yield
+        # без настроек — прод-раскладка. Выбран только цвет: jakson красит сам
+        # (SUBTITLES_FOCUS_HEX), tape/impulse — через override цвета билдера.
+        rgb = hex_to_rgb01(accent_color) if accent_color else None
+        tape.apply_accent_color(rgb)
+        impulse.apply_accent_color(rgb)
+        try:
+            yield
+        finally:
+            tape.apply_accent_color(None)
+            impulse.apply_accent_color(None)
         return
     if style.focus_style is not None:
         raise ValueError("focus_style is a brat-only setting")
     params = _params(style, accent_color)
     preset = _render_preset()
-    font = style.font or DEFAULT_FONT_BY_MODE.get(mode)
+    font = style.font or _default_font(mode)
     if mode in JAKSON_MODES:
         _check_jakson_base(font)
         apply, reset = jakson.apply_font_layout, lambda: jakson.apply_font_layout(None)
