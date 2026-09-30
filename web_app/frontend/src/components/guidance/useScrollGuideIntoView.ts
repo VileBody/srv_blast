@@ -7,18 +7,30 @@ import { useEffect, useRef, type RefObject } from 'react';
  * юзера не утаскивает туда, куда он не просил, пока он смотрит что-то другое
  * на странице.
  */
-export function useScrollGuideIntoView(show: boolean, targetRef: RefObject<HTMLElement>) {
+export function useScrollGuideIntoView(show: boolean, targetRef: RefObject<HTMLElement>,
+  block: ScrollLogicalPosition = 'center') {
   const hasScrolledRef = useRef(false);
   useEffect(() => {
     if (!show || hasScrolledRef.current) return;
-    hasScrolledRef.current = true;
-    const timer = window.setTimeout(() => {
-      targetRef.current?.scrollIntoView({
+    // Флаг — когда скролл реально случился: в StrictMode эффект идёт дважды, и
+    // флаг до таймера отменял скролл насовсем (cleanup гасил единственный таймер).
+    // цель может ещё рендериться (данные грузятся) — пробуем несколько раз
+    let timer = 0;
+    let attempts = 0;
+    const tryScroll = () => {
+      if (!targetRef.current) {
+        if (++attempts < 20) timer = window.setTimeout(tryScroll, 100);
+        return;
+      }
+      hasScrolledRef.current = true;
+      targetRef.current.scrollIntoView({
         behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-        block: 'center',
+        // 'start' — для целей выше экрана: иначе их верх (заголовок) уезжает за край
+        block,
         inline: 'nearest'
       });
-    }, 80);
+    };
+    timer = window.setTimeout(tryScroll, 80);
     return () => window.clearTimeout(timer);
-  }, [show, targetRef]);
+  }, [show, targetRef, block]);
 }

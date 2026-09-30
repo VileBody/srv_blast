@@ -33,6 +33,8 @@ USER_INFO_URL = "https://open.tiktokapis.com/v2/user/info/"
 USER_FIELDS = "open_id,union_id,avatar_url,display_name"
 CREATOR_INFO_URL = "https://open.tiktokapis.com/v2/post/publish/creator_info/query/"
 DIRECT_POST_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+# Upload (video.upload): ролик уходит в inbox TikTok, человек дописывает и публикует в приложении
+INBOX_INIT_URL = "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/"
 PUBLISH_STATUS_URL = "https://open.tiktokapis.com/v2/post/publish/status/fetch/"
 VIDEO_LIST_URL = "https://open.tiktokapis.com/v2/video/list/"
 VIDEO_FIELDS = "id,create_time,cover_image_url,share_url,title,video_description,duration,height,width,like_count,comment_count,share_count,view_count"
@@ -269,11 +271,12 @@ def query_creator_info(access_token: str) -> dict[str, Any]:
     return _json_request(CREATOR_INFO_URL, access_token, {})
 
 
-def init_direct_post_pull(access_token: str, post_info: dict[str, Any], video_url: str, proxy: str = "") -> dict[str, Any]:
+def init_direct_post_pull(access_token: str, post_info: dict[str, Any] | None, video_url: str, proxy: str = "",
+                          draft: bool = False) -> dict[str, Any]:
     if not video_url.startswith("https://"):
         raise ValueError("PULL_FROM_URL requires a public HTTPS video URL")
-    return _json_request(DIRECT_POST_INIT_URL, access_token, {
-        "post_info": post_info,
+    return _json_request(INBOX_INIT_URL if draft else DIRECT_POST_INIT_URL, access_token, {
+        **({} if draft else {"post_info": post_info}),
         "source_info": {"source": "PULL_FROM_URL", "video_url": video_url},
     }, proxy)
 
@@ -300,21 +303,28 @@ def init_direct_post_file(access_token: str, post_info: dict[str, Any], video_pa
     return data
 
 
-def init_file_upload(access_token: str, post_info: dict[str, Any], video_path: str | Path, proxy: str = "") -> dict[str, Any]:
-    """Только init: publish_id и upload_url. Сам файл — upload_file_chunks (у сайта — в фоне)."""
+def init_file_upload(access_token: str, post_info: dict[str, Any] | None, video_path: str | Path, proxy: str = "",
+                     draft: bool = False) -> dict[str, Any]:
+    """Только init: publish_id и upload_url. Сам файл — upload_file_chunks (у сайта — в фоне).
+
+    draft=True — Upload в inbox (video.upload): post_info TikTok не принимает, подпись, приватность
+    и остальное человек выставляет в приложении TikTok.
+    """
     size = Path(video_path).stat().st_size
     if size <= 0:
         raise ValueError("Video file is empty")
     chunk_size, total_chunks = chunk_plan(size)
-    data = _json_request(DIRECT_POST_INIT_URL, access_token, {
-        "post_info": post_info,
+    body: dict[str, Any] = {
         "source_info": {
             "source": "FILE_UPLOAD",
             "video_size": size,
             "chunk_size": chunk_size,
             "total_chunk_count": total_chunks,
         },
-    }, proxy)
+    }
+    if not draft:
+        body["post_info"] = post_info
+    data = _json_request(INBOX_INIT_URL if draft else DIRECT_POST_INIT_URL, access_token, body, proxy)
     if not data.get("upload_url"):
         raise TikTokApiError("missing_upload_url", "TikTok did not return an upload URL")
     return data

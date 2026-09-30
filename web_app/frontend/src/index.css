@@ -82,6 +82,11 @@
 @keyframes guide-fit-grow { 0%, 56% { transform: scaleX(1); } 72%, 86% { transform: scaleX(1.18); } 100% { transform: scaleX(1); } }
 @keyframes guide-fit-grow-label { 0%, 56% { transform: scaleX(1); } 72%, 86% { transform: scaleX(.847); } 100% { transform: scaleX(1); } }
 .guide-fit-drag { animation: guide-fit-drag 4.2s cubic-bezier(.16, 1, .3, 1) infinite; }
+/* подсказка «Настройки текста»: вкладка стиля и её образец сменяются по очереди */
+@keyframes guide-style-a { 0%, 40% { opacity: 1; } 50%, 90% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes guide-style-b { 0%, 40% { opacity: 0; } 50%, 90% { opacity: 1; } 100% { opacity: 0; } }
+.guide-style-a { animation: guide-style-a 5.2s cubic-bezier(.16, 1, .3, 1) infinite; }
+.guide-style-b { opacity: 0; animation: guide-style-b 5.2s cubic-bezier(.16, 1, .3, 1) infinite; }
 .guide-fit-select { animation: guide-fit-select 4.2s cubic-bezier(.16, 1, .3, 1) infinite; }
 .guide-fit-grow { transform-origin: left center; animation: guide-fit-grow 4.2s cubic-bezier(.16, 1, .3, 1) infinite; }
 .guide-fit-grow-label { display: inline-block; transform-origin: left center; animation: guide-fit-grow-label 4.2s cubic-bezier(.16, 1, .3, 1) infinite; }
@@ -333,6 +338,7 @@
   .gw-cur, .gw-play, .gw-ph, .gw-s1, .gw-s2, .gw-s3, .gw-s4, .gw-flash, .gl-cur, .gl-sel, .gl-demo, .gl-shut-t, .gl-shut-b,
   .gp-cur, .gp-rarr, .gp-put, .gp-a, .gp-b, .gp-demo, .gp-land, .gc-cur, .gc-press, .gc-pop, .gc-pick, .gc-icon, .gd-cur, .gd-btn, .gd-toast,
   .guide-tl-sweep, .guide-tl-drag, .guide-tl-land, .guide-sb-a, .guide-sb-b, .guide-sb-press,
+  .guide-style-a, .guide-style-b,
   .guide-fit-drag, .guide-fit-select, .guide-fit-grow, .guide-fit-grow-label,
   .guide-hook-icon-a, .guide-hook-icon-b, .guide-hook-icon-c, .guide-hook-shake,
   .guide-pool-digit-4, .guide-pool-digit-5, .guide-pool-digit-6,

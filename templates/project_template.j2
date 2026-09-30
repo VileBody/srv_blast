@@ -786,6 +786,8 @@
 
     function resolveJustificationByCode(code) {
       try { if (String(code) === "7415") return ParagraphJustification.CENTER_JUSTIFY; } catch(e) {}
+      try { if (String(code) === "7413") return ParagraphJustification.LEFT_JUSTIFY; } catch(e) {}
+      try { if (String(code) === "7414") return ParagraphJustification.RIGHT_JUSTIFY; } catch(e) {}
       return null;
     }
 
@@ -827,6 +829,8 @@
           try { if (base.applyStroke !== undefined) textDoc.applyStroke = !!base.applyStroke; } catch(_) {}
           try { if (base.strokeWidth !== undefined) textDoc.strokeWidth = base.strokeWidth; } catch(_) {}
           try { if (base.strokeColor !== undefined) textDoc.strokeColor = base.strokeColor; } catch(_) {}
+          try { if (base.strokeOverFill !== undefined) textDoc.strokeOverFill = !!base.strokeOverFill; } catch(_) {}
+          try { if (base.verticalScale !== undefined) textDoc.verticalScale = Number(base.verticalScale); } catch(_) {}
           try { if (base.tracking !== undefined) textDoc.tracking = base.tracking; } catch(_) {}
           try { if (base.leading !== undefined) textDoc.leading = base.leading; } catch(_) {}
           try { if (base.autoLeading !== undefined) textDoc.autoLeading = !!base.autoLeading; } catch(_) {}
@@ -865,6 +869,12 @@
               if (cs.fontSize !== undefined) r.fontSize = cs.fontSize;
               if (cs.fillColor !== undefined) { r.applyFill = true; r.fillColor = cs.fillColor; }
               if (cs.fauxItalic !== undefined) r.fauxItalic = !!cs.fauxItalic;
+              // пары шрифтов (app/subtitle_font_layout.AccentLayout): трекинг и сдвиг акцента
+              if (cs.tracking !== undefined) r.tracking = cs.tracking;
+              if (cs.baselineShift !== undefined) r.baselineShift = cs.baselineShift;
+              // пара на двух слоях: «чужие» буквы слоя прозрачные, но занимают место
+              if (cs.applyFill !== undefined) r.applyFill = !!cs.applyFill;
+              if (cs.verticalScale !== undefined) r.verticalScale = Number(cs.verticalScale);
             } catch(eChar) {
               logErr("charStyle failed layer=" + layer.name + " i=" + i, eChar);
             }
@@ -1087,9 +1097,38 @@
       if (!layer || !lData || lData.type !== "text" || !targetComp) return;
       var td = (lData.text_data ? lData.text_data : null);
       if (td && td.no_layout_pass) return;
-      var marginX = 0.05;
+      // layout_follow: слой-двойник (акцент пары) повторяет финальную раскладку
+      // оригинала — ближайшего ниже слоя с этим именем (он создан перед ним).
+      if (td && td.layout_follow) {
+        var src = null;
+        // имена = текст строки и повторяются в припевах — берём ближайший слой ниже
+        for (var li = layer.index + 1; li <= targetComp.numLayers; li++) {
+          var cand = targetComp.layer(li);
+          if (cand.name === String(td.layout_follow)) { src = cand; break; }
+        }
+        if (!src) { logLine("ERR", "layout_follow source missing=" + td.layout_follow + " layer=" + layer.name); return; }
+        try {
+          var stf = src.property("ADBE Transform Group"), dtf = layer.property("ADBE Transform Group");
+          var names = ["ADBE Anchor Point", "ADBE Position", "ADBE Scale"];
+          for (var ni = 0; ni < names.length; ni++) {
+            var sp = safeProp(stf, names[ni]), dp = safeProp(dtf, names[ni]);
+            if (!sp || !dp) continue;
+            if (sp.numKeys && sp.numKeys > 0) { logLine("ERR", "layout_follow: animated " + names[ni] + " on " + src.name); continue; }
+            var v = sp.value;
+            _setPropConstant3D(dp, Number(v[0]), Number(v[1]), (v.length >= 3) ? Number(v[2]) : 0);
+          }
+        } catch(eF) { logErr("layout_follow failed layer=" + layer.name, eF); }
+        return;
+      }
+      // layout_box (app/subtitle_font_layout.py): коробка прописных в координатах
+      // слоя + поля кадра. Есть — центрируем по прописным и держим поля по X и Y;
+      // нет — прежнее поведение (поле 5% по X, центр чернильной рамки).
+      var box = (td && td.layout_box) ? td.layout_box : null;
+      var marginX = (box && isFinite(Number(box.margin_x))) ? Number(box.margin_x) : 0.05;
       var maxWidth = Number(targetComp.width) * (1.0 - 2.0 * marginX);
       if (!(maxWidth > 0)) return;
+      var maxHeight = (box && isFinite(Number(box.margin_y)))
+        ? Number(targetComp.height) * (1.0 - 2.0 * Number(box.margin_y)) : 0;
 
       var fps = Number(targetComp.frameRate || 25);
       if (!(fps > 0)) fps = 25;
@@ -1106,8 +1145,14 @@
         if (m.ok && m.widthPx >= best.widthPx) best = m;
       }
 
-      if (best.sr && best.widthPx > maxWidth + 1e-3) {
-        _scaleLayerUniform2D(layer, maxWidth / best.widthPx);
+      var fitMult = 1.0;
+      if (best.sr && best.widthPx > maxWidth + 1e-3) fitMult = maxWidth / best.widthPx;
+      if (best.sr && maxHeight > 0) {
+        var inkH = Math.abs(Number(best.sr.height)) * (best.widthPx / Math.max(1e-6, Math.abs(Number(best.sr.width))));
+        if (inkH > maxHeight + 1e-3) fitMult = Math.min(fitMult, maxHeight / inkH);
+      }
+      if (best.sr && fitMult < 1.0 - 1e-6) {
+        _scaleLayerUniform2D(layer, fitMult);
         best = {"widthPx": 0.0, "sr": null, "t": t2};
         for (var j = 0; j < samples.length; j++) {
           var m2 = _measureTextWidthPx(layer, samples[j]);
@@ -1120,8 +1165,24 @@
       var sr = best.sr;
       var centerX = Number(sr.left) + Number(sr.width) / 2.0;
       var centerY = Number(sr.top) + Number(sr.height) / 2.0;
+      if (box && isFinite(Number(box.cap_top)) && isFinite(Number(box.baseline_last))) {
+        centerY = (Number(box.cap_top) + Number(box.baseline_last)) / 2.0;
+      }
       var compCenterX = Number(targetComp.width) / 2.0;
       var compCenterY = Number(targetComp.height) / 2.0;
+      // позиция группы (layout_box): X по краю поля для left/right, Y — доля высоты кадра
+      if (box) {
+        // anchor ставится на край рамки текста, поэтому масштаб слоя край не сдвигает
+        var mxPx = Number(targetComp.width) * marginX;
+        if (String(box.align_x) === "left") {
+          centerX = Number(sr.left);
+          compCenterX = mxPx;
+        } else if (String(box.align_x) === "right") {
+          centerX = Number(sr.left) + Number(sr.width);
+          compCenterX = Number(targetComp.width) - mxPx;
+        }
+        if (isFinite(Number(box.center_y))) compCenterY = Number(targetComp.height) * Number(box.center_y);
+      }
 
       try {
         var tf = layer.property("ADBE Transform Group");

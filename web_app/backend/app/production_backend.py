@@ -15,7 +15,7 @@ import httpx
 import logging
 from botocore.config import Config
 
-from . import asr_preview
+from . import asr_preview, subtitle_text
 from .runtime import SETTINGS
 
 
@@ -1216,6 +1216,16 @@ class ProductionBackend:
             if float(drop) <= float(start) or float(drop) >= float(end):
                 raise ProductionBackendError("Дроп должен находиться внутри выбранного отрывка")
 
+        text_settings = variation.get("subtitle", {}).get("text")
+        render_preset_name = str(selector.get("renderPreset") or "vertical")
+        try:
+            text_accent_hex = subtitle_text.accent_color(text_settings)
+            text_style = subtitle_text.resolve(
+                text_settings, subtitles_mode=subtitles_mode, render_preset=render_preset_name
+            )
+        except subtitle_text.SubtitleTextError as exc:
+            raise ProductionBackendError(str(exc)) from exc
+
         target_fragment = str(render_job.get("lyrics", {}).get("fragment") or "").strip()
         lyrics = str(render_job.get("lyrics", {}).get("full") or "").strip()
         asr_block = self._asr_preview_block(job)
@@ -1252,7 +1262,10 @@ class ProductionBackend:
             "effect_hook_extend": resolved.get("hookExtend"),
             "f2_shape": f2_shape,
             "subtitle_color_hex": variation.get("subtitle", {}).get("color"),
-            "accent_color_hex": stage_data.get("final", {}).get("accentColor"),
+            # Один акцентный цвет в кадре (решение смотра 2026-09-29): выбирается в
+            # настройках текста и красит фокус/ударное слово и фигуру F2. Не выбран —
+            # прод-цвета стиля (скрытый final.accentColor больше не применяется).
+            "accent_color_hex": text_accent_hex,
             "bg_mode": str(selector.get("bgMode") or bg_mode),
             # Пара rotation — это точное указание группы: когда обе непусты,
             # оркестратор берёт клипы РОВНО из неё вместо выбора по профилю
@@ -1261,7 +1274,7 @@ class ProductionBackend:
             "rotation_tags_group": str(selector.get("rotationTagsGroup") or ""),
             # Геометрия выдачи: у коллекций 16:9 она wide, иначе кадр
             # центр-кропается в треть ширины (см. _render_preset_for_bucket в боте).
-            "render_preset": str(selector.get("renderPreset") or "vertical"),
+            "render_preset": render_preset_name,
             "bg_solid_color": bg_solid_color,
             "photo_style": background.get("photoStyle"),
             "variant_index": index,
@@ -1270,6 +1283,7 @@ class ProductionBackend:
             # и про этот же трек/окно/текст), остальные — из первой.
             "reuse_text_job_id": master_id or asr_job_id,
             "user_focus_words": focus or None,
+            "subtitle_text_style": text_style,
         }
         if custom_sources:
             if start is None or end is None:

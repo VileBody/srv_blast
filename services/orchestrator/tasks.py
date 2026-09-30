@@ -137,6 +137,7 @@ _LLM_ENV_KEYS = (
     "SUBTITLES_FORCE_FILL_HEX",
     "F2_SHAPE_COLOR_HEX",
     "SUBTITLES_FOCUS_HEX",
+    "SUBTITLE_TEXT_STYLE_JSON",
     # photo flow (bg_mode == "photo")
     "PHOTO_STYLE",
     "PHOTO_TRANSITION",
@@ -1646,6 +1647,19 @@ def _poll_started_at_from_state(st: Any) -> float:
     return time.time()
 
 
+def subtitle_text_style_env_value(req: Dict[str, Any]) -> Optional[str]:
+    """SUBTITLE_TEXT_STYLE_JSON for a job, or None without text settings (the
+    build keeps the production layout). Re-validated here: the request dict may
+    come from a stored job, not only from the HTTP boundary."""
+    from .schemas import SubtitleTextStyle
+
+    raw = req.get("subtitle_text_style")
+    if not raw:
+        return None
+    style = SubtitleTextStyle.model_validate(raw).model_dump(exclude_none=True)
+    return json.dumps(style, ensure_ascii=False, sort_keys=True)
+
+
 def footage_plan_env_value(req: Dict[str, Any]) -> Optional[str]:
     """FOOTAGE_PLAN_JSON for a job, or None without a plan. A pinned storyboard
     only makes sense on library footage of one exact slot; anything else is an
@@ -2068,6 +2082,9 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     if _accent_color:
         env["F2_SHAPE_COLOR_HEX"] = _accent_color
         env["SUBTITLES_FOCUS_HEX"] = _accent_color
+    _text_style_json = subtitle_text_style_env_value(req)
+    if _text_style_json is not None:
+        env["SUBTITLE_TEXT_STYLE_JSON"] = _text_style_json
     if user_clip_start_sec is not None and user_clip_end_sec is not None:
         env["USER_CLIP_START_SEC"] = str(float(user_clip_start_sec))
         env["USER_CLIP_END_SEC"] = str(float(user_clip_end_sec))

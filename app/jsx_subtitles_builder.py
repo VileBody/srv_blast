@@ -244,12 +244,16 @@ def build_jsx_subtitles_overlay(
     fill_hex: Optional[str] = None,
     subs_blend: Optional[str] = None,
     brat_blinker_enabled: bool = True,
+    style_config: Optional[dict[str, Any]] = None,
 ) -> str:
     """Return an injectable JSX block: prelude ($.global injects) + the script.
 
     fill_hex (e.g. '#FF2D55') overrides the subtitle text fill color in the
-    trendy/brat script (via $.global.__BLAST_FILL). Raises if mode is not a
-    5th-template JSX mode or the script is missing.
+    trendy/brat script (via $.global.__BLAST_FILL). style_config — text settings
+    from the engine (`app/subtitle_font_layout.trendy_layout/brat_layout(...)
+    .jsx_config()`), merged into the script CONFIG via $.global.__BLAST_STYLE;
+    the script rejects unknown keys. Raises if mode is not a 5th-template JSX
+    mode or the script is missing.
     """
     script_name = _SCRIPT_BY_MODE.get(mode)
     if not script_name:
@@ -285,6 +289,10 @@ def build_jsx_subtitles_overlay(
     # render template's Difference-on-Текст-precomp doesn't reach them).
     if subs_blend:
         prelude_lines.append(f"$.global.__BLAST_SUBS_BLEND = {json.dumps(str(subs_blend))};")
+    # Always written (null when absent): $.global outlives a script in a reused
+    # AE session, so a previous job's style must never leak into this one.
+    style_js = json.dumps(style_config, ensure_ascii=False) if style_config else "null"
+    prelude_lines.append(f"$.global.__BLAST_STYLE = {style_js};")
     prelude = "\n".join(prelude_lines)
 
     return prelude + "\n" + body

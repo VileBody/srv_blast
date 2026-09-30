@@ -98,6 +98,20 @@ def _publish_proxy() -> str:
     return TIKTOK_PUBLISH_PROXY_URL
 
 
+# Content Posting API = Upload (video.upload, черновики в inbox) + Direct Post (video.publish).
+# Оба сценария есть в продукте, поэтому video.upload запрашиваем всегда — даже если серверный
+# TIKTOK_SCOPES старый и его не перечисляет.
+REQUIRED_SCOPES = ("video.upload",)
+
+
+def _with_required_scopes(raw: str) -> str:
+    scopes = [part.strip() for part in raw.split(",") if part.strip()]
+    for scope in REQUIRED_SCOPES:
+        if scope not in scopes:
+            scopes.append(scope)
+    return ",".join(scopes)
+
+
 def load() -> TiktokConfig:
     load_env()
     upload_source = os.getenv("TIKTOK_UPLOAD_SOURCE", "FILE_UPLOAD").strip().upper()
@@ -115,7 +129,7 @@ def load() -> TiktokConfig:
         client_key=os.getenv("TIKTOK_CLIENT_KEY", ""),
         client_secret=os.getenv("TIKTOK_CLIENT_SECRET", ""),
         redirect_uri=os.getenv("TIKTOK_REDIRECT_URI", "http://localhost:5173/app/profile/tiktok/callback"),
-        scopes=os.getenv("TIKTOK_SCOPES", "user.info.basic,video.publish,video.list"),
+        scopes=_with_required_scopes(os.getenv("TIKTOK_SCOPES", "user.info.basic,video.upload,video.publish,video.list")),
         upload_source=upload_source,
         allowed_user_ids=allowed,
         publish_proxy=_publish_proxy(),

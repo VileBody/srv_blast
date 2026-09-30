@@ -15,6 +15,10 @@ RUN python -m pip install --upgrade pip && \
 
 COPY web_app/backend/ ./
 COPY web_app/frontend/src/data/effects-registry.json /app/web_app/frontend/src/data/effects-registry.json
+# движок раскладки субтитров + каталог/замеры шрифтов: сайт сверяет настройки текста
+# с теми же правилами, что и сборка (web_app/backend/app/subtitle_text.py)
+COPY app/subtitle_font_layout.py /app/app/subtitle_font_layout.py
+COPY config/styles/subtitle_font_catalog.json config/styles/subtitle_font_metrics.json config/styles/subtitle_font_tuning.json /app/config/styles/
 # общий зарубежный прокси: через него идёт публикация в TikTok (см. src/outbound_proxy.py)
 COPY src/__init__.py /app/src/__init__.py
 COPY src/outbound_proxy.py /app/src/outbound_proxy.py

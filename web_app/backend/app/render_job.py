@@ -359,8 +359,15 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
             "index": i + 1,
             "subtitle": {
                 "style": style,
-                "color": final.get("subtitleColor") or subs.get("color") or "#f6f5fd",
+                # Subtitle color is edited in the text stage. Prefer that canonical
+                # field over the legacy final-stage default, which used to mask
+                # every non-white selection with its always-populated value.
+                "color": subs.get("color") or final.get("subtitleColor") or "#f6f5fd",
                 "timingSource": "llm",   # финал; онлайн-превью использует "default"
+                # шрифт/размер/высота/позиция/тень/акцент (этап «Текст») — свои у
+                # каждого стиля; нет записи — стандартные настройки стиля. Сверяет
+                # с рендером production_backend (subtitle_text.resolve).
+                "text": dict((subs.get("textByStyle") or {}).get(style) or {}),
             },
             "background": {
                 "mode": v_mode,
