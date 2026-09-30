@@ -291,7 +291,9 @@ function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: RefObje
     ...(wide ? [{ value: 'down' as const, label: t('wizard.subs.customization.down') }] : [])
   ];
 
-  return <section ref={guideTargetRef} className="mt-[40px] rounded-r15 bg-grad-soft-10 px-[32px] py-[28px] max-md:mt-[16px] max-md:px-[16px] max-md:py-[18px]">
+  return <section className="mt-[40px] rounded-r15 bg-grad-soft-10 px-[32px] py-[28px] max-md:mt-[16px] max-md:px-[16px] max-md:py-[18px]">
+    {/* цель подсказки «Настройки текста» — заголовок и вкладки (весь блок выше экрана) */}
+    <div ref={guideTargetRef}>
     <div className="mb-[22px]">
       <h3 className="wizard-body">{t('wizard.subs.customization.title')}</h3>
       <p className="mt-[5px] text-[14px] text-text-60">{t('wizard.subs.customization.description')}</p>
@@ -302,6 +304,7 @@ function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: RefObje
         className={cn('h-[34px] rounded-r10 px-[14px] text-[13px] transition-colors', name === tab
           ? 'bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'border border-white/10 text-text-60 hover:bg-white/5 hover:text-text')}>{name}</button>)}
     </div>}
+    </div>
     {!tab ? <p className="text-[13px] text-text-40">{t('wizard.subs.customization.pickStyleFirst')}</p> : <div className="flex flex-col">
       {queryDown(catalogQuery) && <InlineError error={catalogQuery.error} offline={catalogQuery.fetchStatus === 'paused'}
         onRetry={() => catalogQuery.refetch()} retrying={catalogQuery.isFetching} />}

@@ -11,9 +11,12 @@ export function useScrollGuideIntoView(show: boolean, targetRef: RefObject<HTMLE
   const hasScrolledRef = useRef(false);
   useEffect(() => {
     if (!show || hasScrolledRef.current) return;
-    hasScrolledRef.current = true;
+    // Флаг — когда скролл реально случился: в StrictMode эффект идёт дважды, и
+    // флаг до таймера отменял скролл насовсем (cleanup гасил единственный таймер).
     const timer = window.setTimeout(() => {
-      targetRef.current?.scrollIntoView({
+      if (!targetRef.current) return;
+      hasScrolledRef.current = true;
+      targetRef.current.scrollIntoView({
         behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
         block: 'center',
         inline: 'nearest'
