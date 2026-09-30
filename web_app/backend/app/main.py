@@ -1635,6 +1635,14 @@ def api_subtitle_styles() -> dict[str, Any]:
     return {"status": "COMPLETED", "styles": store.SUBTITLE_STYLES, "mock": True}
 
 
+@app.get("/api/wizard/subtitle-fonts", tags=["wizard"])
+def api_subtitle_fonts() -> dict[str, Any]:
+    """Каталог шрифтов субтитров из движка рендера: роли, пары, засечки, стили."""
+    from . import subtitle_text
+
+    return subtitle_text.font_catalog()
+
+
 @app.get("/api/wizard/session", tags=["wizard"])
 def api_get_wizard_session() -> dict[str, Any]:
     return {"session": store.get_wizard_session(), "mock": RUNTIME.backend == "mock"}

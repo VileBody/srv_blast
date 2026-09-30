@@ -49,7 +49,7 @@ def _variants() -> List[Dict[str, Any]]:
          "font": TRENDY_REFERENCE_FONT, "params": BASE},
     ]
     for ps, row in load_catalog().items():
-        if "base" in (row.get("roles") or []) and "trendy" not in (row.get("excluded_styles") or []):
+        if not row.get("hidden") and "base" in (row.get("roles") or []) and "trendy" not in (row.get("excluded_styles") or []):
             out.append({"group": _GROUP[row["category"]], "label": row["label"], "font": ps, "params": BASE})
     for label, base, acc in PAIRS:
         out.append({"group": "02 пары", "label": f"{label} · акцент ×4", "font": base, "accent": acc,

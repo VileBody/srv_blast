@@ -22,6 +22,25 @@ class CustomFootageSource(BaseModel):
     duration: float = Field(ge=1.0, le=600.0, allow_inf_nan=False)
 
 
+class SubtitleTextStyle(BaseModel):
+    """Настройки текста веб-визарда (named presets; числа живут на рендере —
+    app/subtitle_font_layout.py). Уезжают в сборку как SUBTITLE_TEXT_STYLE_JSON;
+    сборка отклоняет невозможные для стиля комбинации (шрифт запрещён стилю,
+    пара, высота у гротеска, «вниз» в вертикали, шрифт у brat)."""
+
+    model_config = {"extra": "forbid"}
+
+    # PostScript-имя из config/styles/subtitle_font_catalog.json; None — стандартный для стиля
+    font: Optional[str] = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
+    accent_font: Optional[str] = Field(default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.-]+$")
+    size: Literal["large", "medium", "small"] = "large"
+    height: Literal["compact", "normal", "tall"] = "normal"
+    position: Literal["center", "left", "right", "down"] = "center"
+    shadow: Literal["none", "soft", "strong"] = "soft"
+    # brat: фокус-слово курсивом (Arial Narrow Italic / Bold Italic / наклон)
+    focus_style: Optional[Literal["italic", "bold_italic", "faux_italic"]] = None
+
+
 class FootagePlanClip(BaseModel):
     file_name: str = Field(min_length=1, max_length=512)
     fit_mode: Literal["cover", "contain", "stretch"] = "cover"
@@ -189,6 +208,9 @@ class SendAudioS3Request(BaseModel):
     # accent = F2 shape + focus/accent word. None/empty => script default.
     subtitle_color_hex: Optional[str] = Field(default=None, pattern=r"^#?[0-9a-fA-F]{6}$")
     accent_color_hex: Optional[str] = Field(default=None, pattern=r"^#?[0-9a-fA-F]{6}$")
+    # Шрифт/размер/высота/позиция/тень/курсив фокуса (веб-визард «Текст»).
+    # None => прод-раскладка стиля без изменений.
+    subtitle_text_style: Optional[SubtitleTextStyle] = None
     # Optional internal batch controls for multi-version generation.
     reuse_text_job_id: Optional[str] = None
     # Слова, помеченные автором как фокусные в веб-визарде (см. FocusWord).

@@ -45,7 +45,7 @@ _GROUP_BY_CATEGORY = {"sans_system": "01_CORE_SANS", "display": "02_DISPLAY", "e
 MAIN_FONTS = [
     (_GROUP_BY_CATEGORY[row["category"]], row["label"], ps, row.get("focus_ps"))
     for ps, row in load_catalog().items()
-    if "base" in (row.get("roles") or []) and row["category"] in _GROUP_BY_CATEGORY
+    if not row.get("hidden") and "base" in (row.get("roles") or []) and row["category"] in _GROUP_BY_CATEGORY
 ]
 
 # Худший случай для межстрочного: выносные Д/Щ в первой строке, Ё/Й во второй.

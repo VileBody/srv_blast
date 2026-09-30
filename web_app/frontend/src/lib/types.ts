@@ -515,3 +515,25 @@ export interface AsrPreviewResponse {
   notes?: string[];
   workingEnd?: number | null;
 }
+
+/** Каталог шрифтов субтитров из движка рендера (GET /api/wizard/subtitle-fonts). */
+export interface SubtitleFontEntry {
+  ps: string;
+  label: string;
+  category: 'sans_system' | 'display' | 'editorial' | 'script';
+  roles: ('base' | 'accent')[];
+  serif: boolean;
+  excludedStyles: string[];
+  /** допустимые акцентные шрифты пары (пусто — блок пары скрыт) */
+  accents: string[];
+  /** скрипт: основной текст строчными */
+  lowercase: boolean;
+}
+
+export interface SubtitleFontCatalog {
+  fonts: SubtitleFontEntry[];
+  defaults: Record<string, string>;
+  /** пары при «стандартном для стиля» шрифте */
+  defaultAccents: Record<string, string[]>;
+  lockedFontStyles: string[];
+}

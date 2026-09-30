@@ -140,6 +140,11 @@ jobs:
             tests/test_local_alignment_cache.py \
             tests/test_alignment_failure_stage.py
 
+      - name: Run subtitle text settings tests
+        run: |
+          set -euo pipefail
+          python -m pytest -q             tests/test_subtitle_text_contract.py             tests/test_jsx_subtitles_builder.py             tests/test_template_layout_audio_hooks.py
+
       - name: Run web application regression tests
         run: |
           set -euo pipefail

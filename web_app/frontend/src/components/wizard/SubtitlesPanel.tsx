@@ -6,7 +6,11 @@ import { cn } from '../../lib/cn';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
 import { useDragScroll } from './BackgroundPanel';
 import { PillsFooter } from './WizardFrame';
-import { DEFAULT_SUBTITLE_TEXT_SETTINGS, SubtitleTextSettings, useWizardStore } from '../../stores/wizardStore';
+import { SubtitleTextSettings, activeTextTab, allBackgroundsWide, textSettingsFor, useWizardStore } from '../../stores/wizardStore';
+import {
+  HEIGHT_SCALE, POSITION_CENTER_Y, SIZE_SCALE, STYLE_ACCENT_COLOR, accentFontsFor, baseFonts, cssFamily, findFont, fontBlockedFor, fontStyles,
+  injectFontFaces, styleIdOf
+} from '../../lib/subtitleText';
 import { SubtitleTimeline } from './SubtitleTimeline';
 import { CatalogMedia } from './CatalogPreview';
 import { InlineError, queryDown } from '../ui/ErrorState';
@@ -37,12 +41,19 @@ function SubtitleFitGuideVisual() {
   );
 }
 
-/** Мини-визуал первой подсказки субтитров: свотч + цветовая шкала, как в самой панели. */
-function SubtitleColorGuideVisual() {
+/** Мини-визуал подсказки «Настройки текста»: вкладки стилей + образец шрифта с акцентом. */
+function SubtitleTextGuideVisual() {
   return (
-    <div className="flex w-full items-center gap-[8px]" aria-hidden="true">
-      <span className="guide-track-piece guide-mode-delay-1 h-[34px] w-[34px] shrink-0 rounded-r9 bg-[#f6f5fd] shadow-[0_0_0_2px_var(--accent-light)]" />
-      <span className="guide-track-piece guide-mode-delay-2 h-[34px] flex-1 rounded-r9" style={{ background: 'linear-gradient(90deg,#ff5c5c,#ffd15c,#5cff8f,#5ccbff,#a55cff,#ff5cc9)' }} />
+    <div className="flex w-full flex-col gap-[8px]" aria-hidden="true">
+      <div className="flex gap-[6px]">
+        {['Jakson', 'Brat', 'Tape'].map((name, index) => (
+          <span key={name} className={cn('guide-mode-reveal rounded-[7px] px-[9px] py-[5px] text-[11px] leading-none',
+            index === 0 ? 'guide-mode-delay-1 bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : index === 1 ? 'guide-mode-delay-2 border border-white/15 text-text-60' : 'guide-mode-delay-3 border border-white/15 text-text-60')}>{name}</span>
+        ))}
+      </div>
+      <div className="guide-track-piece guide-mode-delay-2 flex h-[34px] items-center justify-center gap-[6px] rounded-r9 bg-white/10 text-[15px] font-bold uppercase text-white">
+        Аа <span className="normal-case font-normal italic text-accent-light" style={{ fontFamily: 'cursive' }}>аа</span>
+      </div>
     </div>
   );
 }
@@ -106,7 +117,7 @@ function nearestHuePercent(hex: string): number {
 }
 
 function VisualChoice<T extends string>({ kind, label, value, options, onChange }: {
-  kind: 'size' | 'height' | 'position' | 'shadow';
+  kind: 'size' | 'height' | 'position' | 'shadow' | 'focus';
   label: string; value: T; options: { value: T; label: string }[]; onChange: (value: T) => void;
 }) {
   return <fieldset className="flex min-w-0 items-center justify-between gap-[16px] border-0 border-b border-white/10 px-0 py-[13px] last:border-b-0">
@@ -115,15 +126,20 @@ function VisualChoice<T extends string>({ kind, label, value, options, onChange 
     <div className="flex shrink-0 gap-[4px] rounded-r10 border border-white/10 bg-black/15 p-[3px]">
       {options.map((item, index) => <button key={item.value} type="button" aria-label={`${label}: ${item.label}`} aria-pressed={value === item.value}
         onClick={() => onChange(item.value)} className={cn('flex h-[34px] w-[42px] items-center justify-center rounded-[7px] transition-colors', value === item.value ? 'bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-40 hover:bg-white/5 hover:text-text-80')}>
-        <ChoiceGlyph kind={kind} index={index} selected={value === item.value} />
+        <ChoiceGlyph kind={kind} index={index} value={item.value} selected={value === item.value} />
       </button>)}
     </div>
   </fieldset>;
 }
 
-function ChoiceGlyph({ kind, index, selected }: { kind: 'size' | 'height' | 'position' | 'shadow'; index: number; selected: boolean }) {
+function ChoiceGlyph({ kind, index, value, selected }: { kind: 'size' | 'height' | 'position' | 'shadow' | 'focus'; index: number; value: string; selected: boolean }) {
   if (kind === 'position') {
-    return <span className="relative flex h-[18px] w-[26px] items-center rounded-[4px] border border-current/55 px-[3px]"><i className={cn('h-[7px] w-[3px] rounded-full bg-current transition-all', index === 0 ? 'mr-auto' : index === 1 ? 'mx-auto' : 'ml-auto')} /></span>;
+    if (value === 'down') return <span className="relative flex h-[18px] w-[26px] items-end justify-center rounded-[4px] border border-current/55 pb-[2px]"><i className="h-[3px] w-[9px] rounded-full bg-current" /></span>;
+    return <span className="relative flex h-[18px] w-[26px] items-center rounded-[4px] border border-current/55 px-[3px]"><i className={cn('h-[7px] w-[3px] rounded-full bg-current transition-all', value === 'left' ? 'mr-auto' : value === 'center' ? 'mx-auto' : 'ml-auto')} /></span>;
+  }
+  if (kind === 'focus') {
+    const style = [{}, { fontStyle: 'italic' }, { fontStyle: 'italic', fontWeight: 800 }, { display: 'inline-block', transform: 'skewX(-12deg)' }][index] ?? {};
+    return <span className="text-[16px] leading-none" style={{ fontFamily: '"Arial Narrow", Arial, sans-serif', ...style }}>a</span>;
   }
   if (kind === 'size') return <span className="relative font-light leading-none" style={{ fontSize: [11, 15, 19][index], transform: `translateY(${[0, 1, 2][index]}px)` }}>A</span>;
   if (kind === 'height') return <span className="flex w-[11px] items-center justify-center rounded-[3px] border border-current/70" style={{ height: [8, 13, 18][index] }}><i className="h-[1px] w-[5px] bg-current/65" /></span>;
@@ -183,71 +199,147 @@ function SubtitleColorControl({ label, value, defaultColor, defaultLabel, onChan
   </>;
 }
 
-function SubtitleTextCustomization({ colorGuideTargetRef }: { colorGuideTargetRef: RefObject<HTMLDivElement> }) {
+function FontSelect({ label, value, options, onChange, listId }: {
+  label: string;
+  value: string;
+  listId: string;
+  options: { value: string; label: string; family: string; disabled?: string; lowercase?: boolean }[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((option) => option.value === value) ?? options[0];
+  return <div className="border-b border-white/10 py-[13px]" onBlur={(event) => {
+    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false);
+  }}>
+    <div className="flex items-center justify-between gap-[16px]">
+      <span className="text-[14px] text-text-60">{label}</span>
+      <button type="button" aria-haspopup="listbox" aria-expanded={open} aria-controls={listId} onClick={() => setOpen((next) => !next)}
+        className="flex h-[38px] w-[min(58%,260px)] min-w-0 items-center justify-between gap-[8px] rounded-r10 border border-white/15 bg-[#17121f] px-[10px] text-left text-[14px] text-text outline-none transition hover:border-white/30 focus:border-accent-light">
+        <span className="truncate">{selected?.label}</span>
+        <span aria-hidden="true" className="flex h-full w-[14px] shrink-0 items-center justify-center">
+          <svg viewBox="0 0 16 16" className={cn('h-[14px] w-[14px] transition-transform', open && 'rotate-180')} fill="none">
+            <path d="m3.5 6 4.5 4 4.5-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </span>
+      </button>
+    </div>
+    {open && <div id={listId} role="listbox" aria-label={label} className="mt-[8px] max-h-[264px] overflow-y-auto rounded-r10 border border-white/10 bg-[#17121f] p-[4px] shadow-[0_14px_34px_rgba(0,0,0,.38)]">
+      {options.map((option) => <button key={option.value} type="button" role="option" aria-selected={value === option.value}
+        aria-disabled={!!option.disabled} title={option.disabled}
+        onClick={() => { if (option.disabled) return; onChange(option.value); setOpen(false); }}
+        className={cn('flex min-h-[38px] w-full items-center justify-between gap-[12px] rounded-[7px] px-[10px] text-left text-[13px] transition-colors',
+          option.disabled ? 'cursor-not-allowed text-text-40' : value === option.value ? 'bg-accent-20 text-text' : 'text-text-80 hover:bg-white/5 hover:text-text')}>
+        <span className="min-w-0">
+          <span className="block truncate">{option.label}</span>
+          {option.disabled && <span className="block truncate text-[11px] text-text-40">{option.disabled}</span>}
+        </span>
+        <span aria-hidden="true" className="shrink-0 text-[17px] text-text-60" style={{ fontFamily: option.family }}>{option.lowercase ? 'аа' : 'Аа'}</span>
+      </button>)}
+    </div>}
+  </div>;
+}
+
+function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: RefObject<HTMLDivElement> }) {
   const { t } = useTranslation();
   const subtitles = useWizardStore((state) => state.subtitles);
+  const background = useWizardStore((state) => state.background);
   const setSubtitles = useWizardStore((state) => state.setSubtitles);
-  const settings = { ...DEFAULT_SUBTITLE_TEXT_SETTINGS, ...(subtitles.text ?? {}) };
-  const updateText = (patch: Partial<SubtitleTextSettings>) => setSubtitles({ text: { ...settings, ...patch } });
-  const [fontOpen, setFontOpen] = useState(false);
-  const fonts = [
-    { value: 'Point-SemiBold', label: t('wizard.subs.customization.fontPointSemi'), family: 'Point, Arial, sans-serif' },
-    { value: 'Point-ExtraBold', label: t('wizard.subs.customization.fontPointExtra'), family: 'Point, Arial, sans-serif' },
-    { value: 'Montserrat-Bold', label: t('wizard.subs.customization.fontMontserrat'), family: 'Montserrat, Arial, sans-serif' },
-    { value: 'Arial-Bold', label: t('wizard.subs.customization.fontArial'), family: 'Arial, sans-serif' },
-    { value: 'Impact', label: t('wizard.subs.customization.fontImpact'), family: 'Impact, Arial Narrow, sans-serif' },
-    { value: 'Georgia-Bold', label: t('wizard.subs.customization.fontGeorgia'), family: 'Georgia, serif' },
-    { value: 'Trebuchet-Bold', label: t('wizard.subs.customization.fontTrebuchet'), family: 'Trebuchet MS, sans-serif' },
-    { value: 'Courier-Bold', label: t('wizard.subs.customization.fontCourier'), family: 'Courier New, monospace' }
-  ] as const;
-  const selectedFont = fonts.find((font) => font.value === settings.font) ?? fonts[0];
+  const catalogQuery = useQuery({ queryKey: ['subtitle-fonts'], queryFn: api.subtitleFonts, staleTime: Infinity });
+  const catalog = catalogQuery.data;
+  useEffect(() => { injectFontFaces(catalog); }, [catalog]);
+  // вкладка = стиль из пула, который сейчас настраивается (у каждого стиля свои настройки)
+  const tab = activeTextTab(subtitles);
+  const settings = textSettingsFor(subtitles, tab);
+  const updateText = (patch: Partial<SubtitleTextSettings>) => {
+    if (!tab) return;
+    setSubtitles({ textByStyle: { ...subtitles.textByStyle, [tab]: { ...settings, ...patch } } });
+  };
 
-  return <section className="mt-[40px] rounded-r15 bg-grad-soft-10 px-[32px] py-[28px] max-md:mt-[16px] max-md:px-[16px] max-md:py-[18px]">
+  const tabStyle = tab ? styleIdOf(tab) : null;
+  const styles = tabStyle ? [tabStyle] : [];
+  const pickable = fontStyles(styles, catalog);
+  const hasBrat = tabStyle === 'brat';
+  const styleAccent = (tabStyle && STYLE_ACCENT_COLOR[tabStyle]) || subtitles.color;
+  const base = findFont(catalog, settings.font);
+  const accents = accentFontsFor(catalog, base, pickable);
+  const wide = allBackgroundsWide(background);
+  const blocked = base ? fontBlockedFor(base, pickable) : [];
+  const heightAllowed = !!base?.serif;
+
+  const fontOptions = [
+    { value: '', label: t('wizard.subs.customization.fontDefault'), family: 'Point, Arial, sans-serif' },
+    ...baseFonts(catalog).map((font) => {
+      const off = fontBlockedFor(font, pickable);
+      return { value: font.ps, label: font.label, family: cssFamily(font), lowercase: font.lowercase,
+        disabled: off.length ? t('wizard.subs.customization.fontUnavailable', { styles: off.join(', ') }) : undefined };
+    })
+  ];
+  const onFont = (value: string) => {
+    const next = findFont(catalog, value || null);
+    updateText({
+      font: next ? next.ps : null,
+      // пара и высота зависят от основного: несовместимое снимаем вместе со сменой шрифта
+      accentFont: settings.accentFont && (next ? next.accents : (tabStyle && catalog?.defaultAccents?.[tabStyle]) || []).includes(settings.accentFont)
+        ? settings.accentFont : null,
+      height: next?.serif ? settings.height : 'normal'
+    });
+  };
+  const positions = [
+    { value: 'left' as const, label: t('wizard.subs.customization.left') },
+    { value: 'center' as const, label: t('wizard.subs.customization.center') },
+    { value: 'right' as const, label: t('wizard.subs.customization.right') },
+    ...(wide ? [{ value: 'down' as const, label: t('wizard.subs.customization.down') }] : [])
+  ];
+
+  return <section ref={guideTargetRef} className="mt-[40px] rounded-r15 bg-grad-soft-10 px-[32px] py-[28px] max-md:mt-[16px] max-md:px-[16px] max-md:py-[18px]">
     <div className="mb-[22px]">
       <h3 className="wizard-body">{t('wizard.subs.customization.title')}</h3>
       <p className="mt-[5px] text-[14px] text-text-60">{t('wizard.subs.customization.description')}</p>
     </div>
-    <div className="flex flex-col">
-      <div className="border-b border-white/10 py-[13px]" onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFontOpen(false);
-      }}>
-        <div className="flex items-center justify-between gap-[16px]">
-          <span className="text-[14px] text-text-60">{t('wizard.subs.customization.font')}</span>
-          <button type="button" aria-haspopup="listbox" aria-expanded={fontOpen} aria-controls="subtitle-font-list" onClick={() => setFontOpen((open) => !open)}
-            className="flex h-[38px] w-[min(58%,260px)] min-w-0 items-center justify-between gap-[8px] rounded-r10 border border-white/15 bg-[#17121f] px-[10px] text-left text-[14px] text-text outline-none transition hover:border-white/30 focus:border-accent-light">
-            <span className="truncate">{selectedFont.label}</span>
-            <span aria-hidden="true" className="flex h-full w-[14px] shrink-0 items-center justify-center">
-              <svg viewBox="0 0 16 16" className={cn('h-[14px] w-[14px] transition-transform', fontOpen && 'rotate-180')} fill="none">
-                <path d="m3.5 6 4.5 4 4.5-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </span>
-          </button>
-        </div>
-        {fontOpen && <div id="subtitle-font-list" role="listbox" aria-label={t('wizard.subs.customization.font')} className="mt-[8px] max-h-[224px] overflow-y-auto rounded-r10 border border-white/10 bg-[#17121f] p-[4px] shadow-[0_14px_34px_rgba(0,0,0,.38)]">
-          {fonts.map((font) => <button key={font.value} type="button" role="option" aria-selected={settings.font === font.value}
-            onClick={() => { updateText({ font: font.value }); setFontOpen(false); }}
-            className={cn('flex min-h-[38px] w-full items-center justify-between gap-[12px] rounded-[7px] px-[10px] text-left text-[13px] transition-colors', settings.font === font.value ? 'bg-accent-20 text-text' : 'text-text-80 hover:bg-white/5 hover:text-text')}>
-            <span className="truncate">{font.label}</span><span aria-hidden="true" className="shrink-0 text-[16px] font-bold text-text-60" style={{ fontFamily: font.family }}>Aa</span>
-          </button>)}
-        </div>}
-      </div>
+    {subtitles.pool.length > 1 && <div role="tablist" aria-label={t('wizard.subs.customization.styleTabs')} className="mb-[10px] flex flex-wrap gap-[6px]">
+      {subtitles.pool.map((name) => <button key={name} type="button" role="tab" aria-selected={name === tab}
+        onClick={() => setSubtitles({ textTab: name })}
+        className={cn('h-[34px] rounded-r10 px-[14px] text-[13px] transition-colors', name === tab
+          ? 'bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'border border-white/10 text-text-60 hover:bg-white/5 hover:text-text')}>{name}</button>)}
+    </div>}
+    {!tab ? <p className="text-[13px] text-text-40">{t('wizard.subs.customization.pickStyleFirst')}</p> : <div className="flex flex-col">
+      {queryDown(catalogQuery) && <InlineError error={catalogQuery.error} offline={catalogQuery.fetchStatus === 'paused'}
+        onRetry={() => catalogQuery.refetch()} retrying={catalogQuery.isFetching} />}
+      {pickable.length > 0 && <FontSelect listId="subtitle-font-list" label={t('wizard.subs.customization.font')}
+        value={settings.font ?? ''} options={fontOptions} onChange={onFont} />}
+      {hasBrat && <p className="border-b border-white/10 py-[10px] text-[13px] text-text-40">{t('wizard.subs.customization.fontLockedBrat')}</p>}
+      {blocked.length > 0 && <p role="alert" className="py-[8px] text-[13px] text-[#ff8a8a]">{t('wizard.subs.customization.fontInvalid', { styles: blocked.join(', ') })}</p>}
+      {accents.length > 0 && <FontSelect listId="subtitle-accent-list" label={t('wizard.subs.customization.accentFont')}
+        value={settings.accentFont ?? ''} onChange={(value) => updateText({ accentFont: value || null })} options={[
+          { value: '', label: t('wizard.subs.customization.accentNone'), family: cssFamily(base) },
+          ...accents.map((font) => ({ value: font.ps, label: font.label, family: cssFamily(font), lowercase: true }))
+        ]} />}
       <VisualChoice kind="size" label={t('wizard.subs.customization.size')} value={settings.size} onChange={(size) => updateText({ size })} options={[
         { value: 'small', label: t('wizard.subs.customization.small') }, { value: 'medium', label: t('wizard.subs.customization.medium') }, { value: 'large', label: t('wizard.subs.customization.large') }
       ]} />
-      <VisualChoice kind="height" label={t('wizard.subs.customization.height')} value={settings.height} onChange={(height) => updateText({ height })} options={[
+      {heightAllowed && <VisualChoice kind="height" label={t('wizard.subs.customization.height')} value={settings.height} onChange={(height) => updateText({ height })} options={[
         { value: 'compact', label: t('wizard.subs.customization.compact') }, { value: 'normal', label: t('wizard.subs.customization.normal') }, { value: 'tall', label: t('wizard.subs.customization.tall') }
-      ]} />
-      <VisualChoice kind="position" label={t('wizard.subs.customization.position')} value={settings.position} onChange={(position) => updateText({ position })} options={[
-        { value: 'left', label: t('wizard.subs.customization.left') }, { value: 'center', label: t('wizard.subs.customization.center') }, { value: 'right', label: t('wizard.subs.customization.right') }
-      ]} />
+      ]} />}
+      <VisualChoice kind="position" label={t('wizard.subs.customization.position')} value={settings.position} onChange={(position) => updateText({ position })} options={positions} />
+      {settings.position === 'down' && !wide && <p role="alert" className="py-[8px] text-[13px] text-[#ff8a8a]">{t('wizard.subs.customization.downInvalid')}</p>}
       <VisualChoice kind="shadow" label={t('wizard.subs.customization.shadow')} value={settings.shadow} onChange={(shadow) => updateText({ shadow })} options={[
         { value: 'none', label: t('wizard.subs.customization.none') }, { value: 'soft', label: t('wizard.subs.customization.soft') }, { value: 'strong', label: t('wizard.subs.customization.strong') }
       ]} />
-      <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-[16px] border-t border-white/10 pt-[14px]">
-        <SubtitleColorControl guideRef={colorGuideTargetRef} label={t('wizard.subs.customization.color')} value={subtitles.color}
+      {hasBrat && <VisualChoice kind="focus" label={t('wizard.subs.customization.focusStyle')} value={settings.focusStyle ?? 'none'}
+        onChange={(focus) => updateText({ focusStyle: focus === 'none' ? null : focus })} options={[
+          { value: 'none', label: t('wizard.subs.customization.focusNone') }, { value: 'italic', label: t('wizard.subs.customization.focusItalic') },
+          { value: 'bold_italic', label: t('wizard.subs.customization.focusBoldItalic') }, { value: 'faux_italic', label: t('wizard.subs.customization.focusFaux') }
+        ]} />}
+      <div className="grid grid-cols-[max-content_minmax(0,1fr)] items-center gap-x-[16px] gap-y-[14px] border-t border-white/10 pt-[14px]">
+        <SubtitleColorControl label={t('wizard.subs.customization.color')} value={subtitles.color}
           defaultColor="#f6f5fd" defaultLabel={t('wizard.subs.customization.whiteColor')} onChange={(color) => setSubtitles({ color })} />
+        {/* тот же контрол, что у цвета текста: свотч = прод-цвет акцента стиля (у Jakson/Tape
+            красный, у остальных фокус как основной текст); клик по нему — «как в стиле» (null) */}
+        <SubtitleColorControl label={t('wizard.subs.customization.accentColor')} value={settings.accentColor ?? styleAccent}
+          defaultColor={styleAccent} defaultLabel={t('wizard.subs.customization.accentColorDefault')}
+          onChange={(color) => updateText({ accentColor: color.toLowerCase() === styleAccent.toLowerCase() ? null : color })} />
       </div>
-    </div>
+    </div>}
   </section>;
 }
 
@@ -258,31 +350,30 @@ export function StageSubtitles() {
   const stylesQuery = useQuery({ queryKey: ['subtitle-styles'], queryFn: api.subtitleStyles });
   const cardsScroll = useDragScroll();
   const timelineGuideTargetRef = useRef<HTMLDivElement>(null);
-  const colorGuideTargetRef = useRef<HTMLDivElement>(null);
+  const textGuideTargetRef = useRef<HTMLDivElement>(null);
   const stylesGuideTargetRef = useRef<HTMLDivElement>(null);
   const hasStyles = subtitles.pool.length > 0;
+  const textConfigured = Object.keys(subtitles.textByStyle ?? {}).length > 0;
+  // Маршрут: подгонка слов → выбор стилей → настройки текста. Настройки — ПОСЛЕ
+  // выбора: у каждого стиля свои (вкладки), без стиля блоку нечего показать.
   // Хуки объявлены от ПОСЛЕДНЕГО шага цепочки к первому: idle-условие шага N
   // требует dismissed-значения шага N+1 («мы ещё не ушли дальше»), поэтому оно
   // должно быть уже посчитано на момент объявления хука для шага N.
-  // Ни у одного из трёх шагов нет жёсткого пререквизита, кроме своего места в
-  // цепочке (таргеты всегда отрисованы) — visible = «предыдущие шаги уже
-  // пройдены», БЕЗ учёта того, выбран ли уже стиль: принудительный тур
-  // проходит все три по очереди, даже если стиль субтитров уже выбран.
-  // ВАЖНО: visible не может быть просто true для 2-го/3-го шага — иначе
-  // seen записался бы в момент маунта, раньше, чем юзер реально дошёл до
-  // этого шага цепочки.
-  const [stylesGuideDismissed, setStylesGuideDismissed] = useGuideDismiss('subtitles-styles', !hasStyles, false);
-  const [colorGuideDismissed, setColorGuideDismissed] = useGuideDismiss('subtitles-color', !hasStyles && !stylesGuideDismissed, false);
-  const [timelineGuideDismissed, setTimelineGuideDismissed] = useGuideDismiss('subtitles-timeline', !hasStyles && !colorGuideDismissed, true);
+  // visible 2-го/3-го шага — false, показ отмечает useMarkGuideSeen ниже, когда
+  // пройдены предыдущие шаги (иначе seen записался бы в момент маунта).
+  const [textGuideDismissed, setTextGuideDismissed] = useGuideDismiss('subtitles-text', hasStyles && !textConfigured, false);
+  const [stylesGuideDismissed, setStylesGuideDismissed] = useGuideDismiss('subtitles-styles', !hasStyles && !textGuideDismissed, false);
+  const [timelineGuideDismissed, setTimelineGuideDismissed] = useGuideDismiss('subtitles-timeline', !hasStyles && !stylesGuideDismissed, true);
   const showTimelineGuide = !timelineGuideDismissed;
-  const showColorGuide = timelineGuideDismissed && !colorGuideDismissed;
-  const showStylesGuide = timelineGuideDismissed && colorGuideDismissed && !stylesGuideDismissed;
-  useMarkGuideSeen('subtitles-color', timelineGuideDismissed);
-  useMarkGuideSeen('subtitles-styles', timelineGuideDismissed && colorGuideDismissed);
+  const showStylesGuide = timelineGuideDismissed && !stylesGuideDismissed;
+  // цель третьей подсказки (блок настроек стиля) есть только при выбранном стиле
+  const showTextGuide = timelineGuideDismissed && stylesGuideDismissed && !textGuideDismissed && hasStyles;
+  useMarkGuideSeen('subtitles-styles', showStylesGuide);
+  useMarkGuideSeen('subtitles-text', showTextGuide);
 
   useScrollGuideIntoView(showTimelineGuide, timelineGuideTargetRef);
-  useScrollGuideIntoView(showColorGuide, colorGuideTargetRef);
   useScrollGuideIntoView(showStylesGuide, stylesGuideTargetRef);
+  useScrollGuideIntoView(showTextGuide, textGuideTargetRef);
 
   return (
     <div className="flex h-full flex-col">
@@ -345,32 +436,32 @@ export function StageSubtitles() {
         )}
       </div>
 
-      <SubtitleTextCustomization colorGuideTargetRef={colorGuideTargetRef} />
-
-      <ActionGuideOverlay
-        open={showColorGuide}
-        targetRef={colorGuideTargetRef}
-        title={t('wizard.subs.guideColorTitle')}
-        text={t('wizard.subs.guideColorText')}
-        dismissLabel={t('wizard.subs.guideNext')}
-        progressLabel={t('wizard.guideProgress', { current: 2, total: 3 })}
-        onDismiss={() => setColorGuideDismissed(true)}
-        variant="visual"
-        shell="track-top"
-        visual={<SubtitleColorGuideVisual />}
-      />
+      <SubtitleTextCustomization guideTargetRef={textGuideTargetRef} />
 
       <ActionGuideOverlay
         open={showStylesGuide}
         targetRef={stylesGuideTargetRef}
         title={t('wizard.subs.guideStyleTitle')}
         text={t('wizard.subs.guideStyleText')}
-        dismissLabel={t('wizard.subs.guideDismiss')}
-        progressLabel={t('wizard.guideProgress', { current: 3, total: 3 })}
+        dismissLabel={t('wizard.subs.guideNext')}
+        progressLabel={t('wizard.guideProgress', { current: 2, total: 3 })}
         onDismiss={() => setStylesGuideDismissed(true)}
         variant="visual"
         shell="track-top"
         visual={<SubtitleStyleGuideVisual />}
+      />
+
+      <ActionGuideOverlay
+        open={showTextGuide}
+        targetRef={textGuideTargetRef}
+        title={t('wizard.subs.guideTextTitle')}
+        text={t('wizard.subs.guideTextText')}
+        dismissLabel={t('wizard.subs.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: 3, total: 3 })}
+        onDismiss={() => setTextGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<SubtitleTextGuideVisual />}
       />
       <div aria-hidden="true" className="h-[40px] shrink-0 max-md:h-[32px]" />
     </div>
@@ -384,17 +475,27 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
   const fragmentLyrics = useWizardStore((state) => state.fragmentLyrics);
   const pillsScroll = useDragScroll();
   const previewLyrics = (fragmentLyrics.trim() || lyrics.trim()) || t('wizard.subs.lyricsPlaceholder');
-  const textSettings = { ...DEFAULT_SUBTITLE_TEXT_SETTINGS, ...(subtitles.text ?? {}) };
+  const tab = activeTextTab(subtitles);
+  const textSettings = textSettingsFor(subtitles, tab);
   const caption = previewLyrics.split(/[\n.!?]+/).filter(Boolean).slice(0, 2).join(' ');
-  const fontFamilies: Record<SubtitleTextSettings['font'], string> = {
-    'Point-SemiBold': 'Point, Arial, sans-serif', 'Point-ExtraBold': 'Point, Arial, sans-serif', 'Montserrat-Bold': 'Montserrat, Arial, sans-serif',
-    'Arial-Bold': 'Arial, sans-serif', Impact: 'Impact, Arial Narrow, sans-serif', 'Georgia-Bold': 'Georgia, serif',
-    'Trebuchet-Bold': 'Trebuchet MS, sans-serif', 'Courier-Bold': 'Courier New, monospace'
-  };
-  const sizeValue = { small: '5.2cqi', medium: '7cqi', large: '8.5cqi' }[textSettings.size];
-  const heightScale = { compact: 0.8, normal: 1, tall: 1.3 }[textSettings.height];
+  // Превью по тем же пресетам, что у рендера (lib/subtitleText.ts ↔ app/subtitle_font_layout.py):
+  // размер ×1/0.9/0.8, высота — только у шрифтов с засечками, «снизу» — 64% кадра,
+  // скрипты — строчными, фокус-слово — акцентным шрифтом пары и акцентным цветом.
+  const catalog = useQuery({ queryKey: ['subtitle-fonts'], queryFn: api.subtitleFonts, staleTime: Infinity }).data;
+  useEffect(() => { injectFontFaces(catalog); }, [catalog]);
+  const tabStyle = tab ? styleIdOf(tab) : null;
+  const base = tabStyle === 'brat' ? undefined : findFont(catalog, textSettings.font);
+  const accent = findFont(catalog, textSettings.accentFont);
+  const defaultPs = tabStyle === 'brat' ? 'ArialNarrow' : catalog?.defaults[tabStyle ?? 'jakson'];
+  const family = base ? cssFamily(base) : tabStyle === 'brat' ? '"Arial Narrow", Arial, sans-serif' : cssFamily(findFont(catalog, defaultPs), defaultPs);
+  const lowercase = !!base?.lowercase;
+  const sizeValue = `${(8.5 * SIZE_SCALE[textSettings.size]).toFixed(2)}cqi`;
+  const heightScale = base?.serif ? HEIGHT_SCALE[textSettings.height] : 1;
   const shadow = { none: 'none', soft: '0 2px 7px rgba(0,0,0,.78)', strong: '0 3px 13px rgba(0,0,0,.95)' }[textSettings.shadow];
-  const horizontal = textSettings.position === 'left' ? 'justify-start text-left' : textSettings.position === 'right' ? 'justify-end text-right' : 'justify-center text-center';
+  const align = textSettings.position === 'left' ? 'text-left' : textSettings.position === 'right' ? 'text-right' : 'text-center';
+  const words = (caption || 'Текст появится здесь').split(/\s+/).filter(Boolean);
+  const focusIndex = words.length > 1 ? words.length - 1 : -1;
+  const accentColor = textSettings.accentColor ?? ((tabStyle && STYLE_ACCENT_COLOR[tabStyle]) || subtitles.color);
 
   return (
     <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
@@ -402,11 +503,17 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
         <h2 className="wizard-h mb-space-5 shrink-0 whitespace-nowrap">{t('wizard.workZone')}</h2>
         {/* телефон: у зоны своя высота (9:16) — иначе в авто-колонке она схлопывается вместе с даш-рамкой */}
         <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-r15 bg-grad-soft-10 px-[8%] max-md:aspect-[9/16] max-md:w-full" style={{ containerType: 'inline-size' }}>
-          <div className={cn('flex h-full w-full items-center', horizontal)}>
-          <div className="max-w-full whitespace-pre-wrap break-words font-bold uppercase leading-[1.05]"
-            style={{ color: subtitles.color, fontFamily: fontFamilies[textSettings.font], fontSize: sizeValue,
+          <div className="absolute inset-x-[7%] -translate-y-1/2" style={{ top: `${POSITION_CENTER_Y[textSettings.position] * 100}%` }}>
+          <div className={cn('max-w-full whitespace-pre-wrap break-words font-bold leading-[1.05]', align, !lowercase && 'uppercase')}
+            style={{ color: subtitles.color, fontFamily: family, fontSize: sizeValue,
               transform: `scaleY(${heightScale})`, transformOrigin: 'center center', textShadow: shadow }}>
-            {caption || 'Текст появится здесь'}
+            {words.map((word, index) => {
+              const isFocus = index === focusIndex && (accent || textSettings.accentColor);
+              return <span key={index}>{index > 0 && ' '}{isFocus
+                ? <span className={cn(accent && 'normal-case font-normal')} style={{ color: accentColor, fontFamily: accent ? cssFamily(accent) : undefined,
+                  fontSize: accent ? '1.25em' : undefined, lineHeight: accent ? 0 : undefined }}>{accent ? word.toLowerCase() : word}</span>
+                : word}</span>;
+            })}
           </div>
           </div>
         </div>

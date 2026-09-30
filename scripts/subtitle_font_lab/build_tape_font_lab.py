@@ -33,7 +33,7 @@ _GROUP = {"sans_system": "01_CORE_SANS", "display": "02_DISPLAY", "editorial": "
 FONTS = [("01_CORE_SANS", "Montserrat Bold Italic (прод)", "Montserrat-BoldItalic")] + [
     (_GROUP[row["category"]], row["label"], ps)
     for ps, row in load_catalog().items()
-    if "base" in (row.get("roles") or []) and "tape" not in (row.get("excluded_styles") or [])
+    if not row.get("hidden") and "base" in (row.get("roles") or []) and "tape" not in (row.get("excluded_styles") or [])
 ]
 
 # (текст, фокус-слова, длительность) — 2–4 слова, 5 только короткие (промпт tape)

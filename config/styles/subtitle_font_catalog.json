@@ -17,6 +17,36 @@
    "focus_ps": "Point-ExtraBold"
   },
   {
+   "ps": "Point-Light",
+   "label": "Point Light (стандарт impulse)",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system",
+   "hidden": true,
+   "note": "стандартный шрифт стиля: в списке не показывается, нужен для правил пар при «стандартном для стиля»"
+  },
+  {
+   "ps": "Montserrat-BoldItalic",
+   "label": "Montserrat Bold Italic (стандарт tape)",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system",
+   "hidden": true,
+   "note": "стандартный шрифт стиля: в списке не показывается, нужен для правил пар при «стандартном для стиля»"
+  },
+  {
+   "ps": "Montserrat-Bold",
+   "label": "Montserrat Bold (стандарт trendy)",
+   "roles": [
+    "base"
+   ],
+   "category": "sans_system",
+   "hidden": true,
+   "note": "стандартный шрифт стиля: в списке не показывается, нужен для правил пар при «стандартном для стиля»"
+  },
+  {
    "ps": "Inter-Bold",
    "label": "Inter",
    "roles": [

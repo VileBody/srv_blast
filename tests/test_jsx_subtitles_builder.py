@@ -260,7 +260,8 @@ def test_trendy_grotesque_pool_is_point_inter_helvetica():
     from app.subtitle_font_layout import load_catalog, trendy_layout
 
     allowed = [ps for ps, r in load_catalog().items()
-               if r["category"] == "sans_system" and "trendy" not in (r.get("excluded_styles") or [])]
+               if r["category"] == "sans_system" and not r.get("hidden")
+               and "trendy" not in (r.get("excluded_styles") or [])]
     assert allowed == ["Point-SemiBold", "Inter-Bold", "HelveticaNeueCyr-Bold"]
     with pytest.raises(ValueError):
         trendy_layout("DidactGothic")
