@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
+import { cssZoom } from '../../lib/zoom';
 import type { StoryboardCandidate, StoryboardPickedVideo } from '../../lib/types';
 import { emptyStoryboard, recipeKeyOf, StoryboardVideo, useWizardStore } from '../../stores/wizardStore';
 import { seedKeyFor, useRecipeCuts, useStoryboardBusy } from './storyboardData';
@@ -319,7 +320,7 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
           <div className="psb-chips">
             <div ref={railRef} className="rail"
               onPointerDown={(e) => { if (e.pointerType !== 'touch' && railRef.current) railDrag.current = { x: e.clientX, left: railRef.current.scrollLeft, moved: false }; }}
-              onPointerMove={(e) => { const d = railDrag.current; if (!d || !railRef.current) return; const dx = e.clientX - d.x; if (Math.abs(dx) > 5) { d.moved = true; railRef.current.scrollLeft = d.left - dx; } }}
+              onPointerMove={(e) => { const d = railDrag.current; if (!d || !railRef.current) return; const dx = e.clientX - d.x; if (Math.abs(dx) > 5) { d.moved = true; railRef.current.scrollLeft = d.left - dx / cssZoom(railRef.current); } }}
               onPointerUp={() => { railDrag.current = null; }} onPointerLeave={() => { railDrag.current = null; }}>
               {chips.map((chip, i) => <span key={i} className={`psb-chip psb-glass${chip.off ? ' off' : ''}`}>{chip.icon}<span className="tx">{chip.text}</span></span>)}
             </div>

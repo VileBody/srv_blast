@@ -8,25 +8,24 @@ import { useToast } from '../../contexts/ToastContext';
 import { useWizardStore } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss } from '../guidance/useGuideDismiss';
-import { Button, DropZone, Icon, Surface, Tag } from '../ui/kit';
+import { Icon } from '../ui/kit';
 import { formatClock, formatSeconds, parseClock, snapTenth, SEGMENT_SECONDS, toStoreTiming } from './timing';
 import { timingToSeconds, usePlaybackUrl } from './useFragmentAudio';
 import { useWavePeaks } from './useWavePeaks';
+import { PAUSE, PLAY, Svg, W12 } from './WizardFrame';
 import { useLyricsUndo, useTried } from './wizardAttempt';
 
 /*
- * Шаг «Трек» (концепт «Трек / Фон», артефакт wizard12 v3).
+ * Шаг «Трек» — разметка и поведение по макету wizard12 v3.
  *
  * Отрывок выбирается на волне трека: клик ставит окно на лимит тарифа, края тянутся, окно
  * двигается целиком, стрелки двигают края на 0,1 с (с Shift на 1 с). Поля «Начало / Конец»
- * остались для точного ввода — в формате плеера «0:40» или «0:40.5».
- * Длина и лимит видны прямо на окне и рядом с полями; перебор подсвечивается, введённое не
- * стирается. Сдвиг окна очищает текст отрывка, но с «Вернуть» в правой колонке (TextPanel).
+ * — для точного ввода в формате плеера «0:40» или «0:40.5». Длина и лимит видны на окне и
+ * рядом с полями; перебор подсвечивается, введённое не стирается. Сдвиг окна очищает текст
+ * отрывка, но с «Вернуть» справа (TextPanel).
  */
 const BARS = 96;
 const MIN_CUT = 0.5;
-const PLAY = <path d="M7.5 5v14l11.5-7z" className="fill-current" />;
-const PAUSE = <path d="M8 5.5v13M16 5.5v13" />;
 
 export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: number | null; maxSegmentSeconds: number; paidPlan: boolean }) {
   const { t } = useTranslation();
@@ -39,7 +38,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
   const projectId = useWizardStore((state) => state.projectId);
   const reset = useWizardStore((state) => state.reset);
   const tried = useTried(1);
-  const replaceInput = useRef<HTMLInputElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const cutRef = useRef<HTMLDivElement>(null);
 
   /* ── файл ── */
@@ -77,6 +76,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     if (!isAudioFile(file)) { push({ variant: 'error', title: t('wizard.track.audioOnly') }); return; }
     upload.mutate(file);
   };
+  const [dragOver, setDragOver] = useState(false);
 
   /* ── звук: один плеер на трек и на отрывок ── */
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -92,14 +92,24 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     return () => { audio.pause(); if (audioRef.current === audio) audioRef.current = null; };
   }, [audioUrl]);
   const stop = () => { audioRef.current?.pause(); setPlaying(null); setHead(null); };
+
+  /* ── отрывок ── */
+  const duration = track?.durationS ?? 0;
+  const from = timingToSeconds(timingFrom);
+  const to = timingToSeconds(timingTo);
+  const selected = from !== null && to !== null;
+  const length = selected ? to - from : 0;
+  const backwards = selected && length <= 0;
+  const over = selected && length > maxSegmentSeconds + 1e-6;
+  const cutOk = selected && !backwards && !over;
+
   useEffect(() => {
     if (!playing) return undefined;
     let raf = 0;
     const tick = () => {
       const audio = audioRef.current;
       if (!audio) return;
-      const end = playing === 'cut' ? to : null;
-      if (audio.ended || (end !== null && audio.currentTime >= end)) { stop(); return; }
+      if (audio.ended || (playing === 'cut' && to !== null && audio.currentTime >= to)) { stop(); return; }
       setHead(audio.currentTime);
       raf = requestAnimationFrame(tick);
     };
@@ -117,14 +127,6 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     setPlaying(what);
   };
 
-  /* ── отрывок ── */
-  const duration = track?.durationS ?? 0;
-  const from = timingToSeconds(timingFrom);
-  const to = timingToSeconds(timingTo);
-  const selected = from !== null && to !== null;
-  const length = selected ? to - from : 0;
-  const backwards = selected && length <= 0;
-  const over = selected && length > maxSegmentSeconds + 1e-6;
   const setCut = (a: number, b: number) => {
     const nextFrom = toStoreTiming(a);
     const nextTo = toStoreTiming(b);
@@ -142,6 +144,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     setField('timingTo', nextTo);
   };
 
+  /* перетаскивание по волне: клик ставит окно на лимит, края тянутся, окно двигается целиком */
   const waveRef = useRef<HTMLDivElement>(null);
   const drag = useRef<null | { kind: 'l' | 'r' } | { kind: 'move'; off: number; len: number }>(null);
   const timeAt = (clientX: number) => {
@@ -157,7 +160,6 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     if (handle === 'l' || handle === 'r') drag.current = { kind: handle };
     else if (selected && at >= from && at <= to) drag.current = { kind: 'move', off: at - from, len: to - from };
     else {
-      // клик мимо окна ставит новое окно на лимит тарифа
       const start = snapTenth(Math.max(0, Math.min(at, duration - maxSegmentSeconds)));
       const end = snapTenth(Math.min(duration, start + maxSegmentSeconds));
       setCut(start, end);
@@ -185,7 +187,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     else setCut(from, snapTenth(Math.min(duration, Math.max(to + step, from + MIN_CUT))));
   };
 
-  /* поля «Начало / Конец»: принимают «0:40», «40», «0:40.5»; ошибку показывают рамкой, не стирают */
+  /* поля «Начало / Конец»: «0:40», «40», «0:40.5»; ошибку показывают рамкой, не стирают */
   const [draft, setDraft] = useState<{ from?: string; to?: string }>({});
   const [bad, setBad] = useState<{ from?: boolean; to?: boolean }>({});
   const commitField = (which: 'from' | 'to') => {
@@ -199,9 +201,10 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     else setCut(from ?? snapTenth(Math.max(0, value - maxSegmentSeconds)), snapTenth(value));
   };
   const field = (which: 'from' | 'to') => (
-    <label className="inline-flex items-center gap-[8px] text-ui-14 text-text-60">
+    <label className="w12-tf">
       {t(which === 'from' ? 'wizard.track.start' : 'wizard.track.end')}
       <input
+        className={cn('w12-num', bad[which] && 'w12-bad')}
         value={draft[which] ?? (selected ? formatClock(which === 'from' ? from : to) : '')}
         onChange={(event) => { setDraft((d) => ({ ...d, [which]: event.target.value })); setBad((b) => ({ ...b, [which]: false })); }}
         onBlur={() => commitField(which)}
@@ -210,10 +213,6 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
         autoComplete="off"
         placeholder={t('wizard.track.clockPlaceholder')}
         aria-invalid={bad[which] || undefined}
-        className={cn(
-          'h-ctl w-[84px] rounded-r10 border bg-field text-center text-ui-16 tabular-nums text-text outline-none transition-[border-color] duration-150 placeholder:text-text-40 focus:border-accent-line',
-          bad[which] ? 'border-warning' : 'border-transparent'
-        )}
       />
     </label>
   );
@@ -224,51 +223,52 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     : over
       ? t('wizard.track.segmentOver', { seconds: formatSeconds(length), max: maxSegmentSeconds })
       : tried && track && !selected ? t('wizard.track.needCut') : null;
-  const cutInvalid = backwards || over || Boolean(tried && track && !selected);
-
-  const [guideDismissed, setGuideDismissed] = useGuideDismiss('track-timing', Boolean(track) && (!selected || backwards || over), Boolean(track));
+  const [guideDismissed, setGuideDismissed] = useGuideDismiss('track-timing', Boolean(track) && !cutOk, Boolean(track));
   const trackMeta = track ? `${formatClock(Math.round(track.durationS))} · ${(track.filename.split('.').pop() ?? 'mp3').toUpperCase()}` : '';
 
   return (
-    <div className="flex flex-col gap-[22px]">
+    <>
       {/* ── трек ── */}
-      <section className="flex flex-col gap-[10px]">
-        <div className="flex min-h-[28px] flex-wrap items-center justify-between gap-[12px]">
-          <h2 className="flex items-center gap-[0.45em] text-ui-20 font-[400] text-text">
-            <Icon src="/assets/figma/icon-note.svg" ratio={0.72} heavy tone="muted" />
-            {t('wizard.track.intro')}
-          </h2>
-          <div className="flex items-center gap-[12px] text-ui-14 text-text-60">
+      <div className="w12-sec">
+        <div className="w12-sec-head">
+          <h2><span className="w12-mi w12-cap w12-heavy w12-ttl-ic" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-note.svg)', '--r': 0.75 } as React.CSSProperties} /><span className="w12-l">{t('wizard.track.intro')}</span></h2>
+          <div className="w12-side">
             <span>{creditsLeft === null ? t('wizard.track.availableUnlimited') : t('wizard.track.available', { count: creditsLeft })}</span>
             {track && (
-              <Button variant="ghost" size="sm" icon={<Icon><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4" /></Icon>} onClick={() => { stop(); setBlobUrl(null); useLyricsUndo.getState().drop(); reset(projectId); }}>
-                {t('wizard.track.reset')}
-              </Button>
+              <button type="button" className="w12-ghost" onClick={() => { stop(); setBlobUrl(null); useLyricsUndo.getState().drop(); reset(projectId); }}>
+                <Svg>{W12.reset}</Svg><span className="w12-l">{t('wizard.track.reset')}</span>
+              </button>
             )}
           </div>
         </div>
+        <input ref={fileInput} type="file" className="sr-only" accept={AUDIO_FILE_ACCEPT} tabIndex={-1} onChange={(event) => { takeFile(event.target.files?.[0]); event.target.value = ''; }} />
         {!track ? (
-          <>
-            <DropZone
-              title={upload.isPending ? t('wizard.track.uploading') : t('wizard.track.dropTitle')}
-              hint={t('wizard.track.dropFormats')}
-              accept={AUDIO_FILE_ACCEPT}
-              busy={upload.isPending}
-              invalid={tried}
-              onFiles={(files) => takeFile(files[0])}
-            />
+          <div className="w12-sec">
+            <button
+              type="button"
+              className={cn('w12-drop', tried && 'w12-invalid', dragOver && 'w12-over')}
+              disabled={upload.isPending}
+              onClick={() => fileInput.current?.click()}
+              onDragOver={(event) => { event.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(event) => { event.preventDefault(); setDragOver(false); takeFile(event.dataTransfer.files?.[0]); }}
+            >
+              <span className="w12-plus">{upload.isPending ? <span className="spinner" aria-hidden="true" /> : <Svg>{W12.plus}</Svg>}</span>
+              <span><b>{upload.isPending ? t('wizard.track.uploading') : t('wizard.track.dropTitle')}</b><span>{t('wizard.track.dropFormats')}</span></span>
+            </button>
             {previousQuery.data?.track && (
-              <Surface className="flex items-center gap-[12px] py-[6px] pl-[16px] pr-[6px]">
-                <Icon src="/assets/figma/icon-note.svg" ratio={0.72} heavy tone="muted" />
-                <span className="min-w-0 flex-1 truncate text-ui-14 text-text-60">
+              <div className="w12-prev-row">
+                <Svg style={{ color: 'var(--w12-text-3)' }}>{W12.note}</Svg>
+                <span className="w12-txt">
                   <Trans
                     i18nKey="wizard.track.previousRow"
                     values={{ name: previousQuery.data.track.filename, duration: formatClock(Math.round(previousQuery.data.track.durationS)) }}
-                    components={{ b: <span className="text-text" /> }}
+                    components={{ b: <b /> }}
                   />
                 </span>
-                <Button
-                  size="sm"
+                <button
+                  type="button"
+                  className="w12-small-btn"
                   onClick={() => {
                     const previous = previousQuery.data.track;
                     if (!previous) return;
@@ -276,74 +276,50 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
                     setBlobUrl(previous.localUrl || null);
                   }}
                 >
-                  {t('wizard.track.take')}
-                </Button>
-              </Surface>
-            )}
-          </>
-        ) : (
-          <Surface className="flex items-center gap-[14px] p-[12px]">
-            <button
-              type="button"
-              onClick={() => play('track')}
-              disabled={!audioUrl}
-              aria-label={playing === 'track' ? t('wizard.track.pause') : t('wizard.track.listen')}
-              className="grid h-ctl w-ctl shrink-0 place-items-center rounded-full bg-text text-ui-20 text-bg transition-transform duration-150 active:scale-95 disabled:opacity-40"
-            >
-              <Icon>{playing === 'track' ? PAUSE : PLAY}</Icon>
-            </button>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-ui-16 text-text">{track.filename.replace(/\.[^.]+$/, '')}</span>
-              <span className="text-ui-14 tabular-nums text-text-40">{trackMeta}</span>
-            </span>
-            <input ref={replaceInput} type="file" className="sr-only" accept={AUDIO_FILE_ACCEPT} tabIndex={-1} onChange={(event) => { takeFile(event.target.files?.[0]); event.target.value = ''; }} />
-            <Button variant="ghost" size="sm" loading={upload.isPending} onClick={() => replaceInput.current?.click()}>{t('wizard.track.replace')}</Button>
-          </Surface>
-        )}
-      </section>
-
-      {/* ── отрывок ── */}
-      <section className="flex flex-col gap-[10px]">
-        <div className="flex min-h-[28px] flex-wrap items-center justify-between gap-[12px]">
-          <h2 className="text-ui-20 font-[400] text-text">{t('wizard.track.segment')}</h2>
-          <div className="flex items-center gap-[12px] text-ui-14">
-            <Tag tone={over ? 'warn' : 'default'}>{t('wizard.track.segmentCap', { seconds: maxSegmentSeconds })}</Tag>
-            {!paidPlan && (
-              <a href="/app/pricing" className="text-text-60 underline decoration-line-strong underline-offset-[3px] transition-colors hover:text-text">
-                {t('wizard.track.segmentUpgrade', { seconds: SEGMENT_SECONDS.paid })}
-              </a>
+                  <span className="w12-l">{t('wizard.track.take')}</span>
+                </button>
+              </div>
             )}
           </div>
+        ) : (
+          <div className="w12-track-row">
+            <button type="button" className="w12-round" onClick={() => play('track')} disabled={!audioUrl} aria-label={playing === 'track' ? t('wizard.track.pause') : t('wizard.track.listen')}>
+              {playing === 'track' ? PAUSE : PLAY}
+            </button>
+            <span className="w12-name"><b>{track.filename.replace(/\.[^.]+$/, '')}</b><span className="w12-num">{trackMeta}</span></span>
+            <button type="button" className="w12-ghost" onClick={() => fileInput.current?.click()}><span className="w12-l">{upload.isPending ? t('wizard.track.uploading') : t('wizard.track.replace')}</span></button>
+          </div>
+        )}
+      </div>
+
+      {/* ── отрывок: тянется до низа карточки шага, волна растёт вместе с ним ── */}
+      <div className="w12-sec w12-fill">
+        <div className="w12-sec-head">
+          <h2><span className="w12-l">{t('wizard.track.segment')}</span></h2>
+          <div className="w12-side">
+            <span className={cn('w12-chip', over && 'w12-warn')}><span className="w12-l">{t('wizard.track.segmentCap', { seconds: maxSegmentSeconds })}</span></span>
+            {!paidPlan && <a className="w12-link" href="/app/pricing">{t('wizard.track.segmentUpgrade', { seconds: SEGMENT_SECONDS.paid })}</a>}
+          </div>
         </div>
-        <Surface ref={cutRef} className={cn('flex flex-col gap-[12px] px-[16px] pb-[14px] pt-[16px] transition-[border-color,opacity] duration-150', !track && 'pointer-events-none opacity-45', cutInvalid && 'border-warning')}>
-          <div>
-            <div
-              ref={waveRef}
-              onPointerDown={onWaveDown}
-              onPointerMove={onWaveMove}
-              onPointerUp={() => { drag.current = null; }}
-              className="relative mt-[26px] h-[120px] cursor-crosshair touch-none select-none rounded-r10"
-            >
-              <div className="absolute inset-0 flex items-center gap-[2px]" aria-hidden="true">
+        <div ref={cutRef} className={cn('w12-cut w12-fill', !track && 'w12-off', (backwards || over || (tried && track && !selected)) && 'w12-invalid')}>
+          <div className="w12-wave-box">
+            <div ref={waveRef} className="w12-wave" onPointerDown={onWaveDown} onPointerMove={onWaveMove} onPointerUp={() => { drag.current = null; }}>
+              <div className="w12-bars" aria-hidden="true">
                 {Array.from({ length: BARS }, (_, i) => {
                   const at = ((i + 0.5) / BARS) * duration;
                   const inside = selected && at >= from && at <= to;
-                  const height = peaks ? Math.max(0.1, peaks[i] ?? 0) : 0.3;
-                  return <i key={i} className={cn('flex-1 rounded-[2px] transition-colors duration-100', inside ? (over || backwards ? 'bg-warning' : 'bg-accent-light') : 'bg-text-20')} style={{ height: `${Math.round(height * 100)}%` }} />; // ui-allow: столбики волны
+                  const height = peaks ? Math.max(0.12, peaks[i] ?? 0) : 0.3;
+                  return <i key={i} className={cn(inside && 'w12-in')} style={{ height: `${Math.round(height * 100)}%` }} />;
                 })}
               </div>
               {selected && duration > 0 && (
-                <div
-                  className={cn('absolute -bottom-[6px] -top-[6px] cursor-grab rounded-r10 active:cursor-grabbing', over || backwards ? 'bg-warning-bg shadow-[inset_0_0_0_1.5px_var(--warning)]' : 'bg-accent-soft shadow-[inset_0_0_0_1.5px_var(--accent-light)]')}
-                  style={{ left: `${(Math.max(0, from) / duration) * 100}%`, width: `${Math.max(0.5, (Math.max(0, length) / duration) * 100)}%` }}
-                >
-                  <span className={cn('pointer-events-none absolute -top-[30px] left-1/2 -translate-x-1/2 whitespace-nowrap rounded-r6 px-[8px] py-[2px] text-ui-12 tabular-nums text-text', over || backwards ? 'bg-warning-bg text-warning' : 'bg-accent-strong')}>
-                    {formatClock(from)} – {formatClock(to)} · {formatSeconds(length)} с
-                  </span>
+                <div className={cn('w12-win', (over || backwards) && 'w12-over')} style={{ left: `${(Math.max(0, from) / duration) * 100}%`, width: `${Math.max(0.5, (Math.max(0, length) / duration) * 100)}%` }}>
+                  <span className="w12-win-label w12-num">{formatClock(from)} – {formatClock(to)} · {formatSeconds(length)} с</span>
                   {(['l', 'r'] as const).map((edge) => (
                     <span
                       key={edge}
                       data-handle={edge}
+                      className={cn('w12-handle', edge === 'l' ? 'w12-l' : 'w12-r')}
                       role="slider"
                       tabIndex={0}
                       aria-label={t(edge === 'l' ? 'wizard.track.segStart' : 'wizard.track.segEnd')}
@@ -352,42 +328,31 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
                       aria-valuemax={Math.round(duration)}
                       aria-valuenow={Math.round(edge === 'l' ? from : to)}
                       onKeyDown={(event) => nudge(edge, event)}
-                      className={cn('absolute inset-y-0 grid w-[18px] cursor-ew-resize place-items-center focus-visible:outline-none', edge === 'l' ? '-left-[9px]' : '-right-[9px]')}
-                    >
-                      {/* ui-allow: ручка края — пиксельная геометрия */}
-                      <i data-handle={edge} className="h-[30px] w-[4px] rounded-[3px] bg-text shadow-[0_1px_4px_rgba(5,1,15,.6)]" />
-                    </span>
+                    />
                   ))}
                 </div>
               )}
-              {head !== null && duration > 0 && <span className="pointer-events-none absolute bottom-[4px] top-[4px] w-[2px] rounded-full bg-text" style={{ left: `${(head / duration) * 100}%` }} />}
-              {track && !selected && (
-                <div className="pointer-events-none absolute inset-0 grid place-items-center">
-                  <span className="rounded-r10 bg-scrim px-[12px] py-[6px] text-ui-14 text-text-80 backdrop-blur-[6px]">{t('wizard.track.waveHint')}</span>
-                </div>
-              )}
+              {head !== null && duration > 0 && <span className="w12-playhead" style={{ left: `${(head / duration) * 100}%` }} />}
+              {track && !selected && <div className="w12-wave-hint"><span>{t('wizard.track.waveHint')}</span></div>}
             </div>
-            <div className="mt-[12px] flex justify-between text-ui-12 tabular-nums text-text-40" aria-hidden="true">
-              {[0, 0.25, 0.5, 0.75, 1].map((k) => <span key={k}>{formatClock(Math.round((duration || 0) * k))}</span>)}
+            <div className="w12-ruler w12-num" aria-hidden="true">
+              {[0, 0.25, 0.5, 0.75, 1].map((k) => <span key={k}>{formatClock(Math.round((duration || 95) * k))}</span>)}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-[12px]">
-            <Button onClick={() => play('cut')} disabled={!selected || backwards} icon={<Icon>{playing === 'cut' ? PAUSE : PLAY}</Icon>}>
-              {playing === 'cut' ? t('wizard.track.pause') : t('wizard.track.playCut')}
-            </Button>
+          <div className="w12-cut-row">
+            <button type="button" className="w12-play-cut" onClick={() => play('cut')} disabled={!cutOk} style={cutOk ? undefined : { opacity: 0.5 }}>
+              <span className="w12-dot">{playing === 'cut' ? PAUSE : PLAY}</span>
+              <span className="w12-l">{playing === 'cut' ? t('wizard.track.pause') : t('wizard.track.playCut')}</span>
+            </button>
             {field('from')}
             {field('to')}
-            <span className="ml-auto text-ui-14 text-text-60 max-md:ml-0 max-md:w-full">
-              <Trans
-                i18nKey="wizard.track.segmentOf"
-                values={{ seconds: selected ? formatSeconds(Math.max(0, length)) : '0', max: maxSegmentSeconds }}
-                components={{ b: <span className={cn('tabular-nums', over || backwards ? 'text-warning' : 'text-text')} /> }}
-              />
+            <span className={cn('w12-dur w12-num', (over || backwards) && 'w12-over')}>
+              <Trans i18nKey="wizard.track.segmentOf" values={{ seconds: selected ? formatSeconds(Math.max(0, length)) : '0', max: maxSegmentSeconds }} components={{ b: <b /> }} />
             </span>
           </div>
-          {cutMessage && <p role="alert" className="text-ui-14 text-warning">{cutMessage}</p>}
-        </Surface>
-      </section>
+          {cutMessage && <p className="w12-cut-msg" role="alert">{cutMessage}</p>}
+        </div>
+      </div>
 
       <ActionGuideOverlay
         open={Boolean(track) && !guideDismissed}
@@ -401,7 +366,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
         shell="track-top"
         visual={<WaveGuideVisual />}
       />
-    </div>
+    </>
   );
 }
 
@@ -412,7 +377,6 @@ function WaveGuideVisual() {
     <div className="relative flex h-[52px] w-full items-center gap-[3px]" aria-hidden="true">
       {/* ui-allow: иллюстрация гайда */}
       {bars.map((h, i) => <i key={i} className={cn('flex-1 rounded-[2px]', i >= 6 && i <= 12 ? 'bg-accent-light' : 'bg-text-20')} style={{ height: `${h}%` }} />)}
-      {/* окно: левый край на месте, правый тянется — заливка идёт вместе с ним */}
       {/* ui-allow: иллюстрация гайда */}
       <span className="guide-track-fill-move absolute inset-y-0 left-[29%] right-[36%] origin-left rounded-[8px] bg-accent-soft shadow-[inset_0_0_0_1.5px_var(--accent-light)]" />
       <span className="absolute left-[29%] top-1/2 h-[22px] w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-text" />
@@ -420,4 +384,3 @@ function WaveGuideVisual() {
     </div>
   );
 }
-

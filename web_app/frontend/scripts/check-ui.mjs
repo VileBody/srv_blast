@@ -72,7 +72,11 @@ const current = Object.fromEntries(Object.keys(RULES).map((rule) => [rule, {}]))
 for (const path of files) {
   const rel = relative(root, path).split('\\').join('/');
   const kind = path.endsWith('.css') ? 'css' : 'ts';
-  const lines = readFileSync(path, 'utf8').split('\n');
+  const text = readFileSync(path, 'utf8');
+  // Файл-эталон, перенесённый из утверждённого макета как есть (wizard12.css): его кегли и
+  // отступы и есть пропорции макета, поэтому он целиком вне шкалы — метка ui-allow-file в шапке.
+  if (text.includes('ui-allow-file')) continue;
+  const lines = text.split('\n');
   lines.forEach((line, index) => {
     if (isComment(line) || line.includes('ui-allow') || (index > 0 && lines[index - 1].includes('ui-allow'))) return;
     for (const [rule, count] of Object.entries(RULES)) {

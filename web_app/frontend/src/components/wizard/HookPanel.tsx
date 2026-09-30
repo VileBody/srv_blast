@@ -468,7 +468,7 @@ export function StageHooks() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex shrink-0 items-center justify-between gap-space-4">
-        <h2 className="wizard-h flex items-center gap-space-3">
+        <h2 className="w12-h2 flex items-center gap-space-3">
           <SvgMaskIcon src="/assets/figma/icon-bolt.svg" style={{ width: 15, height: 21, color: 'var(--accent-light)' }} />
           {t('wizard.fx.title')}
         </h2>
@@ -850,13 +850,13 @@ export function HooksWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   );
 
   return (
-    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
+    <aside className="w12-col-aside">
       {timelineOpen && <Suspense fallback={null}><FxTimeline onClose={() => setTimelineOpen(false)} /></Suspense>}
-      <div ref={workzoneGuideTargetRef} className="card-2 flex min-h-0 flex-1 flex-col gap-space-5 px-space-6 py-space-6 max-lg:px-space-5">
+      <div ref={workzoneGuideTargetRef} className="w12-card w12-aside">
         {/* На месте прежнего «Развернуть» — таймлайн: полноэкранный рецепт ролика (склейки
             по темпу трека, переходы на стыках, хук на дропе, стили по кадрам). */}
         <div className="flex shrink-0 items-center justify-between gap-space-3">
-          <h2 className="wizard-h whitespace-nowrap">{t('wizard.workZone')}</h2>
+          <h2 className="w12-h2 whitespace-nowrap">{t('wizard.workZone')}</h2>
           {/* Была голая иконка 20×20 без подложки — её просто не замечали. Теперь это
               обычная кнопка с обводкой и подписью: видно, что тут есть широкий режим. */}
           <button

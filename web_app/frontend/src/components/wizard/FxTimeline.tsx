@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import effectsRegistry from '../../data/effects-registry.json';
@@ -905,7 +906,9 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
     </div>
   );
 
-  return (
+  // Порталом в body: таймлайн полноэкранный и живёт в своей системе координат на масштабе
+  // приложения. Внутри холста визарда (WizardCanvas, свой zoom) он бы уехал за экран.
+  return createPortal(
     <div ref={rootRef} className="fxt" data-format={format} role="dialog" aria-label="Таймлайн FX">
       <header className="fxt-top">
         <button type="button" className="fxt-back" onClick={onClose}><Glyph name="back" size={18} /><span className="tx">FX</span></button>
@@ -1122,6 +1125,7 @@ export function FxTimeline({ onClose, tabs }: { onClose: () => void; tabs?: Reac
           ))}
         </div>
       )}
-    </div>
+    </div>,
+    document.body
   );
 }

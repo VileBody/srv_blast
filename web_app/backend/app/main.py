@@ -15,7 +15,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import mock_store as store
 from . import analytics, asr_preview, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
 from . import render_job as render_job_builder
-from . import effect_map
+from . import demo_media, effect_map
 from . import storyboard as storyboard_svc
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
@@ -1561,6 +1561,17 @@ async def api_asr_state(key: str = "") -> dict[str, Any]:
     except Exception as exc:
         raise _production_error(exc) from exc
     return {"asr": state, "mock": RUNTIME.backend == "mock"}
+
+
+@app.get("/api/wizard/demo-media/{item_id}.svg", tags=["wizard"])
+def api_demo_media(item_id: str, aspect: str = "9:16", still: int = 0) -> Response:
+    """Живое превью записи каталога мока (app/demo_media.py). В продакшне не существует."""
+    if RUNTIME.backend != "mock":
+        raise HTTPException(status_code=404, detail="Not found")
+    if aspect not in {"9:16", "16:9", "4:3"}:
+        raise HTTPException(status_code=422, detail=f"Неизвестный формат превью: {aspect}")
+    svg = demo_media.animated_svg(item_id, aspect=aspect, still=bool(still))
+    return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "max-age=3600"})
 
 
 @app.get("/api/wizard/vibes", tags=["wizard"])

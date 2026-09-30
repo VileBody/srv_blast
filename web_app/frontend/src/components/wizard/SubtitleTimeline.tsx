@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
+import { cssZoom } from '../../lib/zoom';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { AsrWord, useWizardStore } from '../../stores/wizardStore';
 import { usePlaybackUrl } from './useFragmentAudio';
@@ -318,7 +319,8 @@ export function SubtitleTimeline() {
   };
   const onPillMove = (e: ReactPointerEvent<HTMLElement>) => {
     if (!drag) return;
-    const dx = (e.clientX - drag.originX) / pxPerSec;
+    // сдвиг мыши — визуальные пиксели, pxPerSec — пиксели дорожки (визард под zoom)
+    const dx = (e.clientX - drag.originX) / cssZoom(scrollRef.current) / pxPerSec;
     if (!drag.moved && Math.abs(e.clientX - drag.originX) < 3) return;
     const { min, max } = bounds(asr.words, drag.index, clipStart, clipEnd);
     const len = drag.tEnd - drag.tStart;
@@ -417,7 +419,7 @@ export function SubtitleTimeline() {
     const box = scrollRef.current;
     if (!box) return;
     const rect = box.getBoundingClientRect();
-    seek(clipStart + (clientX - rect.left + box.scrollLeft - X0) / pxPerSec);
+    seek(clipStart + ((clientX - rect.left) / cssZoom(box) + box.scrollLeft - X0) / pxPerSec);
   };
   const onHeadDown = (e: ReactPointerEvent<HTMLElement>) => { e.stopPropagation(); capture(e); seekFromLane(e.clientX); };
   const onHeadMove = (e: ReactPointerEvent<HTMLElement>) => { if (e.buttons) seekFromLane(e.clientX); };

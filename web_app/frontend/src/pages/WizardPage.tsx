@@ -3,10 +3,10 @@ import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
-import { ActionBar, Button, Dialog, Surface } from '../components/ui/kit';
+import { ActionBar, Button, Dialog } from '../components/ui/kit';
 import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
-import { backgroundVariations, BackgroundWorkZone, StageBackground, type BackgroundGuideGraphic } from '../components/wizard/BackgroundPanel';
+import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
 import { hasTrackInput, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
@@ -19,11 +19,11 @@ import { SEGMENT_SECONDS, segmentSeconds } from '../components/wizard/timing';
 import { TrackStage } from '../components/wizard/TrackStage';
 import { useWizardAttempt } from '../components/wizard/wizardAttempt';
 import { useAsrPreview } from '../components/wizard/useAsrPreview';
-import { WizardHeaderCard } from '../components/wizard/WizardFrame';
+import { WizardCanvas, WizardHeaderCard } from '../components/wizard/WizardFrame';
+import { demoTrackUrl } from '../dev/demoTrack';
 import { useToast } from '../contexts/ToastContext';
 import { cn } from '../lib/cn';
 import { useWizardStore } from '../stores/wizardStore';
-import type { ActionGuideVariant } from '../components/guidance/ActionGuideOverlay';
 
 function apiErrorText(error: unknown): string | undefined {
   if (!(error instanceof ApiError)) return undefined;
@@ -63,19 +63,15 @@ export function WizardPage() {
   const restoredServerDraft = useRef(false);
   const qaStage = import.meta.env.DEV ? Number(params.get('qaStage') || 0) : 0;
   const qaGuide = import.meta.env.DEV ? params.get('qaGuide') : null;
-  const qaGuideVariant = import.meta.env.DEV && ['minimal', 'balanced', 'visual'].includes(params.get('guideStyle') || '')
-    ? params.get('guideStyle') as ActionGuideVariant
-    : 'visual';
-  const qaGuideGraphic = import.meta.env.DEV && ['map', 'pairs', 'stack', 'studio'].includes(params.get('guideGraphic') || '')
-    ? params.get('guideGraphic') as BackgroundGuideGraphic
-    : 'studio';
   useEffect(() => {
     if (qaStage < 1 || qaStage > 5) return;
     // Explicit development-only visual fixture: every Figma stage is directly auditable
     // without faking browser storage or calling an LLM. It is excluded from production use.
     state.setTrack({
       id: 'qa-track', userId: 'user_1', s3Key: 'qa/track.mp3', filename: 'Название трека.mp3',
-      durationS: 204, createdAt: '2026-07-15T00:00:00Z', expiresAt: '2026-07-22T00:00:00Z'
+      durationS: 204, createdAt: '2026-07-15T00:00:00Z', expiresAt: '2026-07-22T00:00:00Z',
+      // синтезированный демо-трек: у волны отрывка настоящая форма, отрывок слышно
+      localUrl: demoTrackUrl(204)
     });
     state.setField('lyrics', qaGuide === 'text' ? '' : 'Я знаю — этот город не уснёт\nПока музыка ведёт нас вперёд');
     state.setField('timingFrom', qaGuide === 'timing' ? '' : '00:10:00');
@@ -381,10 +377,10 @@ export function WizardPage() {
   const busy = submitMutation.isPending || saveSessionMutation.isPending;
 
   // Тот же fill-height, что у Dashboard/Projects/ProjectDetail: верх контента = лого сайдбара,
-  // низ = аватар. Раньше визард жил на своём паттерне (-m-space-6 + h-dvh) и вставал по 32px,
-  // из-за чего ужимался не так, как остальные страницы.
+  // низ = аватар. Внутри — холст по модели макета (WizardCanvas): ширина 1240, высота по месту.
   return (
-    <div className="flex min-h-0 flex-1 gap-[20px] max-lg:h-auto max-lg:flex-col md:h-[var(--app-page-h)] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="w12-zone">
+    <WizardCanvas>
       {/*
         Новый батч наследует трек, текст и тайминги прошлого — но молча подменять
         вводные нельзя: человек либо не заметит, что генерит по старому отрывку,
@@ -403,7 +399,7 @@ export function WizardPage() {
       >
         <p className="text-ui-16 text-text-80">{t('wizard.page.carriedText')}</p>
       </Dialog>
-      <section className="flex min-w-0 flex-1 flex-col gap-[20px]">
+      <div className="w12-col-main">
         <WizardHeaderCard
           title={headerTitle}
           artist={artist}
@@ -413,7 +409,7 @@ export function WizardPage() {
           } : undefined}
         />
         {/* data-limits-dim: хост затемнения для LimitsIndicator (Figma W46 — на всю карточку) */}
-        <Surface level="card" data-limits-dim className={cn('relative min-h-0 flex-1 p-[22px] max-md:p-[16px]', stage === 5 ? 'overflow-hidden' : 'subtle-scroll overflow-y-auto')}>
+        <section data-limits-dim className="w12-card w12-stage" style={stage === 5 ? { overflow: 'hidden' } : undefined}>
           {queryDown(projectsQuery) ? (
             /* без списка проектов визарду некуда сабмитить — честно говорим и даём повтор */
             <QueryError query={projectsQuery} className="!bg-transparent min-h-[420px]" />
@@ -422,14 +418,14 @@ export function WizardPage() {
           ) : (
             <>
               {stage === 1 && <TrackStage creditsLeft={creditsLeft} maxSegmentSeconds={maxSegmentSeconds} paidPlan={paidPlan} />}
-              {stage === 2 && <StageBackground guideGraphic={qaGuideGraphic} guideVariant={qaGuideVariant} qaGuide={qaGuide} />}
+              {stage === 2 && <StageBackground qaGuide={qaGuide} />}
               {stage === 3 && <StageHooks />}
               {stage === 4 && <StageSubtitles />}
               {stage === 5 && <StageSlice />}
             </>
           )}
-        </Surface>
-      </section>
+        </section>
+      </div>
       {stage === 1 ? (
         <TextPanel
           ready={ready}
@@ -448,6 +444,7 @@ export function WizardPage() {
       ) : (
         <SliceWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
       )}
+    </WizardCanvas>
     </div>
   );
 }

@@ -553,7 +553,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
   };
 
   return (
-    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
+    <aside className="w12-col-aside">
       {timelineOpen && (
         <Suspense fallback={null}>
           <FxTimeline
@@ -562,9 +562,9 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
           />
         </Suspense>
       )}
-      <div className="card-2 flex min-h-0 flex-1 flex-col gap-space-5 px-space-6 py-space-6 max-lg:px-space-5">
+      <div className="w12-card w12-aside">
         <div className="flex shrink-0 items-center justify-between gap-space-3">
-          <h2 className="wizard-h whitespace-nowrap">{t('wizard.workZone')}</h2>
+          <h2 className="w12-h2 whitespace-nowrap">{t('wizard.workZone')}</h2>
           <button ref={timelineButtonRef} type="button" onClick={openTimeline}
             className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 disabled:opacity-40 max-md:hidden">
             <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true"><path d="M2 5h16M2 10h16M2 15h16M6 3v4m5 1v4m4 1v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>

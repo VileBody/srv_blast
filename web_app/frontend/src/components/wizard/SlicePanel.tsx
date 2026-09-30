@@ -5,7 +5,6 @@ import { cn } from '../../lib/cn';
 import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { LimitsIndicator } from '../ui/LimitsIndicator';
-import { Surface } from '../ui/kit';
 import { WizardActions } from './WizardFrame';
 import { HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
@@ -604,11 +603,11 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   ];
 
   return (
-    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
-      <div className="card-2 flex min-h-0 flex-1 flex-col px-space-6 py-space-6 max-lg:px-space-5">
+    <aside className="w12-col-aside">
+      <div className="w12-card w12-aside">
         {/* Одно видео батча: пилюля листает видео, внутри — его реальные клипы и замена кадров. */}
         <div className="mb-space-5 flex shrink-0 items-center justify-between gap-space-3">
-          <h2 className="wizard-h whitespace-nowrap">{t('wizard.pool.combinations')}</h2>
+          <h2 className="w12-h2 whitespace-nowrap">{t('wizard.pool.combinations')}</h2>
           <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
             <button
               type="button"
@@ -635,9 +634,9 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
         <PoolStoryboard slots={slots} current={safeIndex} chips={chips} />
       </div>
 
-      <Surface level="card" className="shrink-0 px-[18px] py-[16px]">
+      <div className="w12-card w12-foot-card">
         <WizardActions ready={ready} loading={loading} onBack={onBack} onNext={onNext} nextLabel={t('wizard.pool.generate')} />
-      </Surface>
+      </div>
     </aside>
   );
 }

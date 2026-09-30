@@ -404,6 +404,8 @@
   --bg:              #05010f;
   --nav-bg:          #150F25;
   --card-bg:         #060114;
+  /* единая шкала UI: карточка страницы (UI_RULES.md → Поверхности) */
+  --card:            #0d0820;
   --card-dark-start: #0d0828;
   --card-dark-mid:   #0a0520;
   --card-dark-end:   #080318;

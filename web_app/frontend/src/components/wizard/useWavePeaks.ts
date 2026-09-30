@@ -5,8 +5,41 @@ import { useEffect, useState } from 'react';
  * Считается в браузере из самого файла (WebAudio), без запроса к бэку. Если файл не
  * раскодировался (CORS у ссылки, формат, который браузер не знает), волны нет — компонент
  * рисует ровную полосу, а не выдуманную форму.
+ *
+ * Почему не «RMS / максимум»: у сведённой музыки громкость почти везде одинаковая, и линейная
+ * шкала давала сплошной кирпич, а тихие места сжимала в точки. Поэтому громкость — в децибелах
+ * (так её и слышит ухо), верх шкалы — уровень громких частей трека (95-й перцентиль, а не один
+ * случайный пик), видимый диапазон — 30 дБ под ним. Интро, нарастания и дропы читаются формой.
  */
+const RANGE_DB = 30;
 const cache = new Map<string, Promise<number[] | null>>();
+
+export function wavePeaks(buffer: AudioBuffer, bars: number): number[] {
+  const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
+  const length = buffer.length;
+  const size = Math.max(1, Math.floor(length / bars));
+  const step = Math.max(1, Math.floor(size / 2048)); // ~2 тыс. отсчётов на столбик хватает
+  const levels: number[] = [];
+  for (let bar = 0; bar < bars; bar += 1) {
+    const start = bar * size;
+    const end = Math.min(length, start + size);
+    let sum = 0;
+    let count = 0;
+    for (let i = start; i < end; i += step) {
+      // моно-сумма каналов: стерео-партия в одном канале не пропадает
+      let sample = 0;
+      for (const channel of channels) sample += channel[i];
+      sample /= channels.length;
+      sum += sample * sample;
+      count += 1;
+    }
+    const rms = Math.sqrt(sum / Math.max(1, count));
+    levels.push(20 * Math.log10(Math.max(rms, 1e-5)));
+  }
+  const sorted = [...levels].sort((a, b) => a - b);
+  const top = sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))];
+  return levels.map((db) => Math.min(1, Math.max(0, (db - (top - RANGE_DB)) / RANGE_DB)));
+}
 
 async function decode(url: string, bars: number): Promise<number[] | null> {
   const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -16,20 +49,7 @@ async function decode(url: string, bars: number): Promise<number[] | null> {
   const data = await response.arrayBuffer();
   const context = new AudioCtx();
   try {
-    const buffer = await context.decodeAudioData(data);
-    const channel = buffer.getChannelData(0);
-    const size = Math.max(1, Math.floor(channel.length / bars));
-    const peaks: number[] = [];
-    for (let bar = 0; bar < bars; bar += 1) {
-      let sum = 0;
-      const start = bar * size;
-      const end = Math.min(channel.length, start + size);
-      // среднеквадратичное — ровнее пиков и честнее показывает громкие места
-      for (let i = start; i < end; i += 16) sum += channel[i] * channel[i];
-      peaks.push(Math.sqrt(sum / Math.max(1, (end - start) / 16)));
-    }
-    const max = Math.max(...peaks, 1e-6);
-    return peaks.map((value) => value / max);
+    return wavePeaks(await context.decodeAudioData(data), bars);
   } finally {
     void context.close();
   }

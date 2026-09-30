@@ -7,7 +7,7 @@ export default {
       colors: {
         bg: 'var(--bg)',
         nav: 'var(--nav-bg)',
-        card: 'var(--card-bg)',
+        card: 'var(--card)',
         'card-2': 'var(--card-2)',
         text: 'var(--text)',
         'text-80': 'var(--text-80)',

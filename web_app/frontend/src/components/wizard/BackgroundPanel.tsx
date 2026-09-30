@@ -1,26 +1,34 @@
-import { CSSProperties, PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react';
+import { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { create } from 'zustand';
 import { useChip } from '../../i18n/useChip';
-import { useToast } from '../../contexts/ToastContext';
 import { api } from '../../lib/api';
 import { isVideoUrl } from '../../lib/media';
 import { cn } from '../../lib/cn';
+import { cssZoom } from '../../lib/zoom';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
 import type { Vibe } from '../../lib/types';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { InlineError, queryDown } from '../ui/ErrorState';
-import { ChipIcon } from './HookPanel';
-import { PillsFooter } from './WizardFrame';
-import { PreviewPlayer } from '../ui/PreviewPlayer';
+import { Icon } from '../ui/kit';
+import { ChipIcon, EffectPreview, previewIdFor } from './HookPanel';
+import { PAUSE, PLAY, PillsFooter, Svg, W12 } from './WizardFrame';
 import { useFragmentAudio } from './useFragmentAudio';
 import { SourcesModal } from './SourcesEditor';
-import { ActionGuideOverlay, type ActionGuideVariant } from '../guidance/ActionGuideOverlay';
+import { useTried } from './wizardAttempt';
+import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
-import { footageTypeKey, footageTypePlane, stepFootageType } from '../../data/footageTypes';
+import { FOOTAGE_TYPES, footageTypeKey, footageTypePlane } from '../../data/footageTypes';
 import effectsRegistry from '../../data/effects-registry.json';
-import { BackgroundMode, backgroundPills, backgroundVariations, useWizardStore } from '../../stores/wizardStore';
+import { BackgroundMode, backgroundVariations, useWizardStore } from '../../stores/wizardStore';
+
+/* Цвета фона — данные (значение, уходящее в рендер), а не стиль интерфейса */
+// ui-allow: коды белого и чёрного фона
+const WHITE_BG = '#f6f5fd';
+// ui-allow: коды белого и чёрного фона
+const BLACK_BG = '#05010f';
 
 /** Стили фото (Figma W13/W30) — те же, что «стиль» у эффектов-хука */
 const PHOTO_STYLES = ['Ксерокс', 'Глитч', 'Неон', 'Старая камера'];
@@ -28,18 +36,18 @@ const PHOTO_STYLES = ['Ксерокс', 'Глитч', 'Неон', 'Старая 
 export { backgroundVariations };
 
 /*
- * Этап «Фон» (Figma W12 → 3 → 13 → 14 → 22): разделы настраиваются параллельно,
- * пилюли футера — живое отражение, «+» переводит к следующему разделу.
+ * Этап «Фон» (концепт «Трек / Фон», wizard12 v3): три режима видны сразу и несут счётчики,
+ * типы футажей — вкладками, а не скрытым степпером; выбор нумерует карточки; превью справа
+ * листается пейджером внутри плеера и играет под отрывок; внизу — итог по режимам.
  */
 
-const ACCENT = 'var(--accent-light)';
-const WHITE80 = 'var(--text-80)';
-
-export type BackgroundGuideGraphic = 'map' | 'pairs' | 'stack' | 'studio';
-
+// ui-allow: палитра иллюстраций гайдов
 const GUIDE_TONES = [
+  // ui-allow: палитра иллюстраций гайдов
   'from-[#8b6fe6] to-[#342553]',
+  // ui-allow: иллюстрация гайда
   'from-[#42627b] to-[#172331]',
+  // ui-allow: иллюстрация гайда
   'from-[#8a526d] to-[#2a1823]'
 ];
 
@@ -57,207 +65,75 @@ function GuideFrame({ index, selected, landscape = false, large = false }: { ind
   );
 }
 
-function BackgroundModeGuideVisual({ variant }: { variant: BackgroundGuideGraphic }) {
-  if (variant === 'studio') {
-    // Без стрелки (она никого не убеждала). Отступ между рядом иконок и контейнером
-    // роликов равен отступу МЕЖДУ иконками — единая сетка, не два случайных числа.
-    // Раскадровка одноразовая (guide-mode-frame/-delay-N, не луп): все три пила стартуют
-    // выключенными, первые два включаются по очереди, ролики проявляются вместе с ними.
-    const icons = [
-      { src: '/assets/figma/icon-tag.svg', tag: true },
-      { src: '/assets/figma/icon-photo.svg', tag: false },
-      { src: '/assets/figma/icon-colorwheel.svg', tag: false }
-    ];
-    // Тайминги: у каждого пила ДВА слоя (дашед-«выключен» / сплошной-«включён»),
-    // кросс-фейдятся — дашед реально исчезает, а не остаётся торчать под сплошным.
-    // Иконки разнесены на 600ms (не соседние delay-N — то было слишком быстро и
-    // читалось как «сразу оба фиолетовые»), ролики стартуют вместе со ВТОРОЙ иконкой.
-    const iconDelays = [150, 750];
-    return (
-      <div className="mx-auto flex w-full max-w-[190px] flex-col items-center gap-[10px] overflow-hidden" aria-hidden="true">
-        <span className="grid w-full grid-cols-3 gap-[10px]">
-          {icons.map((icon, index) => (
-            <span key={icon.src} className="relative flex h-[32px] items-center justify-center overflow-hidden rounded-[8px]">
-              <span className="absolute inset-0 rounded-[8px] border border-dashed border-white/20 bg-white/[0.03]" style={index < 2 ? { animation: `guide-mode-off-fade 320ms cubic-bezier(.16,1,.3,1) ${iconDelays[index]}ms both` } : undefined} />
-              {index < 2 && (
-                <span className="absolute inset-0 rounded-[8px] bg-[#6850b7] ring-1 ring-inset ring-white/30" style={{ animation: `guide-mode-on-fade 320ms cubic-bezier(.16,1,.3,1) ${iconDelays[index]}ms both` }} />
-              )}
-              <span className="relative z-[1]">
-                {icon.tag ? <TagIcon color="rgba(255,255,255,.92)" size={13} /> : <SvgMaskIcon src={icon.src} style={{ width: 13, height: 13, color: 'rgba(255,255,255,.92)' }} />}
-              </span>
-            </span>
-          ))}
-        </span>
-        <span className="relative h-[68px] w-full overflow-hidden rounded-[10px] border border-white/25 bg-black/15">
-          <span className="absolute left-1/2 top-[19px] h-[60px] w-[74px] -translate-x-1/2">
-            <span className="guide-mode-frame absolute left-0 top-[4px] scale-[1.15] opacity-45" style={{ animationDelay: '760ms' }}><GuideFrame index={2} /></span>
-            <span className="guide-mode-frame absolute left-[18px] top-[2px] scale-[1.15] opacity-75" style={{ animationDelay: '880ms' }}><GuideFrame index={1} /></span>
-            {/* Реюз once-реавила и infinite-пульса на одном transform дерётся за свойство —
-                вложенный span даёт каждому своё: снаружи разовое появление, внутри вечное дыхание. */}
-            <span className="guide-mode-frame absolute left-[36px] top-0 scale-[1.15]" style={{ animationDelay: '1000ms' }}><span className="guide-pulse"><GuideFrame index={0} selected /></span></span>
-          </span>
-        </span>
-      </div>
-    );
-  }
-
-  if (variant === 'pairs') {
-    return (
-      <div className="grid w-full min-w-0 grid-cols-[104px_18px_minmax(0,1fr)] items-center gap-[8px] overflow-hidden" aria-hidden="true">
-        <span className="flex min-w-0 flex-col gap-[5px]">
-          {['Футажи', 'Фото'].map((label, index) => (
-            <span key={label} className={cn('guide-mode-reveal flex h-[26px] min-w-0 items-center gap-[6px] rounded-[7px] bg-[#6850b7] px-[7px] text-[9px] text-white', index === 0 ? 'guide-mode-delay-1' : 'guide-mode-delay-2')}>
-              {index === 0 ? (
-                <TagIcon color="rgba(255,255,255,0.92)" size={13} />
-              ) : (
-                <SvgMaskIcon src="/assets/figma/icon-photo.svg" style={{ width: 13, height: 12, color: 'rgba(255,255,255,0.92)' }} />
-              )}
-              <span className="action-guide-optical-text truncate">{label}</span>
-            </span>
-          ))}
-        </span>
-        <span className="guide-mode-reveal guide-mode-delay-3 flex items-center justify-center">
-          <img src="/assets/figma/pd-arrow-right.svg" alt="" className="h-[10px] w-[18px]" />
-        </span>
-        <span className="guide-mode-reveal guide-mode-delay-4 relative h-[57px] w-full min-w-0 overflow-hidden rounded-[9px] border border-white/70 bg-black/15">
-          <span className="guide-mode-frame guide-mode-delay-5 absolute left-[7px] top-[4px] opacity-50"><GuideFrame index={2} large /></span>
-          <span className="guide-mode-frame guide-mode-delay-6 absolute left-[22px] top-[3px] opacity-75"><GuideFrame index={1} large /></span>
-          <span className="guide-mode-frame guide-mode-delay-7 absolute left-[37px] top-[2px]"><GuideFrame index={0} selected large /></span>
-        </span>
-      </div>
-    );
-  }
-
-  if (variant === 'stack') {
-    return (
-      <div className="grid w-full min-w-0 grid-cols-[82px_18px_82px] items-center justify-center gap-[8px] overflow-hidden" aria-hidden="true">
-        <span className="flex h-[64px] flex-col gap-[4px] rounded-[9px] border border-white/30 bg-black/15 p-[6px]">
-          {['Футажи', 'Фото', 'Цвет'].map((label, index) => (
-            <span key={label} className={cn('flex h-[14px] min-w-0 items-center gap-[5px] rounded-[5px] px-[5px] text-[7px] text-white', index < 2 ? 'bg-[#6850b7] ring-1 ring-inset ring-white/25' : 'border border-dashed border-white/20 bg-white/[0.03] text-white/45')}>
-              {index === 0 ? <TagIcon color="currentColor" size={9} /> : <SvgMaskIcon src={index === 1 ? '/assets/figma/icon-photo.svg' : '/assets/figma/icon-colorwheel.svg'} style={{ width: 9, height: 9, color: 'currentColor' }} />}
-              <span className="action-guide-optical-text truncate">{label}</span>
-            </span>
-          ))}
-        </span>
-        <img src="/assets/figma/pd-arrow-right.svg" alt="" className="h-[10px] w-[18px] opacity-85" />
-        <span className="relative h-[64px] overflow-hidden rounded-[9px] border border-white/30 bg-black/15">
-          <span className="absolute left-[8px] top-[8px] opacity-45"><GuideFrame index={2} /></span>
-          <span className="absolute left-[24px] top-[6px] opacity-75"><GuideFrame index={1} /></span>
-          <span className="absolute left-[40px] top-[4px]"><GuideFrame index={0} selected /></span>
-        </span>
-      </div>
-    );
-  }
-
+function BackgroundModeGuideVisual() {
+  // Без стрелки (она никого не убеждала). Отступ между рядом иконок и контейнером
+  // роликов равен отступу МЕЖДУ иконками — единая сетка, не два случайных числа.
+  // Раскадровка одноразовая (guide-mode-frame/-delay-N, не луп): все три пила стартуют
+  // выключенными, первые два включаются по очереди, ролики проявляются вместе с ними.
+  const icons = [
+    { src: '/assets/figma/icon-tag.svg', tag: true },
+    { src: '/assets/figma/icon-photo.svg', tag: false },
+    { src: '/assets/figma/icon-colorwheel.svg', tag: false }
+  ];
+  // Тайминги: у каждого пила ДВА слоя (дашед-«выключен» / сплошной-«включён»),
+  // кросс-фейдятся — дашед реально исчезает, а не остаётся торчать под сплошным.
+  // Иконки разнесены на 600ms (не соседние delay-N — то было слишком быстро и
+  // читалось как «сразу оба фиолетовые»), ролики стартуют вместе со ВТОРОЙ иконкой.
+  const iconDelays = [150, 750];
   return (
-    <div className="grid w-full min-w-0 grid-cols-[86px_18px_86px] items-center justify-center gap-[8px] overflow-hidden" aria-hidden="true">
-      <span className="relative h-[64px] overflow-hidden rounded-[9px] border border-white/30 bg-black/15">
-        <span className="absolute left-[9px] top-[8px] flex h-[22px] w-[50px] items-center gap-[5px] rounded-[6px] bg-[#6850b7] px-[6px] text-[7px] text-white ring-1 ring-inset ring-white/25"><TagIcon color="currentColor" size={9} /><span className="action-guide-optical-text">Футажи</span></span>
-        <span className="absolute left-[25px] top-[25px] flex h-[22px] w-[50px] items-center gap-[5px] rounded-[6px] bg-[#6850b7] px-[6px] text-[7px] text-white shadow-[0_5px_12px_rgba(5,1,15,.32)] ring-1 ring-inset ring-white/25"><SvgMaskIcon src="/assets/figma/icon-photo.svg" style={{ width: 9, height: 9, color: 'currentColor' }} /><span className="action-guide-optical-text">Фото</span></span>
-        <span className="absolute bottom-[5px] left-[10px] h-[12px] w-[12px] rounded-[4px] border border-dashed border-white/20" />
+    <div className="mx-auto flex w-full max-w-[190px] flex-col items-center gap-[10px] overflow-hidden" aria-hidden="true">
+      <span className="grid w-full grid-cols-3 gap-[10px]">
+        {icons.map((icon, index) => (
+          <span key={icon.src} className="relative flex h-[32px] items-center justify-center overflow-hidden rounded-[8px]">
+            <span className="absolute inset-0 rounded-[8px] border border-dashed border-white/20 bg-white/[0.03]" style={index < 2 ? { animation: `guide-mode-off-fade 320ms cubic-bezier(.16,1,.3,1) ${iconDelays[index]}ms both` } : undefined} />
+            {index < 2 && (
+              <span /* ui-allow: иллюстрация гайда */ className="absolute inset-0 rounded-[8px] bg-[#6850b7] ring-1 ring-inset ring-white/30" style={{ animation: `guide-mode-on-fade 320ms cubic-bezier(.16,1,.3,1) ${iconDelays[index]}ms both` }} />
+            )}
+            <span className="relative z-[1]">
+              // ui-allow: иллюстрация гайда
+              {icon.tag ? <TagIcon color="rgba(255,255,255,.92)" size={13} /> : <SvgMaskIcon src={icon.src} style={{ width: 13, height: 13, color: 'rgba(255,255,255,.92)' }} />}
+            </span>
+          </span>
+        ))}
       </span>
-      <img src="/assets/figma/pd-arrow-right.svg" alt="" className="h-[10px] w-[18px] opacity-85" />
-      <span className="grid h-[64px] grid-cols-[1fr_1fr] gap-[5px] overflow-hidden rounded-[9px] border border-white/30 bg-black/15 p-[6px]">
-        <span className={cn('col-span-2 h-[20px] rounded-[6px] bg-gradient-to-r ring-1 ring-inset ring-white/35', GUIDE_TONES[1])} />
-        <span className={cn('h-[30px] rounded-[6px] bg-gradient-to-b ring-1 ring-inset ring-white/35', GUIDE_TONES[0])} />
-        <span className={cn('h-[30px] rounded-[6px] bg-gradient-to-b ring-1 ring-inset ring-white/35', GUIDE_TONES[2])} />
+      <span className="relative h-[68px] w-full overflow-hidden rounded-[10px] border border-white/25 bg-black/15">
+        <span className="absolute left-1/2 top-[19px] h-[60px] w-[74px] -translate-x-1/2">
+          <span className="guide-mode-frame absolute left-0 top-[4px] scale-[1.15] opacity-45" style={{ animationDelay: '760ms' }}><GuideFrame index={2} /></span>
+          <span className="guide-mode-frame absolute left-[18px] top-[2px] scale-[1.15] opacity-75" style={{ animationDelay: '880ms' }}><GuideFrame index={1} /></span>
+          {/* Реюз once-реавила и infinite-пульса на одном transform дерётся за свойство —
+              вложенный span даёт каждому своё: снаружи разовое появление, внутри вечное дыхание. */}
+          <span className="guide-mode-frame absolute left-[36px] top-0 scale-[1.15]" style={{ animationDelay: '1000ms' }}><span className="guide-pulse"><GuideFrame index={0} selected /></span></span>
+        </span>
       </span>
     </div>
   );
 }
 
-function BackgroundPoolGuideVisual({ variant }: { variant: BackgroundGuideGraphic }) {
-  if (variant === 'studio') {
-    return (
-      <div className="mx-auto flex w-full max-w-[100px] flex-col items-center gap-[7px] overflow-visible" aria-hidden="true">
-        {/* Галочка — по центру чипа, не в углу (правка ревью: сбоку читалась плохо). */}
-        <span className="flex h-[33px] w-[88px] items-center justify-center gap-[5px] rounded-[9px] border border-white/25 bg-black/15 px-[7px] py-[6px]">
-          <span className={cn('guide-pulse relative flex h-[19px] w-[28px] items-center justify-center rounded-[6px] bg-gradient-to-br ring-1 ring-inset ring-white/45', GUIDE_TONES[2])}>
-            <span className="text-[9px] leading-none text-white">✓</span>
-          </span>
-          <span className="h-[19px] w-[28px] rounded-[6px] border border-dashed border-white/25 bg-white/[0.03]" />
-        </span>
-        {/* Карусель роликов, без стрелки: три пила крутятся по кругу — центр уезжает
-            влево-и-мельчает, правый вырастает в центр, левый встаёт на место правого.
-            Один кейфрейм на всех трёх (guide-carousel), фаза сдвинута на треть периода
-            через отрицательный animation-delay — тот же приём, что у кросс-фейда иконок хука. */}
-        <div className="relative flex h-[58px] w-full items-center justify-center" aria-hidden="true">
-          {GUIDE_TONES.map((tone, index) => (
-            <span
-              key={index}
-              className={cn('guide-carousel absolute left-1/2 top-1/2 flex h-[46px] w-[32px] items-center justify-center overflow-hidden rounded-[7px] bg-gradient-to-b shadow-[0_8px_16px_rgba(5,1,15,.4)] ring-1 ring-inset ring-white/50', tone)}
-              style={{ animationDelay: `${index * -1.5}s` }}
-            >
-              <img src="/assets/figma/btn-play.svg" alt="" className="h-[11px] w-[11px]" />
-            </span>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (variant === 'pairs') {
-    return (
-      <div className="grid w-full min-w-0 grid-cols-3 gap-[9px] overflow-hidden px-[2px]" aria-hidden="true">
-        {GUIDE_TONES.map((tone, index) => (
-          <span key={index} className="flex min-w-0 flex-col items-center">
-            <span className={cn('h-[18px] w-full rounded-[6px] bg-gradient-to-r ring-1 ring-inset ring-white/35', tone)} />
-            <img src="/assets/figma/pd-arrow-right.svg" alt="" className="my-[3px] h-[8px] w-[12px] rotate-90 opacity-80" />
-            <span className={cn('relative flex h-[47px] w-[31px] items-center justify-center overflow-hidden rounded-[7px] bg-gradient-to-b ring-1 ring-inset ring-white/55', tone)}>
-              <img src="/assets/figma/btn-play.svg" alt="" className="h-[14px] w-[14px]" />
-              <span className="action-guide-optical-text absolute bottom-[3px] text-[7px] text-white/80">0{index + 1}</span>
-            </span>
-          </span>
-        ))}
-      </div>
-    );
-  }
-
-  if (variant === 'stack') {
-    return (
-      <div className="grid min-h-[82px] w-full min-w-0 grid-cols-[78px_20px_90px] items-center justify-center gap-[8px]" aria-hidden="true">
-        <span className="flex h-[72px] items-center justify-center gap-[4px] rounded-[9px] border border-white/30 bg-black/15 px-[7px]">
-          {[0, 1, 2, 3].map((index) => index < 3 ? (
-            <span key={index} className={cn('relative h-[52px] w-[13px] shrink-0 rounded-[5px] bg-gradient-to-b ring-1 ring-inset ring-white/45', GUIDE_TONES[index])}>
-              <span className="action-guide-optical-text absolute left-1/2 top-[2px] -translate-x-1/2 text-[6px] text-white">✓</span>
-              <span className="absolute inset-x-[3px] bottom-[5px] h-px rounded-full bg-white/35" />
-            </span>
-          ) : (
-            <span key={index} className="relative h-[52px] w-[13px] shrink-0 rounded-[5px] border border-dashed border-white/30 bg-white/[0.03]">
-              <span className="absolute inset-x-[3px] bottom-[5px] h-px rounded-full bg-white/10" />
-            </span>
-          ))}
-        </span>
-        <img src="/assets/figma/pd-arrow-right.svg" alt="" className="h-[10px] w-[20px] opacity-85" />
-        <span className="relative h-[82px] min-w-0 overflow-visible">
-          {GUIDE_TONES.map((tone, index) => (
-            <span key={index} className={cn('absolute top-[10px] flex h-[58px] w-[36px] items-center justify-center overflow-hidden rounded-[8px] bg-gradient-to-b shadow-[0_7px_12px_rgba(5,1,15,.38)] ring-1 ring-inset ring-white/50', tone)} style={{ left: 4 + index * 25, transform: `rotate(${(index - 1) * 4}deg)` }}>
-              <img src="/assets/figma/btn-play.svg" alt="" className="h-[14px] w-[14px]" />
-              <span className="action-guide-optical-text absolute bottom-[4px] text-[7px] text-white/80">0{index + 1}</span>
-            </span>
-          ))}
-        </span>
-      </div>
-    );
-  }
-
+function BackgroundPoolGuideVisual() {
   return (
-    <div className="flex w-full min-w-0 flex-col gap-[7px] overflow-hidden px-[2px]" aria-hidden="true">
-      <span className="grid grid-cols-[repeat(3,1fr)] gap-[7px]">
-        {GUIDE_TONES.map((tone, index) => <span key={index} className={cn('h-[22px] rounded-[6px] bg-gradient-to-r ring-1 ring-inset ring-white/35', tone)} />)}
+    <div className="mx-auto flex w-full max-w-[100px] flex-col items-center gap-[7px] overflow-visible" aria-hidden="true">
+      {/* Галочка — по центру чипа, не в углу (правка ревью: сбоку читалась плохо). */}
+      <span className="flex h-[33px] w-[88px] items-center justify-center gap-[5px] rounded-[9px] border border-white/25 bg-black/15 px-[7px] py-[6px]">
+        <span className={cn('guide-pulse relative flex h-[19px] w-[28px] items-center justify-center rounded-[6px] bg-gradient-to-br ring-1 ring-inset ring-white/45', GUIDE_TONES[2])}>
+          <span className="text-[9px] leading-none text-white">✓</span>
+        </span>
+        <span className="h-[19px] w-[28px] rounded-[6px] border border-dashed border-white/25 bg-white/[0.03]" />
       </span>
-      <span className="relative h-[10px]">
-        <span className="absolute inset-x-[14%] top-0 h-px bg-white/25" />
-        {GUIDE_TONES.map((_, index) => <img key={index} src="/assets/figma/pd-arrow-right.svg" alt="" className="absolute top-[-1px] h-[8px] w-[11px] rotate-90 opacity-70" style={{ left: `${14 + index * 36}%` }} />)}
-      </span>
-      <span className="grid grid-cols-3 gap-[7px] rounded-[9px] border border-white/35 bg-black/15 p-[5px]">
+      {/* Карусель роликов, без стрелки: три пила крутятся по кругу — центр уезжает
+          влево-и-мельчает, правый вырастает в центр, левый встаёт на место правого.
+          Один кейфрейм на всех трёх (guide-carousel), фаза сдвинута на треть периода
+          через отрицательный animation-delay — тот же приём, что у кросс-фейда иконок хука. */}
+      <div className="relative flex h-[58px] w-full items-center justify-center" aria-hidden="true">
         {GUIDE_TONES.map((tone, index) => (
-          <span key={index} className={cn('relative flex h-[39px] min-w-0 items-center justify-center overflow-hidden rounded-[6px] bg-gradient-to-b', tone)}>
-            <img src="/assets/figma/btn-play.svg" alt="" className="h-[13px] w-[13px]" />
-            <span className="action-guide-optical-text absolute bottom-[2px] text-[7px] text-white/80">ролик {index + 1}</span>
+          <span
+            key={index}
+            className={cn('guide-carousel absolute left-1/2 top-1/2 flex h-[46px] w-[32px] items-center justify-center overflow-hidden rounded-[7px] bg-gradient-to-b shadow-[0_8px_16px_rgba(5,1,15,.4)] ring-1 ring-inset ring-white/50', tone)}
+            style={{ animationDelay: `${index * -1.5}s` }}
+          >
+            <img src="/assets/figma/btn-play.svg" alt="" className="h-[11px] w-[11px]" />
           </span>
         ))}
-      </span>
+      </div>
     </div>
   );
 }
@@ -281,8 +157,11 @@ export function useDragScroll() {
     if (!drag.current.active || !ref.current) return;
     const dx = e.clientX - drag.current.startX;
     if (Math.abs(dx) > 5) {
+      // лента поехала — держим курсор за ней, даже когда он вышел за край (иначе драг рвался)
+      if (!drag.current.moved) ref.current.setPointerCapture(e.pointerId);
       drag.current.moved = true;
-      ref.current.scrollLeft = drag.current.startScroll - dx;
+      // сдвиг мыши — визуальные пиксели, scrollLeft — пиксели ленты (визард под zoom)
+      ref.current.scrollLeft = drag.current.startScroll - dx / cssZoom(ref.current);
     }
   };
   const end = () => {
@@ -333,231 +212,246 @@ export function TagIcon({ color, size = 20 }: { color: string; size?: number }) 
   );
 }
 
-function BgSquaresIcon({ color }: { color: string }) {
+/* ── шаг «Фон» — разметка по макету wizard12 v3 ── */
+
+/** Иконка склейки/стиля из продукта (круг 40) в кружке пилюли макета (28). */
+export function ChipBadge({ label }: { label: string }) {
   return (
-    <span aria-hidden="true" className="relative inline-block h-[19px] w-[19px] shrink-0">
-      <span className="absolute bottom-0 left-0 h-[11px] w-[11px] border border-dashed" style={{ borderColor: color }} />
-      <span className="absolute right-0 top-0 h-[15px] w-[15px]" style={{ backgroundColor: color }} />
+    <span className="w12-gicon" aria-hidden="true">
+      <span className="w12-gicon-scale"><ChipIcon label={label} /></span>
     </span>
   );
 }
 
+/** Что человек навёл в списке склеек/стилей — это же играет примером в превью справа. */
+const useBgHover = create<{ example: string | null; set: (id: string | null) => void }>((set) => ({ example: null, set: (example) => set({ example }) }));
+
 export function ArrowRight() {
-  return (
-    <svg viewBox="0 0 26 16" width="25" height="15" fill="none" aria-hidden="true">
-      <path d="M1 8h22.5M17 1.5 24.5 8 17 14.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+  return <Svg>{W12.arrow}</Svg>;
 }
 
-const modes: { value: BackgroundMode; label: string; icon: string; w: number; h: number }[] = [
-  { value: 'footage', label: 'wizard.bg.modeFootage', icon: '/assets/figma/icon-tag.svg', w: 20, h: 16 },
-  { value: 'photo', label: 'wizard.bg.modePhoto', icon: '/assets/figma/icon-photo.svg', w: 21, h: 19 },
-  { value: 'color', label: 'wizard.bg.modeColor', icon: '/assets/figma/icon-colorwheel.svg', w: 20, h: 20 }
+export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
+  return <button type="button" role="switch" aria-checked={checked} aria-label={label} className="w12-switch" onClick={() => onChange(!checked)} />;
+}
+
+const modes: { value: BackgroundMode; label: string; icon: ReactNode }[] = [
+  { value: 'footage', label: 'wizard.bg.modeFootage', icon: <span className="w12-mi w12-cap w12-heavy" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-tag.svg)', '--r': 1.24, transform: 'rotate(-22deg)' } as React.CSSProperties} /> },
+  { value: 'photo', label: 'wizard.bg.modePhoto', icon: <span className="w12-mi w12-cap" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-photo.svg)', '--r': 1.1 } as React.CSSProperties} /> },
+  { value: 'color', label: 'wizard.bg.modeColor', icon: <span className="w12-mi w12-cap w12-heavy" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-colorwheel.svg)' } as React.CSSProperties} /> }
 ];
 
-export function ModeSwitch() {
-  const { t } = useTranslation();
-  const mode = useWizardStore((state) => state.background.mode);
-  const setBackground = useWizardStore((state) => state.setBackground);
-  const index = Math.max(0, modes.findIndex((m) => m.value === mode));
+/** Сколько выбрано в каждом режиме: свои видео идут в «Футажи». */
+function modeCounts(bg: ReturnType<typeof useWizardStore.getState>['background']): Record<BackgroundMode, number> {
+  return { footage: bg.footage.length + bg.sourceVideos.length, photo: bg.photo.length, color: bg.color ? 1 : 0 };
+}
+
+/* ── тип подборки футажей: выпадающий список — типов станет больше, чем влезает в ряд ── */
+const OWN_TYPE = '__own__';
+function TypeMenu({ label, value, options, onChange }: { label: string; value: string; options: { id: string; label: string }[]; onChange: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const listId = useId();
+  const current = options.find((option) => option.id === value) ?? options[0];
+  useEffect(() => {
+    if (!open) return undefined;
+    setActive(Math.max(0, options.findIndex((option) => option.id === value)));
+    const onDown = (event: PointerEvent) => { if (!wrapRef.current?.contains(event.target as Node)) setOpen(false); };
+    window.addEventListener('pointerdown', onDown);
+    return () => window.removeEventListener('pointerdown', onDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  const pick = (id: string) => { onChange(id); setOpen(false); buttonRef.current?.focus(); };
+  const onKey = (event: React.KeyboardEvent) => {
+    if (event.key === 'Escape' && open) { event.preventDefault(); setOpen(false); return; }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!open) { setOpen(true); return; }
+      setActive((index) => (index + (event.key === 'ArrowDown' ? 1 : -1) + options.length) % options.length);
+      return;
+    }
+    if ((event.key === 'Enter' || event.key === ' ') && open) { event.preventDefault(); pick(options[active].id); }
+  };
   return (
-    <div className="mode-switch" role="tablist" aria-label={t('wizard.bg.typeAria')}>
-      <span className="mode-switch-thumb" style={{ transform: `translateX(${index * 100}%)` }} aria-hidden="true" />
-      {modes.map((item) => {
-        const active = mode === item.value;
-        const iconColor = active ? ACCENT : WHITE80;
-        return (
-          <button
-            key={item.value}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            className={cn('mode-switch-btn', active && 'is-active')}
-            onClick={() => setBackground({ mode: item.value })}
-          >
-            {item.value === 'footage' ? (
-              <TagIcon color={iconColor} />
-            ) : (
-              <SvgMaskIcon src={item.icon} style={{ width: item.w, height: item.h, color: iconColor }} />
-            )}
-            {t(item.label)}
-          </button>
-        );
-      })}
+    <div ref={wrapRef} className="w12-dd-wrap" onKeyDown={onKey}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="w12-dd"
+        aria-label={`${label}: ${current?.label ?? ''}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="w12-l">{current?.label}</span><Svg>{W12.down}</Svg>
+      </button>
+      {open && (
+        <div id={listId} role="listbox" aria-label={label} className="w12-dd-menu" aria-activedescendant={`${listId}-${active}`}>
+          {options.map((option, index) => (
+            <div
+              key={option.id}
+              id={`${listId}-${index}`}
+              role="option"
+              aria-selected={option.id === value}
+              data-active={index === active || undefined}
+              className="w12-dd-opt"
+              onPointerEnter={() => setActive(index)}
+              onClick={() => pick(option.id)}
+            >
+              <span className="w12-l">{option.label}</span>
+              {option.id === value && <Svg>{W12.check}</Svg>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-/**
- * Степпер типа футажей (Figma W12, 737:275): «‹ Личности ›» — текст 24 Book под grad-main,
- * стрелки 6.69×11.78 по краям зоны 429..580 в панели 620. Список из реестра, не хардкод.
- * ГОЧА: на W12 нарисован шаг «Личности», но по смыслу дефолт — «Стандартные» (registry.default).
- */
-function FootageTypeStepper() {
+/* ── лента карточек: листается стрелками и драгом ── */
+const railMovedRef: { current: () => boolean } = { current: () => false };
+function Rail({ children, resetKey }: { children: ReactNode; resetKey: string }) {
   const { t } = useTranslation();
-  const footageType = useWizardStore((state) => state.background.footageType);
-  const setBackground = useWizardStore((state) => state.setBackground);
-  const label = t(footageTypeKey(footageType));
-
-  const arrow = (dir: -1 | 1) => (
-    <button
-      type="button"
-      aria-label={dir === -1 ? t('wizard.bg.prevType') : t('wizard.bg.nextType')}
-      onClick={() => setBackground({ footageType: stepFootageType(footageType, dir) })}
-      className="flex h-[24px] w-[16px] shrink-0 items-center justify-center transition hover:brightness-125"
-    >
-      <SvgMaskIcon
-        src="/assets/figma/bg-step-arrow.svg"
-        style={{ width: 6.69, height: 11.78, color: ACCENT, transform: dir === -1 ? 'rotate(180deg)' : undefined }}
-      />
-    </button>
-  );
-
+  const scroll = useDragScroll();
+  railMovedRef.current = scroll.moved;
+  const [edges, setEdges] = useState({ left: true, right: true });
+  const sync = () => {
+    const el = scroll.ref.current;
+    if (!el) return;
+    setEdges({ left: el.scrollLeft < 8, right: el.scrollLeft + el.clientWidth > el.scrollWidth - 8 });
+  };
+  useEffect(() => {
+    scroll.ref.current?.scrollTo({ left: 0 });
+    sync();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey]);
+  useEffect(() => {
+    window.addEventListener('resize', sync);
+    return () => window.removeEventListener('resize', sync);
+  });
+  const by = (dir: 1 | -1) => scroll.ref.current?.scrollBy({ left: dir * scroll.ref.current.clientWidth * 0.8, behavior: 'smooth' });
   return (
-    /* Стрелки держатся текста на постоянном отступе: фиксированная ширина ряда разносила
-       их по краям и у коротких подписей («16:9») зазор становился огромным. */
-    /* телефон: подпись становится заголовком строки («Вертикальные 9:16»), стрелки — две
-       пилюли справа; на десктопе порядок фигмы «‹ подпись ›» через md:order-* */
-    <span className="inline-flex items-center gap-[15px] max-md:w-full max-md:gap-[8px]">
-      <span
-        className="whitespace-nowrap text-center text-[24px] font-[350] leading-normal text-transparent md:order-2 max-md:mr-auto max-md:text-[15px]"
-        style={{ backgroundImage: 'var(--grad-main)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}
-      >
-        {label}
-      </span>
-      <span className="md:order-1 max-md:flex max-md:h-[28px] max-md:w-[28px] max-md:items-center max-md:justify-center max-md:rounded-[8px] max-md:bg-grad-soft-20">{arrow(-1)}</span>
-      <span className="md:order-3 max-md:flex max-md:h-[28px] max-md:w-[28px] max-md:items-center max-md:justify-center max-md:rounded-[8px] max-md:bg-grad-soft-20">{arrow(1)}</span>
-    </span>
+    <div className="w12-rail">
+      <button type="button" className="w12-rail-btn w12-l" data-off={edges.left || undefined} aria-label={t('wizard.bg.railPrev')} onClick={() => by(-1)}><Svg>{W12.left}</Svg></button>
+      <div ref={scroll.ref} className="w12-cards" onScroll={sync} {...scroll.handlers}>{children}</div>
+      <button type="button" className="w12-rail-btn w12-r" data-off={edges.right || undefined} aria-label={t('wizard.bg.railNext')} onClick={() => by(1)}><Svg>{W12.right}</Svg></button>
+    </div>
   );
 }
 
-export function Toggle({ checked, onChange, label }: { checked: boolean; onChange: (value: boolean) => void; label: string }) {
-  return <button type="button" role="switch" aria-checked={checked} aria-label={label} className="toggle" onClick={() => onChange(!checked)} />;
-}
-
-/**
- * Бокс под контент 1920×1440 (4:3), выровненный по целым пикселям.
- *
- * Высота карточек тянется из флекс-раскладки и приходит дробной (263.7px), из-за чего
- * ширина по aspect-ratio тоже дробная — реальное фото в таком боксе ложится с подпиксельным
- * масштабом: тонкие тёмные полосы по краям и лишний срез сверху/снизу от object-fit: cover.
- * Снапим высоту к кратной 3 — тогда ширина = h/3*4 целая, и кадр 4:3 садится ровно.
- */
-/** Ширина фото-карточки: кратна 4, чтобы высота 4:3 (×3/4) вышла целым числом пикселей. */
-const PHOTO_CARD_W = 348;
-
-function MediaCard({ item, selected, wide, format, onToggle }: { item: Vibe; selected: boolean; wide?: boolean; format: string; onToggle: () => void }) {
-  const chip = useChip();
+function MediaCard({ item, order, format, caption, onToggle }: { item: Vibe; order: number; format: string; caption: string; onToggle: () => void }) {
   const [broken, setBroken] = useState(false);
   const isVideo = isVideoUrl(item.previewUrl);
-  /*
-   * Размер обеих карточек задаёт ВЫСОТА РЯДА, ширину выводит aspect-ratio: фото 4:3
-   * (кадр 1920×1440), футаж — вертикаль 142:253.
-   *
-   * Ширину пробовали считать в JS от высоты ряда, чтобы она выходила целой и кадр не мылился
-   * подпиксельным масштабом. Но пересчёт живёт на ResizeObserver и отстаёт: после смены
-   * размера окна карточка оставалась от прежней высоты ряда и вылезала за него — сверху
-   * обрезался угол вместе с меткой выбора. Чистый CSS пересчитывается синхронно с версткой
-   * и разъехаться не может; возможная полупиксельная кромка — цена меньшая, чем битый ряд.
-   */
-  const sizing: CSSProperties = wide || format === '16:9'
-    ? { height: '100%', aspectRatio: format === '16:9' ? '16 / 9' : '4 / 3', flexShrink: 0 }
-    : { aspectRatio: '142 / 253' };
   return (
-    <button type="button" onClick={onToggle} aria-pressed={selected} className={cn('media-card', wide || format === '16:9' ? 'media-card--fit' : 'h-full')} style={sizing}>
-      <span className="absolute left-2 top-2 z-10 rounded bg-black/60 px-2 py-1 text-xs text-white">{format}</span>
-      {!broken && (isVideo
-        ? <video src={item.previewUrl} muted loop playsInline autoPlay onError={() => setBroken(true)} />
-        : <img src={item.previewUrl} alt="" onError={() => setBroken(true)} />)}
-      {broken && <span className="media-card-fallback">{chip(item.name)}</span>}
-      {selected && (
-        <span
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 z-[2] rounded-r10"
-          style={{ boxShadow: wide ? 'inset 0 0 0 2px var(--accent-light)' : 'inset 0 0 0 3px var(--accent)' }}
-        />
-      )}
-      {/* Галочек на примерах нет ни у футажа, ни у фото, ни у субтитров: кружок в углу
-          лип к скруглению, читался как артефакт и закрывал кадр. Выбор показывает обводка —
-          у узких карточек она толще (3px), чтобы её точно было видно. */}
+    <button
+      type="button"
+      className={cn('w12-mcard', format === '4:3' && 'w12-wide', format === '16:9' && 'w12-cine')}
+      aria-pressed={order > 0}
+      onClick={() => { if (!railMovedRef.current()) onToggle(); }}
+    >
+      <span className="w12-media">
+        {!broken && (isVideo
+          ? <video src={item.previewUrl} muted loop playsInline autoPlay draggable={false} onError={() => setBroken(true)} />
+          : <img src={item.previewUrl} alt="" draggable={false} onError={() => setBroken(true)} />)}
+      </span>
+      <span className="w12-badge w12-num">{order > 0 ? order : ''}</span>
+      <span className="w12-cap">{caption}</span>
     </button>
   );
 }
 
-/* Выбор цвета (Figma W22): повторный клик по выбранному свотчу выключает цвет */
-function ColorRow({ value, onPick }: { value?: string; onPick: (hex?: string) => void }) {
+/* ── цвет: белый, чёрный или свой на шкале; код цвета всегда виден ── */
+function ColorPicker() {
   const { t } = useTranslation();
+  const chip = useChip();
+  const background = useWizardStore((state) => state.background);
+  const setBackground = useWizardStore((state) => state.setBackground);
+  const setHover = useBgHover((state) => state.set);
   const [huePct, setHuePct] = useState(50);
-  const barRef = useRef<HTMLDivElement>(null);
-
-  const pickFromBar = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!barRef.current) return;
-    const rect = barRef.current.getBoundingClientRect();
-    const pct = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100));
+  const hueRef = useRef<HTMLDivElement>(null);
+  const value = background.color;
+  const custom = Boolean(value && value !== WHITE_BG && value !== BLACK_BG);
+  const pick = (clientX: number) => {
+    const rect = hueRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const pct = Math.min(100, Math.max(0, ((clientX - rect.left) / rect.width) * 100));
     setHuePct(pct);
-    onPick(hueAt(pct));
+    setBackground({ color: hueAt(pct) });
   };
-
-  const onBarDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (!barRef.current) return;
-    try {
-      barRef.current.setPointerCapture(e.pointerId);
-    } catch {
-      /* синтетический pointerId */
-    }
-    pickFromBar(e);
-    barRef.current.onpointermove = ((ev: PointerEvent) => {
-      if (ev.buttons) pickFromBar(ev as unknown as ReactPointerEvent<HTMLDivElement>);
-    }) as never;
-    barRef.current.onpointerup = () => {
-      if (barRef.current) { barRef.current.onpointermove = null; barRef.current.onpointerup = null; }
-    };
-  };
-
-  const custom = Boolean(value && value !== '#f6f5fd' && value !== '#05010f');
-
   return (
-    <div className="flex items-center gap-[20px]">
-      <button
-        type="button"
-        aria-label={t('wizard.bg.whiteBg')}
-        className="h-[60px] w-[60px] shrink-0 rounded-r15 bg-[#f6f5fd] transition"
-        style={{ boxShadow: value === '#f6f5fd' ? '0 0 0 2px var(--accent-light)' : undefined }}
-        onClick={() => onPick(value === '#f6f5fd' ? undefined : '#f6f5fd')}
-      />
-      <button
-        type="button"
-        aria-label={t('wizard.bg.blackBg')}
-        className="h-[60px] w-[60px] shrink-0 rounded-r15 bg-[#05010f] transition"
-        style={{ boxShadow: value === '#05010f' ? '0 0 0 2px var(--accent-light)' : 'inset 0 0 0 1px var(--text-20)' }}
-        onClick={() => onPick(value === '#05010f' ? undefined : '#05010f')}
-      />
-      <div
-        ref={barRef}
-        className="color-slider h-[60px] flex-1"
-        style={{ background: HUE_GRADIENT }}
-        onPointerDown={onBarDown}
-        role="slider"
-        aria-label={t('wizard.bg.colorBg')}
-        aria-valuenow={Math.round(huePct)}
-      >
-        {custom && <span className="color-slider-thumb" style={{ left: `${huePct}%` }} />}
+    <div className="w12-colors">
+      <div className="w12-sw-row">
+        <button type="button" className="w12-sw w12-white" aria-label={t('wizard.bg.whiteBg')} aria-pressed={value === WHITE_BG} onClick={() => setBackground({ color: value === WHITE_BG ? undefined : WHITE_BG })} />
+        <button type="button" className="w12-sw w12-black" aria-label={t('wizard.bg.blackBg')} aria-pressed={value === BLACK_BG} onClick={() => setBackground({ color: value === BLACK_BG ? undefined : BLACK_BG })} />
+        <div
+          ref={hueRef}
+          className="w12-hue"
+          role="slider"
+          tabIndex={0}
+          aria-label={t('wizard.bg.colorBg')}
+          aria-pressed={custom}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(huePct)}
+          style={{ background: HUE_GRADIENT }}
+          onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); pick(event.clientX); }}
+          onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) pick(event.clientX); }}
+          onKeyDown={(event) => {
+            const d = ({ ArrowLeft: -2, ArrowRight: 2 } as Record<string, number>)[event.key];
+            if (!d) return;
+            event.preventDefault();
+            const pct = Math.min(100, Math.max(0, huePct + d));
+            setHuePct(pct);
+            setBackground({ color: hueAt(pct) });
+          }}
+        >
+          <span className="w12-thumb" style={{ left: `${huePct}%`, background: hueAt(huePct) }} />
+        </div>
+      </div>
+      <div className="w12-cur-color">
+        {value ? <><i style={{ background: value }} />{t('wizard.bg.colorValue')} <b>{value.toUpperCase()}</b></> : t('wizard.bg.colorHint')}
+      </div>
+      <div className="w12-opt-row">
+        <span className="w12-mi w12-cap" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-strobe.svg)', color: background.strobe ? 'var(--w12-text)' : 'var(--w12-text-3)', alignSelf: 'flex-start', marginTop: '.3em' } as React.CSSProperties} />
+        <span className="w12-txt">{t('wizard.bg.strobe')}<span>{t('wizard.bg.strobeHint')}</span></span>
+        <Toggle checked={background.strobe} onChange={(strobe) => setBackground({ strobe })} label={t('wizard.bg.strobe')} />
+      </div>
+      {/* склейки видны только при включённом стробе — выключенными они не висят */}
+      <div className="w12-disclose" data-open={background.strobe || undefined}>
+        <div>
+          <div className="w12-sec" style={{ gap: 8 }}>
+            <span className="w12-pool-note" style={{ marginTop: 4 }}>{t('wizard.bg.glueHint')}</span>
+            <div className="w12-pills">
+              {GLUE_TYPES.map((glue) => (
+                <button
+                  key={glue.id}
+                  type="button"
+                  className="w12-pill w12-with-ic"
+                  aria-pressed={background.strobe && background.glue === glue.id}
+                  tabIndex={background.strobe ? 0 : -1}
+                  onClick={() => setBackground({ glue: glue.id })}
+                  onPointerEnter={() => setHover(previewIdFor('effectGlue', glue.label) ?? null)}
+                  onPointerLeave={() => setHover(null)}
+                  onFocus={() => setHover(previewIdFor('effectGlue', glue.label) ?? null)}
+                  onBlur={() => setHover(null)}
+                >
+                  <ChipBadge label={glue.label} /><span className="w12-l">{chip(glue.label)}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
 }
 
-export function StageBackground({ guideGraphic = 'studio', guideVariant = 'visual', qaGuide }: { guideGraphic?: BackgroundGuideGraphic; guideVariant?: ActionGuideVariant; qaGuide?: string | null }) {
-  const { t } = useTranslation();
-  const chip = useChip();
-  const { push } = useToast();
+function useBackgroundLists() {
   const background = useWizardStore((state) => state.background);
-  const setBackground = useWizardStore((state) => state.setBackground);
-  const toggleVibe = useWizardStore((state) => state.toggleVibe);
-  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
   const lyrics = useWizardStore((state) => state.fragmentEnabled ? state.fragmentLyrics : state.lyrics);
-  // Lyrics and media plane both determine the semantic order.
+  // Порядок задают и текст отрывка, и план подбора: вайбы ранжируются по смыслу текста
   const footagePlane = footageTypePlane(background.footageType);
   const vibesQuery = useQuery({
     queryKey: ['vibes', footagePlane, footagePlane === 'vibes' ? lyrics : ''],
@@ -573,89 +467,143 @@ export function StageBackground({ guideGraphic = 'studio', guideVariant = 'visua
     staleTime: 60_000,
     enabled: background.mode === 'photo' && Boolean(lyrics.trim())
   });
-  const cardsScroll = useDragScroll();
-  const gluesScroll = useDragScroll();
+  return { background, footagePlane, vibesQuery, photosQuery };
+}
+
+/** Шаг «Фон»: режимы со счётчиками, типы футажей видны сразу, лента выбора, свои исходники. */
+export function StageBackground({ qaGuide }: { qaGuide?: string | null }) {
+  const { t } = useTranslation();
+  const chip = useChip();
+  const setBackground = useWizardStore((state) => state.setBackground);
+  const toggleVibe = useWizardStore((state) => state.toggleVibe);
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
+  const { background, footagePlane, vibesQuery, photosQuery } = useBackgroundLists();
+  const tried = useTried(2);
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  // «Свои» — отдельный тип в ленте футажей, пока свои видео есть
+  const [showOwn, setShowOwn] = useState(false);
   const modeGuideTargetRef = useRef<HTMLDivElement>(null);
   const selectionGuideTargetRef = useRef<HTMLDivElement>(null);
 
-  /*
-   * Фото-карточки жили фиксированными 348×261, пока футажи тянулись во всю высоту ряда:
-   * на высоком окне фото выглядели заметно мельче и с лишними полями. Считаем ширину от
-   * реальной высоты ряда и округляем до кратного 4 — так 4:3 остаётся целым числом пикселей.
-   */
-  useEffect(() => {
-    const row = cardsScroll.ref.current;
-    if (!row) return;
-    row.scrollTo({ left: 0, behavior: 'smooth' });
-  }, [background.mode, background.footageType, cardsScroll.ref]);
-
   const isMedia = background.mode !== 'color';
   const listQuery = background.mode === 'photo' ? photosQuery : vibesQuery;
-  const list = background.mode === 'photo' ? photosQuery.data?.photos : vibesQuery.data?.vibes;
+  const list = (background.mode === 'photo' ? photosQuery.data?.photos : vibesQuery.data?.vibes) ?? [];
   const loading = listQuery.isLoading;
   const selected = background.mode === 'photo' ? background.photo : background.footage;
+  const counts = modeCounts(background);
   const hasBackground = backgroundVariations(background) > 0;
-  // selection-хук объявлен первым: его dismissed-значение нужно для idle-условия
-  // ГАЙДА ВЫШЕ по цепочке (mode) — «эта подсказка ещё актуальна, если дальше по
-  // цепочке ещё не ушли», иначе после простоя может вернуться уже пройденный шаг.
-  // visible=false у selection: точный пререквизит «mode уже закрыт» на этом
-  // месте не собрать (modeGuideDismissed объявлен НИЖЕ) — показ отмечаем
-  // отдельно через useMarkGuideSeen после showSelectionGuide (см. ниже).
-  const [selectionGuideDismissed, setSelectionGuideDismissed] = useGuideDismiss(
-    'background-selection',
-    !hasBackground && (!isMedia || !loading),
-    false
-  );
-  const [modeGuideDismissed, setModeGuideDismissed] = useGuideDismiss('background-mode', !hasBackground && !selectionGuideDismissed, true);
+  const own = background.sourceVideos;
+  const ownShown = background.mode === 'footage' && showOwn && own.length > 0;
 
+  // selection-гайд объявлен первым: его dismissed нужен для idle-условия гайда выше по цепочке
+  const [selectionGuideDismissed, setSelectionGuideDismissed] = useGuideDismiss('background-selection', !hasBackground && (!isMedia || !loading), false);
+  const [modeGuideDismissed, setModeGuideDismissed] = useGuideDismiss('background-mode', !hasBackground && !selectionGuideDismissed, true);
   useEffect(() => {
+    if (!qaGuide) return;
     setModeGuideDismissed(qaGuide === 'background-sources');
     setSelectionGuideDismissed(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qaGuide]);
-
   const showModeGuide = !modeGuideDismissed;
   const showSelectionGuide = modeGuideDismissed && !selectionGuideDismissed && (!isMedia || !loading);
   useMarkGuideSeen('background-selection', modeGuideDismissed && (!isMedia || !loading));
-
   useScrollGuideIntoView(showSelectionGuide, selectionGuideTargetRef);
 
-  const format = background.mode === 'photo' ? '4:3' : background.footageType === 'cine16x9' && background.mode === 'footage' ? '16:9' : '9:16';
-  const pickVibe = (name: string) => {
-    toggleVibe(name, format);
-  };
-  const heading = loading && isMedia ? t('wizard.bg.headingShort') : t('wizard.bg.heading');
-  const panelTitle = {
-    footage: t('wizard.bg.typeFootage'),
-    photo: t('wizard.bg.typePhoto'),
-    color: t('wizard.bg.typeColor')
-  }[background.mode];
+  const format = background.mode === 'photo' ? '4:3' : background.footageType === 'cine16x9' ? '16:9' : '9:16';
+  const canUpload = Boolean(meQuery.data?.capabilities?.customSources);
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Figma W12: слева заголовок, справа «Загрузить футажи» (иконка 20 + текст 24) */}
-      <div className="flex items-center justify-between gap-space-4 max-md:gap-[10px]">
-        <h2 className="wizard-h flex min-w-0 items-center gap-space-3 whitespace-nowrap max-md:truncate">
-          <BgSquaresIcon color="var(--accent-light)" />
-          {heading}
-        </h2>
-        {background.mode === 'footage' && meQuery.data?.capabilities?.customSources && (
-          <button
-            type="button"
-            onClick={() => setSourcesOpen(true)}
-            className={cn('wizard-body flex h-[44px] shrink-0 items-center gap-[10px] whitespace-nowrap rounded-r15 px-[16px] transition hover:text-text max-md:h-[32px] max-md:gap-[6px] max-md:rounded-r10 max-md:bg-grad-soft-20 max-md:px-[10px] max-md:!text-[13px]', background.sourceVideos.length > 0 && 'border border-accent-light bg-grad-soft-20 !text-text')}
-          >
-            <SvgMaskIcon src="/assets/figma/bg-upload.svg" style={{ width: 20, height: 20, color: WHITE80 }} />
-            {background.sourceVideos.length > 0
-              ? t('wizard.bg.ownFootageCount', { count: background.sourceVideos.length })
-              : <><span className="max-md:hidden">{t('wizard.bg.uploadFootage')}</span><span className="hidden max-md:inline">{t('wizard.bg.uploadShort')}</span></>}
-          </button>
+    <>
+      <div className="w12-sec">
+        <div className="w12-sec-head">
+          <h2><span className="w12-sq w12-ttl-ic" /><span className="w12-l">{t('wizard.bg.headingShort')}</span></h2>
+          {canUpload && (
+            <div className="w12-side">
+              <button type="button" className={cn('w12-ghost', own.length > 0 && 'w12-on')} onClick={() => setSourcesOpen(true)}>
+                <span className="w12-mi w12-cap w12-heavy" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-upload.svg)' } as React.CSSProperties} />
+                <span className="w12-l">{own.length > 0 ? t('wizard.bg.ownFootageCount', { count: own.length }) : t('wizard.bg.uploadFootage')}</span>
+              </button>
+            </div>
+          )}
+        </div>
+        <div ref={modeGuideTargetRef} className="w12-modes" role="tablist" aria-label={t('wizard.bg.typeAria')}>
+          {modes.map((item) => (
+            <button key={item.value} type="button" role="tab" className="w12-mode" aria-selected={background.mode === item.value} onClick={() => setBackground({ mode: item.value })}>
+              {item.icon}<span className="w12-l">{t(item.label)}</span>
+              <span className={cn('w12-cnt w12-num', !counts[item.value] && 'w12-zero')}>{counts[item.value] || ''}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div ref={selectionGuideTargetRef} className={cn('w12-pool', tried && !hasBackground && 'w12-invalid')}>
+        <div className="w12-pool-head">
+          {background.mode === 'footage' && (
+            <>
+              <TypeMenu
+                label={t('wizard.bg.footageTypeAria')}
+                value={ownShown ? OWN_TYPE : background.footageType}
+                options={[
+                  ...(own.length > 0 ? [{ id: OWN_TYPE, label: t('wizard.bg.ownType', { count: own.length }) }] : []),
+                  ...FOOTAGE_TYPES.map((type) => ({ id: type.id, label: t(footageTypeKey(type.id)) }))
+                ]}
+                onChange={(id) => {
+                  if (id === OWN_TYPE) { setShowOwn(true); return; }
+                  setShowOwn(false);
+                  setBackground({ footageType: id });
+                }}
+              />
+              <span className="w12-pool-note">{ownShown ? t('wizard.bg.ownNote') : footagePlane === 'vibes' ? <><Svg>{W12.spark}</Svg><span className="w12-l">{t('wizard.bg.byLyrics')}</span></> : null}</span>
+            </>
+          )}
+          {background.mode === 'photo' && (
+            <>
+              <span className="w12-pool-note"><Svg>{W12.spark}</Svg><span className="w12-l">{t('wizard.bg.photosByLyrics')}</span></span>
+              <span className="w12-pool-note w12-num">{t('wizard.bg.selectedCount', { count: counts.photo })}</span>
+            </>
+          )}
+          {background.mode === 'color' && (
+            <>
+              <span className="w12-pool-note">{t('wizard.bg.colorNote')}</span>
+              {background.color && <button type="button" className="w12-link" onClick={() => setBackground({ color: undefined })}>{t('wizard.bg.colorOff')}</button>}
+            </>
+          )}
+        </div>
+
+        {!isMedia ? <ColorPicker /> : ownShown ? (
+          <Rail resetKey="own">
+            {own.map((plan, index) => (
+              <button key={plan.id} type="button" className={cn('w12-mcard', plan.format === '16:9' && 'w12-cine')} aria-pressed="true" onClick={() => setSourcesOpen(true)}>
+                <span className="w12-media w12-own"><Svg>{W12.upload}</Svg></span>
+                <span className="w12-badge"><Svg>{W12.check}</Svg></span>
+                <span className="w12-cap">{t('wizard.bg.ownCard', { n: index + 1, count: plan.sourceIds.length })}</span>
+              </button>
+            ))}
+          </Rail>
+        ) : loading ? (
+          <div className="w12-rail w12-center"><span className="spinner" aria-hidden="true" /></div>
+        ) : queryDown(listQuery) ? (
+          /* библиотека фонов не пришла — без этого экран оставался пустым молча */
+          <div className="w12-rail w12-center">
+            <InlineError error={listQuery.error} offline={listQuery.fetchStatus === 'paused'} onRetry={() => listQuery.refetch()} retrying={listQuery.isFetching} />
+          </div>
+        ) : (
+          <Rail resetKey={`${background.mode}:${background.footageType}`}>
+            {list.map((item) => (
+              <MediaCard
+                key={item.id}
+                item={item}
+                format={format}
+                caption={chip(item.name)}
+                order={selected.indexOf(item.name) + 1}
+                onToggle={() => toggleVibe(item.name, format)}
+              />
+            ))}
+          </Rail>
         )}
       </div>
 
-      <div ref={modeGuideTargetRef} className="mt-[20px] max-md:mt-[14px]">
-        <ModeSwitch />
-      </div>
+      <SourcesModal open={sourcesOpen} onClose={() => { setSourcesOpen(false); if (useWizardStore.getState().background.sourceVideos.length) { setBackground({ mode: 'footage' }); setShowOwn(true); } }} />
 
       <ActionGuideOverlay
         open={showModeGuide}
@@ -665,107 +613,10 @@ export function StageBackground({ guideGraphic = 'studio', guideVariant = 'visua
         dismissLabel={t('wizard.bg.guideNext')}
         progressLabel={t('wizard.guideProgress', { current: 1, total: 2 })}
         onDismiss={() => setModeGuideDismissed(true)}
-        variant={guideVariant}
+        variant="visual"
         shell="track-top"
-        visual={<BackgroundModeGuideVisual variant={guideGraphic} />}
+        visual={<BackgroundModeGuideVisual />}
       />
-
-      <SourcesModal
-        open={sourcesOpen}
-        onClose={() => setSourcesOpen(false)}
-      />
-
-      <div className="relative mt-[40px] flex min-h-[382px] w-full flex-1 flex-col overflow-hidden rounded-r15 bg-grad-soft-10 pb-[40px] pt-[40px] max-md:mt-[14px] max-md:min-h-0 max-md:flex-none max-md:pb-[14px] max-md:pt-[14px]">
-        <div className="flex items-center justify-between px-[40px] max-md:flex-wrap max-md:gap-[10px] max-md:px-[16px]">
-          <span className={cn('wizard-body', background.mode === 'footage' && 'max-md:hidden')}>{panelTitle}</span>
-          {/* Figma W12: у футажей на месте счётчика — степпер типа футажей */}
-          {background.mode === 'footage' && <FootageTypeStepper />}
-          {background.mode === 'photo' && (
-            <span className="wizard-body flex items-center gap-space-3">
-              <TagIcon color={ACCENT} />
-              {t('wizard.videosCount', { count: selected.length })}
-            </span>
-          )}
-          {background.mode === 'color' && background.color && (
-            <button type="button" className="text-[15px] text-text-60 underline decoration-dotted underline-offset-4 transition hover:text-text" onClick={() => setBackground({ color: undefined })}>
-              {t('wizard.bg.disable')}
-            </button>
-          )}
-        </div>
-
-        {isMedia ? (
-          loading ? (
-            <div className="flex flex-1 items-center justify-center">
-              <span className="spinner !h-[48px] !w-[48px] !border-[3px] !border-accent-20 !border-t-accent-light" />
-            </div>
-          ) : queryDown(listQuery) ? (
-            /* библиотека фонов не пришла — без этого экран оставался пустым молча */
-            <div className="flex flex-1 items-center justify-center">
-              <InlineError error={listQuery.error} offline={listQuery.fetchStatus === 'paused'} onRetry={() => listQuery.refetch()} retrying={listQuery.isFetching} />
-            </div>
-          ) : (
-            <div ref={selectionGuideTargetRef} className="relative mt-[12px] min-h-[253px] flex-1 max-md:mt-[8px] max-md:h-[200px] max-md:min-h-0 max-md:flex-none">
-              <span className="scroll-fade-l" />
-              <span className="scroll-fade-r" />
-              <div
-                ref={cardsScroll.ref}
-                className="media-row cursor-grab select-none items-center gap-[20px] px-[40px] active:cursor-grabbing max-md:gap-[10px] max-md:px-[14px]"
-                {...cardsScroll.handlers}
-              >
-                {list?.map((item) => (
-                  <MediaCard
-                    key={item.id}
-                    item={item}
-                    wide={background.mode === 'photo'}
-                    format={format}
-                    selected={selected.includes(item.name)}
-                    onToggle={() => { if (!cardsScroll.moved()) pickVibe(item.name); }}
-                  />
-                ))}
-              </div>
-            </div>
-          )
-        ) : (
-          <div ref={selectionGuideTargetRef} className="mt-[28px] flex flex-col gap-[40px]">
-            <div className="px-[40px]">
-              <ColorRow value={background.color} onPick={(hex) => setBackground({ color: hex })} />
-            </div>
-            <div className="flex min-h-[30px] items-center justify-between gap-space-4 px-[40px]">
-              <span className="wizard-body flex items-center gap-space-3 leading-none">
-                <SvgMaskIcon src="/assets/figma/icon-strobe.svg" className="-translate-y-px" style={{ width: 20, height: 20, color: background.strobe ? ACCENT : WHITE80 }} />
-                <span>{t('wizard.bg.strobe')}</span>
-                <span className="ml-space-2 flex items-center">
-                  <Toggle checked={background.strobe} onChange={(value) => setBackground({ strobe: value })} label={t('wizard.bg.strobe')} />
-                </span>
-              </span>
-              <span className={cn('wizard-body transition-opacity', !background.strobe && 'opacity-40')}>{t('wizard.bg.glueType')}</span>
-            </div>
-            <div className="relative h-[60px]">
-              <span className="scroll-fade-l !h-[60px]" />
-              <span className="scroll-fade-r !h-[60px]" />
-              <div
-                ref={gluesScroll.ref}
-                className="media-row cursor-grab select-none items-center gap-[20px] px-[40px] active:cursor-grabbing max-md:gap-[10px] max-md:px-[14px]"
-                {...gluesScroll.handlers}
-              >
-                {GLUE_TYPES.map((glue) => (
-                  <button
-                    key={glue.id}
-                    type="button"
-                    disabled={!background.strobe}
-                    className={cn('glue-chip', background.glue === glue.id && background.strobe && 'is-selected')}
-                    onClick={() => { if (!gluesScroll.moved()) setBackground({ glue: glue.id }); }}
-                  >
-                    <ChipIcon label={glue.label} />
-                    {chip(glue.label)}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-
       <ActionGuideOverlay
         open={showSelectionGuide}
         targetRef={selectionGuideTargetRef}
@@ -774,261 +625,153 @@ export function StageBackground({ guideGraphic = 'studio', guideVariant = 'visua
         dismissLabel={t('wizard.bg.guideDismiss')}
         progressLabel={t('wizard.guideProgress', { current: 2, total: 2 })}
         onDismiss={() => setSelectionGuideDismissed(true)}
-        variant={guideVariant}
+        variant="visual"
         shell="track-top"
         visual={background.mode === 'color' ? (
           <div className="flex w-full items-center gap-[8px]" aria-hidden="true">
-            <span className="h-[34px] w-[34px] shrink-0 rounded-r9 bg-[#f6f5fd]" />
-            <span className="h-[34px] w-[34px] shrink-0 rounded-r9 bg-[#05010f] ring-1 ring-text-20" />
-            <span className="h-[34px] flex-1 rounded-r9" style={{ background: HUE_GRADIENT }} />
+            {/* ui-allow: иллюстрация гайда */}
+            <span className="h-[34px] w-[34px] shrink-0 rounded-r10 bg-[#f6f5fd]" />
+            <span className="h-[34px] w-[34px] shrink-0 rounded-r10 bg-bg ring-1 ring-text-20" />
+            <span className="h-[34px] flex-1 rounded-r10" style={{ background: HUE_GRADIENT }} />
           </div>
-        ) : <BackgroundPoolGuideVisual variant={guideGraphic} />}
+        ) : <BackgroundPoolGuideVisual />}
       />
-    </div>
+    </>
   );
 }
 
-/** «+»: переход к следующему разделу фона (футажи → фото → цвет) */
-const MODE_ORDER: BackgroundMode[] = ['footage', 'photo', 'color'];
-
-export function BackgroundWorkZone({ ready, canContinue, loading, onBack, onNext }: { ready: boolean; canContinue: boolean; loading?: boolean; onBack: () => void; onNext: () => void }) {
+/** Правая колонка «Фона»: превью (пейджер внутри плеера, играет под отрывок) и итог. */
+export function BackgroundWorkZone({ ready, loading, onBack, onNext }: { ready: boolean; canContinue?: boolean; loading?: boolean; onBack: () => void; onNext: () => void }) {
   const { t } = useTranslation();
   const chip = useChip();
-  const background = useWizardStore((state) => state.background);
   const setBackground = useWizardStore((state) => state.setBackground);
   const lyrics = useWizardStore((state) => state.fragmentEnabled ? state.fragmentLyrics : state.lyrics);
-  // Lyrics and media plane both determine the semantic order.
-  const footagePlane = footageTypePlane(background.footageType);
-  const vibesQuery = useQuery({
-    queryKey: ['vibes', footagePlane, footagePlane === 'vibes' ? lyrics : ''],
-    queryFn: async () => footagePlane === 'vibes'
-      ? { vibes: (await api.rankBackgrounds(lyrics, 'video')).items }
-      : api.vibes(footagePlane),
-    staleTime: 60_000,
-    enabled: background.mode === 'footage' && (footagePlane !== 'vibes' || Boolean(lyrics.trim()))
-  });
-  const photosQuery = useQuery({
-    queryKey: ['photos', lyrics],
-    queryFn: async () => ({ photos: (await api.rankBackgrounds(lyrics, 'photo')).items }),
-    staleTime: 60_000,
-    enabled: background.mode === 'photo' && Boolean(lyrics.trim())
-  });
+  const { background, vibesQuery, photosQuery } = useBackgroundLists();
+  const example = useBgHover((state) => state.example);
+  const setHover = useBgHover((state) => state.set);
   const [index, setIndex] = useState(0);
   const [broken, setBroken] = useState<Record<string, boolean>>({});
-  const pillsScroll = useDragScroll();
-  const stylesScroll = useDragScroll();
-  const styleFades = useScrollFades(stylesScroll.ref, [background.photoEffects, background.mode]);
-
   const fragmentAudio = useFragmentAudio();
-  const isMedia = background.mode !== 'color';
+  const counts = modeCounts(background);
+
+  const queryClient = useQueryClient();
   const list = (background.mode === 'photo' ? photosQuery.data?.photos : vibesQuery.data?.vibes) ?? [];
+  // Выбранные футажи могут быть из другой подборки, чем открытая сейчас (выбрал вертикальные —
+  // переключился на «Кино 16:9»): ищем их во всех уже загруженных подборках, а не только в текущей,
+  // иначе превью писало «выбери карточки», хотя счётчик показывал выбранные.
+  const known = background.mode === 'photo'
+    ? list
+    : [...list, ...queryClient.getQueriesData<{ vibes?: Vibe[] }>({ queryKey: ['vibes'] }).flatMap(([, data]) => data?.vibes ?? [])];
   const selectedNames = background.mode === 'photo' ? background.photo : background.footage;
-  const selected = list.filter((item) => selectedNames.includes(item.name));
-  const safeIndex = selected.length ? Math.min(index, selected.length - 1) : 0;
-  const current = selected.length ? selected[safeIndex] : null;
-  const currentFormat = current && background.mode === 'footage'
-    ? background.footageFormats?.[current.name] ?? (background.footageType === 'cine16x9' ? '16:9' : '9:16')
+  const selected = selectedNames.map((name) => known.find((item) => item.name === name)).filter(Boolean) as Vibe[];
+  const total = background.mode === 'color' ? (background.color ? 1 : 0) : selected.length;
+  const safeIndex = total ? Math.min(index, total - 1) : 0;
+  const current = background.mode === 'color' ? null : selected[safeIndex] ?? null;
+  useEffect(() => setIndex(Math.max(0, selectedNames.length - 1)), [background.mode, selectedNames.length]);
+  const format = current && background.mode === 'footage'
+    // формат — у самого клипа (записан при выборе, иначе по его подборке), а не у открытой сейчас подборки
+    ? background.footageFormats?.[current.name] ?? (current.plane ? (current.plane === 'cine16x9' ? '16:9' : '9:16') : background.footageType === 'cine16x9' ? '16:9' : '9:16')
     : background.mode === 'photo' ? '4:3' : '9:16';
-  const activeColor = background.mode === 'color' ? background.color : undefined;
-  const variations = backgroundVariations(background);
-  const pills = backgroundPills(background);
-  const footerPills = pills.length > 0
-    ? pills
-    : [{ key: background.mode, mode: background.mode, label: modes.find((item) => item.value === background.mode)?.label ?? 'wizard.bg.modeFootage', count: 0 }];
-
-  const emptyText = { footage: t('wizard.bg.emptyFootage'), photo: t('wizard.bg.emptyPhoto'), color: t('wizard.bg.emptyColor') }[background.mode];
-  const step = (delta: number) => {
-    if (!selected.length) return;
-    setIndex((safeIndex + delta + selected.length) % selected.length);
-  };
-
-  useEffect(() => setIndex(0), [background.mode, selectedNames.join('|')]);
+  const color = background.mode === 'color' ? background.color : undefined;
   const isVideo = current ? isVideoUrl(current.previewUrl) : false;
-
-  const nextMode = MODE_ORDER[MODE_ORDER.indexOf(background.mode) + 1];
-
-  const fillStyle: CSSProperties | undefined = activeColor
-    ? background.strobe
-      ? ({ '--strobe-color': activeColor, animation: 'strobeFlicker 1s steps(1) infinite' } as CSSProperties)
-      : { backgroundColor: activeColor }
-    : undefined;
-
-  /*
-   * Управление живёт В САМОМ плеере: плей по центру и стрелки по бокам. Счётчик примеров
-   * вернулся в шапку карточки компактной пилюлей (как на превью батча) — верхний ряд из
-   * двух кнопок и двух чипов закрывал кадр и спорил с превью за внимание.
-   *
-   * Плей запускает выбранный отрывок трека поверх футажа: до этого фон выбирался «в тишине»,
-   * и как он ляжет на музыку, человек узнавал только из готового ролика.
-   */
-  const playerProps = {
-    playing: fragmentAudio.playing,
-    onTogglePlay: fragmentAudio.available ? fragmentAudio.toggle : undefined,
-    playLabel: t('wizard.bg.playTrack'),
-    pauseLabel: t('wizard.bg.stopTrack'),
-    onPrev: () => step(-1),
-    onNext: () => step(1),
-    showSteps: isMedia && selected.length > 1
-  };
-
-  const renderMedia = (item: Vibe) => (
-    <>
-      {!broken[item.id] && (isVideo
-        ? <video key={item.id} className="h-full w-full object-cover" src={item.previewUrl} muted loop playsInline autoPlay onError={() => setBroken((b) => ({ ...b, [item.id]: true }))} />
-        : <img key={item.id} className="h-full w-full object-cover" src={item.previewUrl} alt="" onError={() => setBroken((b) => ({ ...b, [item.id]: true }))} />)}
-      {broken[item.id] && <div className="flex h-full w-full items-center justify-center bg-grad-card text-[15px] text-text-80">{chip(item.name)}</div>}
-    </>
-  );
+  const hasContent = Boolean(current || color);
+  const lyricLine = lyrics.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
+  const meta = total
+    ? background.mode === 'footage' ? t('wizard.bg.metaFootage', { count: total }) : background.mode === 'photo' ? t('wizard.bg.metaPhoto', { count: total }) : t('wizard.bg.modeColor')
+    : '';
+  const tag = example
+    ? t('wizard.bg.exampleTag')
+    : current
+      ? `${t(background.mode === 'photo' ? 'wizard.bg.modePhoto' : 'wizard.bg.tagFootage')} · ${chip(current.name)}`
+      : color ? `${t('wizard.bg.modeColor')} · ${color.toUpperCase()}${background.strobe ? ` · ${t('wizard.bg.strobe').toLowerCase()}` : ''}` : null;
 
   return (
-    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
-      <div className="card-2 flex min-h-0 flex-1 flex-col px-space-6 py-space-6 max-lg:px-space-5">
-        <div className="mb-space-5 flex shrink-0 flex-nowrap items-center justify-between gap-space-3 max-md:mb-[12px]">
-          <h2 className="wizard-h whitespace-nowrap">{t('wizard.workZone')}</h2>
-          {/* Компактная пилюля «‹ N/M ›» — тот же элемент, что на превью батча. Листать
-              можно и ей, и стрелками внутри плеера: она вспомогательная. */}
-          {isMedia && selected.length > 0 ? (
-            <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
-              <button type="button" aria-label={t('wizard.bg.prevExample')} onClick={() => step(-1)} disabled={selected.length < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-                <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)', transform: 'rotate(180deg)' }} />
+    <aside className="w12-col-aside">
+      <div className="w12-card w12-pv-card">
+        <div className="w12-aside-head"><h2>{t('wizard.bg.preview')}</h2><span className="w12-meta">{meta}</span></div>
+        {/* широкий кадр (4:3, 16:9) в высокой колонке: вокруг него — размытая копия того же кадра,
+            как у горизонтальных видео в вертикальных лентах, а не пустое поле сверху и снизу */}
+        <div className={cn('w12-pv-stage', format !== '9:16' && 'w12-pv-ambient')}>
+          {format !== '9:16' && current && !broken[current.id] && !example && (isVideo
+            ? <video key={`bg-${current.id}`} className="w12-ambient-bg" src={current.previewUrl} muted loop playsInline autoPlay aria-hidden="true" />
+            : <img key={`bg-${current.id}`} className="w12-ambient-bg" src={current.previewUrl} alt="" aria-hidden="true" />)}
+          <div className={cn('w12-player', format === '4:3' && 'w12-wide', format === '16:9' && 'w12-cine', fragmentAudio.playing && 'w12-playing')}>
+            {current && !broken[current.id] && (isVideo
+              ? <video key={current.id} className="w12-media-el" src={current.previewUrl} muted loop playsInline autoPlay onError={() => setBroken((b) => ({ ...b, [current.id]: true }))} />
+              : <img key={current.id} className="w12-media-el" src={current.previewUrl} alt="" onError={() => setBroken((b) => ({ ...b, [current.id]: true }))} />)}
+            {color && (
+              <div
+                className="w12-media-el"
+                style={background.strobe && !example ? ({ '--strobe-color': color, animation: 'strobeFlicker 1s steps(1) infinite' } as CSSProperties) : { background: color }}
+              />
+            )}
+            {/* наведённая склейка или стиль — честный пример из каталога эффектов */}
+            {example && <div className="w12-media-el w12-example"><EffectPreview previewId={example} /></div>}
+            {!hasContent && !example && <div className="w12-empty">{t(background.mode === 'color' ? 'wizard.bg.previewEmptyColor' : 'wizard.bg.previewEmpty')}</div>}
+            {hasContent && !example && (
+              <>
+                <div className="w12-shade" />
+                {lyricLine && <div className="w12-lyric" style={color === WHITE_BG ? { color: BLACK_BG, textShadow: 'none' } : undefined}>{lyricLine}</div>}
+              </>
+            )}
+            {tag && <span className="w12-pv-tag">{tag}</span>}
+            {hasContent && fragmentAudio.available && (
+              <button type="button" className="w12-pv-play" onClick={fragmentAudio.toggle} aria-label={fragmentAudio.playing ? t('wizard.bg.stopTrack') : t('wizard.bg.playTrack')}>
+                {fragmentAudio.playing ? PAUSE : PLAY}
               </button>
-              <span className="text-[16px] font-[350] leading-none text-accent">{safeIndex + 1}/{selected.length}</span>
-              <button type="button" aria-label={t('wizard.bg.nextExample')} onClick={() => step(1)} disabled={selected.length < 2} className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30">
-                <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)' }} />
-              </button>
-            </div>
-          ) : (
-            /* «N вариаций» — внутренний термин: снаружи это просто счётчик выбранных фонов */
-            <span className="wizard-body whitespace-nowrap">{t('wizard.bg.chosenCount', { count: variations })}</span>
-          )}
+            )}
+            {total > 1 && (
+              <div className="w12-pv-bar">
+                <button type="button" className="w12-pv-nav" aria-label={t('wizard.bg.prevExample')} onClick={() => setIndex((safeIndex - 1 + total) % total)}><Svg>{W12.left}</Svg></button>
+                <span className="w12-pv-count w12-num">{safeIndex + 1} / {total}</span>
+                <button type="button" className="w12-pv-nav" aria-label={t('wizard.bg.nextExample')} onClick={() => setIndex((safeIndex + 1) % total)}><Svg>{W12.right}</Svg></button>
+              </div>
+            )}
+          </div>
         </div>
-
-        {background.mode === 'photo' ? (
-          // Figma W13: превью сверху, блок эффектов прижат к низу карточки
-          <div className="subtle-scroll flex min-h-0 flex-1 flex-col justify-start gap-[20px] overflow-y-auto">
-            {/* Превью 4:3 ужимается по доступной высоте (раньше оба блока были shrink-0 и на
-                низком окне 720px сумма 426px выдавливала блок эффектов за карточку), но не
-                мельче 180px: ниже кадр нечитаемый — тогда колонка уходит в прокрутку. */}
-            {/* Высоту превью задаёт его ширина (ровно 4:3) — так кадр 1920×1440 не режется
-                ни по одной оси. Если на низком окне столбец перестаёт вмещать превью вместе
-                с блоком эффектов, он уходит в прокрутку (раньше блок эффектов выдавливало
-                за карточку, потому что оба были shrink-0). */}
-            <div className="flex shrink-0 justify-center">
-              <PreviewPlayer
-                key={current?.id ?? 'empty-photo'}
-                className="w-full rounded-r15"
-                {...playerProps}
-                showSteps={playerProps.showSteps && Boolean(current)}
-                onTogglePlay={current ? playerProps.onTogglePlay : undefined}
-              >
-                <div className="w-full" style={{ aspectRatio: '4 / 3' }}>
-                  {current ? renderMedia(current) : (
-                    <div className="flex h-full items-center justify-center bg-grad-soft-10">
-                      <p className="wizard-body max-w-[223px] text-center">{emptyText}</p>
-                    </div>
-                  )}
-                </div>
-                <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
-              </PreviewPlayer>
+        {background.mode === 'photo' && (
+          <div className="w12-fx-box">
+            <div className="w12-opt-row" style={{ border: 0, padding: 0 }}>
+              <span style={{ color: 'var(--w12-text-3)', alignSelf: 'flex-start', fontSize: '.9em', lineHeight: 1.55 }} aria-hidden="true">✦</span>
+              <span className="w12-txt">{t('wizard.bg.effects')}<span>{t('wizard.bg.effectsHint')}</span></span>
+              <Toggle checked={background.photoEffects} onChange={(photoEffects) => setBackground({ photoEffects })} label={t('wizard.bg.effects')} />
             </div>
-            <div className="shrink-0 rounded-r15 bg-grad-soft-10 p-space-5">
-              <div className="flex items-center gap-space-3">
-                <span className="wizard-body">✦ {t('wizard.bg.effects')}</span>
-                <Toggle checked={background.photoEffects} onChange={(value) => setBackground({ photoEffects: value })} label={t('wizard.bg.effects')} />
-              </div>
-              <div className="mt-space-4 flex items-center gap-space-4">
-                <span className={cn('wizard-body shrink-0 transition-opacity', !background.photoEffects && 'opacity-40')}>{t('wizard.bg.style')}</span>
-                <div className="relative min-w-0 flex-1">
-                  <div
-                    ref={stylesScroll.ref}
-                    className="media-row cursor-grab select-none items-center gap-[12px] active:cursor-grabbing"
-                    style={{ height: 48 }}
-                    onScroll={styleFades.sync}
-                    {...stylesScroll.handlers}
-                  >
-                    {PHOTO_STYLES.map((style) => (
-                      <button
-                        key={style}
-                        type="button"
-                        disabled={!background.photoEffects}
-                        className={cn('glue-chip !h-[48px] !gap-space-2 !pl-[6px] !pr-space-4 !text-[18px]', background.photoStyle === style && background.photoEffects && 'is-selected')}
-                        onClick={() => { if (!stylesScroll.moved()) setBackground({ photoStyle: style }); }}
-                      >
-                        <span className="scale-[0.72]"><ChipIcon label={style} /></span>
-                        {chip(style)}
-                      </button>
-                    ))}
-                  </div>
-                  {styleFades.fade.left && <span className="pointer-events-none absolute inset-y-0 left-0 z-[1] w-[26px]" style={{ background: 'linear-gradient(-90deg, rgba(30,22,53,0) 0%, #1e1635 92%)' }} />}
-                  {styleFades.fade.right && <span className="pointer-events-none absolute inset-y-0 right-0 z-[1] w-[26px]" style={{ background: 'linear-gradient(90deg, rgba(30,22,53,0) 0%, #1e1635 92%)' }} />}
+            <div className="w12-disclose" data-open={background.photoEffects || undefined}>
+              <div>
+                <div className="w12-pills">
+                  {PHOTO_STYLES.map((style) => (
+                    <button
+                      key={style}
+                      type="button"
+                      className="w12-pill w12-with-ic"
+                      aria-pressed={background.photoEffects && background.photoStyle === style}
+                      tabIndex={background.photoEffects ? 0 : -1}
+                      onClick={() => setBackground({ photoStyle: style })}
+                      onPointerEnter={() => setHover(previewIdFor('effectStyle', style) ?? null)}
+                      onPointerLeave={() => setHover(null)}
+                      onFocus={() => setHover(previewIdFor('effectStyle', style) ?? null)}
+                      onBlur={() => setHover(null)}
+                    >
+                      <ChipBadge label={style} /><span className="w12-l">{chip(style)}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
             </div>
           </div>
-        ) : currentFormat === '16:9' && background.mode === 'footage' ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center">
-            <PreviewPlayer
-              key={current?.id ?? 'empty-wide'}
-              className="w-full rounded-r15 bg-grad-soft-10"
-              {...playerProps}
-              showSteps={playerProps.showSteps && Boolean(current)}
-              onTogglePlay={current ? playerProps.onTogglePlay : undefined}
-            >
-              <div className="relative w-full" style={{ aspectRatio: '16 / 9' }}>
-                {current ? renderMedia(current) : <div className="flex h-full items-center justify-center"><p className="wizard-body">{emptyText}</p></div>}
-              </div>
-              <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
-            </PreviewPlayer>
-          </div>
-        ) : background.mode === 'footage' ? (
-          <div className="flex min-h-0 flex-1 justify-center">
-            <PreviewPlayer
-              className="h-full w-auto max-w-full rounded-r15 bg-grad-soft-10 max-md:h-auto max-md:w-full"
-              style={{ aspectRatio: '9 / 16' }}
-              {...playerProps}
-              showSteps={playerProps.showSteps && Boolean(current)}
-              onTogglePlay={current ? playerProps.onTogglePlay : undefined}
-            >
-              <div className="absolute inset-0">
-                {current ? renderMedia(current) : (
-                  <div className="flex h-full items-center justify-center p-space-5">
-                    <p className="wizard-body max-w-[223px] text-center">{emptyText}</p>
-                  </div>
-                )}
-              </div>
-              <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
-            </PreviewPlayer>
-          </div>
-        ) : (
-          <PreviewPlayer className="min-h-0 flex-1 rounded-r15" {...playerProps} showSteps={false} onTogglePlay={undefined}>
-            <div className="absolute inset-0" style={fillStyle} />
-            <span className="dash-panel-plain pointer-events-none absolute inset-0 z-[3]" aria-hidden="true" />
-          </PreviewPlayer>
         )}
       </div>
 
+      {/* итог по режимам (клик ведёт в режим); «+» не нужен — его делают вкладки */}
       <PillsFooter
-        pills={footerPills.map((pill) => ({
-          key: pill.key,
-          label: pill.label.startsWith('wizard.') ? t(pill.label) : chip(pill.label),
-          // Figma W22: счётчик выбранных стейтов. Было «Хn» — читалось как код, а не как
-          // «столько выбрано»; оставили голое число и подписали его в title.
-          icon: <span className="text-[20px] font-[350] text-text-80" title={t('wizard.bg.pillCount', { count: pill.count })}>{pill.count}</span>
-        }))}
-        activeKey={background.mode === 'footage' ? 'footage' : background.mode}
-        emptyLabel={t('wizard.bg.addNew')}
-        onPill={(key) => {
-          if (key === 'uploads') { setBackground({ mode: 'footage' }); return; }
-          setBackground({ mode: key as BackgroundMode });
-        }}
-        onPlus={() => { if (nextMode) setBackground({ mode: nextMode }); }}
-        plusDisabled={!nextMode}
+        pills={modes.map((item) => ({ key: item.value, label: t(item.label), icon: counts[item.value] || '0', zero: !counts[item.value] }))}
+        activeKey={background.mode}
+        emptyLabel=""
+        onPill={(key) => setBackground({ mode: key as BackgroundMode })}
         ready={ready}
-        canContinue={canContinue}
         loading={loading}
         onBack={onBack}
         onNext={onNext}
-        dragScroll={pillsScroll}
       />
     </aside>
   );

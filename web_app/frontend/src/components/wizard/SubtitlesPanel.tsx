@@ -153,7 +153,7 @@ export function StageSubtitles() {
 
   return (
     <div className="flex h-full flex-col">
-      <h2 className="wizard-h flex items-center gap-space-3">
+      <h2 className="w12-h2 flex items-center gap-space-3">
         <em className="inline-block bg-grad-text bg-clip-text pb-[3px] pr-[3px] font-bold italic text-[30px] leading-[1.15] text-transparent">Т</em>
         {t('wizard.subs.title')}
       </h2>
@@ -276,9 +276,9 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
   const previewLyrics = (fragmentLyrics.trim() || lyrics.trim()) || t('wizard.subs.lyricsPlaceholder');
 
   return (
-    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
-      <div className="card-2 flex min-h-0 flex-1 flex-col px-space-6 py-space-6 max-lg:px-space-5">
-        <h2 className="wizard-h mb-space-5 shrink-0 whitespace-nowrap">{t('wizard.workZone')}</h2>
+    <aside className="w12-col-aside">
+      <div className="w12-card w12-aside">
+        <h2 className="w12-h2 mb-space-5 shrink-0 whitespace-nowrap">{t('wizard.workZone')}</h2>
         {/* телефон: у зоны своя высота (9:16) — иначе в авто-колонке она схлопывается вместе с даш-рамкой */}
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10 max-md:aspect-[9/16] max-md:w-full">
           {currentName && <SubtitleCatalogPreview className="absolute inset-0" name={currentName} />}
