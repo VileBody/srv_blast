@@ -642,8 +642,8 @@
         "runningHint": "Aligning words to the track…",
         "hint": "Drag a word to shift its timing, drag its edges to change duration. Click selects a word; double-click or the Focus button makes it the accent in subtitles. While dragging, the word start snaps to the beat."
       },
-      "guideTextTitle": "Tune the text for each style",
-      "guideTextText": "Switch styles with the tabs: each has its own font, accent font for focus words, size, position, shadow and colors. Untouched means the style's default."
+      "guideTextTitle": "Tune each style",
+      "guideTextText": "Switch styles with the tabs — each has its own font, size and colors."
     },
     "fxv": {
       "stepSound": "Warm-up",

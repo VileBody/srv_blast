@@ -41,18 +41,31 @@ function SubtitleFitGuideVisual() {
   );
 }
 
-/** Мини-визуал подсказки «Настройки текста»: вкладки стилей + образец шрифта с акцентом. */
+/**
+ * Мини-визуал подсказки «Настройки текста»: две вкладки стилей по очереди
+ * становятся активными, и вместе с ними меняется образец — у Jakson капс с
+ * рукописным акцентом, у Brat строчный узкий с курсивным фокус-словом.
+ * Показывает главное: у каждого стиля свой вид, переключение — вкладкой.
+ */
 function SubtitleTextGuideVisual() {
   return (
-    <div className="flex w-full flex-col gap-[8px]" aria-hidden="true">
-      <div className="flex gap-[6px]">
-        {['Jakson', 'Brat', 'Tape'].map((name, index) => (
-          <span key={name} className={cn('guide-mode-reveal rounded-[7px] px-[9px] py-[5px] text-[11px] leading-none',
-            index === 0 ? 'guide-mode-delay-1 bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : index === 1 ? 'guide-mode-delay-2 border border-white/15 text-text-60' : 'guide-mode-delay-3 border border-white/15 text-text-60')}>{name}</span>
+    <div className="flex w-full items-center gap-[10px] py-[12px]" aria-hidden="true">
+      <div className="flex shrink-0 flex-col gap-[6px]">
+        {['Jakson', 'Brat'].map((name, index) => (
+          <span key={name} className="relative flex h-[26px] w-[62px] items-center justify-center overflow-hidden rounded-[7px] border border-white/15 text-[11px] leading-none text-text-60">
+            <span className={cn('absolute inset-0 rounded-[7px] bg-accent-20 shadow-[inset_0_0_0_1px_var(--accent-light)]', index === 0 ? 'guide-style-a' : 'guide-style-b')} />
+            <span className="action-guide-optical-text relative">{name}</span>
+          </span>
         ))}
       </div>
-      <div className="guide-track-piece guide-mode-delay-2 flex h-[34px] items-center justify-center gap-[6px] rounded-r9 bg-white/10 text-[15px] font-bold uppercase text-white">
-        Аа <span className="normal-case font-normal italic text-accent-light" style={{ fontFamily: 'cursive' }}>аа</span>
+      <div className="relative h-[58px] flex-1 overflow-hidden rounded-[9px] bg-black/30">
+        <span className="guide-style-a absolute inset-0 flex items-center justify-center gap-[5px] px-[6px] text-[15px] font-bold uppercase leading-none tracking-[-0.02em] text-white">
+          <span className="action-guide-optical-text">не уйду</span> <span className="text-[19px] font-normal normal-case text-accent-light" style={{ fontFamily: '"blast-PrincessDiana", "blast-Katherine-Plus", cursive' }}>отсюда</span>
+        </span>
+        <span className="guide-style-b absolute inset-0 flex items-center justify-center gap-[6px] px-[6px] text-[16px] lowercase leading-none text-white"
+          style={{ fontFamily: '"Arial Narrow", Arial, sans-serif', letterSpacing: '-0.02em' }}>
+          не уйду <i className="font-bold text-accent-light">отсюда</i>
+        </span>
       </div>
     </div>
   );
@@ -291,9 +304,7 @@ function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: RefObje
     ...(wide ? [{ value: 'down' as const, label: t('wizard.subs.customization.down') }] : [])
   ];
 
-  return <section className="mt-[40px] rounded-r15 bg-grad-soft-10 px-[32px] py-[28px] max-md:mt-[16px] max-md:px-[16px] max-md:py-[18px]">
-    {/* цель подсказки «Настройки текста» — заголовок и вкладки (весь блок выше экрана) */}
-    <div ref={guideTargetRef}>
+  return <section ref={guideTargetRef} className="mt-[40px] rounded-r15 bg-grad-soft-10 px-[32px] py-[28px] max-md:mt-[16px] max-md:px-[16px] max-md:py-[18px]">
     <div className="mb-[22px]">
       <h3 className="wizard-body">{t('wizard.subs.customization.title')}</h3>
       <p className="mt-[5px] text-[14px] text-text-60">{t('wizard.subs.customization.description')}</p>
@@ -304,7 +315,6 @@ function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: RefObje
         className={cn('h-[34px] rounded-r10 px-[14px] text-[13px] transition-colors', name === tab
           ? 'bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'border border-white/10 text-text-60 hover:bg-white/5 hover:text-text')}>{name}</button>)}
     </div>}
-    </div>
     {!tab ? <p className="text-[13px] text-text-40">{t('wizard.subs.customization.pickStyleFirst')}</p> : <div className="flex flex-col">
       {queryDown(catalogQuery) && <InlineError error={catalogQuery.error} offline={catalogQuery.fetchStatus === 'paused'}
         onRetry={() => catalogQuery.refetch()} retrying={catalogQuery.isFetching} />}
@@ -376,7 +386,8 @@ export function StageSubtitles() {
 
   useScrollGuideIntoView(showTimelineGuide, timelineGuideTargetRef);
   useScrollGuideIntoView(showStylesGuide, stylesGuideTargetRef);
-  useScrollGuideIntoView(showTextGuide, textGuideTargetRef);
+  // блок настроек выше экрана — к его началу (заголовок и вкладки), не к середине
+  useScrollGuideIntoView(showTextGuide, textGuideTargetRef, 'start');
 
   return (
     <div className="flex h-full flex-col">
