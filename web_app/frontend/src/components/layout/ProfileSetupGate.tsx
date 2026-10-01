@@ -42,8 +42,8 @@ export function ProfileSetupGate({ open }: { open: boolean }) {
 
   // Закрыть шаг нельзя (ни крестика, ни клика по подложке): профиль обязателен
   return createPortal(
-    <div className="fixed inset-0 z-overlay flex items-center justify-center bg-[rgba(5,1,15,0.86)] p-space-5">
-      <form onSubmit={onSubmit} className="w-full max-w-[520px] rounded-r25 bg-card-2 p-[40px]">
+    <div className="m-overlay fixed inset-0 z-overlay flex items-center justify-center bg-[rgba(5,1,15,0.86)] p-space-5">
+      <form onSubmit={onSubmit} className="m-dialog w-full max-w-[520px] rounded-r25 bg-card-2 p-[40px]">
         <h2 className="text-[32px] font-[400] leading-[38px] text-text">{t('auth.setupTitle')}</h2>
         <p className="mt-[12px] text-[16px] leading-[21px] text-text-60">{t('auth.setupText')}</p>
 

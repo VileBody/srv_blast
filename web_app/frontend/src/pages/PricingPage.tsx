@@ -453,7 +453,7 @@ export function PricingPage() {
         {/* Телефон: карта — фигма-макет 357×736 на абсолютных координатах; переверстать
             её нельзя без потери композиции, поэтому масштабируем целиком (zoom .8 → 286×589,
             влезает в экран), лента со snap, следующая карта выглядывает справа. */}
-        <div ref={plansRef} className="mt-[28px] grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(var(--plan-min-w,357px),1fr))] md:[&>*]:[zoom:var(--plan-fit,1)] items-start gap-[20px] overflow-x-auto no-scrollbar max-md:-mx-[20px] max-md:mt-[14px] max-md:flex max-md:snap-x max-md:snap-mandatory max-md:scroll-pl-[20px] max-md:gap-[12px] max-md:px-[20px] max-md:[&>*]:shrink-0 max-md:[&>*]:snap-start max-md:[&>*]:[zoom:.8]">
+        <div ref={plansRef} className="m-stagger mt-[28px] grid min-h-0 flex-1 grid-cols-[repeat(3,minmax(var(--plan-min-w,357px),1fr))] md:[&>*]:[zoom:var(--plan-fit,1)] items-start gap-[20px] overflow-x-auto no-scrollbar max-md:-mx-[20px] max-md:mt-[14px] max-md:flex max-md:snap-x max-md:snap-mandatory max-md:scroll-pl-[20px] max-md:gap-[12px] max-md:px-[20px] max-md:[&>*]:shrink-0 max-md:[&>*]:snap-start max-md:[&>*]:[zoom:.8]">
           {plans.map((plan) => (
             <PlanCard
               key={plan.type}

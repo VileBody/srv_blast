@@ -266,7 +266,7 @@ export function ProjectsPage() {
             </button>
           )}
         </div>
-        <div className="no-scrollbar mt-[28px] flex min-h-0 flex-1 items-stretch gap-space-5 overflow-x-auto max-md:-mx-[20px] max-md:h-[112px] max-md:gap-[10px] max-md:px-[20px]">
+        <div className="m-stagger no-scrollbar mt-[28px] flex min-h-0 flex-1 items-stretch gap-space-5 overflow-x-auto max-md:-mx-[20px] max-md:h-[112px] max-md:gap-[10px] max-md:px-[20px]">
           {projects.map((project) => (
             <ProjectCard
               key={project.id}
