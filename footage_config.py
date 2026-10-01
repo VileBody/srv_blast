@@ -431,6 +431,24 @@ def build_inventory_and_bundle(
                 f"sample_missing:\n{sample_text}"
             )
 
+    # Internal edits of each source, keyed by the IDENTITY the assets carry (after
+    # qualification the row's file_name is no longer the raw basename the index
+    # recorded). The picker places every clip window inside one shot by them, and the
+    # collection segmenter snaps window boundaries onto them.
+    scene_cuts: Dict[str, List[float]] = {}
+    for a in source_assets or []:
+        if not isinstance(a, dict) or not a.get("scene_cuts"):
+            continue
+        raw_name = str(a.get("file_name") or "")
+        if not raw_name:
+            continue
+        key = (
+            _qualified_file_name(a.get("genre"), a.get("tag"), raw_name)
+            if _qualify
+            else raw_name
+        )
+        scene_cuts[key] = [float(x) for x in (a.get("scene_cuts") or [])]
+
     assets: List[Dict[str, Any]] = []
     for file_name, row in sorted(assets_map.items(), key=lambda kv: kv[0]):
         obj: Dict[str, Any] = {
@@ -448,6 +466,8 @@ def build_inventory_and_bundle(
             obj["palette_bins"] = row.palette_bins
         if row.media_file_name:
             obj["media_file_name"] = row.media_file_name
+        if scene_cuts.get(row.file_name):
+            obj["scene_cuts"] = scene_cuts[row.file_name]
         assets.append(obj)
 
     # Collection plane only: expose a long upload as N pickable windows. The
@@ -458,22 +478,6 @@ def build_inventory_and_bundle(
     if str(media_type or "").strip().lower() == "collection":
         from mlcore.footage_segments import expand_asset_rows
 
-        # Keyed by the IDENTITY the assets now carry, not the raw basename the
-        # index recorded — the segmenter looks cuts up by the row's file_name, and
-        # after qualification those are no longer the same string.
-        scene_cuts: Dict[str, List[float]] = {}
-        for a in source_assets or []:
-            if not isinstance(a, dict) or not a.get("scene_cuts"):
-                continue
-            raw_name = str(a.get("file_name") or "")
-            if not raw_name:
-                continue
-            key = (
-                _qualified_file_name(a.get("genre"), a.get("tag"), raw_name)
-                if _qualify
-                else raw_name
-            )
-            scene_cuts[key] = [float(x) for x in (a.get("scene_cuts") or [])]
         before = len(assets)
         assets = expand_asset_rows(assets, scene_cuts_by_file=scene_cuts)
         print(
