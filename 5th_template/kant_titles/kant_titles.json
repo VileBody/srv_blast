@@ -17,7 +17,7 @@
   "titles": {
     "two-frames": {
       "mode": "kant_two_frames",
-      "label": "Two Frames",
+      "label": "Duo",
       "fonts": ["Staatliches-Regular"],
       "cyr": {"Staatliches-Regular": "Oswald-Regular"},
       "intro": 0.1,
@@ -26,7 +26,7 @@
     },
     "gum": {
       "mode": "kant_gum",
-      "label": "Gum",
+      "label": "Bubble",
       "fonts": ["Arial-BoldMT"],
       "cyr": {},
       "intro": 1.43,
@@ -35,7 +35,7 @@
     },
     "matrix": {
       "mode": "kant_matrix",
-      "label": "Matrix",
+      "label": "Code",
       "fonts": ["CoolveticaRg-Regular"],
       "cyr": {},
       "intro": 2.0,
@@ -44,7 +44,7 @@
     },
     "edit": {
       "mode": "kant_edit",
-      "label": "Edit",
+      "label": "Novel",
       "fonts": ["NirmalaText-Semilight", "TagType", "AdobeArabic-BoldItalic"],
       "cyr": {"NirmalaText-Semilight": "Inter-Regular", "AdobeArabic-BoldItalic": "CormorantGaramond-LightItalic"},
       "intro": 0.6,
@@ -58,7 +58,7 @@
     },
     "vhs": {
       "mode": "kant_vhs",
-      "label": "VHS",
+      "label": "Retro",
       "fonts": ["SixCaps"],
       "cyr": {"SixCaps": "Oswald-Regular"},
       "cyrSqueeze": 0.75,
@@ -68,7 +68,7 @@
     },
     "lani-style": {
       "mode": "kant_lani_style",
-      "label": "Lani",
+      "label": "Scribble",
       "fonts": ["TagType"],
       "cyr": {},
       "intro": 1.0,

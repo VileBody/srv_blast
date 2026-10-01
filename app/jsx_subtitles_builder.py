@@ -277,12 +277,13 @@ def kant_phrases(word_timings: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def build_kant_title_overlay(*, mode: str, word_timings: list[dict[str, Any]], target_comp: str) -> str:
     """Тайтл Kant (AddText .aep) на каждую фразу трека поверх target_comp.
 
-    .aep выбранного тайтла едет внутри JSX (base64) и раскладывается во временную папку ноды:
-    скрипт вставляется в render JSX текстом, отдельной доставки файлов у субтитров нет.
+    .aep выбранного тайтла едет внутри JSX бинарной строкой (символ = байт, overlay.js_binary_literal)
+    и раскладывается во временную папку ноды: скрипт вставляется в render JSX текстом, отдельной
+    доставки файлов у субтитров нет. Не base64 — его посимвольный декодер в ExtendScript на .aep
+    в 200+ КБ не укладывался в таймаут ноды «нет прогресса» (5 мин), и AE убивали.
     """
-    import base64
-
     from core.subtitles_mode import KANT_TITLE_BY_MODE
+    from mlcore.hooks.f3_effect.overlay import js_binary_literal
 
     title = KANT_TITLE_BY_MODE.get(mode)
     if not title:
@@ -295,18 +296,12 @@ def build_kant_title_overlay(*, mode: str, word_timings: list[dict[str, Any]], t
     return "\n".join([
         f"// ── blast inject: Kant title {title}, {len(phrases)} phrases",
         "(function () {",
-        "  var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
-        "  function decode(s) { var m = {}, i, o = [], buf = 0, bits = 0;",
-        "    for (i = 0; i < 64; i++) m[B64.charAt(i)] = i;",
-        "    for (i = 0; i < s.length; i++) { var c = s.charAt(i); if (!m.hasOwnProperty(c)) continue;",
-        "      buf = (buf << 6) | m[c]; bits += 6; if (bits >= 8) { bits -= 8; o.push(String.fromCharCode((buf >> bits) & 255)); } }",
-        "    return o.join(''); }",
         "  var dir = new Folder(Folder.temp.fsName + '/blast_kant_titles');",
         "  if (!dir.exists) dir.create();",
         f"  var f = new File(dir.fsName + '/' + {json.dumps(title + '.aep')});",
         "  f.encoding = 'BINARY';",
         "  if (!f.open('w')) throw new Error('kant titles: cannot write ' + f.fsName);",
-        f"  f.write(decode({json.dumps(base64.b64encode(aep).decode('ascii'))}));",
+        f"  f.write({js_binary_literal(aep)});",
         "  f.close();",
         "  $.global.KANT_TITLES_AEP_DIR = dir.fsName;",
         "})();",

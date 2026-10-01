@@ -80,12 +80,12 @@ SUBTITLE_MODES = {
     "Jakson": "scenes_3rd",
     "Tape": "template_4th",
     # тайтлы Kant Tools (5th_template/kant_titles)
-    "Two Frames": "kant_two_frames",
-    "Gum": "kant_gum",
-    "Matrix": "kant_matrix",
-    "Edit": "kant_edit",
-    "VHS": "kant_vhs",
-    "Lani": "kant_lani_style",
+    "Duo": "kant_two_frames",
+    "Bubble": "kant_gum",
+    "Code": "kant_matrix",
+    "Novel": "kant_edit",
+    "Retro": "kant_vhs",
+    "Scribble": "kant_lani_style",
 }
 
 

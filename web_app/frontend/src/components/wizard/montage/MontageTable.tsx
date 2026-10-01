@@ -32,8 +32,8 @@ const SUB_STYLES = [
   { id: 'brat', name: 'Brat' }, { id: 'jakson', name: 'Jakson' }, { id: 'impulse', name: 'Impulse' },
   { id: 'tape', name: 'Tape' }, { id: 'trendy', name: 'Trendy' },
   // тайтлы Kant: имя = ключ WEB_SUBTITLE_MODE_MAP_JSON (lib/subtitleText KANT_STYLE_BY_NAME)
-  { id: 'kant_two_frames', name: 'Two Frames' }, { id: 'kant_gum', name: 'Gum' }, { id: 'kant_matrix', name: 'Matrix' },
-  { id: 'kant_edit', name: 'Edit' }, { id: 'kant_vhs', name: 'VHS' }, { id: 'kant_lani_style', name: 'Lani' }
+  { id: 'kant_two_frames', name: 'Duo' }, { id: 'kant_gum', name: 'Bubble' }, { id: 'kant_matrix', name: 'Code' },
+  { id: 'kant_edit', name: 'Novel' }, { id: 'kant_vhs', name: 'Retro' }, { id: 'kant_lani_style', name: 'Scribble' }
 ] as const;
 
 const FPS = 30;
