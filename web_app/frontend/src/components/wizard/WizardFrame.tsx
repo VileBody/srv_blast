@@ -62,6 +62,8 @@ export function StageTabs() {
             type="button"
             role="tab"
             className="w12-tab"
+            // на телефоне у нетекущих шагов виден только значок — имя шага остаётся для скринридера
+            aria-label={t(tab.label)}
             aria-selected={current}
             disabled={index > reached}
             onClick={() => setStage(tab.stage)}

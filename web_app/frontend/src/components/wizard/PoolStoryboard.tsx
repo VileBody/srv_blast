@@ -9,6 +9,7 @@ import { usePlaybackUrl } from './useFragmentAudio';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useFxLab } from './FxLab';
+import { useStripFollow } from './useStripFollow';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { StoryboardGuideVisual, StoryboardReplaceGuideVisual } from './timelineGuides';
 import './PoolStoryboard.css';
@@ -334,6 +335,8 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
         : !video ? 'Подбираем исходники…'
           : null;
 
+  // лента кадров: на узком экране прокручивается и держит текущий кадр в центре
+  const strip = useStripFollow(edit?.k ?? s, video?.clips.length ?? 0);
   return (
     <div className="psb">
       <div ref={frameGuideRef} style={{ position: 'relative', height: '100%', aspectRatio: '9 / 16', maxWidth: '100%' }}>
@@ -398,7 +401,7 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
                   <button type="button" className="psb-btn pri" onClick={() => { setReplaceGuideDismissed(true); void startEdit(); }} aria-label="Заменить кадр" title="Подобрать другой клип для кадра на экране"><Svg d={REROLL} /><span className="tx">Заменить кадр</span></button>
                 </div>
               )}
-              <div className={`psb-strip${edit ? ' editing' : ''}`}>
+              <div ref={strip.ref} className={`psb-strip${edit ? ' editing' : ''}`} data-fade-l={strip.fadeLeft || undefined} data-fade-r={strip.fadeRight || undefined}>
                 {video.clips.map((c, i) => (
                   <button key={`${c.fileName}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === s ? ' cur' : ''}`} style={{ flexGrow: bounds[i + 1] - bounds[i] }} aria-label={`Кадр ${i + 1}`} onClick={() => { if (!edit) seekShot(i); }}>
                     {c.previewUrl && (isSvg(c.previewUrl) ? <img src={c.previewUrl} alt="" draggable={false} /> : <video src={`${c.previewUrl}#t=${c.previewOffset + 0.1}`} muted playsInline preload="metadata" />)}
