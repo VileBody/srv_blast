@@ -26,6 +26,7 @@
 
 @keyframes m-fade { from { opacity: 0; } }
 @keyframes m-rise { from { opacity: 0; transform: translateY(10px); } }
+@keyframes m-nudge { from { opacity: 0; transform: translateY(6px); } }
 @keyframes m-drop { from { opacity: 0; transform: translateY(-6px); } }
 @keyframes m-pop { from { opacity: 0; scale: 0.97; translate: 0 6px; } }
 
@@ -52,9 +53,9 @@
 :where(.m-stagger) > :where(:nth-child(7)) { animation-delay: calc(var(--m-step) * 6); }
 :where(.m-stagger) > :where(:nth-child(n + 8)) { animation-delay: calc(var(--m-step) * 7); }
 
-/* визард: шаг сменился — содержимое карточки шага и правая рабочая зона */
-:where(.w12-stage) > :where(*),
-:where(.w12-app) > :where(.w12-col-aside) { animation: m-rise var(--m-base) var(--m-ease) backwards; }
+/* визард: шаг сменился — содержимое карточки шага всплывает на полшага (сама карточка
+   остаётся на месте); карточки правой рабочей зоны монтируются заново и идут по правилу выше */
+:where(.w12-stage) > :where(*) { animation: m-nudge var(--m-base) var(--m-ease) backwards; }
 
 /* окна: подложка проявляется, панель чуть подрастает */
 :where(.modal-overlay, .m-overlay) { animation: m-fade var(--m-base) var(--m-ease) backwards; }
@@ -69,7 +70,6 @@
   :where(.card, .card-2, .w12-card),
   :where(.m-stagger) > :where(*),
   :where(.w12-stage) > :where(*),
-  :where(.w12-app) > :where(.w12-col-aside),
   :where(.modal-overlay, .m-overlay, .modal-panel, .m-dialog, .w12-modal),
   :where(.fxt-acc) > :where(:not(.fxt-acc-h)),
   :where(.fxt-lib-b) > :where(*) { animation: none; }
