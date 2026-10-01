@@ -84,17 +84,17 @@ function LyricTitle() {
 function AuthField({ label, value, onChange, error }: { label: string; value: string; onChange: (value: string) => void; error?: string | false }) {
   const id = useId();
   return (
-    <label htmlFor={id} className="flex min-w-0 flex-1 flex-col gap-[6px]">
-      <span className="text-ui-12 text-text-60">{label}</span>
+    <label htmlFor={id} className="flex min-w-0 flex-1 flex-col gap-[8px]">
+      <span className="auth-small">{label}</span>
       <input
         id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         aria-invalid={error ? true : undefined}
         autoComplete={label}
-        className="auth-input h-ctl w-full rounded-r10 border border-line bg-field px-[14px] text-ui-16 text-text outline-none"
+        className="auth-input auth-control auth-body-text w-full rounded-r15 border border-line bg-field px-[20px] text-text outline-none"
       />
-      {error && <span className="text-ui-12 text-error">{error}</span>}
+      {error && <span className="auth-small !text-error">{error}</span>}
     </label>
   );
 }
@@ -229,7 +229,7 @@ function ProviderButton({ kind, label, primary, disabled, busy, onClick, href }:
   const inner = (
     <>
       {kind === 'google' && <span className="auth-cta-icon" aria-hidden="true"><GoogleMark /></span>}
-      <span className="auth-cta-label text-ui-20">{label}</span>
+      <span className="auth-cta-label">{label}</span>
       {/* шеврон без стебля — только «галочка» направления; на загрузке вместо него спиннер */}
       {kind === 'telegram' && (
         <span className="auth-cta-icon" aria-hidden="true">
@@ -240,7 +240,7 @@ function ProviderButton({ kind, label, primary, disabled, busy, onClick, href }:
       )}
     </>
   );
-  const shell = cn('auth-cta', primary ? 'auth-cta--primary' : 'auth-cta--secondary');
+  const shell = cn('auth-cta auth-control auth-body-text', primary ? 'auth-cta--primary' : 'auth-cta--secondary');
   return href ? (
     <a href={href} className={shell}>{inner}</a>
   ) : (
@@ -337,7 +337,7 @@ export function AuthPage({ mode }: { mode: Mode }) {
 
         <form className="auth-body" onSubmit={onSubmit} noValidate>
           <LyricTitle />
-          <p className="auth-rise mt-[18px] max-w-[440px] text-ui-20 text-text-60 [text-wrap:balance] max-lg:text-ui-16" style={{ animationDelay: '1.4s' }}>
+          <p className="auth-rise auth-lead auth-body-text" style={{ animationDelay: '1.4s' }}>
             {mode === 'register' ? t('auth.registerLead') : t('auth.loginLead')}
           </p>
 
@@ -346,9 +346,9 @@ export function AuthPage({ mode }: { mode: Mode }) {
            * chat_id, Google — через подтверждённую почту. ФИО спрашиваем только на регистрации
            * и только ради телеграм-пути (Google отдаёт имя сам) — поэтому поля стоят над кнопкой.
            */}
-          <div className="auth-rise mt-[28px] flex max-w-[440px] flex-col gap-[10px] max-lg:mt-[20px]" style={{ animationDelay: '1.55s' }}>
+          <div className="auth-rise auth-actions" style={{ animationDelay: '1.55s' }}>
             {mode === 'register' && (
-              <div className="mb-[4px] flex gap-[10px]">
+              <div className="flex gap-[12px]">
                 <AuthField label={t('auth.name')} value={form.name} onChange={(name) => setForm((current) => ({ ...current, name }))} error={submitted && errors.name} />
                 <AuthField label={t('auth.surname')} value={form.surname} onChange={(surname) => setForm((current) => ({ ...current, surname }))} error={submitted && errors.surname} />
               </div>
@@ -373,16 +373,16 @@ export function AuthPage({ mode }: { mode: Mode }) {
          * происходит в момент регистрации, а Google и TikTok при ревью проверяют ссылки здесь.
          * Названия в винительном падеже (auth.legal*).
          */}
-        <div className="auth-rise mt-[24px] flex flex-wrap items-end justify-between gap-x-[24px] gap-y-[8px] lg:mt-0" style={{ animationDelay: '1.7s' }}>
-          <p className="max-w-[360px] text-ui-12 text-text-40">
+        <div className="auth-rise auth-foot" style={{ animationDelay: '1.7s' }}>
+          <p className="auth-small">
             {t('auth.legalPrefix')}{' '}
-            <a className="whitespace-nowrap text-text-60 underline underline-offset-2 transition hover:text-text" href={LEGAL_LINKS.offer} target="_blank" rel="noreferrer">{t('auth.legalOffer')}</a>{' '}
+            <a className="auth-link whitespace-nowrap" href={LEGAL_LINKS.offer} target="_blank" rel="noreferrer">{t('auth.legalOffer')}</a>{' '}
             {t('auth.legalAnd')}{' '}
-            <a className="text-text-60 underline underline-offset-2 transition hover:text-text" href={LEGAL_LINKS.policy} target="_blank" rel="noreferrer">{t('auth.legalPolicy')}</a>
+            <a className="auth-link whitespace-nowrap" href={LEGAL_LINKS.policy} target="_blank" rel="noreferrer">{t('auth.legalPolicy')}</a>
           </p>
-          <p className="text-ui-14 text-text-60">
+          <p className="auth-small">
             {mode === 'register' ? t('auth.haveAccount') : t('auth.noAccount')}{' '}
-            <Link className="text-accent-light underline-offset-4 transition hover:underline" to={mode === 'register' ? '/login' : '/register'}>
+            <Link className="auth-link" to={mode === 'register' ? '/login' : '/register'}>
               {mode === 'register' ? t('auth.loginCta') : t('auth.registerCta')}
             </Link>
           </p>
