@@ -177,8 +177,10 @@ class StoryboardService:
         raw = loaded.raw_by_name.get(clip.file_name) or {}
         meta = loaded.ctx.by_name.get(clip.file_name) or {}
         file_path = str(raw.get("file_path") or "")
-        # A virtual segment of a long source plays from segment_base_sec.
-        offset = float(raw.get("segment_base_sec") or 0.0) + float(clip.source_offset_sec)
+        # source_offset_sec is already in seconds of the source FILE: the picker (and a
+        # pinned replacement) put the virtual segment's base inside it. Adding the base
+        # again would preview a later moment than the render plays.
+        offset = float(clip.source_offset_sec)
         return {
             **clip.model_dump(),
             "preview_url": self._sign(file_path) if file_path.startswith("s3://") else None,
