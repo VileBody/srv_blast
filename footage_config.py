@@ -475,7 +475,21 @@ def build_inventory_and_bundle(
     # five-minute film would contribute exactly one cut to a video. Deliberately
     # NOT applied to the tag-based pool — those clips are already short, and
     # expanding them would change every existing job's selection.
-    if str(media_type or "").strip().lower() == "collection":
+    pool = str(media_type or "video").strip().lower()
+    # Video and collection: an edited source becomes one clip per shot, so its internal
+    # edits never reach a video as off-beat jump cuts (FOOTAGE_SPLIT_SHOTS=0 turns it
+    # off). Photos have no edits. Runs BEFORE the collection grid: shot rows already
+    # carry segment_base_sec, so the grid only takes long sources with no edits found.
+    if pool in ("video", "collection"):
+        from mlcore.footage_segments import expand_shot_rows, shot_split_enabled
+
+        if shot_split_enabled():
+            before = len(assets)
+            edited = sum(1 for a in assets if a.get("scene_cuts"))
+            assets = expand_shot_rows(assets)
+            print(f"[{pool}] shot split: {before} sources ({edited} edited) -> {len(assets)} clips")
+
+    if pool == "collection":
         from mlcore.footage_segments import expand_asset_rows
 
         before = len(assets)
@@ -488,17 +502,6 @@ def build_inventory_and_bundle(
             f"[collection] segment expansion: {before} sources -> {len(assets)} clips "
             f"(scene-cut data for {len(scene_cuts)})"
         )
-
-    # Video pool: an edited pin becomes one clip per shot, so its internal edits never
-    # reach a video as off-beat jump cuts (FOOTAGE_SPLIT_PIN_SHOTS=0 turns it off).
-    if str(media_type or "video").strip().lower() == "video":
-        from mlcore.footage_segments import expand_shot_rows, pin_shots_enabled
-
-        if pin_shots_enabled():
-            before = len(assets)
-            edited = sum(1 for a in assets if a.get("scene_cuts"))
-            assets = expand_shot_rows(assets)
-            print(f"[video] shot split: {before} pins ({edited} edited) -> {len(assets)} clips")
 
     inv_obj: Dict[str, Any] = {
         "version": "v2",
