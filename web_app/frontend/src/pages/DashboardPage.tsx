@@ -63,7 +63,7 @@ function ProjectRow({ project }: { project: Project }) {
   const allPosted = generated > 0 && posted === generated;
   return (
     <Link to={`/app/projects/${project.id}`} className="group flex items-center gap-space-5">
-      <ProjectCover name={project.name} src={project.coverUrl} className="h-[80px] w-[80px] shrink-0 rounded-[5px] max-md:h-[56px] max-md:w-[56px]" />
+      <ProjectCover name={project.name} src={project.coverUrl} track={project.coverTrack} className="h-[80px] w-[80px] shrink-0 rounded-[5px] max-md:h-[56px] max-md:w-[56px]" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[24px] leading-none text-text-80 transition-colors group-hover:text-text">
           {project.name}
@@ -144,7 +144,7 @@ function Hero({ name, resume, onCreate, onResume }: {
               >
                 {resume.kind === 'post' ? t('dashboard.resumePostCta') : t('dashboard.resumeWizardCta')}
               </button>
-              <button type="button" onClick={onCreate} className="soft-btn h-[60px] gap-space-3 px-space-6 text-[20px] font-[400] max-md:h-[44px] max-md:flex-1 max-md:gap-[6px] max-md:whitespace-nowrap max-md:!bg-[#2a1e49] max-md:px-[10px] max-md:text-[13px]">
+              <button type="button" onClick={onCreate} className="soft-btn h-[60px] gap-space-3 px-space-6 text-[20px] font-[400] max-md:h-[44px] max-md:flex-1 max-md:gap-[6px] max-md:whitespace-nowrap max-md:!bg-field-hover max-md:px-[10px] max-md:text-[13px]">
                 <img src="/assets/figma/home-note.svg" width="14" height="19" alt="" aria-hidden className="max-md:h-[14px] max-md:w-[10px]" />
                 {t('dashboard.createProject')}
               </button>
@@ -158,7 +158,7 @@ function Hero({ name, resume, onCreate, onResume }: {
             <button
               type="button"
               onClick={onCreate}
-              className="soft-btn mt-[40px] h-[60px] gap-space-3 px-space-6 text-[20px] font-[400] max-md:mt-[18px] max-md:h-[44px] max-md:!bg-[#2a1e49] max-md:px-[14px] max-md:text-[14px]"
+              className="soft-btn mt-[40px] h-[60px] gap-space-3 px-space-6 text-[20px] font-[400] max-md:mt-[18px] max-md:h-[44px] max-md:!bg-field-hover max-md:px-[14px] max-md:text-[14px]"
             >
               <img src="/assets/figma/home-note.svg" width="14" height="19" alt="" aria-hidden className="max-md:h-[14px] max-md:w-[10px]" />
               {t('dashboard.createProject')}

@@ -6,6 +6,7 @@ import { App } from './app/App';
 import { ToastProvider } from './contexts/ToastContext';
 import './i18n';
 import './index.css';
+import './motion.css';
 
 const queryClient = new QueryClient({
   defaultOptions: {

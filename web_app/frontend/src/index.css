@@ -370,9 +370,30 @@
   will-change: transform, opacity;
 }
 
-.project-cover-frame { border-radius: clamp(7px, 7cqi, 18px); }
-.project-cover-gem { width: clamp(4px, 2.7cqi, 7px); height: clamp(4px, 2.7cqi, 7px); }
-.project-cover-initial { font-size: clamp(22px, 22cqi, 48px); transform: translateY(1px); }
+/*
+ * Обложка-дорожка: волна трека проекта, рамка выбранного отрывка (как окно выбора на шаге
+ * «Трек») и линия дропа. Без свечений и градиентов — данные, а не декор.
+ * Подпись (файл и время отрывка) — только на крупной обложке: в плитке 56–80px на главной
+ * она не читается, там остаётся одна волна.
+ */
+.project-cover { container-type: inline-size; }
+.project-cover-lane { position: absolute; left: 8%; right: 8%; top: 18%; bottom: 32%; }
+.project-cover-bars { position: absolute; inset: 0; display: flex; align-items: center; gap: 1px; }
+.project-cover-bars i { flex: 1; min-width: 0; border-radius: 2px; background: var(--line-strong); } /* ui-allow: столбик волны, как на шаге «Трек» */
+.project-cover-bars i.in { background: var(--accent-light); }
+.project-cover-bars.n24 { display: none; gap: 1px; }
+/* рамка отрывка — как окно выбора на шаге «Трек» */
+.project-cover-win { position: absolute; top: -8%; bottom: -8%; border-radius: var(--r6); background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent-light); }
+.project-cover-drop { position: absolute; top: -8%; bottom: -8%; width: 1.5px; margin-left: -0.75px; border-radius: 2px; background: var(--text-80); } /* ui-allow: линия дропа */
+.project-cover-meta { position: absolute; left: 8%; right: 8%; bottom: 9%; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 12px; line-height: 16px; color: var(--text-60); } /* ui-allow: подпись обложки = text-ui-12 */
+.project-cover-meta .nm { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.project-cover-meta .tm { flex: none; color: var(--text-80); font-variant-numeric: tabular-nums; }
+@container (max-width: 140px) {
+  .project-cover-lane { inset: 22% 10%; }
+  .project-cover-bars.n64 { display: none; }
+  .project-cover-bars.n24 { display: flex; }
+  .project-cover-meta { display: none; }
+}
 
 /* Hover-capable screens keep the video clear until the player is engaged.
    Touch users have no hover state, so controls remain visible for them. */
@@ -408,7 +429,8 @@
 
 :root {
   --bg:              #05010f;
-  --nav-bg:          #150F25;
+  /* палитра сайта = палитра визарда (wizard12.css, --w12-*): одни поверхности на всех страницах */
+  --nav-bg:          #0d0820;
   --card-bg:         #060114;
   /* единая шкала UI: карточка страницы (UI_RULES.md → Поверхности) */
   --card:            #0d0820;
@@ -428,7 +450,7 @@
   --accent-10:    rgba(95, 66, 185, 0.10);
   --accent-light: #8b6fe6;
   --pill-border:  #8b6fe6;
-  --border:       rgba(95, 66, 185, 0.25);
+  --border:       rgba(246, 245, 253, 0.09);
   --border-hover: rgba(139, 111, 230, 0.50);
 
   --success:     #22c55e;
@@ -442,15 +464,18 @@
   --neutral-bg:  rgba(246,245,253,.08);
 
   /* Figma: карточки/панели новых макетов (Wireframe 7–17) */
-  --card-2:      #140E24;
+  --card-2:      #0d0820;
   --dash-accent: #8b6fe6;
   --dash-white:  rgba(246, 245, 253, 0.95);
   --dash-white-50: rgba(246, 245, 253, 0.50);
-  --grad-soft-10: linear-gradient(175deg, rgba(139, 111, 230, 0.10) 3.6%, rgba(95, 66, 185, 0.10) 132.9%);
+  /* «мягкие» заливки вложенных контейнеров — плоские поверхности визарда (panel / field), а не
+     полупрозрачный фиолетовый градиент: страницы выглядели другим продуктом. Остаются градиентом
+     (одного цвета), чтобы bg-grad-soft-* (background-image) работали как раньше. */
+  --grad-soft-10: linear-gradient(#140d2b, #140d2b);
   /* Фактический цвет контейнеров grad-soft-10 над card-2 (alpha-blend) — в него тают фейды чипов.
      Фейд обязан совпадать с фоном; grad-soft-10 почти плоский, поэтому одного цвета достаточно. */
-  --fx-container-bg: #1e1535;
-  --grad-soft-20: linear-gradient(175deg, rgba(139, 111, 230, 0.20) 3.6%, rgba(95, 66, 185, 0.20) 132.9%);
+  --fx-container-bg: #140d2b;
+  --grad-soft-20: linear-gradient(#1a1236, #1a1236);
   /* Пилюля слова на таймлайне примерки: НЕПРОЗРАЧНАЯ, на тон светлее контейнера
      (card-2 → soft-10 → soft-20 даёт ≈#35295a; пилюля должна читаться поверх него). */
   --tl-pill: #3f3170;
@@ -461,7 +486,7 @@
   /* Figma-стиль «whitey»: светлая заливка инпутов/кнопок (W49 760:2587, пагинация W36) */
   --grad-whitey: linear-gradient(178deg, rgba(246, 245, 253, 0.95) 7.5%, rgb(246, 245, 253) 119.25%);
   --grad-btn:  linear-gradient(90deg,  #8b6fe6 0%, #5f42b9 100%);
-  --grad-card: linear-gradient(135deg, #0d0828 0%, #0a0520 50%, #080318 100%);
+  --grad-card: linear-gradient(#0d0820, #0d0820);
   --grad-text: linear-gradient(90deg,  #8b6fe6 0%, #5f42b9 100%);
 
   --font: 'Point', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -625,28 +650,20 @@ input, textarea, [contenteditable] { caret-color: var(--accent-light); }
     background: var(--grad-card); border: 1px solid var(--border); border-radius: var(--r20); padding: var(--space-5);
   }
   /* Новый визуальный язык (Figma Wireframe 7–17) */
+  /* карточка страницы = карточка визарда (.w12-card): плоская panel, нейтральная линия, без свечения */
   .card-2 {
-    border: 1px solid rgba(246, 245, 253, .045);
+    border: 1px solid var(--line);
     border-radius: var(--r25);
-    background:
-      linear-gradient(155deg, rgba(246, 245, 253, .025) 0%, transparent 35%),
-      var(--card-2);
-    box-shadow:
-      inset 0 1px 0 rgba(246, 245, 253, .035),
-      0 22px 64px rgba(0, 0, 0, .18);
+    background: var(--card-2);
   }
   .taste-metric {
-    border: 1px solid rgba(139, 111, 230, .14);
-    background:
-      linear-gradient(145deg, rgba(139, 111, 230, .18), rgba(95, 66, 185, .10)),
-      rgba(246, 245, 253, .015);
-    box-shadow: inset 0 1px 0 rgba(246, 245, 253, .045);
+    border: 1px solid var(--line);
+    background: var(--field);
     transition: transform var(--t-base), border-color var(--t-base), box-shadow var(--t-base);
   }
   .taste-metric:hover {
     transform: translateY(-2px);
-    border-color: rgba(139, 111, 230, .32);
-    box-shadow: inset 0 1px 0 rgba(246, 245, 253, .07), 0 14px 36px rgba(5, 1, 15, .24);
+    border-color: var(--line-strong);
   }
   @media (max-width: 1023px) {
   }

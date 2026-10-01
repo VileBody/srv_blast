@@ -200,14 +200,14 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
 
   return createPortal(
     <div
-      className="fixed inset-y-[var(--rail-pad-y)] left-[calc(var(--sidebar-w)_+_var(--space-6))] right-space-6 z-overlay flex items-center justify-center rounded-r25 bg-[rgba(5,1,15,0.72)] max-lg:inset-0 max-lg:rounded-none"
+      className="m-overlay fixed inset-y-[var(--rail-pad-y)] left-[calc(var(--sidebar-w)_+_var(--space-6))] right-space-6 z-overlay flex items-center justify-center rounded-r25 bg-[rgba(5,1,15,0.72)] max-lg:inset-0 max-lg:rounded-none"
       onMouseDown={() => { if (!busy) onClose(); }}
     >
       <section
         role="dialog"
         aria-modal="true"
         aria-label={t('projectModal.title')}
-        className="subtle-scroll relative max-h-[calc(100%-40px)] w-[460px] max-w-full overflow-y-auto rounded-r25 bg-card-2 p-[40px]"
+        className="m-dialog subtle-scroll relative max-h-[calc(100%-40px)] w-[460px] max-w-full overflow-y-auto rounded-r25 bg-card-2 p-[40px]"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center gap-[20px]">

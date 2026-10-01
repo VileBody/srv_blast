@@ -1,0 +1,76 @@
+/*
+ * Движение сайта — одна система мягких появлений.
+ *
+ * Каждая анимация отвечает на вопрос «что изменилось»: открылась страница, сменился шаг,
+ * пришли данные, открылось окно или группа. Ничего не крутится просто так.
+ *
+ * Правила:
+ * - одна кривая (expo-out: быстрый старт, долгое мягкое затухание) и три длительности;
+ * - анимируем только opacity и transform — без layout и без размытия;
+ * - сдвиг небольшой (6–10px): элемент «всплывает», а не прилетает;
+ * - корень страницы проявляется ТОЛЬКО прозрачностью: transform на предке сделал бы его
+ *   опорой для position: fixed, и модалки внутри страницы (Modal.tsx — не портал)
+ *   съехали бы на время анимации. Сдвиг получают карточки, а fill-mode у всех backwards —
+ *   по окончании transform снимается целиком;
+ * - модалки — отдельными свойствами scale/translate: не перетирают их transform центровки;
+ * - селекторы в :where() — нулевая специфичность: своя анимация компонента всегда главнее;
+ * - prefers-reduced-motion — появления выключены, остаётся мгновенный показ.
+ */
+:root {
+  --m-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --m-fast: 180ms;
+  --m-base: 320ms;
+  --m-slow: 520ms;
+  --m-step: 45ms;
+}
+
+@keyframes m-fade { from { opacity: 0; } }
+@keyframes m-rise { from { opacity: 0; transform: translateY(10px); } }
+@keyframes m-nudge { from { opacity: 0; transform: translateY(6px); } }
+@keyframes m-drop { from { opacity: 0; transform: translateY(-6px); } }
+@keyframes m-pop { from { opacity: 0; scale: 0.97; translate: 0 6px; } }
+
+/* страница: новый корень маршрута проявляется */
+:where(.app-content) > :where(*) { animation: m-fade var(--m-base) var(--m-ease) backwards; }
+
+/* карточки страниц и визарда всплывают лесенкой — по порядку в родителе */
+:where(.card, .card-2, .w12-card) { animation: m-rise var(--m-slow) var(--m-ease) backwards; }
+:where(.card, .card-2, .w12-card):nth-child(2) { animation-delay: calc(var(--m-step) * 1); }
+:where(.card, .card-2, .w12-card):nth-child(3) { animation-delay: calc(var(--m-step) * 2); }
+:where(.card, .card-2, .w12-card):nth-child(4) { animation-delay: calc(var(--m-step) * 3); }
+:where(.card, .card-2, .w12-card):nth-child(5) { animation-delay: calc(var(--m-step) * 4); }
+:where(.card, .card-2, .w12-card):nth-child(6) { animation-delay: calc(var(--m-step) * 5); }
+:where(.card, .card-2, .w12-card):nth-child(7) { animation-delay: calc(var(--m-step) * 6); }
+:where(.card, .card-2, .w12-card):nth-child(n + 8) { animation-delay: calc(var(--m-step) * 7); }
+
+/* списки (плитки проектов, тарифы): тот же подъём лесенкой, по порядку в списке */
+:where(.m-stagger) > :where(*) { animation: m-rise var(--m-slow) var(--m-ease) backwards; }
+:where(.m-stagger) > :where(:nth-child(2)) { animation-delay: calc(var(--m-step) * 1); }
+:where(.m-stagger) > :where(:nth-child(3)) { animation-delay: calc(var(--m-step) * 2); }
+:where(.m-stagger) > :where(:nth-child(4)) { animation-delay: calc(var(--m-step) * 3); }
+:where(.m-stagger) > :where(:nth-child(5)) { animation-delay: calc(var(--m-step) * 4); }
+:where(.m-stagger) > :where(:nth-child(6)) { animation-delay: calc(var(--m-step) * 5); }
+:where(.m-stagger) > :where(:nth-child(7)) { animation-delay: calc(var(--m-step) * 6); }
+:where(.m-stagger) > :where(:nth-child(n + 8)) { animation-delay: calc(var(--m-step) * 7); }
+
+/* визард: шаг сменился — содержимое карточки шага всплывает на полшага (сама карточка
+   остаётся на месте); карточки правой рабочей зоны монтируются заново и идут по правилу выше */
+:where(.w12-stage) > :where(*) { animation: m-nudge var(--m-base) var(--m-ease) backwards; }
+
+/* окна: подложка проявляется, панель чуть подрастает */
+:where(.modal-overlay, .m-overlay) { animation: m-fade var(--m-base) var(--m-ease) backwards; }
+:where(.modal-panel, .m-dialog, .w12-modal) { animation: m-pop var(--m-base) var(--m-ease) backwards; }
+
+/* монтажный стол: открытая группа библиотеки и смена вкладки */
+:where(.fxt-acc) > :where(:not(.fxt-acc-h)) { animation: m-drop var(--m-base) var(--m-ease) backwards; }
+:where(.fxt-lib-b) > :where(*) { animation: m-fade var(--m-fast) var(--m-ease) backwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  :where(.app-content) > :where(*),
+  :where(.card, .card-2, .w12-card),
+  :where(.m-stagger) > :where(*),
+  :where(.w12-stage) > :where(*),
+  :where(.modal-overlay, .m-overlay, .modal-panel, .m-dialog, .w12-modal),
+  :where(.fxt-acc) > :where(:not(.fxt-acc-h)),
+  :where(.fxt-lib-b) > :where(*) { animation: none; }
+}

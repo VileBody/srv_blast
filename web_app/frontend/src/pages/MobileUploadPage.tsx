@@ -64,7 +64,7 @@ export function MobileUploadPage() {
     setBusy(false);
   };
 
-  return <main className="min-h-[100dvh] bg-[#100820] px-5 py-8 text-text">
+  return <main className="min-h-[100dvh] bg-bg px-5 py-8 text-text">
     <div className="mx-auto flex max-w-lg flex-col gap-5">
       <div><h1 className="text-[30px] leading-tight">{t('wizard.sources.title')}</h1>{info && <p className="mt-3 text-[15px] leading-6 text-text-60">{t('wizard.sources.rules', { format: info.format })}</p>}</div>
       {info && <>

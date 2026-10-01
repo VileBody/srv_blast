@@ -152,11 +152,23 @@ export interface ContentIteration {
   createdAt: string;
 }
 
+/** Трек проекта для обложки: волна считается из файла, отрывок и дроп — секунды трека. */
+export interface ProjectCoverTrack {
+  trackId: string;
+  filename?: string | null;
+  durationS?: number | null;
+  from?: number | null;
+  to?: number | null;
+  drop?: number | null;
+}
+
 export interface Project {
   id: string;
   userId: string;
   name: string;
   coverUrl?: string | null;
+  /** Трек последней генерации — обложка-дорожка, пока своей картинки нет */
+  coverTrack?: ProjectCoverTrack | null;
   packageType: PackageType;
   status: ProjectStatus;
   startedAt: string;

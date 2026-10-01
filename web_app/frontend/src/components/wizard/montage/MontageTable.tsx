@@ -464,7 +464,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
       <div key={g.id} className="fxt-acc" data-open={Boolean(open[g.id])}>
         <button type="button" className="fxt-acc-h" aria-expanded={Boolean(open[g.id])} onClick={() => setOpen(g.id)}>
           <span className={`fxt-ic k-${kind} sm${inUse ? ' on' : ''}`}><Glyph name={g.icon} size={14} /></span>
-          <span className="name">{g.label}</span><span className="c">{g.items.length || ''}</span>
+          <span className="name">{g.label}{g.items.length > 0 && <span className="c">{g.items.length}</span>}</span>
           {inUse && <span className="was">в этом ролике</span>}
           {!g.items.length && <span className="mt-soon">скоро</span>}
           <span className="chev"><Glyph name="chev" size={16} /></span>
@@ -477,7 +477,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
       </div>
     );
   });
-  const tabs: [LibKind, string, number][] = [['text', 'Субтитры', SUB_STYLES.length], ['hook', 'Хуки', HOOK_CATS.reduce((n, c) => n + c.options.length, 0)], ['trans', 'Переходы', GLUES.length], ['style', 'Стилизации', STYLES.length], ['frame', 'Рамки', frames.length]];
+  const tabs: [LibKind, string, number][] = [['hook', 'Хуки', HOOK_CATS.reduce((n, c) => n + c.options.length, 0)], ['style', 'Стилизации', STYLES.length], ['trans', 'Переходы', GLUES.length], ['text', 'Субтитры', SUB_STYLES.length], ['frame', 'Рамки', frames.length]];
   return (
     <section className="fxt-panel fxt-lib" aria-label="Библиотека">
       <div className="fxt-lib-h">
@@ -485,7 +485,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
         <div className="fxt-tabs" role="tablist">
           {tabs.map(([id, label, count]) => (
             <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
-              <span className="tx">{label}</span><span className="c tx">{count}</span>
+              <span className="tx">{label}<span className="c">{count}</span></span>
             </button>
           ))}
         </div>
@@ -511,7 +511,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
           <div key={cat.kind} className="fxt-acc" data-open={Boolean(open[cat.kind])}>
             <button type="button" className="fxt-acc-h" aria-expanded={Boolean(open[cat.kind])} onClick={() => setOpen(cat.kind)}>
               <span className={`fxt-ic k-hook sm${activeHookKind === cat.kind ? ' on' : ''}`}><Glyph name={cat.icon} size={14} /></span>
-              <span className="name">{cat.label}</span><span className="c">{cat.options.length || ''}</span>
+              <span className="name">{cat.label}{cat.options.length > 0 && <span className="c">{cat.options.length}</span>}</span>
               {activeHookKind === cat.kind && <span className="was">в этом ролике</span>}
               <span className="chev"><Glyph name="chev" size={16} /></span>
             </button>
@@ -525,7 +525,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
             <div className="fxt-acc mt-plain">
               <button type="button" className="fxt-acc-h" aria-pressed={used({ kind: 'trans', label: NO_GLUE })} onClick={() => onAdd({ kind: 'trans', label: NO_GLUE })}>
                 <span className={`fxt-ic k-trans sm${used({ kind: 'trans', label: NO_GLUE }) ? ' on' : ''}`}><Glyph name="t_none" size={14} /></span>
-                <span className="name">{NO_GLUE}</span><span className="c">жёсткая склейка</span>
+                <span className="name">{NO_GLUE}<span className="c">жёсткая склейка</span></span>
                 {used({ kind: 'trans', label: NO_GLUE }) ? <span className="was">в этом ролике</span> : <span className="mt-plainact">на все склейки</span>}
               </button>
             </div>
@@ -794,7 +794,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
 
   /* ── состояние экрана ── */
   const [tab, setTab] = useState<LibKind>('hook');
-  const [open, setOpenState] = useState<Record<string, boolean>>(() => (kind && kind !== 'none' ? { [kind]: true } : { effects: true }));
+  // Группы библиотеки стартуют свёрнутыми: стол открывается обзором, а не одной группой
+  // хуков; группа, что уже стоит в ролике, видна по метке «в этом ролике».
+  const [open, setOpenState] = useState<Record<string, boolean>>({});
   const [sel, setSel] = useState<Sel>(null);
   const [t, setT] = useState(0);
   const tRef = useRef(0);

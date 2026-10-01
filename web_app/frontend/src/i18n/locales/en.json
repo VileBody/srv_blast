@@ -1060,7 +1060,16 @@
     "googleBenefit": "One click — your name comes from the account",
     "namesForTelegram": "Needed for the Telegram route. Google fills the name in for you.",
     "legalOffer": "Terms of service",
-    "legalPolicy": "Privacy policy"
+    "legalPolicy": "Privacy policy",
+    "loginLead": "Welcome back. New track, new clips.",
+    "registerLead": "Upload the track and lyrics. Subtitles land on the beat, footage and effects match the mood.",
+    "title1": "Make your track",
+    "title2": "go viral",
+    "titleHot": "viral",
+    "tgCtaLogin": "Sign in with Telegram",
+    "tgCtaRegister": "Continue in Telegram",
+    "googleCtaLogin": "Sign in with Google",
+    "googleCtaRegister": "Continue with Google"
   },
   "processing": {
     "progress": "Progress: {{done}}/{{total}} videos",

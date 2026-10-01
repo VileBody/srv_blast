@@ -51,7 +51,7 @@ export function Dialog({
 
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-modal grid place-items-center bg-scrim p-[16px] backdrop-blur-[6px]" onMouseDown={onClose}>
+    <div className="m-overlay fixed inset-0 z-modal grid place-items-center bg-scrim p-[16px] backdrop-blur-[6px]" onMouseDown={onClose}>
       <section
         ref={panel}
         role="dialog"
@@ -60,7 +60,7 @@ export function Dialog({
         tabIndex={-1}
         onMouseDown={(event) => event.stopPropagation()}
         className={cn(
-          'flex max-h-[calc(100dvh-32px)] w-full flex-col overflow-hidden rounded-r25 border border-line-strong bg-card outline-none',
+          'm-dialog flex max-h-[calc(100dvh-32px)] w-full flex-col overflow-hidden rounded-r25 border border-line-strong bg-card outline-none',
           size === 'md' ? 'max-w-[560px]' : 'max-w-[960px]'
         )}
       >

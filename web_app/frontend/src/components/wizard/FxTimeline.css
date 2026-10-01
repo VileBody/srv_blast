@@ -87,14 +87,14 @@
 .fxt-tabs button:hover { color: var(--text); }
 .fxt-tabs button[aria-selected="true"] { background: var(--fxt-raise); color: var(--text); }
 .fxt-tabs button[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
-.fxt-tabs .c { font-size: 11px; color: var(--fxt-t40); }
+.fxt-tabs .c { margin-left: 6px; font-size: 11px; color: var(--fxt-t40); }
 .fxt-lib-b { overflow: auto; padding: 4px 12px 12px; min-height: 0; scrollbar-width: thin; scrollbar-color: var(--fxt-t20) transparent; }
 .fxt-acc { border-bottom: 1px solid var(--fxt-line); }
 .fxt-acc:last-child { border-bottom: 0; }
 .fxt-acc-h { width: 100%; display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 4px; color: var(--fxt-t80); text-align: left; }
 .fxt-acc-h:hover { color: var(--text); }
-.fxt-acc-h .name, .fxt-acc-h .c { position: relative; top: 1px; }
-.fxt-acc-h .c { font-size: 12px; color: var(--fxt-t40); }
+.fxt-acc-h .name { position: relative; top: 1px; }
+.fxt-acc-h .c { margin-left: 8px; font-size: 12px; color: var(--fxt-t40); }
 .fxt-acc-h .was { font-size: 11px; line-height: 1.2; color: var(--fxt-hook); background: var(--fxt-hook-soft); padding: 4px 8px 2px; border-radius: 6px; }
 .fxt-acc-h .chev { margin-left: auto; color: var(--fxt-t40); transition: transform .2s var(--fxt-ease); }
 .fxt-acc[data-open="true"] .chev { transform: rotate(180deg); }
