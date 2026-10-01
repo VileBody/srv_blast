@@ -103,5 +103,7 @@ def test_pin_edits_reach_the_picker_inventory(tmp_path, monkeypatch):
     build_inventory_and_bundle(repo_root=tmp_path, footage_dir=tmp_path / "footage", static_assets_index_path=index,
                                inventory_out_path=inv_out, bundle_out_path=tmp_path / "bundle.json")
     assets = {a["file_name"]: a for a in json.loads(inv_out.read_text(encoding="utf-8"))["assets"]}
-    assert assets["edited.mp4"]["scene_cuts"] == [2.5, 7.0]
+    # смонтированный пин режется на планы (test_footage_pin_shots), стыки едут на каждом
+    shots = [a for name, a in assets.items() if name.startswith("edited~seg")]
+    assert len(shots) == 3 and all(a["scene_cuts"] == [2.5, 7.0] for a in shots)
     assert "scene_cuts" not in assets["single.mp4"]

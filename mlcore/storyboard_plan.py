@@ -252,14 +252,23 @@ class VideoPick:
     repeats: List[int] = field(default_factory=list)
 
 
-def _pinned_clip(clip: FootageClipPick, file_name: str) -> FootageClipPick:
+def _pinned_clip(clip: FootageClipPick, file_name: str, asset: Mapping[str, Any] | None = None) -> FootageClipPick:
+    """The user's replacement plays from the start of ITS window — the same frame the
+    storyboard showed as its preview (`preview_offset_sec` = segment_base_sec).
+
+    `source_offset_sec` is in seconds of the SOURCE FILE everywhere (the picker puts the
+    segment base inside it), so a virtual segment — a shot of an edited pin or a window
+    of a long film — must carry its base here too, or it would render the file's opening
+    frames: a different shot from the one the user picked.
+    """
+    offset = float((asset or {}).get("segment_base_sec") or 0.0)
     return FootageClipPick(
         file_name=file_name,
         fit_mode=clip.fit_mode,
         in_point=clip.in_point,
         out_point=clip.out_point,
-        start_time=clip.in_point,
-        source_offset_sec=0.0,
+        start_time=float(clip.in_point) - offset,
+        source_offset_sec=offset,
     )
 
 
@@ -317,7 +326,7 @@ def pick_batch(
                 f"picker returned {len(clips)} clips for {len(intervals)} shots"
             )
         for idx, name in video.pins.items():
-            clips[idx] = _pinned_clip(clips[idx], name)
+            clips[idx] = _pinned_clip(clips[idx], name, ctx.pool.get(name))
         repeats = [i for i, c in enumerate(clips) if c.file_name in used and used[c.file_name] != vi]
         for c in clips:
             used.setdefault(c.file_name, vi)
