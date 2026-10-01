@@ -8,7 +8,7 @@ from pathlib import Path
 import re
 import warnings
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from config.styles.artist_presets_loader import find_preset_by_artist_id
 from mlcore.models.footage_plan import FootageSelectionPayload
@@ -1189,6 +1189,53 @@ def _deterministic_source_offset(
     return round(frac * max_offset, 3)
 
 
+def _clean_shot_offset(
+    *,
+    base: float,
+    asset_duration_sec: float,
+    interval_len: float,
+    scene_cuts: Sequence[float],
+    material: str,
+) -> float | None:
+    """Offset (seconds in the source file) whose window plays ONE shot, or None.
+
+    Pins are often already edited: a window across an internal edit shows up in the
+    video as an off-beat jump cut with no transition. The clean windows are the
+    shots between consecutive edits that are long enough for this interval; a window
+    may start right on an edit (the clip then opens on a fresh shot, which reads as
+    the montage cut it already is). Among all clean positions the pick is
+    deterministic by `material`, spread over their total length like the plain
+    jitter, so different intervals of one job still open different moments.
+
+    Interval length depends on the job's cut grid (beat, chosen cut speed), so this
+    is computed per interval at pick time — the source edits are the only thing stored.
+    """
+    guard = _SOURCE_OFFSET_SAFETY
+    lo, hi = float(base), float(base) + float(asset_duration_sec)
+    need = float(interval_len)
+    edges = [lo] + sorted(c for c in (float(x) for x in scene_cuts) if lo < c < hi) + [hi]
+    ranges: List[tuple[float, float]] = []
+    for s, e in zip(edges, edges[1:]):
+        start = s + (guard if s > lo else 0.0)  # off the edit frame itself
+        end = e - need - guard
+        if end >= start:
+            ranges.append((start, end))
+    if not ranges:
+        return None
+    if not material:
+        return round(ranges[0][0], 3)
+    total = sum(e - s for s, e in ranges)
+    h = int(hashlib.sha256(material.encode("utf-8")).hexdigest()[:16], 16)
+    if total <= _EPS:
+        return round(ranges[h % len(ranges)][0], 3)
+    pos = (h / (2 ** 64)) * total
+    for s, e in ranges:
+        if pos <= e - s:
+            return round(s + pos, 3)
+        pos -= e - s
+    return round(ranges[-1][1], 3)
+
+
 def _source_offset_for_asset(
     *,
     asset: Dict[str, Any],
@@ -1204,10 +1251,28 @@ def _source_offset_for_asset(
     `segment_base_sec` is the floor: even with the random offset switched off the
     clip must open inside its own window, otherwise every segment of a long
     source would play the same opening frames.
+
+    When the source has known internal edits (`scene_cuts`), the window is placed
+    inside a single shot (`_clean_shot_offset`). A source with no shot long enough
+    keeps the plain jitter — same as before the edits were known.
     """
     base = float((asset or {}).get("segment_base_sec") or 0.0)
     asset_dur = float((asset or {}).get("duration_sec") or 0.0)
-    if not offset_enabled or asset_dur <= 0 or _is_reusable_still(asset or {}):
+    if _is_reusable_still(asset or {}) or asset_dur <= 0:
+        return base
+    cuts = (asset or {}).get("scene_cuts") or ()
+    if cuts:
+        clean = _clean_shot_offset(
+            base=base,
+            asset_duration_sec=asset_dur,
+            interval_len=float(interval_len),
+            scene_cuts=cuts,
+            # jitter off -> the earliest clean position, not a random one
+            material=f"srcoff:{seed_value}:{interval_idx}:{file_name}" if offset_enabled else "",
+        )
+        if clean is not None:
+            return clean
+    if not offset_enabled:
         return base
     jitter = _deterministic_source_offset(
         file_name=file_name,

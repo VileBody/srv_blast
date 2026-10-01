@@ -4277,7 +4277,17 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
         else:
             from scripts.build_static_assets_index import build_index
 
-            idx = build_index(bucket=bucket, prefix=prefix, out_path=static_index_path, progress_cb=_idx_progress)
+            # Pins are often already edited. The picker places every clip window
+            # inside one shot by these edits; the file is downloaded for ffprobe
+            # anyway, so detection costs only a decode (~1 s for a 15 s pin).
+            idx = build_index(
+                bucket=bucket,
+                prefix=prefix,
+                out_path=static_index_path,
+                progress_cb=_idx_progress,
+                detect_scene_cuts=True,
+                scene_cut_min_duration_sec=0.0,
+            )
 
         indexed_count = int(idx.get("assets_count") or 0)
         failed_count = int(idx.get("failed") or 0)
