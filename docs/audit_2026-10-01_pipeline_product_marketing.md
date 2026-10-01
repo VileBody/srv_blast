@@ -1,323 +1,322 @@
-# Blast — аудит пайплайна, продуктовые и маркетинговые гипотезы (2026-10-01)
+# Blast — аудит пайплайна, форматы и маркетинг (v2, 2026-10-01)
 
-Источники: код `srv_blast` @ `bdcc3e8` (прочитан, не только CLAUDE.md), Notion Data Room (One Pager, маркетинговая стратегия, CJM v1/v2, рынок, TAM/SAM/SOM, план по гипотезам, приоритеты роста Авг-2026, Content Constructor), питчдек `24.09_Blast.pdf` (15 слайдов). Фин. модель, ЦА и таблицы конкурентов в Google Sheets недоступны из этой среды — их цифры в отчёте отсутствуют. Анализ конкурентов в Notion помечен владельцем как устаревший; актуальный список — из питчдека.
+Источники: код `srv_blast` @ `9c99265` (origin/main), Notion Data Room (One Pager, маркетинговая стратегия, CJM v1/v2, рынок, TAM/SAM/SOM, план по гипотезам, приоритеты роста Авг-2026, Content Constructor), питчдек `24.09_Blast.pdf`. Таблицы в Google Sheets (фин. модель, ЦА, конкуренты) недоступны из этой среды. Анализ конкурентов в Notion устарел, актуальный список — слайд 6 питчдека.
 
-Пометки к цифрам: **[код]** — из репозитория, **[DR]** — из дата-рума/питчдека, **[зн]** — из моих знаний, **[пр]** — предположение.
+Пометки: **[код]** — из репозитория с файлом и строкой, **[DR]** — дата-рум/питчдек, **[зн]** — мои знания, **[пр]** — предположение, **[нет данных]** — замера нет, нужно снять (список в разделе 3).
+
+Что изменилось относительно v1: убраны устаревшие тайминги AE из комментариев кода, предложения про тёплый AE, нативное превью и дефолтный переход; часть «Скорость» переписана вокруг того, что на ноде вне AE; часть 2 переписана как каталог форматов поверх архитектуры вариативности (комбинации × монтажный стол × раскадровка).
 
 ---
 
 ## 1. Резюме
 
-1. **Описание продукта расходится с кодом в трёх местах.** Веб — это Vite+React+FastAPI с JSONB-блобами, а не Next.js/Prisma/NextAuth (`web_app/backend/SPEC.md` — стейл-ТЗ, источник расхождения). «Синхронизация по оптическому потоку, пик действия в 35–65 % клипа» **не существует**: in-point футажа — seeded-random хэш (`mlcore/footage_picker.py:1168-1189`), `cv2` используется только для фото. «Безлимит на один трек в триале» реализован только в mock-режиме (`web_app/backend/app/main.py:1841`); в проде триал = 5 роликов/1 трек (`billing_backend.py:252`).
-2. **Падения 20–30 %: ни один свежий фикс не закрывает корень.** `a45e7c6` (watcher), `bd77461` (Sosana retries), librosa→ffmpeg, reaper — это 4 конкретных симптома. Остались: LLM-транзиенты (25–40 % падений, оценка), невалидный JSON от LLM, AE-ошибки на ноде (плагины/шрифты), build без дедлайна, автоотключение единственной ноды по 3× 503 за 30 мин (`tasks.py:4582-4594`), «SUCCEEDED без видео» (`ae_sdk.py:1005-1026`), веб-батч без таймаута. Класса ошибки нигде нет — `JobState.error` свободный текст, поэтому «стало ли лучше» измерить сейчас нельзя.
-3. **3–4 минуты — это ~65 % AE-рендер (2–3 мин по замеру в коде) + 25 с cold start AE + сеть/CFR.** Батч из N видео рендерится **строго последовательно** и в вебе (`production_backend.py:795-797`), и в боте: 5 роликов ≈ 18–20 мин, 30 ≈ 1.7–2 ч. ≤60 с на AE недостижимо; достижимо на нативном движке (`rust_gen` уже есть как canary) + предрасчёт Stage 2 во время визарда.
-4. **8 600/мес на ноду = один AE под `_RENDER_LOCK` при ~3.5–4 мин на ролик (≈70 % загрузки).** Без новых нод: пре-нормализация банка (CFR), локальный кеш футажа на ноде, тёплый AE, 1080×1920 вместо 1960, нативный превью-рендер.
-5. **Качество: пайплайн технически выдаёт «метроном».** Склейка каждые 1.6–2.6 с независимо от темпа и структуры (`switch_timing_deterministic.py:38-56`), секции трека вычисляются и не используются (`CUT_RATE_BY_LABEL` — мёртвый код), все N роликов батча делят одни склейки и субтитры, тонкие бакеты (9–29 клипов) тихо деградируют в повторы, пост-рендерного QA нет (только «файл ≥64 КБ»).
-6. **Наблюдаемость:** Prometheus+Grafana есть, но `stage_duration_seconds` знает только build/dispatch/render/poll; нет класса ошибки, нет e2e-времени, нет per-node метрик, веб вообще без `/metrics`; `video_posted` в проде не трекается; TikTok-метрики тянутся только при открытии «Статистики».
-7. **Продукт:** самый дешёвый рывок качества — структурный монтаж + per-variant вариативность + QA (ноль LLM-затрат). Самый большой — hook-first генерация и петля TikTok-метрик → следующий батч (мок уже есть, прод-данных нет).
-8. **Маркетинг:** CJM в дата-руме построен на уведомлениях и дрипе, но в коде нет ни фоновой синхронизации метрик, ни триггера «>1000 просмотров», ни реферала для артистов (партнёрка 50/20 есть только для менеджеров). Ключевой разрыв — обещание «вирусные ролики» vs фактический «футаж+субтитры под метроном» и 76 % батчей с ≥1 упавшим роликом при 25 % падений.
-9. **Маржа:** цена ролика ≈ 20 ₽ (1 990 ₽/100 кредитов, 7 990/400) **[код]**; порог «10 % от цены» = **2 ₽/ролик**. Любая AI-видеогенерация (10–30 ₽ за 3 с **[зн]**) — за порогом; LLM на трек (≈10–20 ₽ **[пр]**) укладывается только при батче ≥5.
-10. Питчдек заявляет косты 2 800 ₽ при чеке 5 600 ₽ (≈50 % маржа) против 90–93 % в постановке — нужна сверка определения маржи.
+1. **Падения 20–30 %: свежие фиксы закрыли четыре симптома, не корень.** `a45e7c6` (watcher), `bd77461` (Sosana retries), librosa→ffmpeg, reaper — конкретные случаи. Остались: LLM-транзиенты и невалидный JSON (оценочно половина падений **[пр]**), AE-ошибки на ноде, build без дедлайна, **автоотключение единственной ноды по трём 503 за 30 минут** (`services/orchestrator/tasks.py:4582-4594`), **«SUCCEEDED без видео»** (`windows/render-node-runtime/ae_sdk.py:1022-1024`), веб-батч без таймаута. Класса ошибки в данных нет, поэтому эффект правки измерить сейчас нельзя.
+2. **Где уходят 3–4 минуты — замера нет.** Если AE = ~45 с (30 с рендер + 15 с старт, по словам команды), то ~75 % времени — вне AE: на ноде последовательная загрузка клипов HTTP-чанками по 8 КБ (`ae_sdk.py:1048-1075`, `_download_any`), CFR-транскод ~3 с/клип при промахе кеша, выгрузка; на оркестраторе alignment, LLM субтитров, build-подпроцесс, поллинг. Самый большой рычаг — **локальный банк футажа на ноде** (подтверждено командой); второй — **конвейер батча**: ролик k+1 не начинает собираться, пока k не COMPLETED (`web_app/backend/app/production_backend.py:795-797`), поэтому встроенный в ноду overlap «готовлю следующую, пока рендерится текущая» (`RENDER_MAX_WORKERS=2`, `main.py:49`) в проде никогда не срабатывает.
+3. **Структура трека не влияет на нарезку.** `generate_switch_points` получает только `onsets, beats, bpm, drop_t` (`mlcore/switch_timing_deterministic.py:142-158`); шаг = `max(2 бита, 1.6 с)` (`:38-56, 180-181`), при темпе выше 75 BPM побеждает пол 1.6 с. Секции `low/mid/high/build` и `CUT_RATE_BY_LABEL` (`mlcore/audio_analysis.py:95-101`) считаются и не передаются. Темп «реже/авто/чаще» (`mlcore/storyboard_plan.py:PACE_PARAMS`) меняет шаг глобально.
+4. **Точка входа в клип — хэш, а не момент действия** (`mlcore/footage_picker.py:1168-1189`); пикер читает из инвентаря только теги, настроение, цвет, длительность и размер. Никакого анализа движения в видео в репозитории нет.
+5. **Все N роликов батча делят одни склейки и субтитры** (`tasks.py:68-79` `_REUSE_RESUME_STATE_KEYS`), различаются фоном, стилем, FX-вариантом и правками стола. Тонкие бакеты (9–29 клипов) уходят в повторы молча. Пост-рендерного QA нет (только «файл ≥64 КБ стабилен», `ae_sdk.py:972-983`).
+6. **Вариативность уже есть и это главный актив:** комбинации `фон × стиль субтитров × FX-вариант` (`web_app/frontend/src/components/wizard/SlicePanel.tsx:combinationAt`), стол с хуком, переходом на каждой склейке, двумя дорожками стилей по окнам кадров, рамкой и стилем субтитров (`web_app/backend/app/montage.py`), раскадровка с закреплёнными склейками и клипами (`storyboard.py`, `mlcore/storyboard_plan.py`), свои видео, прогрев. Чего нет: **рецепта как переносимого объекта и как оси батча**, переходов/стилей по классам склеек, структуры трека на столе, оверлеев-титров (POV/caption), AI-источников.
+7. **Маржа:** цена ролика ≈ 20 ₽ (1 990 ₽/100 кредитов, 7 990/400 **[код]** `billing_backend.py:58-60`) → порог «10 %» = **2 ₽/ролик**. Per-user AI-видеогенерация (10–30 ₽ за 3 с **[зн]**) за порогом; AI-картинки (0.3–1 ₽) и AI-клипы **в банк** (амортизация на сотни роликов) — в пределах. Питчдек показывает косты 2 800 ₽ при чеке 5 600 ₽ (≈50 %), постановка — 90–93 %: определение маржи надо сверить.
+8. **Маркетинг:** CJM дата-рума построен на дрипе и триггерах по результату, но в коде нет фонового синка TikTok-метрик (тянутся только при открытии «Статистики», `web_app/backend/app/main.py:2486-2545`, перезаписываются), `video_posted` в проде не трекается (`main.py:2447-2460`), триггер «>1 000 просмотров» и реферал для артистов отсутствуют (партнёрка 50/20 только для менеджеров). «Безлимит на один трек при подключённом TikTok» работает только в mock (`main.py:1841`, `billing_backend.py:252-256`).
 
 ---
 
-## 2. Карта пайплайна с узкими местами и временем
+## 2. Карта пайплайна
 
 ```mermaid
 flowchart TD
-  A[Веб-визард / бот: трек + окно 13–30 с] -->|POST /send_audio_s3| B[Orchestrator API<br/>очередь build, 4 воркера]
-  B --> C[Build task<br/>tasks.py:_build_job_impl]
-  C --> C1[S3 download + ffmpeg -ss<br/>2–6 с]
-  C1 --> C2[Alignment: demucs htdemucs CPU + wav2vec2-large CPU, 4 потока<br/>20–60 с [пр]; в вебе переиспользуется из asr_preview]
-  C2 --> C3[Hook analysis ffmpeg+numpy<br/>2–5 с, на КАЖДОЙ джобе]
-  C3 --> C4[Stage 2 parallel: субтитры LLM gemini-3-pro<br/>20–60 с ∥ стиль футажа детерминированный 0 с]
-  C4 --> C5[Footage pick + merge + f1..f6<br/>2–10 с]
-  C5 --> C6[Build subprocess run.py --skip-llm → JSX<br/>5–15 с]
-  C6 -->|dispatch, очередь render, 1 воркер| D[Windows node /render]
-  D --> D1[download media[] 10–15 клипов<br/>10–40 с]
-  D1 --> D2[CFR normalize ffmpeg ~3 с/клип<br/>0–45 с, кеш по файлу]
-  D2 --> D3[AE cold start ~25 с<br/>AE_RECYCLE_AFTER_JOB=1]
-  D3 --> D4[AfterFX render 1080×1960<br/>2–3 мин — замер в ae_sdk.py:993]
-  D4 --> D5[S3 upload 5–10 с<br/>ошибка = success без видео!]
-  D5 -->|poll 2 с| E[Orchestrator SUCCEEDED]
-  E -->|5 с монитор + 3 с фронт| F[Веб: следующий ролик батча<br/>строго после COMPLETED предыдущего]
-  F --> G[TikTok: ручной пост / драфт через SOCKS5-прокси<br/>100–150 КБ/с]
+  A[Веб-визард: трек, окно 13–30 с, комбинации, стол, раскадровка] -->|POST /send_audio_s3 по одному ролику| B[Orchestrator API, очередь build ×4]
+  B --> C1[S3 download + ffmpeg -ss]
+  C1 --> C2[Alignment demucs+wav2vec2 CPU<br/>в вебе переиспользуется из asr_preview]
+  C2 --> C3[Hook analysis ffmpeg+numpy<br/>на каждый ролик]
+  C3 --> C4[Stage 2: субтитры LLM ∥ стиль футажа детерминированный]
+  C4 --> C5[Footage pick / pinned plan + merge + f1..f6 + стол]
+  C5 --> C6[Build subprocess run.py --skip-llm → JSX + media[]]
+  C6 -->|dispatch, очередь render ×1| D[Windows node /render]
+  D --> D1[download media[] последовательно, HTTP 8 КБ чанки]
+  D1 --> D2[CFR normalize ~3 с/клип при промахе кеша]
+  D2 --> D3[AE start ~15 с + render ~30 с под _RENDER_LOCK]
+  D3 --> D4[S3 upload; ошибка = success без видео]
+  D4 -->|poll 2 с| E[SUCCEEDED]
+  E -->|монитор 5 с + фронт 3 с| F[Веб: ролик k+1 ставится в очередь только теперь]
+  F --> G[TikTok: драфт через SOCKS5 100–150 КБ/с; Direct Post не прошёл аудит]
 ```
 
-| Этап | Где | На трек или на ролик | Замеряется сегодня | Оценка | Ограничитель |
-|---|---|---|---|---|---|
-| Очередь build | `celery_app.py`, concurrency 4 | ролик | нет (есть `queue_depth`) | 0–5 с | — |
-| Audio download + cut | `tasks.py:673`, `:2922` | ролик | нет | 2–6 с | повтор на каждый вариант |
-| Alignment | `mlcore/alignment/*`, `Dockerfile.alignment` (torch CPU, demucs, wav2vec2-large-xlsr-53-russian) | трек (reuse через `reuse_text_job_id`) | `stage_duration{stage=alignment}` только для alignment_smoke | 20–60 с **[пр]** | CPU-демукс |
-| Hook analysis | `gemini_orchestrator.py:4593` | ролик (не кешируется между вариантами!) | нет | 2–5 с | — |
-| Stage 2 субтитры | `gemini_orchestrator.py:3955`, модель `GEMINI_MODEL_SUBTITLES=gemini-3-pro-preview` | трек (reuse) | `gemini_latency_seconds{stage}` | 20–60 с | LLM, 2 ретрая на валидацию |
-| Stage 2 стиль | `_run_style_once`, `STAGE2B_DETERMINISTIC=1` | ролик | — | ~0 с | — |
-| Footage pick | `footage_picker.py` | ролик | нет | 1–5 с | загрузка снапшота инвентаря на каждый вызов |
-| Build subprocess | `tasks.py:2573` (`run.py --skip-llm`) | ролик | в `stage=build` суммарно | 5–15 с | python-импорт 5.8k-строчного модуля |
-| Dispatch | `tasks.py:4399` | ролик | да | 0–30 с | 503 при `render_queue_full` |
-| Node: download + CFR | `ae_sdk.py:1048`, `:1184` | ролик | нет (лог) | 10–85 с | повторная загрузка одних клипов |
-| Node: AE start + render | `ae_sdk.py:842-1004` | ролик | `stage=render` (вместе с poll) | **25 с + 2–3 мин** | один AE на ноду |
-| Node: upload | `ae_sdk.py:1005` | ролик | нет | 5–10 с | ошибка → «success» |
-| Poll + веб-монитор | `WINDOWS_POLL_INTERVAL_S=2`, монитор 5 с, фронт 3 с | ролик | poll да | 5–10 с | — |
-| **Итого первый ролик** | | | | **3.5–5 мин** | AE ≈ 65 % |
-| **Ролики 2..N** | reuse Stage 1/2 → build 15–30 с, рендер 3–3.5 мин, **последовательно** | | | **+3.5 мин каждый** | serial в `_enqueue_next` и в боте |
+| Этап | Где [код] | На трек / на ролик | Замер сегодня | Оценка |
+|---|---|---|---|---|
+| Очередь build + download + cut | `tasks.py:673, 2922` | ролик | нет | 2–10 с **[пр]** |
+| Alignment | `mlcore/alignment/*`, `Dockerfile.alignment` | трек (reuse) | `stage_duration{alignment}` только у smoke | **[нет данных]** |
+| Hook analysis | `gemini_orchestrator.py:4593` | ролик, пересчёт на каждый вариант | нет | **[нет данных]** |
+| Stage 2 субтитры | `gemini_orchestrator.py:3955`, `GEMINI_MODEL_SUBTITLES` | трек (reuse) | `gemini_latency_seconds{stage}` | есть в Prometheus |
+| Footage pick + build subprocess | `footage_picker.py`, `tasks.py:2573` | ролик | суммарно в `stage=build` | **[нет данных]** |
+| Dispatch | `tasks.py:4399` | ролик | да | — |
+| Нода: download + CFR | `ae_sdk.py:1048-1075, 1184` | ролик | лог без времени | **[нет данных]** |
+| Нода: AE | `ae_sdk.py:842-1004` | ролик | `stage=render` вместе с poll | ~45 с (команда) |
+| Нода: upload | `ae_sdk.py:1005` | ролик | нет | **[нет данных]** |
+| Poll + монитор + фронт | 2 с + 5 с + 3 с | ролик | poll да | 5–10 с |
 
 ---
 
-## 3. Часть 1 — технический аудит
+## 3. Что замерить (список для команды)
 
-### 3.1 Падения: таксономия (из кода, доли — оценка до появления метрик)
+Цель: одна таблица «ролик → длительность каждой фазы → исход → класс ошибки → версия кода». Три уровня по возрастанию усилий.
 
-| # | Класс | Где | Как выглядит | Ретраи сегодня | Закрыт свежим фиксом? | Доля [пр] |
+### 3.1 Можно снять сегодня из логов, без правок
+
+| Что | Откуда | Как |
+|---|---|---|
+| Время ноды целиком | `=== AE RENDER START job_id=…` → `=== AE RENDER END job_id=…` (`ae_sdk.py:847, 1029`) | разница таймстемпов строк по `job_id` |
+| CFR-транскод: сколько клипов и промахов | `CFR normalized clip=…` / `CFR cache hit clip=…` (`:1250, 1254`) | счётчик на джобу; доля промахов = сколько раз реально запускался ffmpeg |
+| AE-фаза | строки `[afterfx]` (`:1601`) между стартом wrapper и появлением `output.mp4` | таймстемпы |
+| Оркестратор по стадиям | `obs_event event=build_completed|dispatch_accepted|…` (`tasks.py:497-507`) + `JobState.created_at/queued_at/started_at/finished_at` (`schemas.py:547-551`) | `GET /jobs/{id}` после завершения, `finished_at − created_at` = e2e |
+| Веб: от «Сгенерировать» до первого ролика и до последнего | `analytics_events` (`web_app/backend/app/analytics.py`), `jobs` JSONB: `videos[].completedAt` | SQL по `jobs` |
+| Падения по классам (исторически) | `generation_versions.last_error_text` (бот), `jobs.videos[].error` (веб) | прогнать классификатор-регексп по строкам ошибок из §4.1 |
+
+Выгрузка на 200–300 джоб за последнюю неделю достаточна, чтобы увидеть распределение.
+
+### 3.2 Минимальная инструментация (≈30 строк)
+
+- Нода: в `AeRenderer.run_job` обернуть фазы `prepare_files` (download), `_normalize_footage_to_cfr` (суммарно), `_run_afterfx_once` (отдельно время до появления wrapper и время рендера), upload в `time.monotonic()` и вернуть `timings={"download_s","cfr_s","cfr_miss","ae_start_s","ae_render_s","upload_s","media_count","media_bytes"}` в `AeJobResult`; `main.py` отдаёт их в `/render/{id}`; оркестратор кладёт в `result.node_timings` (`tasks.py:4844`).
+- Оркестратор: `stage_duration_seconds` расширить значениями `alignment, hook_analysis, stage2_subtitles, stage2_footage, footage_pick, stage3_build, queue_wait_build, queue_wait_render` вокруг вызовов в `gemini_orchestrator.py` и `tasks.py`; `job_e2e_seconds{surface,outcome}`.
+- Код: `code_version` (sha оркестратора + sha runtime ноды) в `JobState.result`.
+
+### 3.3 Класс ошибки (для «стало ли лучше»)
+
+`error_class` в `JobState` (`schemas.py:558`) и `generation_versions.last_error_code` (`services/generation_runtime/store.py:49`), значения: `llm_transient, llm_invalid_output, builder, alignment, worker_lost, build_timeout, dispatch_unreachable, dispatch_busy, dispatch_fatal, node_ae_error, node_timeout, node_media, node_output, node_restart, poll_timeout, orphaned`. Один классификатор `classify_job_error(stage, exc, node_message)`, переиспользуемый в `tg_bot_public/job_recovery_policy.py` и веб-`sync_job`. Метрика `job_failed_total{stage,error_class,worker_type,node,code_version}` из `JobStore.set_status` (`job_store.py:326`). Знаменатель — ролики, не батчи (`analytics.generationFailRate` сейчас per batch, `production_monitor.py:41-57`); отдельно `succeeded_no_output`.
+
+### 3.4 Продуктовые метрики, которых нет
+
+`video_posted` в проде (`main.py:2447-2460`), таблица `tiktok_metrics(video_id, synced_at, views, likes, comments, shares)` с фоновым синком в `production_monitor` (сейчас перезапись при открытии «Статистики»), связь `variantId`/фон/стиль/рецепт → просмотры, `web_tiktok_post_total{mode,outcome,fail_reason}`, wait-screen abandon по времени ожидания (`analytics.flow_metrics` есть, разреза по времени нет).
+
+---
+
+## 4. Часть 1 — технический аудит
+
+### 4.1 Падения: таксономия
+
+| # | Класс | Где [код] | Как выглядит | Ретраи сегодня | Свежий фикс | Доля [пр] |
 |---|---|---|---|---|---|---|
-| B1 | LLM-транзиент (Gemini 500/503/429, OpenRouter 5xx/524, Sosana timeout) | `tasks.py:2483-2556`, `gemini_client.py:535-606` | `FAILED stage=build … MaxRetriesExceededError` после 8 ретраев всей build-таски (бэкофф до 600 с) | да, общий бюджет 8 на все классы | `bd77461` ограничил только Sosana (симптом) | 25–40 % |
-| B2 | Невалидный ответ LLM (JSON/схема/окно клипа) | `gemini_orchestrator.py:1956-1985`, `:2249-2264`, `gemini_client.py:937-1015` | `Stage2 failed: …`, `Failed to validate Gemini JSON` | 2 немедленных | нет | 10–20 % |
-| B3 | Билдер/детерминированные ошибки (пустой пул, preflight, hook-env) | `tasks.py:2623-2805`, `footage_picker.py:482-510` | `pipeline_failed rc=…`, `Selected style pool is empty` | 1 immediate rebuild | нет | 10–15 % |
-| B4 | Alignment-сервис | `mlcore/alignment/client.py:47-152` | `FAILED stage=alignment ALIGNMENT_TIMEOUT` | **нет** | только false-positive окна | 3–8 % |
-| B5 | Worker lost (SIGSEGV/OOM) | `tasks.py:3331-3368` | `worker_lost_or_unhandled` | нет | **да** (librosa→ffmpeg + reaper) — но reaper не покрывает dispatch/poll | 1–3 % |
-| B6 | Build без дедлайна | `tasks.py:2573` (`subprocess.run` без `timeout`), нет `soft_time_limit` | `RUNNING stage=build` 6 ч (бот), вечно (веб) | нет | нет | <2 %, но держит слот |
-| D1 | Нода busy/unreachable | `tasks.py:4521-4663` | до 120 ретраев ≈ 4 ч, потом FAILED | да | `a45e7c6` убрал причину сентябрьского инцидента | 5–10 % |
-| D1' | **Автоотключение ноды** по 3× 503 за 30 мин или по 1 poll-timeout | `tasks.py:1277-1283, 4582-4594, 4771` | все последующие джобы: `runtime pool is not set` до ручного включения | — | нет; `a45e7c6` даже допускает минутные провалы watcher'а, которые кормят этот стрик | бурстами |
-| R1 | AE-ошибка (JSX, шрифты, плагины Sapphire/Kant/BCC — ещё не на ноде) | `ae_sdk.py:905-921, 1613-1672` | `windows_failed(async_render) AfterFX error…` | 1 cold-start retry | нет | 10–20 % |
-| R2 | AE wedged (модалка, медленный рендер) | `ae_sdk.py:1649-1660` | `AfterFX idle timeout>300s` | нет | частично (`a45e7c6`, CFR, cover-art strip) | 3–8 % |
-| R3 | Media download (один опциональный ассет) | `ae_sdk.py:873-877`, `s3_utils.py:53` | `prepare/download error` — вся джоба | HTTP 6 попыток; S3 SDK — нет | рамки — да (`head_object`), fx-пулы — нет | 2–5 % |
-| R5 | **SUCCEEDED без видео** | `ae_sdk.py:1005-1026` → `tasks.py:4844` | `output_url=null`, считается успехом | нет | нет | <1 %, но невидим |
+| B1 | LLM-транзиент (Gemini 500/503/429, OpenRouter 5xx/524, Sosana timeout) | `tasks.py:2483-2556`, `gemini_client.py:535-606` | `FAILED stage=build … MaxRetriesExceededError` после 8 ретраев всей build-таски, бэкофф до 600 с | общий бюджет 8 на все классы | `bd77461` только Sosana | 25–40 % |
+| B2 | Невалидный ответ LLM (JSON/схема/окно клипа) | `gemini_orchestrator.py:1956-1985, 2249-2264`, `gemini_client.py:937-1015` | `Stage2 failed: …` | 2 немедленных | нет | 10–20 % |
+| B3 | Билдер / детерминированные (пустой пул, preflight, hook-env) | `tasks.py:2623-2805`, `footage_picker.py:482-510` | `pipeline_failed rc=…`, `Selected style pool is empty` | 1 rebuild | нет | 10–15 % |
+| B4 | Alignment-сервис | `mlcore/alignment/client.py:47-152` | `FAILED stage=alignment ALIGNMENT_TIMEOUT` | нет | только false-positive окна | 3–8 % |
+| B5 | Worker lost (SIGSEGV/OOM) | `tasks.py:3331-3368` | `worker_lost_or_unhandled` | нет | да, но reaper не покрывает dispatch/poll (`:3320`) | 1–3 % |
+| B6 | Build без дедлайна | `tasks.py:2573` (нет `timeout`), `celery_app.py:145-160` | `RUNNING stage=build` 6 ч (бот) / вечно (веб) | нет | нет | <2 %, держит слот |
+| D1 | Нода busy/unreachable | `tasks.py:4521-4663` | до 120 ретраев ≈ 4 ч | да | `a45e7c6` закрыл причину сентябрьского инцидента | 5–10 % |
+| D1' | Автоотключение ноды: 3× 503 за 30 мин, любой 400/409, один poll-timeout | `tasks.py:1277-1283, 4582-4594, 4771` | все следующие джобы `runtime pool is not set` до ручного `PUT /windows-nodes` | — | нет | бурстами |
+| R1 | AE-ошибка (JSX, шрифты, плагины) | `ae_sdk.py:905-921, 1613-1672` | `windows_failed(async_render) AfterFX error…` | 1 cold-start retry | нет | 10–20 % |
+| R2 | AE wedged (модалка, idle) | `ae_sdk.py:1649-1660` | `AfterFX idle timeout>300s` | нет | частично | 3–8 % |
+| R3 | Один опциональный ассет не скачался | `ae_sdk.py:873-877`, `s3_utils.py:53` | `prepare/download error` — вся джоба | HTTP 6; S3 SDK нет | рамки да, fx-пулы нет | 2–5 % |
+| R5 | **SUCCEEDED без видео** | `ae_sdk.py:1005-1026` → `tasks.py:4844` | `output_url=null`, считается успехом, рефанда нет | нет | нет | <1 %, невидим |
 | P2 | Потерян poll-месседж (рестарт Redis/воркера) | `tasks.py:4885-4894` | `RUNNING stage=poll` навсегда, mp4 в S3 | нет | нет | 100 % in-flight при рестарте |
-| W1 | Веб-монитор без политики | `production_backend.py:864-935`, `production_monitor.py:76-87` | 404/5xx от оркестратора → батч `PROCESSING` вечно, кредиты не возвращены | бесконечный re-poll | нет | структурно |
+| W1 | Веб-монитор без политики | `production_backend.py:864-935`, `production_monitor.py:76-87` | 404/5xx → батч `PROCESSING` вечно, кредиты не возвращены; падение k → остальные `skipped` | бесконечный re-poll | нет | структурно |
 
-**Вывод по «недавней правке»:** `a45e7c6` — корень одного инцидента (supervision watcher'а), `bd77461` — симптом (время до FAILED), librosa→ffmpeg — корень SIGSEGV, reaper — видимость. Классы B1/B2/R1/R3/R5/W1 и автоотключение ноды не тронуты. Ожидаемый эффект фиксов — минус 5–10 п.п. от 20–30 %, не больше **[пр]**.
+### 4.2 Пять фиксов простыми словами
 
-**Как измерять падения после фикса отдельно от исторического среднего:**
-1. Ввести `error_class` (enum ~16 значений: `llm_transient, llm_invalid_output, builder, alignment, worker_lost, build_timeout, dispatch_unreachable, dispatch_busy, dispatch_fatal, node_ae_error, node_timeout, node_media, node_output, node_restart, poll_timeout, orphaned`) в `JobState` (`schemas.py:558`) и `generation_versions.last_error_code` (`services/generation_runtime/store.py:49`); один классификатор `classify_job_error(stage, exc, node_message)`, переиспользуемый в `job_recovery_policy.py` и веб-`sync_job`.
-2. Метрика `job_failed_total{stage,error_class,worker_type,node,code_version}` из `JobStore.set_status` (`job_store.py:326`); `code_version` = sha оркестратора + sha runtime ноды, чтобы делить «до/после» по версии, а не по дате.
-3. Исторический baseline: прогнать тот же классификатор по `generation_versions.last_error_text` (бот) и JSONB `jobs` веба (`persistence.py`) по неделям; веб-джобы начать писать в `generation_runs` с `surface=web`.
-4. Считать знаменатель по роликам, не по батчам (`analytics.generationFailRate` сейчас per batch, `production_monitor.py:41-57`), и отдельно «success без output».
+1. **Нода отключается слишком легко.** 503 нода отдаёт и когда просто занята (`render_queue_full`). Три таких за полчаса — и оркестратор вычёркивает единственную ноду из пула; дальше все джобы падают, пока её не включат руками. Фикс: «занята» в стрик не считать; 400/409 — ошибка джобы, не ноды; poll-timeout отключает только при ≥2 за час и если в пуле остаётся нода.
+   ```python
+   def _dispatch_error_kind(e):  # tasks.py рядом с _is_transient_windows_error
+       if isinstance(e, urllib.error.HTTPError):
+           code = (_safe_json(e).get("detail") or {}).get("code")
+           if e.code == 503 and code in {"render_queue_full", "render_node_not_ready"}:
+               return "busy"
+           if e.code in (400, 409):
+               return "job_fatal"
+           if e.code == 404:
+               return "contract"
+           if 500 <= e.code <= 599:
+               return "transient"
+       return "transient" if _is_transient_windows_error(e) else "job_fatal"
+   ```
+2. **Build может висеть вечно.** `soft_time_limit`/`time_limit` на шести build-тасках, `subprocess.run(..., timeout=…)`, `SoftTimeLimitExceeded` → `FAILED build_soft_time_limit_exceeded`; reaper расширить на `dispatch_to_windows`/`poll_windows_render`; beat-таска раз в минуту переэнкьюивает `poll_windows_render(job_id, render_id)` для застрявших `stage=poll` (идемпотентно) и помечает остальных сирот.
+3. **Зелёная джоба без видео.** На ноде ретраи выгрузки (`boto3 Config(retries={'max_attempts': 8, 'mode': 'adaptive'})`) и `success=False` при провале; в `tasks.py:4844` пустой `output_url` = FAILED. Там же пост-рендер QA перед выгрузкой: `ffprobe -show_streams` (есть аудио, `abs(duration − clip_len) < 0.25`), `ffmpeg -vf blackdetect=d=1.0` вне F4-интро/F6-окна, `-af volumedetect` (`mean_volume < −60 dB` → fail). ≈3–5 с на ролик.
+4. **Конвейер батча.** Доставка по одному остаётся; меняется только момент постановки в очередь: версии 2..N энкьюятся сразу после мастера (ему нужен `reuse_text_job_id`), `exclude_file_names` берутся из `stage2_footage` мастера, как в боте (`tg_bot_public/app.py:10426-10451`). Тогда сборка и загрузка клипов k+1 идут, пока k рендерится, и `RENDER_MAX_PENDING=8` на ноде начинает работать. В `sync_job`: 404 → `FAILED stage=vanished`; дедлайн 3 ч на ролик; один `requeue` для транзиентных классов.
+5. **Измерение** — раздел 3.
 
-### 3.2 Таблица проблем по осям
+### 4.3 Стабильность, остальное
 
-| Ось | Проблема | Где | Симптом → причина | Влияние | Сложность |
-|---|---|---|---|---|---|
-| Стаб. | Автоотключение ноды по 503/409/одному poll-timeout | `tasks.py:1277-1283, 4582-4594, 4771` | минутный провал → все джобы падают до ручного `PUT /windows-nodes` | **High** | S |
-| Стаб. | Build без дедлайна | `tasks.py:2573`, `celery_app.py:145-160` | джоба висит 6 ч, держит 1 из 4 build-слотов и LLM-слот | High | M |
-| Стаб. | SUCCEEDED без видео | `ae_sdk.py:1022-1024`, `tasks.py:4844` | доставка «не удалась» при зелёной джобе, рефанда нет | High | S |
-| Стаб. | Reaper не покрывает dispatch/poll; нет свипера RUNNING-сирот | `tasks.py:3320` | `RUNNING stage=poll` навсегда после рестарта | Med | S/M |
-| Стаб. | Общий бюджет 8 ретраев на все классы, ретрай 400 | `tasks.py:2528-2539` | 20–80 мин в `build_retry` до FAILED | Med | S |
-| Стаб. | Веб-батч: 404/5xx = вечный PROCESSING; падение k-го → остальные `skipped` без ретрая | `production_backend.py:864-935` | кредиты не возвращаются; транзиент не ретраится | Med | S |
-| Стаб. | Один опциональный ассет валит рендер | `ae_sdk.py:873`, `render_manifest.py:61` | `prepare/download error` для fx-звука | Med | M |
-| Стаб. | `except Exception: pass` в `_set_failed` | `celery_app.py:82,95` | Redis недоступен при падении → джоба RUNNING без лога | Low | S |
-| Стаб. | Нет `--max-tasks-per-child`, resume_state в Redis-объекте джобы, `/metrics` сканирует все джобы | `docker-compose.yml:136`, `tasks.py:1439`, `job_store.py:210` | рост памяти, дорогой scrape | Low | S |
-| Скорость | AE cold start на каждый ролик (25 с ≈ 10 %) | `ae_sdk.py:985-1004` | обход краша на 3-й джобе | Med | S (тест) |
-| Скорость | CFR-транскод и повторная загрузка одних клипов на каждую джобу | `ae_sdk.py:1048-1075, 1184` | 10–85 с на ролик | Med | S |
-| Скорость | Батч строго последовательный (веб и бот) | `production_backend.py:795`, `tg_bot_public/app.py:10433` | 5 роликов = 20 мин ожидания | **High** | M |
-| Скорость | Hook analysis, inventory load, audio download повторяются на каждый вариант | `gemini_orchestrator.py:4593`, `tasks.py:673` | +10–20 с/вариант | Low | S |
-| Скорость | Stage 2 субтитры не стартуют, пока юзер в визарде | `web_app/backend/app/asr_preview.py` (только ASR) | 20–60 с LLM в критическом пути | Med | M |
-| Скорость | Комп 1080×1960 вместо 1920 | CLAUDE.md 2026-06-09, `app/footage_comp.py:864` | +2 % пикселей и ресайз | Low | S |
-| Пропуск. | Один AE под `_RENDER_LOCK`; `RENDER_MAX_WORKERS=2` даёт только overlap загрузок | `ae_sdk.py:28,894`, `main.py:49` | ~15–17 роликов/час максимум | High | M/L |
-| Качество | Нет синхронизации действия с аудио | `footage_picker.py:1168-1220` | склейка на кик, кадр — случайный момент | **High** | L |
-| Качество | Нарезка метрономная, структура не используется | `switch_timing_deterministic.py:38-56`, `audio_analysis.py:95-101` | 1.6–2.6 с везде, куплет = припев | **High** | M |
-| Качество | Батч = одни склейки+субтитры | `tasks.py:68-79`, нет seed в `generate_switch_points` | 5 «одинаковых» роликов | Med | S |
-| Качество | Тонкие бакеты (9/12/27/29 клипов) → повторы молча | `footage_picker.py:1815-1870`, `data/footage_semantic_catalog_final_report.json` | повтор клипа в 20-с ролике | High | S |
-| Качество | Нет пост-рендерного QA | `ae_sdk.py:972-983` | чёрные/немые/обрезанные ролики уходят юзеру | High | S |
-| Качество | Субтитры: длина строк только промптом, код ужимает | `planner.py:211`, `subtitle_font_layout.py:561` | нечитаемый мелкий текст | Med | S |
-| Качество | Нет учёта светлого футажа и правой колонки TikTok | `tasks.py:2030`, `subtitle_font_layout.py:67-68` | белый текст на небе, иконки поверх строки | Med | S |
-| Качество | F4-интро растёт на медленных треках (до 6.9 с чёрного) | `f4_motion/overlay.py:41-69` | первая секунда — чёрный экран | Med | S |
-| Качество | Без F3 — ни одной вспышки/перехода по умолчанию | `footage_comp.py:1123`, CLAUDE.md 2026-06-06 | «скучный» дефолт | Med | S |
-| Набл. | Нет класса ошибки, e2e-времени, per-stage LLM/ASR, per-node, веб без `/metrics`, `video_posted` не трекается в проде | `prometheus_metrics.py`, `main.py:2447-2460` | нельзя увидеть «стало лучше» и где узко | High | M |
+- Общий бюджет 8 ретраев на все транзиентные классы; `openrouter_bad_request_400` ретраится (`tasks.py:2528-2539`) — per-class капы как у Sosana.
+- `_set_failed: except Exception: pass` (`celery_app.py:82,95`) — при недоступном Redis джоба остаётся RUNNING без лога.
+- Один опциональный ассет валит рендер: `media[]` с флагом `required` в `render_manifest.collect_media_urls_from_render_payload`, нода пропускает опциональные промахи и пишет их в `message`.
+- Inflight-lease ноды не освобождается на poll-timeout (`tasks.py:4759-4821`), TTL 7 200 с.
+- Нет `--max-tasks-per-child` у build-воркера; `resume_state` целиком в Redis-объекте джобы (`tasks.py:1439-1468`), `/metrics` и `/jobs/active` сканируют все джобы.
 
-### 3.3 Развёрнутые фиксы топ-5
+### 4.4 Скорость и пропускная способность
 
-**1. Автоотключение ноды и классификация ошибок dispatch** (`tasks.py:1263`, `:4582-4594`, `:4771`). Сейчас любой 5xx — «транзиент», 3 за 30 мин → `windows_node_disabled`; 409/400 → тоже disable; один poll-timeout → disable. С одной прод-нодой это превращает минутный провал в outage.
+Факты из кода, без цифр:
+- Загрузка `media[]` на ноде **последовательная**, `requests.get(stream=True)` с чанком 8 192 байта (`ae_sdk.py:1048-1075, 1260-1302`); 10–15 клипов на ролик (`render_manifest.py:61`). Параллелизм и чанк 1 МБ — изменение в 10 строк.
+- CFR-нормализация запускает ffmpeg на каждый клип при промахе кеша `_cfr_cache` (`:1184-1258`); кеш никогда не чистится, janitor его пропускает (`main.py:440`). Пре-нормализованный банк (CFR 23.976 при заливке) + локальная копия банка на ноде с ключом по etag убирает и загрузку, и транскод для библиотечного футажа; свои видео и fx-ассеты остаются.
+- Батч последовательный на обеих поверхностях (`production_backend.py:795-797`; бот `app.py:10433`), overlap на ноде не используется — п. 4.2-4.
+- Hook analysis, загрузка аудио и инвентаря повторяются на каждый вариант (`gemini_orchestrator.py:4593`, `tasks.py:673`); для вариантов 2..N всё это уже есть в resume-state мастера, кроме hook analysis.
+- Stage 2 субтитров стартует только в рендер-джобе; в визарде во время шагов «Фон/Текст/FX» уже крутится `asr_preview` (`web_app/backend/app/asr_preview.py`) — туда же можно вынести субтитры, тогда рендер-джоба первого ролика = pick + build + нода.
 
-```python
-def _dispatch_error_kind(e):  # tasks.py рядом с _is_transient_windows_error
-    if isinstance(e, urllib.error.HTTPError):
-        body = _safe_json(e)
-        code = (body.get("detail") or {}).get("code")
-        if e.code == 503 and code in {"render_queue_full", "render_node_not_ready"}:
-            return "busy"        # ждать, в стрик не считать
-        if e.code in (400, 409):
-            return "job_fatal"   # FAILED джобы, ноду НЕ трогать
-        if e.code == 404:
-            return "contract"
-        if 500 <= e.code <= 599:
-            return "transient"
-    return "transient" if _is_transient_windows_error(e) else "job_fatal"
-```
-В `poll_windows_render`: отключать только при ≥2 poll-timeout за час **и** если после отключения в пуле остаётся ≥1 нода; иначе — алерт без disable.
+Пропускная способность: один AE под `_RENDER_LOCK` (`ae_sdk.py:28, 894`). Если AE занимает ~45 с из ~4 минут, нода бо́льшую часть времени не рендерит, а качает и перекодирует; при 8 600/мес это ~70 % утилизации по стенке и ~20 % по AE **[пр]**. Порядок рычагов: локальный банк → конвейер батча → параллельные загрузки → Stage 2 в визарде → второй AE-инстанс (только после замера CPU/RAM). Оценку выигрыша дам после замера по §3.2.
 
-**2. Дедлайн build + reaper на dispatch/poll + свипер сирот.** `@celery_app.task(..., soft_time_limit=BUILD_SOFT_LIMIT_S, time_limit=+60)` на шести build-тасках, `subprocess.run(args, timeout=BUILD_SUBPROCESS_TIMEOUT_S)`; `SoftTimeLimitExceeded` → `FAILED build_soft_time_limit_exceeded`. В `_JOB_ID_FIRST_ARG_TASKS` (`tasks.py:3320`) добавить `dispatch_to_windows`, `poll_windows_render`, `dispatch_to_rust_gen`, `poll_rust_gen_render`. Beat-таска раз в минуту: `RUNNING` с `updated_at` старше порога по стадии → для `poll` переэнкьюить `poll_windows_render(job_id, render_id)` (идемпотентно), для остальных `FAILED stage=<stage>_orphaned`. Проверить `appendonly yes` у внешнего Redis.
+### 4.5 Качество результата (подтверждено кодом)
 
-**3. «Success без видео» и пост-рендерное QA на ноде.** В `ae_sdk.py:1005-1026` — ретраи загрузки (`boto3 Config(retries={'max_attempts': 8, 'mode': 'adaptive'})`) и `success=False` при провале; в `tasks.py:4844` — `if not out_url: raise RuntimeError("windows_succeeded_without_output")`. Перед загрузкой: `ffprobe -show_streams` (есть аудио, `abs(duration − clip_len) < 0.25`), `ffmpeg -vf blackdetect=d=1.0:pix_th=0.02` (чёрное ≥1 с вне F4-интро/F6-окна → fail), `-af volumedetect` (`mean_volume < −60 dB` → fail). Это ~3–5 с на ролик и закрывает R4/R5 плюс класс «кривое видео».
+| Проблема | Где [код] | Симптом | Фикс | Усилие |
+|---|---|---|---|---|
+| Структура трека не влияет на нарезку | `switch_timing_deterministic.py:38-56, 142-181`; `audio_analysis.py:95-101` | куплет и припев режутся одинаково; при темпе >75 BPM шаг = 1.6 с | `gap_at(t)` домножать на `1/CUT_RATE_BY_LABEL[label_at(t)]`, пол `max(0.9, 1.5·beat_sec)`; `sections` отдать из `gemini_orchestrator.py:4780`; на столе показать секции дорожкой | M |
+| Точка входа в клип — хэш | `footage_picker.py:1168-1220` | кадр начинается с произвольного момента, действие не на склейке | при заливке считать motion-envelope клипа (frame-diff 8 fps) → `motion_peaks_sec[]` в инвентарь → `offset = clamp(peak − 0.5·interval)`; это и есть «пик действия на видео» | L |
+| Батч делит склейки и субтитры | `tasks.py:68-79`, нет seed в `generate_switch_points` | 5 роликов = один монтаж с другим фоном | per-variant jitter `SwitchTimingParams` по индексу варианта, `stage2_switch_timestamps` не копировать | S |
+| Тонкие бакеты молча деградируют | `footage_picker.py:1815-1870` (widen → global → repeats) | повтор клипа в 20-с ролике | показывать размер пула при выборе вайба; `FOOTAGE_ALLOW_DEGRADED` явно, иначе ошибка (No-Fallback) | S |
+| Пост-рендерного QA нет | `ae_sdk.py:972-983` | чёрные/немые/обрезанные ролики уходят | п. 4.2-3 | S |
+| Длина строки субтитров — только промпт | `planner.py:41, 211-219` (warning «kept»), `subtitle_font_layout.py:561` (fit ужимает) | 26-символьная строка рисуется на ~55 % кегля | hard-max по стилю (impulse 20, jakson 16) с детерминированным переразбиением по словам; fit только до 10 % | S |
+| Светлый футаж и правая колонка TikTok | `tasks.py:2030-2035` (чёрный текст только для solid), `subtitle_font_layout.py:67-68` (`SAFE_MARGIN_X=0.07`) | белый текст на небе; иконки поверх строки | тень `strong` при ≥50 % интервалов с `meta_color_tone in {light, warm}`; правое поле 0.16 для 9:16 | S |
+| F4-интро растёт на медленных треках | `f4_motion/overlay.py:41-69` (`lead·128/bpm`) | при 90 BPM ~6 с чёрного экрана | клампа `[3.0, 4.5]` | S |
+| Бит-грид фиксированный, фаза от самого громкого кадра | `audio_analysis.py:345-406` | дрейф «по биту» на треках с плавающим темпом | DP beat-tracking на onset-envelope (numpy), downbeats от низкочастотной периодичности | M |
 
-**4. Батч: параллельный enqueue после мастера + ретрай транзиентов в вебе.** В `production_backend._enqueue_next` ждать `COMPLETED` только у версии 1 (мастер — источник `reuse_text_job_id`), версии 2..N энкьюить сразу после неё; `exclude_file_names` собирать из уже выбранного `stage2_footage` мастера (как в боте `app.py:10426-10451`), а не ждать рендера. На ноде это выстроится в очередь (`RENDER_MAX_PENDING=8`), но build-стадия (15–30 с/вариант) перестанет сидеть в критическом пути, и первый ролик приходит через 4 мин, а не вся пачка через 20. В `sync_job`: 404 → `FAILED stage=vanished`; дедлайн 3 ч на ролик; транзиентный класс (B1/D1) → один `requeue` через `POST /jobs/{id}/requeue`.
+### 4.6 Наблюдаемость — пробелы
 
-**5. Классификатор ошибок + стадийные тайминги (измерение).** См. 3.1. Дополнительно `stage_duration_seconds` расширить значениями `asr, alignment, stage2_subtitles, stage2_footage, footage_pick, stage3_build, node_prepare, node_render, node_upload, queue_wait`, `job_e2e_seconds{surface,outcome}` от `created_at` до `finished_at`; на ноде писать `prepare_s/cfr_s/ae_start_s/render_s/upload_s` в `result` поллинга — это 4 строки в `ae_sdk.run_job`.
+Есть: `job_lifecycle_total`, `stage_duration_seconds{build|dispatch|render|poll}`, `gemini_*`, 12 алертов, 4 дашборда (`services/orchestrator/prometheus_metrics.py`, `infra/runners/observability/`). Нет: класса ошибки, e2e, подстадий LLM/ASR/ноды, per-node inflight, «stale RUNNING», `succeeded_no_output`, веб-метрик, TikTok-исходов. Логи ноды не шипятся в Loki (`promtail-edge-config.yml` покрывает Linux-хост). Админка показывает снапшоты и free-text ошибок (`admin_panel.py:1845, 2363, 3821`). Список — раздел 3.
 
-### 3.4 Скорость: реально ли ≤60 с
+### 4.7 Приоритеты части 1
 
-- **На AE — нет.** Пол ≈ 25 с старт + 2–3 мин рендер 20–30 с ролика с текст-аниматорами и f3-эффектами. Тёплый AE (`AE_RECYCLE_AFTER_JOB=0`) снимет 25 с, если CFR-нормализация действительно убрала краш «internal structure inconsistency» (комментарий `ae_sdk.py:985-1000` датирован до CFR-фикса — нужен тест на 20 джобах). Комп 1080×1920, отключение motion blur где не нужен, MFR-флаги — ещё 10–20 % **[пр]**.
-- **Да — на нативном движке.** `rust_gen` (`docs/rust_gen_canary_runbook.md`, `tasks.py:4898-5032`) уже умеет explicit-route `render_engine=rust-gen` по subtitle-mode. Для impulse/jakson без Kant-эффектов ffmpeg-композитинг 20 с 1080p = 10–20 с **[зн]**. Критический путь тогда: Stage 2 субтитры (LLM 20–60 с) — его надо вынести из рендер-джобы: стартовать `stage2_subtitles` сразу после `asr_preview` в визарде (пока юзер на «Фоне»/«Тексте»), как сейчас стартует ASR (`web_app/backend/app/asr_preview.py`). Тогда рендер-джоба = pick (2 с) + build (5 с) + native render (15 с) + transfer (10 с) ≈ **35–50 с p50** для первого ролика, 20–30 с для вариантов.
-- **Схема «быстрое превью → дорогой финал»:** нативное 540p превью всех N вариантов за ~30 с, юзер выбирает 1–3, AE рендерит только их. Это одновременно и x3–5 к пропускной способности ноды.
-
-### 3.5 Пропускная способность и стоимость
-
-Один AE под `_RENDER_LOCK` (`ae_sdk.py:28`), `RENDER_MAX_WORKERS=2` (`main.py:49`) лишь перекрывает загрузку следующей джобы с рендером текущей. Ролик ≈ 25 с + 150–180 с + 15–30 с prep/upload ≈ 3.5–4 мин → 15–17/час → 10.8–12.3k/мес при 100 % → 8 600 ≈ 70 % утилизации (остальное — простой между джобами, cold start, ретраи). Рычаги без новых нод, по убыванию эффекта:
-
-| Рычаг | Эффект | Усилие | Где |
-|---|---|---|---|
-| Превью-отбор на нативном движке, AE только для выбранных | ×2–4 полезных роликов | L | rust_gen canary + визард |
-| Тёплый AE (recycle раз в N джоб) | −10 % времени | S (тест) | `ae_sdk.py:998` |
-| Пре-нормализация банка в CFR 23.976 при заливке + локальный кеш клипов на ноде по etag (2 090 клипов × ~10 МБ ≈ 20 ГБ) | −10–85 с/ролик | S | `scripts/build_static_assets_index.py`, `ae_sdk.py:1048` |
-| Второй AE-инстанс на ноде (отдельный `_RENDER_LOCK` на экземпляр), если CPU/RAM позволяют | до ×1.6 | M | `main.py`, `ae_sdk.py` |
-| 1080×1920, без лишних precomp/эффектов в дефолтном шаблоне | −5–15 % | S | `project_template.j2` |
-
-Себестоимость ролика сейчас **[пр]**: нода Timeweb Windows ≈ 1 ₽/ролик при 8.6k/мес, LLM 10–20 ₽/трек (gemini-2.5-pro + 3-pro) → 2–4 ₽/ролик при батче 5, S3/трафик <0.5 ₽. Цена ролика 20 ₽ → порог 2 ₽. Всё, что ниже, помечаю ✅, выше — ⚠️.
-
-### 3.6 Качество — что технически делает ролик скучным/кривым (кратко, детали в таблице 3.2)
-
-1. Синхронизация: нет; in-point случайный. Фикс: при заливке в банк считать motion-envelope (frame-diff 8 fps или Farneback на прокси) → `motion_peaks_sec[]` в инвентарь; в пикере `offset = clamp(peak − 0.5·interval, …)`, jitter 0.35–0.65. ✅ (считается один раз на клип).
-2. Ритм: сделать `default_gap_floor_sec = max(0.9, 1.5·beat_sec)` и домножать gap на `1/CUT_RATE_BY_LABEL[label_at(t)]` из уже посчитанных `sections` (`audio_analysis.py:722`). ✅ ноль LLM.
-3. Батч: per-variant jitter `SwitchTimingParams` по `BATCH_VARIANT_INDEX`, `stage2_switch_timestamps` убрать из `_REUSE_RESUME_STATE_KEYS`. ✅
-4. Тонкие бакеты: гейт `min_clips = ceil(window/1.6)` при выборе вайба; `FOOTAGE_ALLOW_DEGRADED` по No-Fallback Policy. ✅
-5. Субтитры: hard-max (impulse 20, jakson 16) с детерминированным переразбиением по словам; тень `strong` при ≥50 % интервалов с `meta_color_tone in {light, warm}`; `SAFE_MARGIN_X` 0.12 или правое поле 0.16 под колонку TikTok. ✅
-6. Дефолтный переход `hook_light` на дропе при «Пропустить»; клампа `effective_lead` F4 в [3.0, 4.5]. ✅
-
-### 3.7 Наблюдаемость — чего не хватает
-
-Есть: `job_lifecycle_total`, `stage_duration_seconds{build|dispatch|render|poll}`, `gemini_*`, 12 алертов, 4 дашборда. Нет: класса ошибки; e2e; LLM/ASR/node-подстадий; per-node inflight/queue; «stale RUNNING»; «success без output»; веб-метрик; TikTok-исходов; `video_posted` в проде (`main.py:2447-2460`); истории TikTok-метрик (перезаписываются, `main.py:2486-2545`). Админка показывает только снапшоты и free-text ошибок (`admin_panel.py:1845, 2363, 3821`). Предложенные имена метрик — в 3.1 и 3.3 п.5; плюс `web_tiktok_post_total{mode,outcome,fail_reason}`, таблица `tiktok_metrics(video_id, synced_at, views, likes, …)` с фоновым синком в `production_monitor`.
-
-### 3.8 Приоритизированный список (эффект / усилие)
-
-1. Классификатор ошибок + стадийные тайминги + `code_version` (High / M) — без этого всё остальное не измерить.
+1. Измерение (раздел 3) — без него не видно ни эффекта правок, ни куда уходят минуты.
 2. Автоотключение ноды → busy/fatal/transient (High / S).
-3. Success-без-видео + пост-рендер QA на ноде (High / S).
-4. Параллельный enqueue батча после мастера + веб-ретрай/дедлайн (High / M).
-5. Build soft_time_limit + reaper dispatch/poll + свипер (High / M).
-6. Структурный монтаж + BPM-пол + per-variant jitter (High / M, ноль LLM).
-7. Гейт тонких бакетов + web `exclude_file_names` (High / S).
-8. Субтитры hard-max + тень на светлом + правое поле (Med / S).
-9. Пре-нормализованный банк + кеш клипов на ноде + тест тёплого AE (Med / S).
-10. Motion-peaks при заливке + центрированный in-point (High / L).
-11. Нативное превью + Stage 2 во время визарда (High / L).
+3. Success-без-видео + пост-рендер QA (High / S).
+4. Конвейер батча + веб-дедлайны (High / M).
+5. Локальный банк футажа + параллельная загрузка + пре-CFR (High / M).
+6. Build time limit + reaper/свипер (High / M).
+7. Структура трека в нарезке + per-variant jitter (High / M, ноль LLM).
+8. Гейт тонких бакетов, субтитры hard-max/тень/правое поле, F4-клампа (Med / S).
+9. Motion-peaks при заливке (High / L).
 
 ---
 
-## 4. Часть 2 — продуктовые гипотезы
+## 5. Часть 2 — форматы поверх вариативности
 
-Цена ролика ≈ 20 ₽ → порог 2 ₽. ✅ = в пределах, ⚠️ = за порогом.
+### 5.1 Что уже есть как конструктор [код]
 
-| # | Гипотеза | Механика внимания | Что добавить в пайплайн | Себестоимость / ноды | MVP и метрика | Потенциал / стоимость / риск |
+| Слой | Где | Что задаёт |
+|---|---|---|
+| Оси батча | `render_job.py:build_render_job`, `SlicePanel.combinationAt` | `фон (footage-вайб / photo / upload / color) × стиль субтитров × FX-вариант`, доли в `allocation` |
+| FX-вариант | `wizardStore.FxVariant {kind, config}`; `render_job.fx_variants`, `_resolve_hook` | тип хука (`none/warmup/sound/object/effects/motion/thought`) + хук + склейка + стилизация (+ `effectStyleFull`) |
+| Стол | `montage.py:_apply_one`, `MontageTable.tsx` | хук ролика, переход на каждой склейке (`cutTransitions`), две дорожки стилей по окнам кадров (`extraRanges`), рамка, стиль субтитров; привязка `sig` |
+| Раскадровка | `storyboard.py`, `mlcore/storyboard_plan.py` | темп `sparse/auto/dense`, закреплённые склейки и клипы с заменой (`footage_plan`) |
+| Источники | `background.sourceVideos`, F6 `warmup` | свои видео 9:16/16:9, прогрев-видео/звук до дропа |
+| Текст | `subtitles.textByStyle`, `app/subtitle_font_layout.py` | 5 стилей, шрифт/размер/тень/акцент из метрик AE |
+| Оверлеи-хуки | `mlcore/hooks/f1..f6`, `frames/` | звук/объект/эффект/движение/мысль (TTS)/прогрев, рамки; шаблон `{{ fN_overlay_js }}` |
+| Транспорт нового приёма | `schemas.SendAudioS3Request` → env в `tasks.py` → `_LLM_ENV_KEYS` → `gemini_orchestrator` → `full_edit_config[..]` → `project_builder` → токен в `project_template.j2` | путь, которым добавлены все F1–F6 и рамки |
+
+### 5.2 Чего не хватает, чтобы «лепить форматы»
+
+1. **Рецепт как объект.** Сейчас правки стола привязаны к конкретному ролику через `sig` и умирают при смене комбинации. Рецепт = {темп по секциям, хук, программа переходов, окна стилей относительно дропа/секций, рамка, стиль и настройки текста, оверлеи} — хранится отдельно (`stageData.recipes[]`), применяется к любому слоту. Техника: `render_job` разворачивает рецепт в те же поля `variation.hook.{cutTransitions, extraRanges, …}`, оркестратор не меняется.
+2. **Рецепт как ось батча.** `allocation.recipes` рядом с фонами/стилями/вариантами → один трек × 5 форматов. Это главный шаг: батч перестаёт быть «один формат с разными фонами».
+3. **Адресация по классам склеек.** Переходы и стили заданы индексами (`transitions[i]`, `styles[{a,b}]`), поэтому рецепт не переносится между треками с разным числом склеек. Нужны якоря: `drop`, `drop−k`, `section:chorus`, `cut_class:kick`. Для этого в нарезку надо отдать `sections` (п. 4.5-1) и вернуть класс каждой склейки из `generate_switch_points` (он уже знает `src=kick|beat|low_far`, `:233-261`).
+4. **Структура трека на столе.** Дорожка «куплет/припев/бридж/дроп» + темп по секции.
+5. **Оверлей-титр** как новый тип приёма: статичный/анимированный текст над футажом (caption POV, счётчик эпизода, вопрос к зрителю) — тот же путь, что F5 text-layer (`f5_cognition/inject.py`) без TTS.
+6. **Второй видеослой** (PiP/split) для своих видео — обобщение F6 (`_apply_f6_if_present` кладёт слой `z=3`).
+7. **Источник «AI»** рядом с footage/photo/upload.
+
+### 5.3 Каталог форматов
+
+Цена ролика ≈ 20 ₽ → порог 2 ₽. ✅ — в пределах, ⚠️ — за порогом. Механика внимания — **[зн]**.
+
+| # | Формат | Что это и почему держит | Собирается из | Чего не хватает | Себестоимость | MVP / метрика |
 |---|---|---|---|---|---|---|
-| P1 | **Структурный монтаж** (куплет редко, припев/дроп плотно, бридж — холд) | ожидание и «награда» на дропе; плотность растёт вместе с энергией — удержание на 3–5 с | `generate_switch_points(sections=…)`, BPM-пол, drop-окно по уверенности ≥0.6 | ✅ 0 ₽; ноды без изменений | A/B 50/50 на новых батчах, метрика: 3-с retention и досмотр по TikTok-метрикам (нужен синк) | H / S / низкий |
-| P2 | **Hook-first: 3 версии первых 3 секунд на одно тело** (крупный план + текст-вопрос / молния на дропе / «пропущенное слово» F5) | первая секунда решает скролл; остальное тело идентично → чистый A/B | нативный рендер хук-сегмента + конкат с телом (ffmpeg), либо pinned_cuts | ✅ при нативном движке; на AE ⚠️ ×3 рендер | 10 артистов × 3 хука; метрика: доля досмотра первых 3 с по вариантам | H / M / средний |
-| P3 | **Lyric-сторителлинг / POV** (LLM один раз на трек: «POV: …» + 2–3 overlay-титра по смыслу строк) | нарратив, которому зритель «дочитывает» | один дополнительный LLM-вызов на трек (Stage 1b-подобный), overlay-слой текста как F5-клон | ✅ ≈1 ₽/ролик при батче 5 | 20 треков, метрика: комменты/сохранения vs обычный lyric | M / S / средний (качество LLM) |
-| P4 | **Motion-peak синхронизация** (обещанная фича) | движение в кадре попадает в кик — физиологический «удар» | ingest-скрипт motion-envelope + поле инвентаря + пикер | ✅ одноразово на клип | метрика: 3-с retention на тех же треках до/после | H / L / низкий |
-| P5 | **Материалы артиста как основа**: 10 селфи/фото → фото-флоу + F6-видео; AI-стилизация только обложки хук-кадра (Flux/img2img) | лицо артиста = узнавание и доверие, лучший CTR на профиль **[зн]** | фото-флоу есть (`photo_framing.py`); добавить img2img для 1 кадра | img2img ≈ 0.3–1 ₽ ✅; видео-генерация ⚠️ | 15 артистов с фото-паком vs футаж; метрика: переходы в профиль/на трек | H / M / средний (права на фото) |
-| P6 | **AI-генерация только хук-кадра** (2–3 с Kling/Veo по промпту из строки) | уникальный кадр, которого нет у других lyric-аккаунтов | fal.ai вызов + конкат | ⚠️ 10–30 ₽ за 3 с **[зн]** — только для Глоу/Импульс или платный аддон | 1 тариф-эксперимент: аддон «AI-хук» +200 ₽ | M / M / высокий (стоимость) |
-| P7 | **Серийный формат** («эп. 1/7» + единый стиль на трек, выдача дрипом по CJM: день 0/1/3) | сериальность = возврат зрителя и артиста | нумерация в overlay, стилевая консистентность = seed на трек | ✅ | когорта 50 юзеров с дрипом; метрика: доля выложивших ≥3 | M / S / низкий |
-| P8 | **Петля TikTok-метрики → следующий батч** (сейчас мок: `mock_store.analyze_iterations`) | «масштабируй то, что зашло» — обещание питчдека | фоновый синк метрик, таблица истории, выбор победителя по фону/стилю/хуку → seed следующего батча | ✅ | 30 юзеров с подключённым TikTok; метрика: средние просмотры батча 2 vs батча 1 | H / M / средний (API-аудит) |
-| P9 | **Шаблоны трендов**: «до/после» (split-screen с F6-видео), реакция (камера артиста поверх футажа PiP) | мем-грамматика, которую зритель уже знает | обобщить F6 на PiP/split; каталог шаблонов как у F3 | ✅ | 3 шаблона, 20 роликов; метрика: shares | M / M / средний |
-| P10 | **Diversity в батче** (jitter склеек, 2 стиля субтитров, разные хуки) | 5 разных роликов вместо 5 одинаковых — больше шансов у алгоритма | п. 3.6 (3) | ✅ | метрика: дисперсия просмотров внутри батча, доля батчей с «выстрелом» | M / S / низкий |
-| P11 | **Быстрое превью (нативное, 540p) → финал на AE только выбранного** | юзер видит результат через 40 с (aha), а не через 4–20 мин | rust_gen для impulse/jakson, Stage 2 в визарде | ✅ и ×2–4 к ноде | метрика: конверсия в оплату у когорты с превью | H / L / средний |
-| P12 | **Lyrics-pack для сети аккаунтов**: лучший ролик + caption + хэштеги + слот постинга | дистрибуция вместо инструмента (Flywheel) | Direct Post после аудита, «пакет» = JSON + mp4; партнёрка уже есть | ✅ | 3 lyrics-аккаунта × 10 артистов; метрика: просмотры/переходы на трек, цена слота | H / M / высокий (аудит TikTok, прокси) |
+| F-L1 | **Lyric (база)** — строки под вокал на футаже | текст = второй канал внимания, зритель «читает» трек | всё текущее | структура в нарезке, diversity, QA (часть 1) | ✅ | базовая линия для сравнения |
+| F-L2 | **Lyric-typography** — текст на цвете/стробе без футажа | нет фона → весь фокус на слове; brat/trendy | `background.color` + `strobe`, стили trendy/brat | per-variant jitter, kinetic-пресеты (масштаб/вращение по битам — кейфреймы, как в F4) | ✅ | 20 треков, доля досмотра vs F-L1 |
+| F-P | **POV** — «POV: ты …» сверху + футаж от первого лица + строка-панчлайн на дропе | самоидентификация, комментарии «кто ещё»; caption читают до того, как решают скроллить | хук `thought` даёт текст-слой (F5), инвентарь имеет `framing`/`people_type` для фильтра «от первого лица» | LLM-генерация caption (1 вызов на трек, промпт как у `f5_cognition` Stage 1), оверлей-титр без TTS, фильтр футажа по `framing` | ✅ ≈1 ₽ при батче 5 | 10 треков × 3 caption как FX-варианты; метрика: комментарии/просмотр и 3-с удержание |
+| F-E | **Edit** — плотная нарезка 1/2 бита после дропа, переход на каждой склейке, шейк/зум/флеш, стиль-окно перед дропом | «satisfying» синхрон; культура edit-аккаунтов | темп `dense`, Kant-переходы (47 в `f3_effect/kantfx`), `cutTransitions`, `extraRanges`, `hook_light` | программа переходов по классу склейки (kick→shake, drop→light), speed-ramp как новый visual op (time-remap в AE), motion-peaks для попадания действия | ✅ | рецепт «Edit» на 10 треков vs F-L1; метрика: досмотр, shares |
+| F-AI1 | **AI-кадр для фото-флоу** — 6–10 картинок по строкам трека (Flux/SDXL) → Ken Burns | уникальный визуал без банка; тема трека буквально | фото-флоу (`photo_framing.py`, `photo_comp.py`) | источник `ai_images` рядом с `photo`, промпты из строк, модерация | ✅ 0.3–1 ₽ **[зн]** | 15 треков; метрика: досмотр vs футаж того же вайба |
+| F-AI2 | **AI-клипы в банк** — генерировать b-roll под тонкие бакеты, не per-user | закрывает «нечего показать» (бакеты 9–29 клипов) с амортизацией на сотни роликов | ingest-скрипты банка (`scripts/build_static_assets_index.py`, тегирование) | генерация по тегам бакета, прогон через тот же теггер и CFR | ✅ ≈0.3 ₽/ролик при 100+ использованиях **[пр]** | 4 тонких бакета × 20 клипов; метрика: доля повторов и жалоб |
+| F-AI3 | **AI-хук-клип per-user** — 2–3 с image-to-video под хук | уникальная первая секунда | слот хука в F3/F6 (`f6_video_*`) | генерация (Kling/Veo), конкат | ⚠️ 15–30 ₽ **[зн]** — только платный аддон или Глоу+ | аддон «AI-хук» +200 ₽; метрика: конверсия аддона и 3-с удержание |
+| F-S | **Сниппет-визуалайзер** — обложка + волна/спектр + строка | формат релиза, «официально»; дешёв | обложка через фото-флоу, аудио-реактивность — кейфреймы из `audio_analysis` (RMS-огибающая) | оверлей волны/баров как визуал-оп | ✅ | метрика: переходы на трек из caption |
+| F-O | **Свой кадр vs футаж** — PiP/split/«до-после»/реакция | лицо артиста = узнавание, доверие, переходы в профиль | `upload`, F6 (слой до дропа) | второй видеослой с геометрией (PiP угол / split 50-50) как дорожка стола | ✅ | 15 артистов со своим видео; метрика: переходы в профиль |
+| F-C | **Caption-хук / вопрос к зрителю** — «если ты это слышишь, …», «1 или 2?» | comment-bait; простейший оверлей | оверлей-титр (п. 5.2-5) | набор шаблонов caption, LLM-подстановка под строку | ✅ | метрика: комментарии |
+| F-SER | **Сериал** — 7 роликов одного трека по рецепту с «эп. N/7» и дрипом по CJM (день 0/1/3) | сериальность возвращает и зрителя, и артиста | рецепт + оверлей-счётчик + расписание выдачи (CJM v2) | счётчик, дрип в боте | ✅ | когорта 50; метрика: доля выложивших ≥3 |
+| F-M | **Мем-шаблон/рамка с текстом** — PNG-шаблон с текстовыми слотами | узнаваемая грамматика мема | `frames/` (PNG-маска) | текстовые слоты в каталоге рамок | ✅ | 3 шаблона; метрика: shares |
 
-**Топ-3 к проверке:** P1 (0 ₽, 1 неделя, ноль риска), P11 (двойной эффект — aha и ноды), P8 (единственное, что делает Blast «co-pilot», а не генератор; без него питчдек не подтверждается данными).
+### 5.4 Куда интегрировать
+
+- **Визард, шаг FX:** галерея «Форматы» = рецепты; выбор рецепта создаёт FX-вариант(ы) и правки стола для слота; доли в «Пуле» по рецептам. Данные: `stageData.recipes[]`, `allocation.recipes`, `montage.videos[i].recipeId`.
+- **Стол:** дорожка структуры трека; якоря `drop±k`/секция для окон стилей; новая дорожка «оверлей-титр»; дорожка «второй слой» для своих видео.
+- **Оркестратор:** новые env (`POV_CAPTION_JSON`, `OVERLAY_TEXT_JSON`, `F6_LAYOUT=pip|split`, `AI_IMAGES_JSON`) по пути `schemas → tasks env → _LLM_ENV_KEYS → gemini_orchestrator → full_edit_config → project_builder → {{ token }}`; классы склеек в `render_plan`.
+- **Банк:** AI-клипы и motion-peaks — на ingest, не в рендер.
+- **Петля:** `variantId`/`recipeId` → `tiktokPostIds` → просмотры → «масштабировать победителя» (сейчас `mock_store.analyze_iterations`, `main.py:468-500`). Без этого формат нельзя сравнить с форматом.
+
+### 5.5 Топ-3 к проверке
+
+1. **Рецепт как ось батча + F-E «Edit»** — зрителю видимая разница с нулевыми LLM-затратами, и первая проверка того, что «пять форматов на трек» конвертируют лучше, чем «пять фонов».
+2. **F-P «POV»** — один LLM-вызов на трек, оверлей-титр по пути F5; самый дешёвый новый формат с собственной механикой внимания.
+3. **F-AI2 «AI-клипы в банк»** — закрывает тонкие бакеты и даёт «AI-generated» без удара по марже.
 
 ---
 
-## 5. Часть 3 — маркетинг
+## 6. Часть 3 — маркетинг
 
-### 5.1 Сегменты (по дата-руму и питчдеку)
+### 6.1 Сегменты
 
-| Сегмент | Контекст | Цель | Триггер прихода | Данные |
+| Сегмент | Контекст | Цель | Триггер | Данные |
 |---|---|---|---|---|
-| S1. Начинающий артист без бюджета | 81 % не набирают 100 слушателей **[DR]**; 50K/мес ищут продвижение **[DR]** | первые 1 000 просмотров, «чтобы трек услышали» | релиз/сниппет, увидел ролик в TikTok/TG | триал 5 роликов, конверсия органики 1.9 % **[DR]** |
-| S2. Артист с релизом и дедлайном | есть трек, релиз через 1–3 недели, бюджет 2–8 к ₽ | 10–30 роликов на пресейв/релиз | дедлайн | Бласт 1 990 / Глоу 7 990; ARPU $140, жизнь 1.2 мес **[DR]** |
-| S3. Менеджер/продюсер с несколькими артистами | 5–20 треков в работе, считает ROI | поток контента без монтажёра | калькулятор `/calc`, партнёрский оффер **[DR Авг-2026]** | Импульс 29 990 (24 трека/год); партнёрка 50/20 **[код]** |
-| S4. Лейбл | 100+ в РФ, ~50 артистов каждый **[DR]** | масштабируемый промо-контент на каталог | триал на месяц всем артистам (стратегия B2B) | нет мультиаккаунта в коде; «на паузе до proof-pack» **[DR]** |
-| Канал (не покупатель): менеджер тгк / lyrics-аккаунт | охват 500 → 12–14 покупок **[DR]** | комиссия | партнёрский кабинет `/partner/*` **[код]** | есть в проде |
+| S1 начинающий без бюджета | 81 % не наберут 100 слушателей; 50K/мес ищут продвижение **[DR]** | первые 1 000 просмотров | релиз/сниппет, ролик в TikTok/TG | триал 5 роликов; органика 1.9 % **[DR]** |
+| S2 артист с релизом и дедлайном | бюджет 2–8 к ₽, релиз через 1–3 недели | 10–30 роликов на пресейв | дедлайн | Бласт 1 990 / Глоу 7 990; ARPU $140, жизнь 1.2 мес **[DR]** |
+| S3 менеджер/продюсер | 5–20 треков, считает ROI | поток без монтажёра | калькулятор `/calc`, партнёрский оффер **[DR]** | Импульс 29 990; партнёрка 50/20 **[код]** |
+| S4 лейбл | 100+ в РФ, ~50 артистов **[DR]** | промо каталога | триал на месяц | в коде нет организаций/ролей; «на паузе» **[DR]** |
+| Канал: менеджер тгк / lyrics-аккаунт | охват 500 → 12–14 покупок **[DR]** | комиссия | партнёрский кабинет `/partner/*` **[код]** | есть |
 
-### 5.2 Ценностные карты
+### 6.2 Ценностные карты (по коду)
 
-**S1 — начинающий без бюджета**
+**S1.** Jobs: выложить что-то под трек каждый день; «я артист с контентом»; не чувствовать, что трек умер. Blast закрывает «что-то выложить» (5 роликов, 5 стилей, хуки, стол). Разрывы: обещание «вирусные ролики» vs метроном-монтаж и одинаковый батч; при 25 % падений 76 % батчей из 5 имеют ≥1 упавший ролик — на единственном бесплатном опыте; 4–20 минут ожидания без первого ролика раньше остальных; «безлимит на трек» только в mock; результат не измеряется автоматически → gain не доказуем.
 
-| Customer Profile | Value Map (по коду) | Fit / Gap |
-|---|---|---|
-| Jobs: функц. — выложить что-то под трек каждый день; соц. — «я артист, у меня есть контент»; эмоц. — не чувствовать, что трек умер | Триал 5 роликов/1 трек, визард 5 шагов, 5 стилей субтитров, 47 Kant-эффектов, хуки F1–F6, рамки, фото-флоу, драфты в TikTok | ✅ «что-то выложить» закрыто. ❌ «вирусность» из питчдека не подкреплена: метроном-монтаж, одинаковый батч, нет синка с движением. ❌ 76 % батчей из 5 имеют ≥1 падение при 25 % (бьёт по единственному бесплатному опыту). ❌ «безлимит на 1 трек при TikTok» — только в mock |
-| Pains: не умеет монтировать, нет денег, не знает, что сработает, стыдно за «дешёвый» вид | Pain relievers: бесплатный первый батч, методичка после генерации (бот), квиз | ❌ ожидание 4–20 мин без первого ролика раньше остальных; ❌ нет «почему именно эти 5» |
-| Gains: первые 1 000 просмотров, подписчики, ощущение системы | Gain creators: TikTok-статистика (ручная, по открытию страницы), итерации (мок) | ❌ результат артиста не измеряется автоматически → gain не доказуем |
+**S2.** Jobs: 20–30 роликов, разные хуки, посты по расписанию. Закрыто: объём (батч ограничен только кредитами, `main.py:362`), стол, ASR-примерка, настройки текста. Разрывы: 30 роликов = ~2 часа последовательной очереди; ролики похожи; падение версии k → остальные `skipped` без ретрая; нет планировщика постинга и связи ролик → переходы на трек.
 
-**S2 — артист с релизом и дедлайном**
+**S3.** Jobs: поток под 5–20 треков, отчёт артисту. Закрыто: Импульс, проекты, партнёрка (единственный готовый монетарный gain creator). Разрывы: нет мультиаккаунта/ролей, нет экспорта отчёта, `reserve` списывает кредиты даже при `credits=None` (проверить `billing_backend.py:349-392`).
 
-| Customer Profile | Value Map | Fit / Gap |
-|---|---|---|
-| Jobs: 20–30 роликов до релиза, разные хуки, посты по расписанию | 100/400 кредитов, батч до N (ограничен только кредитами, `main.py:362`), монтажный стол, ASR-примерка слов, настройки текста | ✅ объём закрыт. ❌ 30 роликов = ~2 ч последовательного рендера; ❌ ролики в батче почти одинаковые; ❌ нет планировщика постинга |
-| Pains: дедлайн, деньги на монтажёра, страх, что «всё одинаковое» | подписка 1 990 с автопродлением, рефанд упавших | ❌ рефанд только кредитов, не времени; ❌ падение версии k → остальные skipped без ретрая |
-| Gains: пресейвы/стримы, «релиз прошёл громко» | — | ❌ нет связи ролик → переходы на трек (нет UTM/ссылки в caption) |
+**S4.** Ничего лейбл-специфичного в коде; стратегия сама ставит на паузу.
 
-**S3 — менеджер нескольких артистов**
+### 6.3 CJM S1→S2
 
-| Customer Profile | Value Map | Fit / Gap |
-|---|---|---|
-| Jobs: поток под 5–20 треков, отчёт артисту, ROI | Импульс (24 трека/год, безлимит кредитов), проекты, партнёрский кабинет | ❌ нет мультиаккаунта/ролей; ❌ `reserve` списывает кредиты даже у `credits=None` (проверить); ❌ нет экспорта отчёта |
-| Pains: время, качество «на поток», доказать клиенту | калькулятор `/calc` (план, не сделан) | ❌ отчёт по результатам — только в CJM, не в коде |
-| Gains: маржа на услуге поверх Blast | партнёрка 50/20 | ✅ единственный сегмент с готовым монетарным gain creator |
-
-**S4 — лейбл**: jobs — промо каталога, A&R-сигнал по роликам; в коде — ничего лейбл-специфичного (нет организаций, нет SSO, нет white-label). Gap полный; стратегия сама ставит сегмент на паузу.
-
-### 5.3 CJM ключевого сегмента (S1 → S2, один путь)
-
-| Этап | Действие | Мысли/эмоции | Точки контакта | Барьер / отток | Blast сейчас (код) | Техпроблема из части 1 | Возможность |
-|---|---|---|---|---|---|---|---|
-| Осведомлённость | видит ролик/пост | «а это с чем?» | TikTok Blast (бренд-бэклог на паузе **[DR]**), TG-канал, TG Ads | нет социального доказательства результатами | лендинг из компонентов приложения | — | бренд-TikTok из собственных роликов + метрики артистов |
-| Первый контакт | лендинг → логин через Telegram | «ещё один бот» | `/api/auth/tg-start`, подписка на канал | обязательный Telegram даже при Google | Telegram-only генерация (`main.py:735`) | — | Google-only путь до первого превью, Telegram — после |
-| Онбординг/триал | загрузка трека, окно 13–30 с, 5 шагов | «что выбирать?» | визард, ASR во время шага «Фон» | 5 шагов до первого результата; нет превью | ASR-примерка, гиды | — | превью субтитров уже есть; добавить превью ролика (P11) |
-| Первая генерация | «Сгенерировать», ждёт | «долго… упало?» | экран обработки, бот «ролик N из M готов» | **4–20 мин**, 76 % батчей с ≥1 FAILED, бот шлёт только ссылку | последовательный батч, уведомления первых 5 | B1/B2/R1/D1', W1; serial | первый ролик первым + честный прогресс по стадиям; QA |
-| Первый пост | скачивает, выкладывает или «в драфты TikTok» | «а что написать?» | `/api/tiktok/post` (draft), прокси 100–150 КБ/с | медленная загрузка, RU-IP, Direct Post не прошёл аудит | drafts работают; `video_posted` не трекается | TikTok route_unavailable | caption+хэштеги из Stage 1b; чек-лист из CJM в коде |
-| Первый результат | смотрит просмотры | «зашло/не зашло» | «Статистика» (синк только по открытию) | нет пуша с результатом | метрики перезаписываются, нет истории | нет фонового синка | триггер «>1 000 просмотров → масштабируй» (CJM v2 §3) |
-| Оплата | квота кончилась | «стоит ли 1 990?» | предупреждение при ≥80 % квоты (бот) | не видит связи ролики → результат | TBank через бот-webhook; подписка с продлением | — | paywall с результатами собственного батча |
-| Повтор | новый трек/батч | «в прошлый раз было одинаково» | проекты, итерации (мок) | одинаковые ролики, те же вайбы | seed на проект, LRU-кулдаун | P10 | diversity + «масштабировать победителя» (P8) |
-| Рекомендация | — | «посоветую, если сработало» | партнёрка только для менеджеров | нет реферала для артистов | `partner_links` | — | «приведи артиста → +N роликов» |
-
-### 5.4 Маркетинговые гипотезы
-
-| # | Гипотеза | Разрыв | Сегмент | Механика | Эксперимент | Метрика | Стоимость |
-|---|---|---|---|---|---|---|---|
-| M1 | **Aha ≤ 90 с**: превью первого ролика до любых ограничений и до Telegram-гейта | 4–20 мин ожидания на первом опыте | S1 | нативное превью (P11), Telegram после превью | 50/50 на новых регистрациях | конверсия регистрация → первый скачанный ролик; время до aha | M (техника) |
-| M2 | Позиционирование от боли слайда 2: «81 % не наберут 100 слушателей — твои первые 1 000 просмотров за вечер» вместо «co-pilot/AI-агент» | обещание «вирусности» vs реальный продукт | S1/S2 | креативы и лендинг с цифрами из TikTok-метрик реальных юзеров | 2 набора креативов в TG Ads | CPA ≤ 1.6 $ **[DR]**, CTR | S |
-| M3 | Триал «безлимит на один трек при подключённом TikTok» реально в проде | обещано в UI/доках, работает только в mock | S1 | `billing_backend.snapshot` учитывает `space.tiktok` | когорта 200 регистраций | доля подключивших TikTok, конверсия в оплату, доля выложивших | S |
-| M4 | Апгрейд-триггер по результату: «ролик набрал >1 000 — сгенерировать ещё 5 в этом стиле» | триггеры только по квоте | S1→S2 | фоновый синк метрик + пуш в бот | 100 юзеров с TikTok | конверсия пуша в батч/оплату | M |
-| M5 | Еженедельное «ревью результатов» (CJM v2 §6) как удержание | удержание через функции, а не результат | S2/S3 | отчёт: лучший ролик, фон/стиль/хук победителя, CTA | 30 платящих | retention 2-го месяца (сейчас жизнь 1.2 мес **[DR]**) | M |
-| M6 | Бренд-TikTok Blast из собственного продукта + build-in-public по метрикам артистов | бэклог контента на паузе, «сапожник без сапог» | все | 1–2 ролика/день из батчей пользователей (с согласия) + разборы | 30 дней | регистрации с источником tiktok, CPA vs ads | S (время) |
-| M7 | Реферал для артистов: «приведи артиста → +5 роликов обоим» | партнёрка только для менеджеров | S1/S2 | `partner_links` расширить на user-коды | 60 дней | k-фактор, доля регистраций по ссылкам | S |
-| M8 | Лейбл-пилот после proof-pack: 1 лейбл × 20 артистов × триал | сегмент на паузе, нет мультиаккаунта | S4 | ручной онбординг через менеджера, отчёт (M5) | 1 лейбл | активация ≥50 %, оплата ≥10 % | M |
-| M9 | «Гарантированный триал» (из выводов по конкурентам: «3 ролика — если нет роста, вернём») | нет доказательства результата | S2 | возврат кредитов при <N просмотров по синку | 50 юзеров | конверсия, доля возвратов | рискованно до P1/P4/QA |
-| M10 | Честная очередь: первый ролик первым, ETA по стадиям, пуш с самим видео, а не ссылкой | отток на экране ожидания (`flow_metrics` wait-abandon) | S1 | уведомление с mp4 при первом COMPLETED | все новые | wait-screen abandon, доля вернувшихся за результатом | S |
-
----
-
-## 6. Роадмап на 6 недель
-
-| Неделя | Техника | Продукт | Маркетинг | Почему |
+| Этап | Барьер / отток | Blast сейчас [код] | Техпроблема | Возможность |
 |---|---|---|---|---|
-| 1 | Классификатор ошибок + `code_version` + стадийные тайминги (3.1, 3.3-5); фикс автоотключения ноды; success-без-видео | — | бренд-TikTok стартует на текущих роликах (M6) | без измерения остальное не доказать; disable ноды — самый дешёвый High |
-| 2 | Пост-рендер QA на ноде; soft_time_limit + reaper/свипер; веб: 404/дедлайн/один requeue; первый ролик первым (M10) | гейт тонких бакетов, web `exclude_file_names` | креативы от боли (M2), 2 набора | закрыть «кривое видео» и вечные PROCESSING до притока трафика |
-| 3 | параллельный enqueue после мастера | **P1 структурный монтаж + P10 diversity + субтитры hard-max/тень/правое поле + дефолтный переход** | M3 триал-безлимит в проде | ноль LLM-затрат, крупнейший рычаг качества |
-| 4 | пре-нормализация банка + кеш клипов на ноде + тест тёплого AE (20 джоб) | фоновый синк TikTok-метрик + история (основа P8/M4/M5); `video_posted` в проде | M7 реферал артистам | пропускная способность +15–30 % и данные для петли |
-| 5 | Stage 2 во время визарда; rust_gen canary на impulse/jakson для превью | P4 motion-peaks ingest (скрипт + поле инвентаря), пикер | M4 триггер «>1 000» | путь к ≤60 с и aha |
-| 6 | нативное превью в визарде (P11) под флагом | P2 hook-first A/B на 10 артистах; P8 «масштабировать победителя» | M5 недельное ревью; решение по M8 лейбл-пилоту | неделя эксперимента с измеримыми метриками |
+| Осведомлённость | нет социального доказательства результатами | лендинг; бренд-TikTok на паузе **[DR]** | — | бренд-TikTok из собственных роликов + метрики артистов |
+| Первый контакт | обязательный Telegram даже при Google | `main.py:735` | — | Google-only до первого результата |
+| Онбординг/триал | 5 шагов до результата | ASR во время «Фона», гиды, превью субтитров | — | показывать раскадровку и стол как «уже результат» |
+| Первая генерация | **4–20 мин**, 76 % батчей с падением, бот шлёт ссылку | последовательный батч, уведомления первых 5 | B1/B2/R1/D1'/W1, serial | первый ролик первым + честный прогресс + QA |
+| Первый пост | медленный аплоад через прокси, Direct Post не прошёл аудит | драфты работают; `video_posted` не трекается | `route_unavailable` | caption+хэштеги из трека; чек-лист CJM в коде |
+| Первый результат | нет пуша с результатом | метрики только при открытии «Статистики» | нет фонового синка | триггер «>1 000 → масштабируй» (CJM v2 §3) |
+| Оплата | не видит связи ролики → результат | предупреждение ≥80 % квоты (бот), TBank | — | paywall с результатами собственного батча |
+| Повтор | «в прошлый раз было одинаково» | seed на проект, LRU | diversity | рецепты как ось + «масштабировать победителя» |
+| Рекомендация | нет реферала для артистов | `partner_links` только менеджерам | — | «приведи артиста → +N роликов» |
 
-Пять приоритетов, если делать только пять: (1) измерение + классы ошибок, (2) QA + success-без-видео + disable ноды, (3) структурный монтаж и diversity, (4) синк TikTok-метрик + триггеры, (5) превью/Stage 2 в визарде как путь к ≤60 с.
+### 6.4 Маркетинговые гипотезы
+
+| # | Гипотеза | Разрыв | Сегмент | Эксперимент / метрика | Стоимость |
+|---|---|---|---|---|---|
+| M1 | Aha ≤ 2 мин: первый ролик первым, прогресс по стадиям, пуш с самим mp4 | 4–20 мин ожидания | S1 | 50/50 на новых; время до первого скачанного, wait-abandon | M (конвейер) |
+| M2 | Позиционирование от боли слайда 2: «81 % не наберут 100 слушателей — твои первые 1 000 просмотров за вечер» | «AI-агент» vs боль | S1/S2 | 2 набора креативов в TG Ads; CPA ≤ 1.6 $ **[DR]** | S |
+| M3 | Триал «безлимит на один трек при подключённом TikTok» в проде | обещано, работает в mock | S1 | когорта 200; доля подключивших TikTok, конверсия | S |
+| M4 | Апгрейд по результату: «ролик набрал >1 000 — ещё 5 в этом рецепте» | триггеры только по квоте | S1→S2 | 100 юзеров с TikTok; конверсия пуша | M (синк) |
+| M5 | Недельное «ревью результатов» с рецептом-победителем | удержание через результат | S2/S3 | 30 платящих; retention 2-го месяца (сейчас 1.2 мес **[DR]**) | M |
+| M6 | Бренд-TikTok из продукта + build-in-public по метрикам артистов | бэклог контента на паузе | все | 30 дней; регистрации с источником tiktok | S |
+| M7 | Реферал артистам «приведи артиста → +5 роликов обоим» | партнёрка только менеджерам | S1/S2 | 60 дней; k-фактор | S |
+| M8 | Форматы как оффер: «5 форматов на твой трек» вместо «5 роликов» | обещание вирусности без разницы в роликах | S1/S2 | A/B лендинга после рецептов-оси | S после 5.5-1 |
+| M9 | Лейбл-пилот после proof-pack | сегмент на паузе | S4 | 1 лейбл × 20 артистов; активация ≥50 % | M |
+| M10 | «Гарантированный триал» (из выводов по конкурентам) | нет доказательства результата | S2 | 50 юзеров; возвраты | рискованно до QA и синка |
 
 ---
 
-## 7. Открытые вопросы и недостающие данные
+## 7. Роадмап на 6 недель
 
-1. Реальное распределение падений по классам за 30 дней (нужен прогон классификатора по `generation_versions.last_error_text` и веб-`jobs`) — все доли в 3.1 оценочные.
-2. Фактические тайминги ноды: `prepare_s / cfr_s / ae_start_s / render_s / upload_s` на 100 джобах; CPU/RAM ноды (для второго AE-инстанса).
-3. Определение маржи: питчдек даёт косты 2 800 ₽ при чеке 5 600 ₽ (≈50 %), постановка — 90–93 %; что внутри «костов»? Стоимость LLM на трек по факту (`gemini_token_total` есть — нужно вытащить).
-4. Воронка по когортам из `activity_log`/`analytics_events`: регистрация → первый батч → первый скачанный → первый пост → оплата; wait-screen abandon по времени ожидания.
-5. Статус аудита Direct Post и `TIKTOK-REVIEW.md` п. 13 (ключи в проде); реальная доля юзеров с подключённым TikTok.
-6. Фин. модель, таблица ЦА и таблица конкурентов из Google Sheets — недоступны; выводы по сегментам S2–S4 опираются на питчдек и стратегию, не на данные.
-7. Срабатывает ли краш AE «internal structure inconsistency» после CFR-фикса при тёплой сессии — определяет 10 % пропускной способности.
-8. Права на пользовательские фото/видео для P5 и на материалы для бренд-TikTok (M6) — юридическая проверка (`LEGAL_DATA_REQUIRED.md`).
+| Неделя | Техника | Продукт | Маркетинг |
+|---|---|---|---|
+| 1 | Замеры по разделу 3 (логи сегодня + инструментация ноды); фикс автоотключения ноды; success-без-видео | — | бренд-TikTok стартует на текущих роликах (M6) |
+| 2 | Пост-рендер QA; build time limit + reaper/свипер; веб: 404/дедлайн/один requeue; первый ролик первым | гейт тонких бакетов | креативы от боли (M2) |
+| 3 | Конвейер батча; локальный банк на ноде + параллельная загрузка | рецепт как объект и ось батча (5.2-1,2); per-variant jitter | триал-безлимит в проде (M3) |
+| 4 | Пре-CFR банка; Stage 2 в визарде | структура трека в нарезке и на столе; классы склеек (5.2-3,4); рецепт «Edit» (F-E) | синк TikTok-метрик + `video_posted`; реферал (M7) |
+| 5 | Classifier в проде, дашборд «падения по классам», e2e | оверлей-титр + POV (F-P); субтитры hard-max/тень/поле | триггер «>1 000» (M4) |
+| 6 | motion-peaks ingest (скрипт + поле инвентаря) | AI-клипы в банк под тонкие бакеты (F-AI2); «масштабировать победителя» по `recipeId` | «5 форматов на трек» на лендинге (M8); недельное ревью (M5) |
+
+---
+
+## 8. Открытые вопросы
+
+1. Распределение фаз ноды и оркестратора на 200–300 джобах (раздел 3.1) — все выводы части 4.4 до замера качественные.
+2. Реальное распределение падений по классам за 30 дней (прогон классификатора по `last_error_text` и веб-`jobs`).
+3. CPU/RAM ноды под рендером — вопрос про второй AE-инстанс.
+4. Определение маржи: 2 800 ₽ костов при чеке 5 600 ₽ в питчдеке vs 90–93 %.
+5. Когортная воронка регистрация → первый батч → скачал → выложил → оплата из `activity_log`/`analytics_events`.
+6. Статус аудита Direct Post (`web_app/TIKTOK-REVIEW.md` п. 13) и доля юзеров с подключённым TikTok.
+7. Какие 2–3 формата из 5.3 команда считает приоритетными — от этого зависит, какие дорожки стола делать первыми (оверлей-титр vs второй видеослой vs классы склеек).
+8. Права на пользовательские фото/видео (F-O, F-AI1) и на материалы для бренд-TikTok (`LEGAL_DATA_REQUIRED.md`).
