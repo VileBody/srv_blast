@@ -27,6 +27,7 @@ video{display:block}
 .lp-brand img{width:26px;height:26px;display:block}
 .lp-nav{display:flex;gap:4px}
 .lp-right{display:flex;align-items:center;gap:8px}
+.lp-lang{flex:none}
 .lp-burger{display:none}
 .lp-hdr > .lp-wrap{position:relative}
 .lp-menu{position:absolute;left:var(--lp-gutter);right:var(--lp-gutter);top:calc(100% + 8px);padding:8px;display:flex;flex-direction:column;gap:4px;box-shadow:0 24px 60px -20px rgba(5,1,15,.9)}
@@ -149,11 +150,14 @@ video{display:block}
 .c-formats{grid-column:span 5;min-height:460px}
 .c-flow{grid-column:span 7;min-height:460px}
 .lp-particles{position:absolute;inset:0;z-index:-1;width:100%;height:100%;cursor:crosshair;touch-action:pan-y}
-.lp-hint{position:absolute;right:22px;top:24px}
+/* подсказка — под заголовком, в потоке */
+.lp-cell-head{display:flex;flex-direction:column;align-items:flex-start;gap:12px}
+.lp-hint{position:static}
 .lp-orbit{position:relative;flex:1;min-height:280px;margin:10px 0}
 .lp-ring{position:absolute;left:50%;top:50%;border-radius:50%;border:1px solid var(--line-strong);transform:translate(-50%,-50%)}
 .lp-core{position:absolute;left:50%;top:50%;width:40px;height:40px;margin:-20px 0 0 -20px}
-.lp-orbit .lp-op{position:absolute;left:50%;top:50%;will-change:transform}
+/* transform пишется каждый кадр — transition из кита давал рывки */
+.lp-orbit .lp-op{position:absolute;left:50%;top:50%;will-change:transform;transition:none!important;backface-visibility:hidden}
 /* шаги: слева список, справа инфографика шага */
 .lp-steps-grid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:16px;flex:1;margin-top:20px;min-height:0}
 .lp-steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
@@ -228,7 +232,11 @@ video{display:block}
 
 /* ── Адаптив ── */
 @media (max-width:1100px){
-  .lp-nav,.lp-right .lp-lang{display:none}
+  .lp-nav{display:none}
+  /* мобильный хедер: звезда · RU/EN · кнопка — равные промежутки */
+  .lp-bar{justify-content:space-between}
+  .lp-bar .lp-brand{margin-right:0}
+  .lp-right{display:contents}
   .lp-hero-grid{grid-template-columns:minmax(0,1fr)}
   .lp-wall-wrap{height:clamp(440px,90vw,620px)}
   .lp-cards{grid-template-columns:minmax(0,1fr);max-width:560px;margin-inline:auto}
@@ -315,9 +323,6 @@ video{display:block}
 :where(a, button, input):focus-visible { outline: 2px solid #b99cff; outline-offset: 3px; }
 
 @media (max-width: 768px) {
-  .language-switch--desktop { display: none; }
-  .language-switch--mobile { display: flex; margin-left: 16px; }
-  .language-switch button { min-width: 28px; height: 24px; padding: 0 5px; font-size: 10px; }
   .cookie-banner { right: 12px; bottom: 12px; left: 12px; align-items: stretch; flex-direction: column; gap: 14px; padding: 16px; border-radius: 16px; }
   .cookie-banner__actions { display: grid; grid-template-columns: 1fr 1fr; }
   .cookie-banner__actions .cookie-button--primary { grid-column: 1 / -1; grid-row: 1; }
@@ -325,8 +330,17 @@ video{display:block}
   .cookie-dialog__panel h2 { font-size: 23px; }
   .cookie-dialog__actions { align-items: stretch; flex-direction: column-reverse; }
   .cookie-dialog__actions .cookie-button { width: 100%; }
+}
 .cookie-button { transition: transform var(--dur-fast) var(--ease), filter var(--dur) var(--ease), border-color var(--dur) var(--ease); }
 .cookie-button:active { transform: scale(.98); }
 /* Диалог cookie — та же лестница поверхностей и тонированные тени */
 .cookie-banner { box-shadow: var(--shadow-3); border-color: var(--line); }
-.cookie-dialog__panel {
+
+/* узкий телефон: звезда без надписи, чтобы влезли RU/EN и кнопка */
+@media (max-width:420px){
+  .lp-bar .lp-brand{font-size:0;gap:0;padding-right:0}
+  .lp-bar{gap:8px;padding:0 8px 0 12px}
+  .lp-right{gap:6px}
+  .lp-bar .lp-lang{flex:none}
+  .lp-bar .lp-cta-top{padding:0 14px}
+}
