@@ -952,7 +952,9 @@
     "videos": "Generations",
     "used": "{{used}}/{{total}} used",
     "unlimited": "∞ uses",
-    "noLimit": "No limit"
+    "noLimit": "No limit",
+    "of": "{{used}} of {{total}}",
+    "out": "used up"
   },
   "auth": {
     "registerTitle": "Sign up",

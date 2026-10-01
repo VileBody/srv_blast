@@ -14,8 +14,8 @@ import { cssZoom } from '../../lib/zoom';
  * своим z-контекстом, поэтому поднять его над затемнением на месте нельзя — затемнение,
  * копия кружка и поповер портируются в карточку-хост `[data-limits-dim]` (ей нужен `relative`).
  *
- * Геометрия W46/W47: кружок 25×25; поповер 522×210 r15 grad-soft-20 backdrop-blur-50,
- * правый край = правый край кружка, паддинги 28/29/25; шкалы 161×20 r20.
+ * Геометрия: кружок 25×25; поповер 360 r15 grad-soft-20 backdrop-blur-50, правый край =
+ * правый край кружка. Строка лимита — подпись и «n из m» сверху, тонкая шкала под ними.
  */
 
 /** Донат-индикатор (Figma 758:584): кольцо whitey + дуга grad-main от 12 часов по часовой */
@@ -25,7 +25,9 @@ function LimitRing({ pct }: { pct: number }) {
   const C = 2 * Math.PI * R;
   const filled = Math.max(0, Math.min(1, pct)) * C;
   return (
-    <svg viewBox="0 0 25 25" width="25" height="25" aria-hidden="true" className="block shrink-0 max-md:h-[26px] max-md:w-[26px]">
+    // overflow visible: внешний край кольца ровно на границе viewBox, и при дробном масштабе
+    // холста сглаживание с одной стороны срезалось — кольцо казалось обрезанным справа
+    <svg viewBox="0 0 25 25" width="25" height="25" overflow="visible" aria-hidden="true" className="block shrink-0 overflow-visible max-md:h-[26px] max-md:w-[26px]">
       <defs>
         <linearGradient id="limitRingArc" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="#8b6fe6" />
@@ -47,36 +49,30 @@ function LimitRing({ pct }: { pct: number }) {
   );
 }
 
-const SOFT_TEXT: React.CSSProperties = {
-  // Figma 758:597: вертикальный градиент по тексту .8 → .64
-  backgroundImage: 'linear-gradient(185deg, rgba(246,245,253,0.8) 8.5%, rgba(246,245,253,0.64) 94.6%)',
-  WebkitBackgroundClip: 'text',
-  backgroundClip: 'text'
-};
-
 /**
- * Строка шкалы (Figma 758:597–606): лейбл / бар 161×20 r20 / «n/m использовано» справа.
- *
- * Лейбл был жёстко 88px без переноса: «Генерации» (и англ. «Generations») в него не влезали
- * и наезжали на бар. Теперь колонка лейбла тянется по тексту с минимумом 88 и зазором,
- * а бар остаётся фигмовских 161. Безлимит заливается целиком «текущим» градиентом — так же,
- * как в «Лимитах» профиля, иначе пустая шкала читается как «ничего не доступно».
+ * Строка лимита: подпись и «n из m» в одну строку, под ними шкала на всю ширину.
+ * Безлимит заливается целиком «текущим» градиентом — как в «Лимитах» профиля, иначе пустая
+ * шкала читается как «ничего не доступно»; исчерпанный лимит подсвечивается словом.
  */
 function LimitBar({ label, used, total }: { label: string; used: number; total: number | null }) {
   const { t } = useTranslation();
   const unlimited = total === null;
   const pct = total ? Math.max(0, Math.min(1, used / total)) : 0;
+  const out = !unlimited && total !== null && used >= total;
   return (
-    <span className="flex items-center gap-[16px] max-md:gap-[10px]">
-      <span className="min-w-[88px] shrink-0 whitespace-nowrap text-[16px] font-[400] leading-[19px] text-transparent max-md:min-w-0" style={SOFT_TEXT}>{label}</span>
-      <span className="relative h-[20px] w-[161px] shrink-0 overflow-hidden rounded-[20px] bg-grad-soft-20 max-md:h-[14px] max-md:w-auto max-md:flex-1">
+    <span className="flex flex-col gap-[10px]">
+      <span className="flex items-baseline justify-between gap-space-4 text-ui-14">
+        <span className="text-text-60">{label}</span>
+        <span className="tabular-nums text-text">
+          {unlimited ? t('limits.noLimit') : t('limits.of', { used, total })}
+          {out && <span className="ml-[8px] text-accent-light">{t('limits.out')}</span>}
+        </span>
+      </span>
+      <span className="relative h-[6px] w-full overflow-hidden rounded-full bg-white/10">
         <span
-          className={`absolute inset-y-0 left-0 rounded-[20px] ${unlimited ? 'limit-unlimited' : 'bg-grad-main'}`}
+          className={`absolute inset-y-0 left-0 rounded-full ${unlimited ? 'limit-unlimited' : 'bg-grad-main'}`}
           style={{ width: unlimited ? '100%' : `${pct * 100}%` }}
         />
-      </span>
-      <span className="ml-auto whitespace-nowrap text-right text-[16px] font-[400] leading-[19px] text-transparent" style={SOFT_TEXT}>
-        {unlimited ? t('limits.noLimit') : t('limits.used', { used, total })}
       </span>
     </span>
   );
@@ -142,18 +138,11 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
           <span className="pointer-events-none absolute z-[8] h-[25px] w-[25px] max-md:!left-[20px] max-md:right-[20px] max-md:w-auto" style={{ left: anchor.x, top: anchor.y }}>
             <span
               role="tooltip"
-              className="absolute right-0 block w-[522px] rounded-r15 bg-grad-soft-20 px-[28px] pb-[25px] pt-[29px] backdrop-blur-[50px] max-md:left-0 max-md:w-auto max-md:px-[14px] max-md:pb-[14px] max-md:pt-[14px]"
+              className="absolute right-0 flex w-[360px] flex-col gap-[20px] rounded-r15 bg-grad-soft-20 p-[24px] shadow-[0_24px_60px_rgba(5,1,15,0.45)] backdrop-blur-[50px] max-md:left-0 max-md:w-auto max-md:p-[16px]"
               style={{ top: 25 + offsetY }}
             >
-              <span className="flex items-center gap-[16px]">
-                <img src="/assets/figma/icon-note.svg" width="12" height="17" alt="" aria-hidden="true" />
-                <span className="text-[24px] font-[400] leading-[29px] text-text">{t('limits.title')}</span>
-              </span>
-
-              <span className="mt-[28px] block max-md:mt-[14px]">
-                <LimitBar label={t('limits.tracks')} used={tracksUsed} total={tracksTotal} />
-              </span>
-              <span aria-hidden="true" className="my-[28px] block h-px w-full bg-[rgba(246,245,253,0.2)] max-md:my-[14px]" />
+              <span className="text-ui-20 text-text">{t('limits.title')}</span>
+              <LimitBar label={t('limits.tracks')} used={tracksUsed} total={tracksTotal} />
               <LimitBar label={t('limits.videos')} used={videosUsed} total={videosTotal} />
             </span>
           </span>

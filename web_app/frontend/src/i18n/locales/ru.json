@@ -955,7 +955,9 @@
     "videos": "Генерации",
     "used": "{{used}}/{{total}} использовано",
     "unlimited": "∞ использований",
-    "noLimit": "Без лимита"
+    "noLimit": "Без лимита",
+    "of": "{{used}} из {{total}}",
+    "out": "закончились"
   },
   "auth": {
     "registerTitle": "Регистрация",
