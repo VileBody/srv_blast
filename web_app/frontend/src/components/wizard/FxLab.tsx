@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
@@ -8,20 +8,18 @@ import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { CatalogMedia } from './CatalogPreview';
 import { WarmupInput } from './WarmupInput';
-import { useDragScroll } from './BackgroundPanel';
-import { PillsFooter } from './WizardFrame';
-import { emptyTimeline, FX_VARIANT_PALETTE, FxVariant, fxVariantsMode, HOOK_LABELS, variantsFromLegacyHooks, HookConfig, HookKind, hookComplete, TimelineRecipe, useWizardStore } from '../../stores/wizardStore';
+import { useDragScroll } from './useDragScroll';
+import { PillsFooter, Svg, W12 } from './WizardFrame';
+import { FX_VARIANT_PALETTE, FxVariant, fxVariantsMode, HOOK_LABELS, variantsFromLegacyHooks, HookConfig, HookKind, hookComplete, useWizardStore } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
-import { TimelineButtonGuideVisual, useFxTimelineOpen, useTimelineGuideAvailable } from './timelineGuides';
 import {
   ChipRow, HOOK_TYPES, HookStep,
   hookSteps, previewIdFor, selectedStyles
-} from './HookPanel';
+} from './hookCatalog';
 
 // Таймлайн сам берёт каталоги из HookPanel — статический импорт дал бы цикл модулей.
-const FxTimeline = lazy(() => import('./FxTimeline').then((m) => ({ default: m.FxTimeline })));
 
 /*
  * Режим вариантов шага FX (по умолчанию; `?fxLab=0` — откат на классический шаг).
@@ -70,14 +68,11 @@ const STEP_NAME: Record<string, string> = {
   thought: 'wizard.fxv.stepThought', effectGlue: 'wizard.fxv.stepGlue', effectStyle: 'wizard.fxv.stepStyle'
 };
 
-type Snapshot = { hooks: ReturnType<typeof useWizardStore.getState>['hooks']; timeline: TimelineRecipe };
-
 /** Только состояние интерфейса; сами варианты и их доли — в сторе визарда. */
 interface LabState {
   activeId: string | null;
   expanded: HookKind | null;
   tab: number;
-  snapshot: Snapshot | null;
   select: (id: string) => void;
   toggleType: (kind: HookKind) => void;
   add: (kind: HookKind, config?: HookConfig) => void;
@@ -86,11 +81,6 @@ interface LabState {
   patch: (patch: Partial<HookConfig>) => void;
   setTab: (tab: number) => void;
   setCount: (id: string, n: number) => void;
-  /* таймлайн работает со стором визарда — на время его работы вариант «одалживается» в стор */
-  beginTimeline: () => void;
-  switchTimeline: (id: string) => void;
-  newInTimeline: () => void;
-  endTimeline: () => void;
 }
 
 /** Id переживают перезагрузку (они ключи allocation.variants) — счётчик модуля тут не годится. */
@@ -113,38 +103,14 @@ function firstOpenTab(v?: LabVariant): number {
   return i < 0 ? 0 : i;
 }
 
-/* Склейки и темп — общие на батч (по ним собрана раскадровка «Пула» и считает рендер),
-   у варианта свои только переходы и стили таймлайна. */
-const BATCH_TIMELINE_KEYS = ['key', 'pace', 'cuts', 'edited'] as const;
-function withBatchCuts(recipe: TimelineRecipe, batch: TimelineRecipe): TimelineRecipe {
-  const out = { ...recipe };
-  for (const k of BATCH_TIMELINE_KEYS) (out as Record<string, unknown>)[k] = batch[k];
-  return out;
-}
-
-function loadIntoWizard(v: LabVariant) {
-  const store = useWizardStore.getState();
-  useWizardStore.setState({
-    // черновой вариант (создан из таймлайна) ещё без хука — таймлайн откроется пустым
-    hooks: { ...store.hooks, kind: v.draft ? undefined : v.kind, configs: v.draft ? {} : { [v.kind]: v.config } },
-    timeline: withBatchCuts(v.recipe ?? { ...emptyTimeline(), pace: 'auto' }, store.timeline)
-  });
-}
-function readFromWizard(v: LabVariant): LabVariant {
-  const { hooks, timeline } = useWizardStore.getState();
-  if (!hooks.kind) return { ...v, recipe: { ...timeline } };
-  return { ...v, kind: hooks.kind, draft: false, config: { ...(hooks.configs[hooks.kind] ?? {}) }, recipe: { ...timeline } };
-}
 /** Правка конкретного варианта (загрузка прогрева асинхронная — активный вариант мог смениться). */
 const patchVariant = (id: string, patch: Partial<HookConfig>) =>
   setVariants(variantsNow().map((v) => (v.id === id ? { ...v, config: { ...v.config, ...patch } } : v)));
-const mkDraft = (list: FxVariant[]): LabVariant => ({ id: newId(), kind: 'none', config: {}, color: nextColor(list), draft: true });
 
 export const useFxLabStore = create<LabState>((set, get) => ({
   activeId: null,
   expanded: null,
   tab: 0,
-  snapshot: null,
   select: (id) => set((s) => { const v = variantsNow().find((x) => x.id === id); return { activeId: id, expanded: v?.kind ?? s.expanded, tab: firstOpenTab(v) }; }),
   toggleType: (kind) => {
     const s = get();
@@ -181,61 +147,21 @@ export const useFxLabStore = create<LabState>((set, get) => ({
   },
   patch: (patch) => { const id = get().activeId; setVariants(variantsNow().map((v) => (v.id === id ? { ...v, config: { ...v.config, ...patch } } : v))); },
   setTab: (tab) => set({ tab }),
-  setCount: (id, n) => setCounts((c) => ({ ...c, [id]: Math.max(0, n) })),
-  beginTimeline: () => {
-    const s = get();
-    let v = variantsNow().find((x) => x.id === s.activeId);
-    // Таймлайн доступен всегда: без вариантов открываем черновой — он станет вариантом,
-    // как только в таймлайне выберут хук (иначе при закрытии исчезнет).
-    if (!v) { v = mkDraft(variantsNow()); setVariants([...variantsNow(), v]); setCounts((c) => ({ ...c, [v!.id]: 1 })); set({ activeId: v.id }); }
-    const { hooks, timeline } = useWizardStore.getState();
-    set({ snapshot: { hooks, timeline } });
-    loadIntoWizard(v);
-  },
-  newInTimeline: () => {
-    const s = get();
-    const variants = variantsNow().map((x) => (x.id === s.activeId ? readFromWizard(x) : x));
-    const v = mkDraft(variants);
-    setVariants([...variants, v]);
-    setCounts((c) => ({ ...c, [v.id]: 1 }));
-    set({ activeId: v.id });
-    loadIntoWizard(v);
-  },
-  switchTimeline: (id) => {
-    const s = get();
-    const next = variantsNow().find((x) => x.id === id);
-    if (!next || id === s.activeId) return;
-    const variants = variantsNow().map((x) => (x.id === s.activeId ? readFromWizard(x) : x));
-    setVariants(variants);
-    set({ activeId: id, expanded: next.kind });
-    loadIntoWizard(variants.find((x) => x.id === id)!);
-  },
-  endTimeline: () => {
-    const s = get();
-    // черновики, которым в таймлайне так и не выбрали хук, не остаются пустыми вариантами
-    const all = variantsNow().map((x) => (x.id === s.activeId ? readFromWizard(x) : x));
-    const variants = all.filter((x) => !x.draft);
-    const dropped = all.filter((x) => x.draft).map((x) => x.id);
-    setVariants(variants);
-    if (dropped.length) setCounts((c) => Object.fromEntries(Object.entries(c).filter(([k]) => !dropped.includes(k))));
-    const active = variants.find((x) => x.id === s.activeId);
-    set({ snapshot: null, activeId: active?.id ?? variants[0]?.id ?? null, expanded: active?.kind ?? s.expanded, tab: firstOpenTab(active) });
-    // Хуки визарда возвращаем как были; склейки и темп, выбранные на таймлайне, остаются —
-    // они общие на батч и нужны раскадровке «Пула» и рендеру.
-    if (s.snapshot) useWizardStore.setState((w) => ({ hooks: s.snapshot!.hooks, timeline: withBatchCuts(s.snapshot!.timeline, w.timeline) }));
-  }
+  setCount: (id, n) => setCounts((c) => ({ ...c, [id]: Math.max(0, n) }))
 }));
 
 /**
- * Варианты для экрана: без черновиков, если таймлайн закрыт. Черновик мог остаться в
- * черновике визарда, если вкладку закрыли с открытым таймлайном, — его убираем при входе.
+ * Варианты для экрана}));
+
+/**
+ * Варианты для экрана. Черновики (вариант без хука) остались от прежнего таймлайна шага
+ * FX — их убираем при входе, в пул и рендер они не попадают.
  */
 export function useLabVariants(): LabVariant[] {
   return useWizardStore((s) => s.fxVariants);
 }
 export function useDropStaleDrafts() {
   useEffect(() => {
-    if (useFxLabStore.getState().snapshot) return;
     const list = variantsNow();
     if (!list.some((v) => v.draft)) return;
     const drafts = list.filter((v) => v.draft).map((v) => v.id);
@@ -274,13 +200,12 @@ const guideShell = { variant: 'visual' as const, shell: 'track-top' as const };
  * префиксом: у старых hook-drop / hook-type «видел» уже записан у всех, кто проходил
  * прежний тур, и на новом маршруте они молча не показывались.
  */
-export const FX_LAB_TOUR = ['drop', 'type', 'variants', 'dock', 'footer', 'timeline'] as const;
+export const FX_LAB_TOUR = ['drop', 'type', 'variants', 'dock', 'footer'] as const;
 export type FxLabTourStep = typeof FX_LAB_TOUR[number];
 export const fxLabGuideId = (step: FxLabTourStep) => `fx2-${step}`;
 export function useFxLabTourProgress() {
   const { t } = useTranslation();
-  const withTimeline = useTimelineGuideAvailable();
-  const total = withTimeline ? FX_LAB_TOUR.length : FX_LAB_TOUR.length - 1;
+  const total = FX_LAB_TOUR.length;
   return (step: FxLabTourStep) => t('wizard.guideProgress', { current: FX_LAB_TOUR.indexOf(step) + 1, total });
 }
 
@@ -293,11 +218,11 @@ function VariantsGuideVisual() {
     <div className="flex w-full flex-col gap-[6px]" aria-hidden="true">
       {rows.map(([c, l], i) => (
         <span key={l} className={cn('guide-mode-reveal flex h-[24px] items-center gap-[7px] rounded-[7px] px-[8px] text-[11px] leading-none text-white/85', i ? 'guide-mode-delay-2 bg-white/[0.06]' : 'guide-mode-delay-1 bg-accent-20 shadow-[inset_0_0_0_1px_var(--accent-light)]')}>
-          <i className="h-[7px] w-[7px] rounded-full" style={{ background: c }} /><span className="translate-y-px">{l}</span>
+          <i className="h-[7px] w-[7px] rounded-full" style={{ background: c }} /><span>{l}</span>
           <span className="ml-auto text-white/50">×</span>
         </span>
       ))}
-      <span className="guide-mode-reveal guide-mode-delay-3 flex h-[22px] w-fit items-center gap-[5px] rounded-[7px] bg-white/[0.08] px-[8px] text-[11px] leading-none text-white/80"><span>+</span><span className="translate-y-px">{t('wizard.fxv.add')}</span></span>
+      <span className="guide-mode-reveal guide-mode-delay-3 flex h-[22px] w-fit items-center gap-[5px] rounded-[7px] bg-white/[0.08] px-[8px] text-[11px] leading-none text-white/80"><span>+</span><span>{t('wizard.fxv.add')}</span></span>
     </div>
   );
 }
@@ -313,15 +238,15 @@ function DockGuideVisual() {
       <span className="flex min-w-0 flex-1 flex-col gap-[6px]">
         <span className="guide-mode-reveal guide-mode-delay-2 flex items-center gap-[6px] text-[10px] leading-none text-white/80">
           <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white/10">‹</span>
-          <span className="translate-y-px">{t('wizard.fxv.visBrowse')}</span>
+          <span>{t('wizard.fxv.visBrowse')}</span>
           <span className="guide-sb-press flex h-[18px] w-[18px] items-center justify-center rounded-full bg-white/10">›</span>
         </span>
         <span className="guide-mode-reveal guide-mode-delay-3 flex gap-[4px]">
           {['Щелчок', 'Минимакс', 'Вспышка'].map((l, i) => (
-            <span key={l} className={cn('truncate rounded-[6px] px-[6px] py-[4px] text-[9px] leading-none', i === 1 ? 'bg-accent-20 text-white shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'bg-white/[0.07] text-white/60')}><span className="inline-block translate-y-px">{l}</span></span>
+            <span key={l} className={cn('truncate rounded-[6px] px-[6px] py-[4px] text-[9px] leading-none', i === 1 ? 'bg-accent-20 text-white shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'bg-white/[0.07] text-white/60')}><span className="inline-block">{l}</span></span>
           ))}
         </span>
-        <span className="guide-mode-reveal guide-mode-delay-4 text-[10px] leading-none text-white/60"><span className="inline-block translate-y-px">{t('wizard.fxv.visPick')}</span></span>
+        <span className="guide-mode-reveal guide-mode-delay-4 text-[10px] leading-none text-white/60"><span className="inline-block">{t('wizard.fxv.visPick')}</span></span>
       </span>
     </div>
   );
@@ -367,69 +292,59 @@ export function LabTypeList({ locked }: { locked: boolean }) {
 
   return (
     <>
-      <div className="no-scrollbar flex h-full flex-col gap-[14px] overflow-y-auto py-[16px]" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)' }}>
+      <div className="w12-fx-types">
         {HOOK_TYPES.map((item) => {
           const variants = allVariants.filter((v) => v.kind === item.kind && !v.draft);
           const open = lab.expanded === item.kind;
           const has = variants.length > 0;
           const isLocked = locked && item.kind !== 'none';
           return (
-            <div key={item.kind} ref={open ? openRef : undefined} className={cn('relative shrink-0 rounded-r15 bg-grad-soft-10 transition', (open || has) && 'border-2 border-accent-light', open && 'bg-grad-soft-20', isLocked && 'opacity-45')}>
+            <div key={item.kind} ref={open ? openRef : undefined} className={cn('w12-fx-type', (open || has) && 'w12-on', open && 'w12-open', isLocked && 'w12-locked')}>
               {/* строка типа: иконка · название · «?» рядом с названием · метки вариантов · стрелка справа */}
-              <button
-                type="button"
-                disabled={isLocked}
-                aria-expanded={open}
-                onClick={() => lab.toggleType(item.kind)}
-                className="flex h-[76px] w-full items-center gap-[12px] px-[26px] text-left disabled:cursor-not-allowed"
-              >
-                <SvgMaskIcon src={item.icon} style={{ width: item.iconW, height: item.iconH, color: has ? 'var(--accent-light)' : 'var(--text-80)' }} />
-                <span className="wizard-body ml-[4px] !text-text">{chip(HOOK_LABELS[item.kind])}</span>
+              <button type="button" disabled={isLocked} aria-expanded={open} onClick={() => lab.toggleType(item.kind)} className="w12-fx-head">
+                <SvgMaskIcon src={item.icon} className="w12-fx-ic" style={{ width: item.iconW, height: item.iconH }} />
+                <span className="w12-fx-name w12-l">{chip(HOOK_LABELS[item.kind])}</span>
                 <span
                   role="button"
                   tabIndex={0}
-                  className="relative flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-full bg-white/[0.08] text-[13px] text-text-60 transition hover:bg-white/[0.14] hover:text-text"
+                  className="w12-help-dot"
                   onMouseEnter={() => setHint(item.kind)}
                   onMouseLeave={() => setHint(null)}
                   onClick={(e) => { e.stopPropagation(); setHint(hint === item.kind ? null : item.kind); }}
                   aria-label={t('wizard.fx.whatIs', { label: chip(HOOK_LABELS[item.kind]) })}
                 >
-                  <span className="translate-y-px">?</span>
+                  <span className="w12-l">?</span>
                 </span>
                 {has && (
-                  <span className="flex items-center gap-[5px]" aria-label={t('wizard.fxv.count', { count: variants.length })}>
-                    {variants.slice(0, 5).map((v) => <i key={v.id} className="h-[8px] w-[8px] rounded-full" style={{ background: v.color }} />)}
+                  <span className="w12-fx-dots" aria-label={t('wizard.fxv.count', { count: variants.length })}>
+                    {variants.slice(0, 5).map((v) => <i key={v.id} className="w12-fx-dot" style={{ background: v.color }} />)}
                   </span>
                 )}
-                <span className={cn('ml-auto flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-[10px] text-text-60 transition', open ? 'bg-white/[0.08] text-text' : 'bg-transparent')}>
-                  <svg className={cn('h-[16px] w-[16px] transition-transform', open && 'rotate-180')} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3.5 6 4.5 4 4.5-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                </span>
+                <span className="w12-fx-chev" aria-hidden="true"><Svg>{W12.down}</Svg></span>
               </button>
-              {hint === item.kind && (
-                <span className="absolute left-[26px] right-[26px] top-[64px] z-[3] rounded-r10 bg-[#2b2145] px-space-4 py-[10px] text-[14px] leading-[1.3] text-text shadow-[0_8px_28px_rgba(0,0,0,.45)] ring-1 ring-[var(--accent-light)]">{t(item.hint)}</span>
-              )}
+              {hint === item.kind && <span className="w12-fx-hint">{t(item.hint)}</span>}
               {open && (
-                <div className="flex flex-col gap-[8px] px-[16px] pb-[16px]">
+                <div className="w12-fx-vars">
                   {variants.map((v) => {
                     const active = v.id === lab.activeId;
                     const done = hookComplete(v.kind, v.config);
                     return (
-                      <div key={v.id} className={cn('flex h-[46px] items-center rounded-r10 transition', active ? 'bg-accent-20 shadow-[inset_0_0_0_1.5px_var(--accent-light)]' : 'bg-[rgba(5,1,15,.34)] hover:bg-[rgba(5,1,15,.5)]')}>
-                        <button type="button" aria-current={active} className="flex h-full min-w-0 flex-1 items-center gap-[11px] pl-[14px] text-left" onClick={() => lab.select(v.id)}>
-                          <i className="h-[9px] w-[9px] shrink-0 rounded-full" style={{ background: v.color }} />
-                          <span className={cn('min-w-0 translate-y-px truncate text-[16px]', active ? 'text-text' : 'text-text-80')}>{label(v)}</span>
-                          {!done && <span className="shrink-0 rounded-[6px] bg-[rgba(245,158,11,.14)] px-[7px] py-[3px] text-[12px] leading-none text-[var(--warning)]"><span className="inline-block translate-y-px">{t('wizard.fxv.configure')}</span></span>}
+                      <div key={v.id} className="w12-fx-var" data-active={active || undefined}>
+                        <button type="button" aria-current={active} className="w12-fx-var-main" onClick={() => lab.select(v.id)}>
+                          <i className="w12-fx-dot" style={{ background: v.color }} />
+                          <span className="w12-fx-var-name w12-l">{label(v)}</span>
+                          {!done && <span className="w12-chip w12-warn w12-chip-sm"><span className="w12-l">{t('wizard.fxv.configure')}</span></span>}
                         </button>
-                        <button type="button" aria-label={t('wizard.fxv.remove')} title={t('wizard.fxv.remove')} onClick={() => lab.remove(v.id)} className="mr-[6px] flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[9px] text-text-40 transition hover:bg-white/10 hover:text-text active:scale-95">
-                          <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 1L11 11M11 1L1 11" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+                        <button type="button" className="w12-icon-btn" aria-label={t('wizard.fxv.remove')} title={t('wizard.fxv.remove')} onClick={() => lab.remove(v.id)}>
+                          <Svg>{W12.close}</Svg>
                         </button>
                       </div>
                     );
                   })}
-                  <button type="button" onClick={() => (variants.length ? lab.copyActive() : lab.add(item.kind))} className="flex h-[40px] w-fit items-center gap-[8px] rounded-r10 bg-white/[0.07] px-[14px] text-[15px] text-text-80 transition hover:bg-white/[0.12] hover:text-text active:scale-[.98]">
-                    <span className="text-[18px] leading-none text-accent-light">+</span>
-                    <span className="translate-y-px">{t('wizard.fxv.add')}</span>
-                    <span className="translate-y-px text-[13px] text-text-40">{t('wizard.fxv.addHint')}</span>
+                  <button type="button" className="w12-fx-add" onClick={() => (variants.length ? lab.copyActive() : lab.add(item.kind))}>
+                    <Svg>{W12.plus}</Svg>
+                    <span className="w12-l">{t('wizard.fxv.add')}</span>
+                    <small>{t('wizard.fxv.addHint')}</small>
                   </button>
                 </div>
               )}
@@ -456,13 +371,12 @@ export function LabTypeList({ locked }: { locked: boolean }) {
 
 function LabModifier({ label, value, options, onPick }: { label: string; value: string; options: [string, string][]; onPick: (value: string) => void }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-[12px] gap-y-[6px] px-[4px]">
-      <span className="translate-y-px text-[14px] text-text-60">{label}</span>
-      <span className="flex min-w-0 max-w-full gap-[2px] rounded-[10px] bg-white/[0.06] p-[3px]" role="group" aria-label={label}>
+    <div className="w12-fx-mod">
+      <span>{label}</span>
+      <span className="w12-seg" role="group" aria-label={label}>
         {options.map(([val, text]) => (
-          <button key={val || 'std'} type="button" aria-pressed={value === val} onClick={() => onPick(val)}
-            className={cn('h-[28px] whitespace-nowrap rounded-[8px] px-[12px] text-[13px] transition', value === val ? 'bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-60 hover:text-text')}>
-            <span className="inline-block translate-y-px">{text}</span>
+          <button key={val || 'std'} type="button" aria-pressed={value === val} onClick={() => onPick(val)} className="w12-seg-btn w12-seg-text">
+            <span className="w12-l">{text}</span>
           </button>
         ))}
       </span>
@@ -477,7 +391,7 @@ function LabPreview({ previewId }: { previewId?: string }) {
   if (!previewId || query.isLoading) return null;
   const effect = query.data?.previews.find((item) => item.id === previewId);
   // cover: пример заполняет рабочую зону целиком, а не висит полосой посередине
-  return <div className="absolute inset-0 [&_img]:!object-cover [&_video]:!object-cover"><CatalogMedia url={effect?.previewUrl} className="absolute inset-0 h-full w-full" /></div>;
+  return <div className="w12-fx-media"><CatalogMedia url={effect?.previewUrl} className="w12-fx-media-el" /></div>;
 }
 
 export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { ready: boolean; canContinue: boolean; loading?: boolean; onBack: () => void; onNext: () => void }) {
@@ -487,7 +401,6 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
   const allVariants = useLabVariants();
   const label = useVariantLabel();
   const pillsScroll = useDragScroll();
-  const [timelineOpen, setTimelineOpen] = useState(false);
   const dockRef = useRef<HTMLDivElement>(null);
   const footRef = useRef<HTMLDivElement>(null);
   const v = allVariants.find((x) => x.id === lab.activeId);
@@ -510,7 +423,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
   const browse = (d: number) => { if (options.length) setCursor((c) => (c + d + options.length) % options.length); };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (timelineOpen || !(e.target instanceof HTMLElement) || e.target.matches('input, textarea, select')) return;
+      if (!(e.target instanceof HTMLElement) || e.target.matches('input, textarea, select')) return;
       if (e.key === 'ArrowLeft') browse(-1);
       if (e.key === 'ArrowRight') browse(1);
     };
@@ -518,29 +431,15 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  // Шаги «Док» → «Футер» → «Таймлайн»: после «Вариантов» (левая панель — поэтому её живой dismissed).
+  // Шаги «Док» → «Футер»: после «Вариантов» (левая панель — поэтому её живой dismissed).
   const progress = useFxLabTourProgress();
   const variantsDismissed = useGuideLiveDismissed(fxLabGuideId('variants'));
   const [footGuideDismissed, setFootGuideDismissed] = useGuideDismiss(fxLabGuideId('footer'), false);
   const [dockGuideDismissed, setDockGuideDismissed] = useGuideDismiss(fxLabGuideId('dock'), false);
-  const [timelineGuideDismissed, setTimelineGuideDismissed] = useGuideDismiss(fxLabGuideId('timeline'), false);
-  const timelineGuideAvailable = useTimelineGuideAvailable();
-  const timelineButtonRef = useRef<HTMLButtonElement>(null);
-  const showDockGuide = Boolean(v) && variantsDismissed && !dockGuideDismissed && !timelineOpen;
-  const showFootGuide = Boolean(v) && variantsDismissed && dockGuideDismissed && !footGuideDismissed && !timelineOpen;
-  const showTimelineGuide = timelineGuideAvailable && Boolean(v) && footGuideDismissed && !timelineGuideDismissed && !timelineOpen;
+  const showDockGuide = Boolean(v) && variantsDismissed && !dockGuideDismissed;
+  const showFootGuide = Boolean(v) && variantsDismissed && dockGuideDismissed && !footGuideDismissed;
   useMarkGuideSeen(fxLabGuideId('dock'), showDockGuide);
   useMarkGuideSeen(fxLabGuideId('footer'), showFootGuide);
-  useMarkGuideSeen(fxLabGuideId('timeline'), showTimelineGuide);
-
-  // Таймлайн — на том же варианте; на время работы вариант «одалживается» в стор визарда.
-  useEffect(() => () => { if (useFxLabStore.getState().snapshot) useFxLabStore.getState().endTimeline(); }, []);
-  // общий флаг «таймлайн открыт»: по нему молчат подсказки шага FX (в т.ч. реактивация по простою)
-  const setTimelineFlag = useFxTimelineOpen((s) => s.setOpen);
-  useEffect(() => () => setTimelineFlag(false), [setTimelineFlag]);
-  // Открыл таймлайн — шаг про кнопку пройден действием.
-  const openTimeline = () => { if (!timelineGuideDismissed) setTimelineGuideDismissed(true); lab.beginTimeline(); setTimelineOpen(true); setTimelineFlag(true); };
-  const closeTimeline = () => { lab.endTimeline(); setTimelineOpen(false); setTimelineFlag(false); };
 
   const pick = (option?: string) => {
     if (!v || !step) return;
@@ -553,69 +452,44 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
   };
 
   return (
-    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
-      {timelineOpen && (
-        <Suspense fallback={null}>
-          <FxTimeline
-            onClose={closeTimeline}
-            tabs={<LabVariantSwitcher />}
-          />
-        </Suspense>
-      )}
-      <div className="card-2 flex min-h-0 flex-1 flex-col gap-space-5 px-space-6 py-space-6 max-lg:px-space-5">
-        <div className="flex shrink-0 items-center justify-between gap-space-3">
-          <h2 className="wizard-h whitespace-nowrap">{t('wizard.workZone')}</h2>
-          <button ref={timelineButtonRef} type="button" onClick={openTimeline}
-            className="flex h-[37px] shrink-0 items-center gap-[8px] whitespace-nowrap rounded-r10 border border-accent-light bg-grad-soft-20 px-[12px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 disabled:opacity-40 max-md:hidden">
-            <svg viewBox="0 0 20 20" width="16" height="16" fill="none" aria-hidden="true"><path d="M2 5h16M2 10h16M2 15h16M6 3v4m5 1v4m4 1v4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
-            <span className="translate-y-px">{t('wizard.fx.timeline')}</span>
-          </button>
+    <aside className="w12-col-aside">
+      <div className="w12-card w12-pv-card">
+        <div className="w12-aside-head">
+          <h2>{t('wizard.workZone')}</h2>
         </div>
 
-        {/* узкий экран: у колонки нет высоты — зона примера держит 9:16, как на проде */}
-        <div className="relative min-h-0 flex-1 overflow-hidden rounded-r15 bg-grad-soft-10 max-lg:aspect-[9/16] max-lg:w-full max-lg:flex-none">
+        {/* пример во всю высоту зоны; узкий экран — 9:16, как у превью фона */}
+        <div className="w12-fx-stage">
           {v && <LabPreview previewId={previewId} />}
-          {!v && (
-            <div className="flex h-full items-center justify-center p-space-5">
-              <p className="wizard-body max-w-[260px] text-center">{t('wizard.fx.empty')}</p>
-            </div>
-          )}
+          {!v && <div className="w12-empty">{t('wizard.fx.empty')}</div>}
           {v && (
             <>
-              <div className="absolute left-[14px] right-[14px] top-[14px] z-[4] flex items-start justify-between gap-[8px]">
-                <div className="flex min-w-0 items-center gap-[8px] rounded-[10px] bg-[rgba(5,1,15,.58)] px-[12px] py-[7px] backdrop-blur-[10px]">
-                  <i className="h-[9px] w-[9px] shrink-0 rounded-full" style={{ background: v.color }} />
-                  <span className="translate-y-px truncate text-[14px] text-text">{label(v)}</span>
-                </div>
+              <div className="w12-fx-tags">
+                <span className="w12-fx-tag"><i className="w12-fx-dot" style={{ background: v.color }} /><span className="w12-l">{label(v)}</span></span>
                 {browsed && (
-                  <div className="flex shrink-0 items-center gap-[8px] rounded-[10px] bg-[rgba(5,1,15,.58)] px-[12px] py-[7px] backdrop-blur-[10px]">
-                    <span className="translate-y-px text-[13px] text-text-60">{t('wizard.fxv.example')}</span>
-                    <span className="translate-y-px text-[14px] text-text">{chip(browsed)}</span>
-                    <span className="translate-y-px text-[12px] text-text-40">{cursor + 1}/{options.length}</span>
-                    {browsed === selected && <span className="rounded-[6px] bg-accent px-[6px] py-[2px] text-[11px] text-white"><span className="inline-block translate-y-px">{t('wizard.fxv.picked')}</span></span>}
-                  </div>
+                  <span className="w12-fx-tag">
+                    <span className="w12-fx-tag-dim">{t('wizard.fxv.example')}</span>
+                    <span className="w12-l">{chip(browsed)}</span>
+                    <span className="w12-fx-tag-dim w12-num">{cursor + 1}/{options.length}</span>
+                    {browsed === selected && <em className="w12-fx-picked"><span className="w12-l">{t('wizard.fxv.picked')}</span></em>}
+                  </span>
                 )}
               </div>
               {options.length > 1 && (
                 <>
-                  <button type="button" aria-label={t('wizard.fxv.prev')} onClick={() => browse(-1)} className="absolute left-[12px] top-[38%] z-[4] flex h-[44px] w-[44px] -translate-y-1/2 items-center justify-center rounded-full bg-[rgba(5,1,15,.58)] text-text-80 backdrop-blur-[10px] transition hover:text-text active:scale-95">
-                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true"><path d="M14.5 6 8.5 12l6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  </button>
-                  <button type="button" aria-label={t('wizard.fxv.next')} onClick={() => browse(1)} className="absolute right-[12px] top-[38%] z-[4] flex h-[44px] w-[44px] -translate-y-1/2 items-center justify-center rounded-full bg-[rgba(5,1,15,.58)] text-text-80 backdrop-blur-[10px] transition hover:text-text active:scale-95">
-                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true"><path d="M9.5 6l6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  </button>
+                  <button type="button" className="w12-rail-btn w12-l w12-fx-nav" aria-label={t('wizard.fxv.prev')} onClick={() => browse(-1)}><Svg>{W12.left}</Svg></button>
+                  <button type="button" className="w12-rail-btn w12-r w12-fx-nav" aria-label={t('wizard.fxv.next')} onClick={() => browse(1)}><Svg>{W12.right}</Svg></button>
                 </>
               )}
-              <div ref={dockRef} className="absolute inset-x-[12px] bottom-[12px] z-[4] flex flex-col gap-[12px] rounded-r15 bg-[rgba(5,1,15,.62)] p-[12px] backdrop-blur-[12px]">
-                <div className="flex min-w-0 gap-[6px]" role="tablist" aria-label={t('wizard.fxv.settings')}>
+              <div ref={dockRef} className="w12-fx-dock">
+                <div className="w12-fx-steps" role="tablist" aria-label={t('wizard.fxv.settings')}>
                   {steps.map((s, i) => {
                     const filled = stepFilled(s, config);
                     const value = s.key === 'effectStyle' ? style : (config[s.key] as string | undefined);
                     return (
-                      <button key={s.key} type="button" role="tab" aria-selected={i === tab} onClick={() => lab.setTab(i)}
-                        className={cn('flex min-w-0 flex-1 flex-col items-start gap-[2px] rounded-r10 px-[12px] py-[7px] text-left transition', i === tab ? 'bg-accent-20 shadow-[inset_0_0_0_1.5px_var(--accent-light)]' : 'bg-white/[0.06] hover:bg-white/[0.1]')}>
-                        <span className="translate-y-px text-[11px] uppercase tracking-[.06em] text-text-40">{t(STEP_NAME[s.key])}</span>
-                        <span className={cn('w-full translate-y-px truncate text-[15px]', filled ? 'text-text' : 'text-text-40')}>{value ? chip(value) : t('wizard.fxv.choose')}</span>
+                      <button key={s.key} type="button" role="tab" aria-selected={i === tab} className="w12-fx-step" onClick={() => lab.setTab(i)}>
+                        <small>{t(STEP_NAME[s.key])}</small>
+                        <span className={cn(!filled && 'w12-off')}>{value ? chip(value) : t('wizard.fxv.choose')}</span>
                       </button>
                     );
                   })}
@@ -683,70 +557,13 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
         targetRef={footRef}
         title={t('wizard.fxv.guideFooterTitle')}
         text={t('wizard.fxv.guideFooterText')}
-        dismissLabel={t(timelineGuideAvailable ? 'wizard.fx.guideNext' : 'wizard.fx.guideDismiss')}
+        dismissLabel={t('wizard.fx.guideDismiss')}
         progressLabel={progress('footer')}
         onDismiss={() => setFootGuideDismissed(true)}
         visual={<FooterGuideVisual />}
         {...guideShell}
       />
-      <ActionGuideOverlay
-        open={showTimelineGuide}
-        targetRef={timelineButtonRef}
-        title={t('wizard.fx.guideTimelineTitle')}
-        text={t('wizard.fx.guideTimelineText')}
-        dismissLabel={t('wizard.fx.guideDismiss')}
-        progressLabel={progress('timeline')}
-        onDismiss={() => setTimelineGuideDismissed(true)}
-        visual={<TimelineButtonGuideVisual />}
-        {...guideShell}
-      />
     </aside>
-  );
-}
-
-/* ── переключатель вариантов в шапке таймлайна: «вариант ▾» + приклеенный «+» ── */
-
-function LabVariantSwitcher() {
-  const { t } = useTranslation();
-  const lab = useFxLabStore();
-  const label = useVariantLabel();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const close = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
-    window.addEventListener('pointerdown', close);
-    return () => window.removeEventListener('pointerdown', close);
-  }, [open]);
-  const allVariants = useLabVariants();
-  const cur = allVariants.find((x) => x.id === lab.activeId);
-  const check = <svg className="ck" viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
-  return (
-    <div ref={ref} className="fxt-vsw">
-      <button type="button" className="fxt-vsw-main" aria-haspopup="listbox" aria-expanded={open} aria-label={t('wizard.fxv.switcher')} onClick={() => setOpen((o) => !o)}>
-        {cur && <i style={{ background: cur.color }} />}
-        <span className="lb tx">{cur ? label(cur) : t('wizard.fxv.none')}</span>
-        <svg className="chev" viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><path d="m3.5 6 4.5 4 4.5-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-      </button>
-      <button type="button" className="fxt-vsw-plus" aria-label={t('wizard.fxv.newVariant')} data-tip={t('wizard.fxv.newVariant')} onClick={() => { lab.newInTimeline(); setOpen(false); }}>
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
-      </button>
-      {open && (
-        <div className="fxt-vsw-menu" role="listbox" aria-label={t('wizard.fxv.variants')}>
-          {allVariants.map((x) => (
-            <button key={x.id} type="button" role="option" aria-selected={x.id === lab.activeId} aria-current={x.id === lab.activeId} className="fxt-vsw-item" title={label(x)} onClick={() => { lab.switchTimeline(x.id); setOpen(false); }}>
-              <i style={{ background: x.color }} /><span className="lb tx">{label(x)}</span>
-              {x.id === lab.activeId && check}
-            </button>
-          ))}
-          <div className="fxt-vsw-sep" />
-          <button type="button" className="fxt-vsw-item new" onClick={() => { lab.newInTimeline(); setOpen(false); }}>
-            <span className="ic"><svg viewBox="0 0 16 16" width="12" height="12" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg></span>
-            <span className="lb tx">{t('wizard.fxv.addVariant')}</span>
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 

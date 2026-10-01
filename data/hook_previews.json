@@ -203,6 +203,194 @@
       "file_id_public": "BAACAgIAAxkDAAEB8UFqRBFTP5QFBD-8Qg1hJpPlyLzcNgACdKAAAmk1IUrSviqQ0erwAzwE",
       "source": "Субтитры примеры/trendy.mp4",
       "built_at": "2026-06-30T18:56:21Z"
+    },
+    "effect_extra:cc_tritone_red": {
+      "label": "Красный тритон",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_tritone_red.mp4"
+    },
+    "effect_extra:cc_neutral_tritone": {
+      "label": "Нейтральный тритон",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_neutral_tritone.mp4"
+    },
+    "effect_extra:cc_tritone_exposure": {
+      "label": "Тритон с пересветом",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_tritone_exposure.mp4"
+    },
+    "effect_extra:cc_colorista_looks": {
+      "label": "Колориста",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_colorista_looks.mp4"
+    },
+    "effect_extra:cc_lumetri_curves_looks": {
+      "label": "Кино-грейд",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_lumetri_curves_looks.mp4"
+    },
+    "effect_extra:cc_lumetri_contrast": {
+      "label": "Контраст",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_lumetri_contrast.mp4"
+    },
+    "effect_extra:cc_lumetri_mb": {
+      "label": "Люметри",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_lumetri_mb.mp4"
+    },
+    "effect_extra:cc_looks_exposure_grain": {
+      "label": "Яркий лук",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_looks_exposure_grain.mp4"
+    },
+    "effect_extra:fx_paint_bucket": {
+      "label": "Заливка",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_paint_bucket.mp4"
+    },
+    "effect_extra:fx_cartoon_thermal": {
+      "label": "Тепловизор",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_cartoon_thermal.mp4"
+    },
+    "effect_extra:fx_invert_curves": {
+      "label": "Инверсия",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_invert_curves.mp4"
+    },
+    "effect_extra:cc_lumetri_looks_grain": {
+      "label": "Мягкая плёнка",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_lumetri_looks_grain.mp4"
+    },
+    "effect_extra:cc_looks_curves_grain": {
+      "label": "Плёночный грейд",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_looks_curves_grain.mp4"
+    },
+    "effect_extra:cc_double_looks_grain": {
+      "label": "Двойной лук",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_double_looks_grain.mp4"
+    },
+    "effect_extra:cc_film_grain_looks_a": {
+      "label": "Зерно A",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_film_grain_looks_a.mp4"
+    },
+    "effect_extra:cc_film_grain_looks_b": {
+      "label": "Зерно B",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_film_grain_looks_b.mp4"
+    },
+    "effect_extra:cc_mb_suite_grain": {
+      "label": "Мэджик Буллет",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_mb_suite_grain.mp4"
+    },
+    "effect_extra:cc_looks_curves_noise": {
+      "label": "Шумный лук",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/cc_looks_curves_noise.mp4"
+    },
+    "effect_extra:fx_film_damage": {
+      "label": "Плёнка",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_film_damage.mp4"
+    },
+    "effect_extra:fx_universe_vhs": {
+      "label": "VHS",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_universe_vhs.mp4"
+    },
+    "effect_extra:fx_scanlines_displace": {
+      "label": "Скан-линии",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_scanlines_displace.mp4"
+    },
+    "effect_extra:fx_etching_fisheye": {
+      "label": "Гравюра",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_etching_fisheye.mp4"
+    },
+    "effect_extra:fx_luma_key_noise": {
+      "label": "Люма-шум",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_luma_key_noise.mp4"
+    },
+    "effect_extra:fx_cross_glitch": {
+      "label": "Кросс-глитч",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_cross_glitch.mp4"
+    },
+    "effect_extra:fx_jpeg_damage": {
+      "label": "JPEG-артефакты",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_jpeg_damage.mp4"
+    },
+    "effect_extra:fx_jpeg_tritone": {
+      "label": "JPEG-тритон",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_jpeg_tritone.mp4"
+    },
+    "effect_extra:fx_chroma_distort": {
+      "label": "Хроматика",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_chroma_distort.mp4"
+    },
+    "effect_extra:fx_bcc_displace": {
+      "label": "Смещение",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_bcc_displace.mp4"
+    },
+    "effect_extra:fx_turbulent_noise": {
+      "label": "Турбулентность",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_turbulent_noise.mp4"
+    },
+    "effect_extra:fx_signal_mesh": {
+      "label": "Сигнал",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_signal_mesh.mp4"
+    },
+    "effect_extra:fx_directional_blur": {
+      "label": "Смаз",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_directional_blur.mp4"
+    },
+    "effect_extra:fx_mojo_glow_grade": {
+      "label": "Моджо-свечение",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_mojo_glow_grade.mp4"
+    },
+    "effect_extra:fx_hotspot_flicker": {
+      "label": "Блики",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_hotspot_flicker.mp4"
+    },
+    "effect_extra:fx_sapphire_flicker": {
+      "label": "Мерцание",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_sapphire_flicker.mp4"
+    },
+    "effect_extra:fx_lens_blur": {
+      "label": "Линза",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/fx_lens_blur.mp4"
+    },
+    "effect_transition:sh_twitch_flicker": {
+      "label": "Твич",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/sh_twitch_flicker.mp4"
+    },
+    "effect_transition:sh_chroma_lens_shake": {
+      "label": "Хрома-тряска",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/sh_chroma_lens_shake.mp4"
+    },
+    "effect_transition:sh_dissolve_shake": {
+      "label": "Тряска-растворение",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/sh_dissolve_shake.mp4"
+    },
+    "effect_transition:sh_tile_shake": {
+      "label": "Тряска с повтором",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/sh_tile_shake.mp4"
+    },
+    "effect_transition:sh_puddle_shake": {
+      "label": "Рябь",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/sh_puddle_shake.mp4"
+    },
+    "effect_transition:sh_puddle_warp_shake": {
+      "label": "Рябь с искажением",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/sh_puddle_warp_shake.mp4"
+    },
+    "effect_transition:of_edge_radial": {
+      "label": "Контур",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/of_edge_radial.mp4"
+    },
+    "effect_transition:of_exposure_flicker": {
+      "label": "Пересвет",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/of_exposure_flicker.mp4"
+    },
+    "effect_transition:of_invert_flash": {
+      "label": "Негатив-вспышка",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/of_invert_flash.mp4"
+    },
+    "effect_transition:of_linear_wipe": {
+      "label": "Шторка",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/of_linear_wipe.mp4"
+    },
+    "effect_transition:of_rgb_glitch_burst": {
+      "label": "RGB-взрыв",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/of_rgb_glitch_burst.mp4"
+    },
+    "effect_transition:of_fisheye_scan": {
+      "label": "Рыбий глаз",
+      "local_path": "Хуки/Эффекты/kantfx/примеры/of_fisheye_scan.mp4"
     }
   }
 }

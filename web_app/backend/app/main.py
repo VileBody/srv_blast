@@ -15,7 +15,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import mock_store as store
 from . import analytics, asr_preview, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
 from . import render_job as render_job_builder
-from . import effect_map
+from . import demo_media, effect_map
 from . import storyboard as storyboard_svc
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
@@ -1256,6 +1256,31 @@ def api_track_playback(trackId: str = "") -> dict[str, Any]:
     return {"url": url, "mock": RUNTIME.backend == "mock"}
 
 
+@app.get("/api/wizard/track-audio", tags=["wizard"])
+def api_track_audio(trackId: str = "") -> Response:
+    """Файл сохранённого трека текущего юзера со СВОЕГО домена — для волны.
+
+    Волну браузер считает из самого файла (WebAudio). Presigned-ссылка S3 — чужой домен,
+    и без CORS на бакете `fetch` падал: волна на проде была ровной полосой. Плеер по-прежнему
+    играет presigned-ссылку (`/api/wizard/track-playback`), этот маршрут — только для данных.
+    """
+    track = next((item for item in store.ws().saved_tracks if item.get("id") == trackId), None)
+    if track is None:
+        raise HTTPException(status_code=404, detail="track not found")
+    if RUNTIME.backend == "production":
+        try:
+            body, content_type, length = _production_backend().open_track_audio(str(track["s3Key"]))
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        headers = {"Cache-Control": "private, max-age=3600"}
+        if length is not None:
+            headers["Content-Length"] = str(length)
+        return StreamingResponse(body.iter_chunks(chunk_size=256 * 1024), media_type=content_type, headers=headers)
+    # mock: трек лежит в /static (тот же домен) — отдаём туда
+    url = str(track.get("localUrl") or "") or "/static/uploads/tracks/demo-last-night.wav"
+    return RedirectResponse(url, status_code=307)
+
+
 @app.get("/api/wizard/drops", tags=["wizard"])
 async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
     """Кандидаты дропа для выбранного отрывка — то же, что показывает бот.
@@ -1566,6 +1591,22 @@ async def api_asr_state(key: str = "") -> dict[str, Any]:
     return {"asr": state, "mock": RUNTIME.backend == "mock"}
 
 
+@app.get("/api/wizard/demo-media/{item_id}.svg", tags=["wizard"])
+def api_demo_media(item_id: str, aspect: str = "9:16", still: int = 0) -> Response:
+    """Живое превью записи каталога мока (app/demo_media.py). В продакшне не существует."""
+    if RUNTIME.backend != "mock":
+        raise HTTPException(status_code=404, detail="Not found")
+    if aspect not in {"9:16", "16:9", "4:3"}:
+        raise HTTPException(status_code=422, detail=f"Неизвестный формат превью: {aspect}")
+    if item_id.startswith("sub-"):
+        svg = demo_media.subtitle_svg(item_id.removeprefix("sub-"))
+    elif item_id.startswith("frame-"):
+        svg = demo_media.frame_svg(item_id.removeprefix("frame-"))
+    else:
+        svg = demo_media.animated_svg(item_id, aspect=aspect, still=bool(still))
+    return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/api/wizard/vibes", tags=["wizard"])
 def api_vibes(plane: str = "vibes") -> dict[str, Any]:
     """Примеры футажа выбранного ПЛАНА подбора.
@@ -1638,12 +1679,85 @@ def api_subtitle_styles() -> dict[str, Any]:
     return {"status": "COMPLETED", "styles": store.SUBTITLE_STYLES, "mock": True}
 
 
+@app.get("/api/wizard/frames", tags=["wizard"])
+def api_frames() -> dict[str, Any]:
+    """Рамки для монтажного стола: тот же каталог, что у бота и рендера (app/frames.py).
+
+    Превью — сам PNG рамки: на проде подписанная ссылка на бакет ассетов, в моке — демо-SVG."""
+    from . import frames as frames_catalog
+
+    if RUNTIME.backend == "production":
+        try:
+            backend = _production_backend()
+            items = [
+                {"id": fid, "label": ru, "labelEn": en, "previewUrl": backend.frame_preview_url(file)}
+                for fid, (file, ru, en) in frames_catalog.FRAMES.items()
+            ]
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        return {"status": "COMPLETED", "frames": items, "mock": False}
+    items = [
+        {"id": fid, "label": ru, "labelEn": en, "previewUrl": f"/api/wizard/demo-media/frame-{fid}.svg"}
+        for fid, (_file, ru, en) in frames_catalog.FRAMES.items()
+    ]
+    return {"status": "COMPLETED", "frames": items, "mock": True}
+
+
+def _font_store() -> dict[str, Any]:
+    """Где лежат файлы шрифтов субтитров: прод — S3 бэкенда, мок — локальная папка."""
+    if RUNTIME.backend == "production":
+        backend = _production_backend()
+        return {"production": True, "s3": backend._s3, "asset_bucket": backend.config.asset_bucket}
+    return {"production": False}
+
+
 @app.get("/api/wizard/subtitle-fonts", tags=["wizard"])
 def api_subtitle_fonts() -> dict[str, Any]:
-    """Каталог шрифтов субтитров из движка рендера: роли, пары, засечки, стили."""
+    """Каталог шрифтов субтитров из движка рендера: роли, пары, засечки, стили —
+    и файлы шрифтов, которыми превью рисует субтитры (только залитые в хранилище)."""
+    from . import subtitle_fonts, subtitle_text
+
+    catalog = subtitle_text.font_catalog()
+    try:
+        files = subtitle_fonts.font_files(**_font_store())
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    return {**catalog, "files": files, "required": subtitle_fonts.required_fonts()}
+
+
+@app.get("/api/wizard/subtitle-font/{name}", tags=["wizard"])
+def api_subtitle_font(name: str) -> Response:
+    """Файл шрифта субтитров (woff2). Имя — только из каталога; версия — в query (?v=)."""
+    from . import subtitle_fonts
+
+    ps = name[: -len(subtitle_fonts.FONT_EXT)] if name.endswith(subtitle_fonts.FONT_EXT) else ""
+    try:
+        data = subtitle_fonts.read_font(ps, **_font_store())
+    except (KeyError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=f"Шрифт {ps or name} не загружен") from exc
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    return Response(content=data, media_type=subtitle_fonts.CONTENT_TYPE,
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+class SubtitleGeometryPayload(BaseModel):
+    style: str
+    settings: dict[str, Any] = Field(default_factory=dict)
+    renderPreset: str = "vertical"
+
+
+@app.post("/api/wizard/subtitle-geometry", tags=["wizard"])
+def api_subtitle_geometry(payload: SubtitleGeometryPayload) -> dict[str, Any]:
+    """Числа раскладки стиля для JS-превью субтитров — из того же движка, что сборка."""
     from . import subtitle_text
 
-    return subtitle_text.font_catalog()
+    if payload.renderPreset not in ("vertical", "wide"):
+        raise HTTPException(status_code=422, detail=f"Неизвестный формат кадра: {payload.renderPreset}")
+    try:
+        return subtitle_text.geometry(payload.settings, style=payload.style, render_preset=payload.renderPreset)
+    except subtitle_text.SubtitleTextError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/wizard/session", tags=["wizard"])

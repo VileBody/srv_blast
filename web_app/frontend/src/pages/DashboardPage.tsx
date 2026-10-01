@@ -32,15 +32,15 @@ function formatViews(n?: number): string {
   return `${s}k`;
 }
 
-/** Заголовок карточки: 32px Point Book + стрелка «›» (Figma 662:3 / 662:48). */
+/** Заголовок карточки (UI_RULES: 24/32) + стрелка «›» — «смотреть всё» (Figma 662:3 / 662:48). */
 function CardHeader({ title, to }: { title: string; to: string }) {
   return (
-    <Link to={to} className="group flex items-center gap-[14px] text-text max-md:gap-[8px]">
-      <span className="text-[32px] font-[350] leading-none">{title}</span>
+    <Link to={to} className="group flex w-fit items-center gap-[10px] text-text max-md:gap-[8px]">
+      <span className="text-ui-24 font-[400]">{title}</span>
       <FigIcon
         name="home-arrow.svg"
-        h={16}
-        className="translate-y-[1px] transition-transform duration-200 group-hover:translate-x-[4px] max-md:translate-y-[2px]"
+        h={12}
+        className="transition-transform duration-200 ease-out group-hover:translate-x-[3px]"
       />
     </Link>
   );
@@ -260,9 +260,9 @@ function StatsCard({ connected, handle, published, created, previewData, analysi
   return (
     <section className="card-2 group relative flex flex-col overflow-hidden p-[40px]">
       <Link to="/app/stats" className="absolute inset-0" aria-label={t('dashboard.stats')} />
-      <span className="pointer-events-none relative flex items-center gap-[14px] text-text max-md:gap-[8px]">
-        <span className="text-[32px] font-[350] leading-none">{t('dashboard.stats')}</span>
-        <FigIcon name="home-arrow.svg" h={16} className="translate-y-[1px] transition-transform duration-200 group-hover:translate-x-[4px] max-md:translate-y-[2px]" />
+      <span className="pointer-events-none relative flex items-center gap-[10px] text-text max-md:gap-[8px]">
+        <span className="text-ui-24 font-[400]">{t('dashboard.stats')}</span>
+        <FigIcon name="home-arrow.svg" h={12} className="transition-transform duration-200 ease-out group-hover:translate-x-[3px]" />
         {/* телефон: «Скоро» компактно в строке заголовка, а не одиноко по центру пустой карточки */}
         {!connected && <span className="pointer-events-auto relative z-[1] ml-auto hidden max-md:block"><TiktokButton connected={false} size="sm" /></span>}
       </span>

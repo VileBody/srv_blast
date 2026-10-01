@@ -366,33 +366,34 @@ def _seed_demo_workspace() -> Workspace:
 WORKSPACES[DEMO_USER_ID] = _seed_demo_workspace()
 
 # Фикстуры трёх планов подбора — тех же, что у бота (vibes 9:16 / cine16x9 / films).
+# Превью — живые SVG мок-бэкенда (app/demo_media.py): настоящих файлов у мока нет.
 # Планы нужны и в моке: без них степпер типов футажей нечем проверить, а именно на
 # нём и вылезло, что переключение ничего не меняло.
 VIBES: list[dict[str, Any]] = [
-    {"id": "night-city", "name": "Ночной город", "plane": "vibes", "score": 0.93, "previewUrl": f"{BASE_S3}/vibes/night-city/preview.mp4"},
-    {"id": "neon", "name": "Неон", "plane": "vibes", "score": 0.89, "previewUrl": f"{BASE_S3}/vibes/neon/preview.mp4"},
-    {"id": "sunset", "name": "Закат", "plane": "vibes", "score": 0.76, "previewUrl": f"{BASE_S3}/vibes/sunset/preview.mp4"},
-    {"id": "backstage", "name": "Бэкстейдж", "plane": "vibes", "score": 0.71, "previewUrl": f"{BASE_S3}/vibes/backstage/preview.mp4"},
-    {"id": "street", "name": "Улица", "plane": "vibes", "score": 0.68, "previewUrl": f"{BASE_S3}/vibes/street/preview.mp4"},
-    {"id": "cine-new-york", "name": "Нью-Йорк", "plane": "cine16x9", "score": 0.88, "previewUrl": f"{BASE_S3}/vibes/cine-new-york/preview.mp4"},
-    {"id": "cine-tokyo", "name": "Киото", "plane": "cine16x9", "score": 0.74, "previewUrl": f"{BASE_S3}/vibes/cine-tokyo/preview.mp4"},
-    {"id": "film-brat", "name": "Брат", "plane": "films", "score": 0.9, "previewUrl": f"{BASE_S3}/vibes/film-brat/preview.mp4"},
-    {"id": "film-bumer", "name": "Бумер", "plane": "films", "score": 0.72, "previewUrl": f"{BASE_S3}/vibes/film-bumer/preview.mp4"},
+    {"id": "night-city", "name": "Ночной город", "plane": "vibes", "score": 0.93, "previewUrl": "/api/wizard/demo-media/night-city.svg?aspect=9:16"},
+    {"id": "neon", "name": "Неон", "plane": "vibes", "score": 0.89, "previewUrl": "/api/wizard/demo-media/neon.svg?aspect=9:16"},
+    {"id": "sunset", "name": "Закат", "plane": "vibes", "score": 0.76, "previewUrl": "/api/wizard/demo-media/sunset.svg?aspect=9:16"},
+    {"id": "backstage", "name": "Бэкстейдж", "plane": "vibes", "score": 0.71, "previewUrl": "/api/wizard/demo-media/backstage.svg?aspect=9:16"},
+    {"id": "street", "name": "Улица", "plane": "vibes", "score": 0.68, "previewUrl": "/api/wizard/demo-media/street.svg?aspect=9:16"},
+    {"id": "cine-new-york", "name": "Нью-Йорк", "plane": "cine16x9", "score": 0.88, "previewUrl": "/api/wizard/demo-media/cine-new-york.svg?aspect=16:9"},
+    {"id": "cine-tokyo", "name": "Киото", "plane": "cine16x9", "score": 0.74, "previewUrl": "/api/wizard/demo-media/cine-tokyo.svg?aspect=16:9"},
+    {"id": "film-brat", "name": "Брат", "plane": "films", "score": 0.9, "previewUrl": "/api/wizard/demo-media/film-brat.svg?aspect=9:16"},
+    {"id": "film-bumer", "name": "Бумер", "plane": "films", "score": 0.72, "previewUrl": "/api/wizard/demo-media/film-bumer.svg?aspect=9:16"},
 ]
 
 PHOTOS: list[dict[str, Any]] = [
-    {"id": "photo-desert", "name": "Пустынный закат", "score": 0.9, "previewUrl": f"{BASE_S3}/photos/desert/preview.jpg"},
-    {"id": "photo-portrait", "name": "Крупный план", "score": 0.84, "previewUrl": f"{BASE_S3}/photos/portrait/preview.jpg"},
-    {"id": "photo-studio", "name": "Студийный свет", "score": 0.77, "previewUrl": f"{BASE_S3}/photos/studio/preview.jpg"},
-    {"id": "photo-street", "name": "Уличный кадр", "score": 0.65, "previewUrl": f"{BASE_S3}/photos/street/preview.jpg"},
+    {"id": "photo-desert", "name": "Пустынный закат", "score": 0.9, "previewUrl": "/api/wizard/demo-media/photo-desert.svg?aspect=4:3&still=1"},
+    {"id": "photo-portrait", "name": "Крупный план", "score": 0.84, "previewUrl": "/api/wizard/demo-media/photo-portrait.svg?aspect=4:3&still=1"},
+    {"id": "photo-studio", "name": "Студийный свет", "score": 0.77, "previewUrl": "/api/wizard/demo-media/photo-studio.svg?aspect=4:3&still=1"},
+    {"id": "photo-street", "name": "Уличный кадр", "score": 0.65, "previewUrl": "/api/wizard/demo-media/photo-street.svg?aspect=4:3&still=1"},
 ]
 
 SUBTITLE_STYLES: list[dict[str, Any]] = [
-    {"id": "brat", "name": "Brat", "previewUrl": f"{BASE_S3}/subtitles/brat/preview.jpg"},
-    {"id": "jakson", "name": "Jakson", "previewUrl": f"{BASE_S3}/subtitles/jakson/preview.jpg"},
-    {"id": "impulse", "name": "Impulse", "previewUrl": f"{BASE_S3}/subtitles/impulse/preview.jpg"},
-    {"id": "tape", "name": "Tape", "previewUrl": f"{BASE_S3}/subtitles/tape/preview.jpg"},
-    {"id": "trendy", "name": "Trendy", "previewUrl": f"{BASE_S3}/subtitles/trendy/preview.jpg"},
+    {"id": "brat", "name": "Brat", "previewUrl": "/api/wizard/demo-media/sub-brat.svg?v=3"},
+    {"id": "jakson", "name": "Jakson", "previewUrl": "/api/wizard/demo-media/sub-jakson.svg?v=3"},
+    {"id": "impulse", "name": "Impulse", "previewUrl": "/api/wizard/demo-media/sub-impulse.svg?v=3"},
+    {"id": "tape", "name": "Tape", "previewUrl": "/api/wizard/demo-media/sub-tape.svg?v=3"},
+    {"id": "trendy", "name": "Trendy", "previewUrl": "/api/wizard/demo-media/sub-trendy.svg?v=3"},
 ]
 
 DROPS: list[dict[str, Any]] = [

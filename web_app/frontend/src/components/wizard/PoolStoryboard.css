@@ -25,7 +25,9 @@
 .psb-dhead { display: flex; align-items: center; gap: 6px; min-height: 30px; padding-left: 4px; }
 .psb-dhead.edit { justify-content: space-between; }
 .psb-info { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.2; }
-.psb-info b { font-weight: 400; font-size: 13px; color: var(--text); white-space: nowrap; display: flex; align-items: center; gap: 6px; }
+.psb-info b { font-weight: 400; font-size: 13px; color: var(--text); white-space: nowrap; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.psb-info b > .tx { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.psb-badge { flex-shrink: 0; }
 .psb-info small { font-size: 11px; color: rgba(246, 245, 253, .6); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .psb-badge { font-size: 10px; padding: 2px 6px 1px; border-radius: 5px; background: #c6b6ff; color: #170c38; }
 .psb-badge.pin { background: var(--accent); color: #fff; cursor: pointer; border: 0; }
@@ -41,9 +43,15 @@
 .psb-var button { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: rgba(246, 245, 253, .8); }
 .psb-var button:hover { background: rgba(246, 245, 253, .1); color: var(--text); }
 .psb-var button:disabled { opacity: .25; pointer-events: none; }
-.psb-strip { display: flex; gap: 4px; height: 54px; }
-.psb-seg { position: relative; flex: 1 1 0; min-width: 18px; border-radius: 7px; overflow: hidden; background: #1a1230; box-shadow: 0 0 0 1px rgba(246, 245, 253, .12); cursor: pointer; transition: box-shadow .15s ease, opacity .15s ease; }
-.psb-seg video { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; opacity: .8; pointer-events: none; }
+.psb-strip { display: flex; gap: 4px; height: 58px; padding: 2px; margin: -2px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.psb-strip::-webkit-scrollbar { display: none; }
+/* На узком плеере кадры не сжимаются в щели: минимум 40px, лента едет вбок (useStripFollow держит
+   текущий кадр в центре), фейд — с той стороны, где за краем ещё есть кадры. */
+.psb-strip[data-fade-r] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); } /* ui-allow: альфа-маска фейда, не цвет */
+.psb-strip[data-fade-l] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); } /* ui-allow: альфа-маска фейда, не цвет */
+.psb-strip[data-fade-l][data-fade-r] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); } /* ui-allow: альфа-маска фейда, не цвет */
+.psb-seg { position: relative; flex: 1 0 0; min-width: 40px; border-radius: 7px; overflow: hidden; background: #1a1230; box-shadow: 0 0 0 1px rgba(246, 245, 253, .12); cursor: pointer; transition: box-shadow .15s ease, opacity .15s ease; }
+.psb-seg video, .psb-seg img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; opacity: .8; pointer-events: none; }
 .psb-seg:hover video, .psb-seg.cur video { opacity: 1; }
 .psb-seg.sel { box-shadow: 0 0 0 2px #fff; }
 .psb-strip.editing .psb-seg:not(.sel) { opacity: .35; pointer-events: none; }
@@ -51,3 +59,15 @@
 .psb-seg .lk { position: absolute; top: 3px; right: 3px; width: 15px; height: 15px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; }
 .psb-seg .dm { position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: #c6b6ff; }
 .psb-seg .rp { position: absolute; left: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; background: #f59e0b; }
+
+/* «Изменён»: закреплена слева, лента чипов уходит под неё и тает у её края */
+.psb-chips .psb-mark { position: absolute; left: 12px; top: 0; z-index: 2; padding: 0 12px; background: var(--accent); color: var(--text); }
+.psb-chips[data-mark] .rail { padding-left: calc(12px + var(--mark-w, 0px) + 6px); -webkit-mask-image: linear-gradient(90deg, transparent calc(12px + var(--mark-w, 0px) - 10px), black calc(12px + var(--mark-w, 0px) + 6px)); mask-image: linear-gradient(90deg, transparent calc(12px + var(--mark-w, 0px) - 10px), black calc(12px + var(--mark-w, 0px) + 6px)); }
+
+/* Узкое превью (колонка «Комбинаций» на 1600×900 ≈ 250px): «Заменить кадр» — иконкой
+   (подсказка в title), подпись кадра обрезается многоточием — иначе строка наезжала на кнопки. */
+@container (max-width: 300px) {
+  .psb-dhead:not(.edit) .psb-btn.pri { width: 30px; padding: 0; }
+  .psb-dhead:not(.edit) .psb-btn.pri .tx { display: none; }
+}
+.psb-info small.psb-note { color: var(--warning); }

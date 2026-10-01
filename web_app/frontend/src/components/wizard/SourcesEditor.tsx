@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -8,6 +8,8 @@ import { isVideoFile, VIDEO_FILE_ACCEPT } from '../../lib/mediaFiles';
 import type { UserSource } from '../../lib/types';
 import { useWizardStore } from '../../stores/wizardStore';
 import type { SourceVideoPlan } from '../../stores/wizardStore';
+import { useModalCount } from '../ui/Modal';
+import { Svg, W12 } from './WizardFrame';
 
 type SourceFormat = SourceVideoPlan['format'];
 /** Строка очереди загрузки: живёт до закрытия окна, чтобы был виден факт загрузки. */
@@ -18,11 +20,6 @@ const timeSeconds = (value: string) => {
   return parts.length >= 2 && parts.every(Number.isFinite) ? parts[0] * 60 + parts[1] + (parts[2] ?? 0) / 100 : null;
 };
 
-const ICON_BTN = 'flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[9px] bg-accent-20 text-[14px] leading-none text-text-80 transition hover:text-text disabled:opacity-25';
-const SEGMENT = 'inline-flex shrink-0 items-center gap-[4px] rounded-r15 bg-[rgba(8,3,19,.5)] p-[4px]';
-const SEGMENT_ITEM = 'flex h-[34px] items-center justify-center rounded-[11px] px-[16px] text-[14px] transition';
-const SEGMENT_ON = 'bg-grad-soft-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]';
-const SEGMENT_OFF = 'text-text-60 hover:text-text';
 
 export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useTranslation();
@@ -32,7 +29,6 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
   const setAllocation = useWizardStore(s => s.setAllocation);
   const timingFrom = useWizardStore(s => s.timingFrom);
   const timingTo = useWizardStore(s => s.timingTo);
-  const input = useRef<HTMLInputElement>(null);
   const [tab, setTab] = useState<'pc' | 'qr'>('pc');
   const [format, setFormat] = useState<SourceFormat>('9:16');
   const [activeId, setActiveId] = useState<string>();
@@ -41,6 +37,9 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
   const [error, setError] = useState('');
   const [link, setLink] = useState<{ url: string; qrSvg: string; expiresAt: number }>();
   const [drag, setDrag] = useState<{ planId: string; sourceId: string }>();
+  const input = useRef<HTMLInputElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const titleId = useId();
   const sources = useQuery({ queryKey: ['sources', projectId], queryFn: () => api.sources(projectId!), enabled: open && Boolean(projectId), refetchInterval: open ? 3000 : false });
   const list = sources.data?.sources ?? [];
   const plans = bg.sourceVideos;
@@ -50,11 +49,6 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
     if (!open) return;
     setTab('pc'); setError(''); setLink(undefined); setQueue([]); setActiveId(bg.sourceVideos[0]?.id);
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (!open) return;
-    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key);
-  }, [open, onClose]);
 
   const report = (e: unknown) => {
     const detail = e instanceof ApiError ? (e.detail as { detail?: unknown })?.detail : null;
@@ -98,9 +92,8 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
    * Очередь загрузки видна целиком: строка на файл с процентами и итоговым статусом.
    * Один сбойный файл больше не обрывает пачку — он помечается ошибкой, остальные едут дальше.
    */
-  const upload = async (files: FileList | null) => {
+  const upload = async (picked: File[]) => {
     if (!projectId || busy) return;
-    const picked = Array.from(files ?? []);
     if (!picked.length) return;
     if (picked.some(file => !isVideoFile(file))) {
       setError(t('wizard.sources.videoOnly'));
@@ -133,142 +126,191 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
   const requiredDuration = fromSeconds !== null && toSeconds !== null ? Math.max(0, toSeconds - fromSeconds) : 0;
   const unused = list.filter(source => !assigned.has(source.id));
 
-  if (!open) return null;
-  return createPortal(<div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onMouseDown={onClose}>
-    <section role="dialog" aria-modal="true" aria-label={t('wizard.sources.title')} className="flex max-h-[calc(var(--app-layout-h,100vh)*.92)] w-[1000px] max-w-full flex-col overflow-hidden rounded-r25 bg-[#21153d] text-text" onMouseDown={e => e.stopPropagation()}>
-      <header className="flex shrink-0 items-start justify-between gap-4 px-[28px] pb-[14px] pt-[26px] max-md:px-[16px] max-md:pt-[16px]">
-        <div>
-          <h2 className="text-[24px] leading-tight">{t('wizard.sources.title')}</h2>
-          <p className="mt-[8px] max-w-[640px] text-[14px] leading-[1.45] text-text-60 max-md:text-[13px]">{t('wizard.sources.editorHint')}</p>
-        </div>
-        <button type="button" className={ICON_BTN} onClick={onClose} aria-label={t('wizard.sources.close')}>
-          <span className="translate-y-[1px]" aria-hidden="true">✕</span>
-        </button>
-      </header>
+  // модалка считается в useModalCount: подсказки визарда при открытом окне молчат
+  useEffect(() => {
+    if (!open) return undefined;
+    useModalCount.getState().inc();
+    const returnTo = document.activeElement;
+    titleRef.current?.focus({ preventScroll: true });
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      useModalCount.getState().dec();
+      window.removeEventListener('keydown', onKey);
+      if (returnTo instanceof HTMLElement) returnTo.focus({ preventScroll: true });
+    };
+  }, [open, onClose]);
 
-      <div className="no-scrollbar grid min-h-0 flex-1 grid-cols-1 gap-[20px] overflow-auto px-[28px] pb-[20px] lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] max-md:gap-[14px] max-md:px-[16px]">
-        {/* Левая колонка — откуда приходят файлы и что с ними происходит прямо сейчас */}
-        <div className="flex min-w-0 flex-col gap-[14px]">
-          {/* Формат и источник — два одинаковых сегмент-контрола в одном блоке: раньше это
-              были разнокалиберные пилюли в два ряда и левая колонка читалась как свалка. */}
-          <div className="flex flex-col gap-[12px] rounded-r15 bg-[rgba(16,9,34,.35)] p-[16px]">
-            <div className="flex items-center justify-between gap-[12px]">
-              <span className="text-[14px] text-text-60">{t('wizard.sources.chooseFormat')}</span>
-              <span className={SEGMENT}>
-                {(['9:16', '16:9'] as const).map(value => (
-                  <button key={value} type="button" aria-pressed={format === value}
-                    className={cn(SEGMENT_ITEM, format === value ? SEGMENT_ON : SEGMENT_OFF)}
-                    onClick={() => { setFormat(value); setLink(undefined); }}>{value}</button>
-                ))}
-              </span>
+  if (!open) return null;
+  const vert = { transform: 'rotate(90deg)' };
+  const mini = (label: string, icon: ReactNode, onClick: () => void, disabled = false) => (
+    <button type="button" className="w12-mini" aria-label={label} disabled={disabled} onClick={(event) => { event.stopPropagation(); onClick(); }}>{icon}</button>
+  );
+  const pick = (files: FileList | null) => { const list = Array.from(files ?? []); if (list.length) void upload(list); };
+
+  return createPortal(
+    <div className="w12">
+      <div className="w12-scrim" style={{ zIndex: 'var(--z-modal)' } as React.CSSProperties} onMouseDown={onClose}>
+        <section className="w12-modal" role="dialog" aria-modal="true" aria-labelledby={titleId} onMouseDown={(event) => event.stopPropagation()}>
+          <header className="w12-m-head">
+            <div>
+              <h2 id={titleId} ref={titleRef} tabIndex={-1}>{t('wizard.sources.title')}</h2>
+              <p>{t('wizard.sources.editorHint')}</p>
             </div>
-            <div className="flex items-center justify-between gap-[12px] max-md:hidden">
-              <span className="text-[14px] text-text-60">{t('wizard.sources.chooseSource')}</span>
-              <span className={SEGMENT}>
-                {([['pc', t('wizard.sources.fromPc')], ['qr', t('wizard.sources.fromPhone')]] as const).map(([value, label]) => (
-                  <button key={value} type="button" aria-pressed={tab === value} disabled={busy || !projectId}
-                    className={cn(SEGMENT_ITEM, tab === value ? SEGMENT_ON : SEGMENT_OFF)}
+            <button type="button" className="w12-icon-btn" aria-label={t('wizard.sources.close')} onClick={onClose}><Svg>{W12.close}</Svg></button>
+          </header>
+          <div className="w12-m-body">
+            {/* левая колонка — откуда приходят файлы и что с ними происходит прямо сейчас */}
+            <div className="w12-m-col">
+              <div className="w12-m-row">
+                <span>{t('wizard.sources.chooseFormat')}</span>
+                <div className="w12-types">
+                  {(['9:16', '16:9'] as const).map((value) => (
+                    <button key={value} type="button" className="w12-type" aria-pressed={format === value} onClick={() => { setFormat(value); setLink(undefined); }}><span className="w12-l">{value}</span></button>
+                  ))}
+                </div>
+              </div>
+              <div className="w12-m-row max-md:hidden">
+                <span>{t('wizard.sources.chooseSource')}</span>
+                <div className="w12-types">
+                  <button type="button" className="w12-type" aria-pressed={tab === 'pc'} onClick={() => setTab('pc')}><span className="w12-l">{t('wizard.sources.fromPc')}</span></button>
+                  <button
+                    type="button"
+                    className="w12-type"
+                    aria-pressed={tab === 'qr'}
+                    disabled={busy || !projectId}
                     onClick={async () => {
-                      if (value === 'pc') { setTab('pc'); return; }
                       setTab('qr'); setBusy(true); setError('');
                       try { setLink(await api.uploadLink(projectId!, format)); } catch (e) { report(e); } finally { setBusy(false); }
-                    }}>{label}</button>
-                ))}
-              </span>
+                    }}
+                  >
+                    <span className="w12-l">{t('wizard.sources.fromPhone')}</span>
+                  </button>
+                </div>
+              </div>
+
+              {tab === 'pc' ? (
+                <>
+                  <input ref={input} type="file" accept={VIDEO_FILE_ACCEPT} multiple className="sr-only" tabIndex={-1} onChange={(e) => { pick(e.target.files); e.target.value = ''; }} />
+                  <button
+                    type="button"
+                    className="w12-drop"
+                    disabled={busy || !projectId}
+                    onClick={() => input.current?.click()}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => { e.preventDefault(); pick(e.dataTransfer.files); }}
+                  >
+                    <span className="w12-plus">{busy ? <span className="spinner" aria-hidden="true" /> : <Svg>{W12.upload}</Svg>}</span>
+                    <span><b>{busy ? t('wizard.warmup.processing') : t('wizard.sources.drop')}</b><span>{t('wizard.sources.rules', { format })}</span></span>
+                  </button>
+                </>
+              ) : link ? (
+                <div className="w12-qr">
+                  <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(link.qrSvg)}`} alt={t('wizard.sources.qrAlt')} className="w12-qr-img" />
+                  <div className="w12-qr-link">
+                    <input readOnly value={link.url} aria-label={t('wizard.sources.link')} onFocus={(e) => e.currentTarget.select()} />
+                    <button type="button" className="w12-small-btn" onClick={() => navigator.clipboard.writeText(link.url).catch(report)}><span className="w12-l">{t('wizard.sources.copy')}</span></button>
+                  </div>
+                  <span className="w12-m-hint" style={{ margin: 0 }}>{t('wizard.sources.expires')}</span>
+                </div>
+              ) : <div className="w12-empty-plan">{t('wizard.warmup.processing')}</div>}
+
+              {queue.length > 0 && (
+                <div className="w12-queue">
+                  {queue.map((row) => (
+                    <div key={row.id} className="w12-q-row">
+                      <span>{row.name}</span>
+                      <span className="w12-bar"><i style={{ '--p': row.state === 'error' ? 1 : row.percent / 100, background: row.state === 'error' ? 'var(--w12-warn)' : undefined } as React.CSSProperties} /></span>
+                      <span className="w12-num" style={row.state === 'error' ? { color: 'var(--w12-warn)' } : undefined}>
+                        {row.state === 'done' ? t('wizard.sources.queueDone') : row.state === 'error' ? t('wizard.sources.queueError') : `${row.percent}%`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {error && <p role="alert" className="w12-miss">{error}</p>}
+              {sources.isError && <p role="alert" className="w12-miss">{t('wizard.sources.listFailed')}</p>}
+
+              {unused.length > 0 && (
+                <div className="w12-m-col" style={{ gap: 6 }}>
+                  <span className="w12-m-hint" style={{ margin: 0 }}>{t('wizard.sources.unused')}</span>
+                  {unused.map((source) => (
+                    <div key={source.id} className="w12-clip">
+                      {source.localUrl ? <video src={source.localUrl} muted playsInline preload="metadata" className="w12-th" /> : <span className="w12-th" />}
+                      <button type="button" className="w12-nm" style={{ textAlign: 'left' }} onClick={() => append(source)}>+ {source.name} <span className="w12-num">· {source.format} · {source.duration.toFixed(1)} с</span></button>
+                      {mini(t('wizard.sources.delete'), <Svg>{W12.close}</Svg>, async () => { try { await api.deleteSource(source.id); await sources.refetch(); } catch (e) { report(e); } })}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* правая колонка — что из этого станет роликами в Пуле */}
+            <div className="w12-m-col">
+              <h3>{t('wizard.sources.videoPlans')}</h3>
+              <p className="w12-m-hint">{t('wizard.sources.videoPlansHint')}</p>
+              <div className="w12-m-col" style={{ gap: 10 }}>
+                {plans.map((plan, planIndex) => {
+                  const total = totalDuration(plan);
+                  const short = requiredDuration > total;
+                  return (
+                    <div
+                      key={plan.id}
+                      className="w12-plan"
+                      style={active?.id === plan.id ? { borderColor: 'var(--w12-accent-line)' } : undefined}
+                      onClick={() => { setActiveId(plan.id); setFormat(plan.format); }}
+                    >
+                      <div className="w12-plan-head">
+                        <span>{t('wizard.sources.videoTitle', { n: planIndex + 1 })} · {plan.format}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                          <span className={cn('w12-tot w12-num', short && 'w12-short')}>
+                            {short ? t('wizard.sources.tooShort', { selected: total.toFixed(1), required: requiredDuration.toFixed(1) }) : t('wizard.sources.total', { seconds: total.toFixed(1) })}
+                          </span>
+                          {mini(t('wizard.sources.up'), <Svg style={vert}>{W12.left}</Svg>, () => movePlan(planIndex, -1), planIndex === 0)}
+                          {mini(t('wizard.sources.down'), <Svg style={vert}>{W12.right}</Svg>, () => movePlan(planIndex, 1), planIndex === plans.length - 1)}
+                        </span>
+                      </div>
+                      {plan.sourceIds.map((sourceId, index) => {
+                        const source = sourceById(sourceId);
+                        if (!source) return null;
+                        const swap = (to: number) => { const ids = [...plan.sourceIds]; [ids[to], ids[index]] = [ids[index], ids[to]]; updatePlan(plan.id, ids); };
+                        return (
+                          <div
+                            key={sourceId}
+                            className="w12-clip"
+                            draggable
+                            onDragStart={() => setDrag({ planId: plan.id, sourceId })}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={(e) => {
+                              e.preventDefault(); if (!drag || drag.planId !== plan.id || drag.sourceId === sourceId) return;
+                              const ids = plan.sourceIds.filter((id) => id !== drag.sourceId); ids.splice(index, 0, drag.sourceId); updatePlan(plan.id, ids); setDrag(undefined);
+                            }}
+                          >
+                            {source.localUrl ? <video src={source.localUrl} muted playsInline preload="metadata" className="w12-th" /> : <span className="w12-th" />}
+                            <span className="w12-nm">{source.name} <span className="w12-num">· {source.duration.toFixed(1)} с</span></span>
+                            {mini(t('wizard.sources.up'), <Svg style={vert}>{W12.left}</Svg>, () => swap(index - 1), index === 0)}
+                            {mini(t('wizard.sources.down'), <Svg style={vert}>{W12.right}</Svg>, () => swap(index + 1), index === plan.sourceIds.length - 1)}
+                            {plan.sourceIds.length > 1 && <button type="button" className="w12-split" onClick={(event) => { event.stopPropagation(); split(plan, sourceId); }}><span className="w12-l">{t('wizard.sources.split')}</span></button>}
+                            {mini(t('wizard.sources.remove'), <Svg>{W12.close}</Svg>, () => updatePlan(plan.id, plan.sourceIds.filter((id) => id !== sourceId)))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+                {!plans.length && <div className="w12-empty-plan">{t('wizard.sources.noPlans')}</div>}
+              </div>
             </div>
           </div>
-
-          {tab === 'pc' ? <>
-            <input ref={input} type="file" accept={VIDEO_FILE_ACCEPT} multiple className="sr-only" disabled={busy} onChange={e => { void upload(e.target.files); e.target.value = ''; }} />
-            <button type="button" disabled={busy || !projectId}
-              className="flex min-h-[220px] w-full flex-1 flex-col items-center justify-center gap-[14px] rounded-r15 border-2 border-dashed border-accent-light bg-grad-soft-10 px-[24px] py-[28px] text-center transition hover:brightness-110 disabled:opacity-60"
-              onClick={() => input.current?.click()}
-              onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); void upload(e.dataTransfer.files); }}>
-              <span aria-hidden="true" className="flex h-[44px] w-[44px] items-center justify-center rounded-r15 bg-text text-[26px] leading-none text-accent">+</span>
-              <span className="text-[15px]">{busy ? t('wizard.warmup.processing') : t('wizard.sources.drop')}</span>
-              <span className="text-[12px] text-text-60">{t('wizard.sources.rules', { format })}</span>
-            </button>
-          </> : link ? <div className="flex flex-col items-center gap-[10px] rounded-r15 bg-grad-soft-10 p-[18px]">
-            <img src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(link.qrSvg)}`} alt={t('wizard.sources.qrAlt')} className="h-48 w-48 rounded-lg bg-white p-2" />
-            <input readOnly value={link.url} className="w-full rounded-lg bg-black/20 p-2 text-xs" aria-label={t('wizard.sources.link')} onFocus={e => e.currentTarget.select()} />
-            <button type="button" className="text-sm underline" onClick={() => navigator.clipboard.writeText(link.url).catch(report)}>{t('wizard.sources.copy')}</button>
-            <p className="text-center text-[13px] leading-[1.4] text-text-60">{t('wizard.sources.expires')}</p>
-          </div> : <p className="rounded-r15 bg-grad-soft-10 p-[18px] text-sm text-text-60">{t('wizard.warmup.processing')}</p>}
-
-          {queue.length > 0 && <section className="flex flex-col gap-[12px] rounded-r15 bg-grad-soft-10 p-[16px]">
-            <h3 className="text-[14px] text-text-60">{t('wizard.sources.queueTitle', { done: queue.filter(row => row.state === 'done').length, total: queue.length })}</h3>
-            {queue.map(row => <div key={row.id} className="min-w-0">
-              <div className="mb-[6px] flex items-center justify-between gap-[10px] text-[13px]">
-                <span className="min-w-0 truncate">{row.name}</span>
-                <span className={cn('shrink-0', row.state === 'error' ? 'text-red-300' : 'text-text-60')}>
-                  {row.state === 'done' ? t('wizard.sources.queueDone') : row.state === 'error' ? t('wizard.sources.queueError') : `${row.percent}%`}
-                </span>
-              </div>
-              <div className="h-[6px] overflow-hidden rounded-full bg-accent-20">
-                <span className={cn('block h-full rounded-full transition-[width]', row.state === 'error' ? 'bg-red-400' : 'bg-grad-main')} style={{ width: `${row.state === 'error' ? 100 : row.percent}%` }} />
-              </div>
-            </div>)}
-          </section>}
-
-          {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
-          {sources.isError && <p role="alert" className="text-sm text-red-300">{t('wizard.sources.listFailed')}</p>}
-
-          {unused.length > 0 && <section className="flex flex-col gap-[8px]">
-            <h3 className="text-[14px] text-text-60">{t('wizard.sources.unused')}</h3>
-            {unused.map(source => <div key={source.id} className="flex items-center gap-[8px] text-sm">
-              {source.localUrl && <video src={source.localUrl} muted playsInline preload="metadata" className="h-12 w-20 shrink-0 rounded-[10px] object-cover" />}
-              <button type="button" className="min-w-0 flex-1 truncate rounded-r15 bg-black/20 p-[10px] text-left transition hover:bg-black/30" onClick={() => append(source)}>＋ {source.name} · {source.format} · {source.duration.toFixed(1)} s</button>
-              <button type="button" className={ICON_BTN} aria-label={t('wizard.sources.delete')} onClick={async () => { try { await api.deleteSource(source.id); await sources.refetch(); } catch (e) { report(e); } }}>✕</button>
-            </div>)}
-          </section>}
-        </div>
-
-        {/* Правая колонка — что из этого станет роликами в Пуле */}
-        <div className="flex min-w-0 flex-col gap-[10px]">
-          <h3 className="text-[18px]">{t('wizard.sources.videoPlans')}</h3>
-          <p className="text-[12px] leading-[1.4] text-text-60">{t('wizard.sources.videoPlansHint')}</p>
-          <div className="flex flex-col gap-[10px]">
-            {plans.map((plan, planIndex) => <section key={plan.id}
-              className={cn('rounded-r15 border p-[14px] transition', active?.id === plan.id ? 'border-accent-light bg-grad-soft-20' : 'border-transparent bg-black/20')}
-              onClick={() => { setActiveId(plan.id); setFormat(plan.format); }}>
-              <header className="mb-[10px] flex items-center justify-between gap-[8px]">
-                <strong className="text-[15px] font-normal">{t('wizard.sources.videoTitle', { n: planIndex + 1 })} · {plan.format}</strong>
-                <div className="flex items-center gap-[6px]">
-                  <span className={cn('text-[12px]', requiredDuration > totalDuration(plan) ? 'text-red-300' : 'text-text-60')}>{requiredDuration > totalDuration(plan)
-                    ? t('wizard.sources.tooShort', { selected: totalDuration(plan).toFixed(1), required: requiredDuration.toFixed(1) })
-                    : t('wizard.sources.total', { seconds: totalDuration(plan).toFixed(1) })}</span>
-                  <button type="button" className={ICON_BTN} disabled={planIndex === 0} aria-label={t('wizard.sources.up')} onClick={e => { e.stopPropagation(); movePlan(planIndex, -1); }}>↑</button>
-                  <button type="button" className={ICON_BTN} disabled={planIndex === plans.length - 1} aria-label={t('wizard.sources.down')} onClick={e => { e.stopPropagation(); movePlan(planIndex, 1); }}>↓</button>
-                </div>
-              </header>
-              <ol className="flex flex-col gap-[8px]">
-                {plan.sourceIds.map((sourceId, index) => {
-                  const source = sourceById(sourceId);
-                  if (!source) return null;
-                  return <li key={sourceId} draggable onDragStart={() => setDrag({ planId: plan.id, sourceId })} onDragOver={e => e.preventDefault()} onDrop={e => {
-                    e.preventDefault(); if (!drag || drag.planId !== plan.id || drag.sourceId === sourceId) return;
-                    const ids = plan.sourceIds.filter(id => id !== drag.sourceId); ids.splice(index, 0, drag.sourceId); updatePlan(plan.id, ids); setDrag(undefined);
-                  }} className="flex items-center gap-[8px] rounded-[12px] bg-black/25 p-[8px]">
-                    {source.localUrl && <video src={source.localUrl} muted playsInline preload="metadata" className="h-12 w-20 shrink-0 rounded-[10px] object-cover" />}
-                    <span className="min-w-0 flex-1 truncate text-[13px]">{index + 1}. {source.name} · {source.duration.toFixed(1)} s</span>
-                    <button type="button" className={ICON_BTN} disabled={index === 0} aria-label={t('wizard.sources.up')} onClick={e => { e.stopPropagation(); const ids = [...plan.sourceIds]; [ids[index-1], ids[index]] = [ids[index], ids[index-1]]; updatePlan(plan.id, ids); }}>↑</button>
-                    <button type="button" className={ICON_BTN} disabled={index === plan.sourceIds.length-1} aria-label={t('wizard.sources.down')} onClick={e => { e.stopPropagation(); const ids = [...plan.sourceIds]; [ids[index+1], ids[index]] = [ids[index], ids[index+1]]; updatePlan(plan.id, ids); }}>↓</button>
-                    {plan.sourceIds.length > 1 && <button type="button" className="h-[26px] shrink-0 rounded-[9px] bg-accent-20 px-[10px] text-[12px] transition hover:brightness-125" onClick={e => { e.stopPropagation(); split(plan, sourceId); }}>{t('wizard.sources.split')}</button>}
-                    <button type="button" className={ICON_BTN} aria-label={t('wizard.sources.remove')} onClick={e => { e.stopPropagation(); updatePlan(plan.id, plan.sourceIds.filter(id => id !== sourceId)); }}>✕</button>
-                  </li>;
-                })}
-              </ol>
-            </section>)}
-            {!plans.length && <p className="rounded-r15 bg-black/20 p-[16px] text-[13px] leading-[1.45] text-text-60">{t('wizard.sources.noPlans')}</p>}
-          </div>
-        </div>
+          {/* итог: сколько роликов реально уедет в Пул — ответ на «куда попали мои футажи» */}
+          <footer className="w12-m-foot">
+            <span>{t('wizard.sources.summary', { count: plans.length })}</span>
+            <button type="button" className="w12-cta w12-ready" onClick={onClose}><span className="w12-l">{t('wizard.sources.done')}</span></button>
+          </footer>
+        </section>
       </div>
-
-      {/* Итог: сколько роликов реально уедет в Пул — ответ на «куда попали мои футажи» */}
-      <footer className="flex shrink-0 items-center justify-between gap-[16px] border-t border-[rgba(246,245,253,.08)] px-[28px] py-[18px]">
-        <span className="text-[14px] text-text-60">{t('wizard.sources.summary', { count: plans.length })}</span>
-        <button type="button" className="h-[46px] rounded-r15 bg-accent px-[34px] text-[15px] transition hover:brightness-125" onClick={onClose}>{t('wizard.sources.done')}</button>
-      </footer>
-    </section>
-  </div>, document.body);
+    </div>,
+    document.body
+  );
 }

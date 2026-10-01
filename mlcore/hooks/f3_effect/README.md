@@ -77,6 +77,24 @@ FX_ASSETS_S3_PREFIX=fx_assets/
 
 Пикер — детерминированный (`random.Random(seed)`): один и тот же job + variant → один и тот же SFX. `seed` = `STAGE2_SELECTION_SEED` (или `JOB_ID`).
 
+## Эффекты Kant Tools (`kantfx/`)
+47 эффектов из пресетов Kant Tools: 35 стилизаций (`extra`) и 12 переходов (`transition`).
+Отдельных скриптов у них нет: все записи манифеста ведут на один `kantfx/apply_kantfx.jsx`,
+а свой пресет указывают в поле `preset` (`kantfx/<id>.ffx`).
+
+- `mode: "window"` — стилизация: adjustment-слой на окно, пресет на весь слой (окно стола или 0..дроп).
+- `mode: "cuts"` — переход: на каждой склейке свой adjustment-слой длиной `default_duration`,
+  ключи пресета стартуют от склейки. Все Kant-переходы есть в `F3_CUT_TRANSITIONS` — стол ставит их на одну склейку.
+- **Доставка пресета:** `overlay.py` кладёт содержимое `.ffx` прямо в render JSX (`presetB64`),
+  скрипт раскладывает его во временный файл на ноде. S3 и media[] для пресетов не нужны.
+  `run_job.jsx` (локальный харнесс) передаёт путь к файлу (`preset`).
+- **Плагины на ноде** (`needs_plugin`): Sapphire, Magic Bullet Suite, BCC, Universe, Grain Surgery,
+  Video Copilot Twitch, Deep Glow. Пресет без своего плагина не добавляет эффектов — скрипт падает
+  явной ошибкой, а не рендерит ролик без выбранного эффекта.
+- Сайт: записи в `effects-registry.json` несут `montageGroup` / `montageGlyph` / `meta` — по ним
+  монтажный стол раскладывает эффекты по группам без правки `MontageTable.tsx`.
+- Проверка: `tests/test_f3_kantfx.py` + `scripts/validate_effects_registry.py` (шаг CI «F3 effects»).
+
 ## ⚠️ Прочие требования
 - **Плагины на ноде:** Sapphire (`S_*`) + VISINF Grain (если нет — соответствующие эффекты молча пустые).
 - **`.aep`-зависимости** только у `pixel_grain` и `warm_map` (Colorama/Grain-пресет через copyToComp — `.aep` лежат рядом в `extra/`).

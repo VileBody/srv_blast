@@ -410,6 +410,8 @@
   --bg:              #05010f;
   --nav-bg:          #150F25;
   --card-bg:         #060114;
+  /* единая шкала UI: карточка страницы (UI_RULES.md → Поверхности) */
+  --card:            #0d0820;
   --card-dark-start: #0d0828;
   --card-dark-mid:   #0a0520;
   --card-dark-end:   #080318;
@@ -480,6 +482,23 @@
   --r12: 12px;
   --r10: 10px;
   --r9:  9px;
+  --r6:  6px;
+
+  /* Единая шкала (UI_RULES.md): поверхности, акцент и высоты контролов для новых компонентов */
+  --panel:         #140d2b;
+  --field:         #1a1236;
+  --field-hover:   #211742;
+  --accent-strong: #6a4fcf;
+  --accent-soft:   rgba(139, 111, 230, 0.16);
+  --accent-line:   rgba(139, 111, 230, 0.55);
+  --line:          rgba(246, 245, 253, 0.09);
+  --line-strong:   rgba(246, 245, 253, 0.16);
+  --scrim:         rgba(5, 1, 15, 0.55);
+  --ctl-xs:    24px;
+  --ctl-sm:    32px;
+  --ctl:       44px;
+  --ctl-touch: 52px;
+  --ctl-lg:    60px;
 
   --t-fast:  0.15s ease;
   --t-base:  0.25s ease;
@@ -505,10 +524,16 @@
   --scroll-fade: rgb(32, 24, 54);
 }
 
-@font-face { font-family: 'Point'; font-weight: 350; src: url('/fonts/Point-Book.ttf') format('truetype'); font-display: swap; }
-@font-face { font-family: 'Point'; font-weight: 400; src: url('/fonts/Point-Regular.ttf') format('truetype'); font-display: swap; }
-@font-face { font-family: 'Point'; font-weight: 500; font-style: italic; src: url('/fonts/Point-MediumItalic.ttf') format('truetype'); font-display: swap; }
-@font-face { font-family: 'Point'; font-weight: 700; src: url('/fonts/PointBold.ttf') format('truetype'); font-display: swap; }
+/*
+ * Point с USE_TYPO_METRICS центрирует строку по полю 1475/451 (upm 2048): заглавные сидели
+ * ~1.4px выше центра любого контрола, и экраны компенсировали это ручными translate-y.
+ * Override двигает центр строки к середине заглавных; суммарная высота та же (94%),
+ * поэтому раскладка не едет. Safari override не поддерживает — там как было.
+ */
+@font-face { font-family: 'Point'; font-weight: 350; src: url('/fonts/Point-Book.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
+@font-face { font-family: 'Point'; font-weight: 400; src: url('/fonts/Point-Regular.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
+@font-face { font-family: 'Point'; font-weight: 500; font-style: italic; src: url('/fonts/Point-MediumItalic.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
+@font-face { font-family: 'Point'; font-weight: 700; src: url('/fonts/PointBold.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
 
 * { box-sizing: border-box; }
 html { min-height: 100%; background: var(--bg); color: var(--text); }
@@ -522,6 +547,8 @@ a { color: inherit; text-decoration: none; }
 ::selection { background: var(--accent-80); color: var(--text); }
 
 :focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+/* каретка полей — из палитры, а не системная чёрная/белая */
+input, textarea, [contenteditable] { caret-color: var(--accent-light); }
 
 @media (max-width: 768px) {
   body { font-size: 14px; }
@@ -584,6 +611,12 @@ a { color: inherit; text-decoration: none; }
   /* Выбранный раздел — иконка светлеет однозначно: полный цвет (не text-60), opacity 1
      и мягкое свечение. Маска = background:currentColor, поэтому осветляем именно currentColor. */
   .sidebar-icon-active { opacity: 1 !important; }
+  /* Пункты навигации — одинаковые ячейки 52×52: шаг между иконками ровный при любой форме иконки.
+     Выбранный пункт — мягкая подложка с рамкой (как выбранный таб визарда), а не свечение. */
+  .sidebar-nav .sidebar-icon { width: 52px; height: 52px; border-radius: 15px; transition: background-color var(--t-fast), box-shadow var(--t-fast), opacity var(--t-fast); }
+  .sidebar-nav .sidebar-icon:hover { transform: none; background: var(--panel); }
+  .sidebar-nav .sidebar-icon-active { background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent-line); }
+  .sidebar-nav .sidebar-icon-active .nav-icon-mask { filter: none; }
   .sidebar-icon-active .nav-icon-mask {
     background: var(--text);
     filter: drop-shadow(0 0 10px var(--accent-light));
@@ -661,7 +694,10 @@ a { color: inherit; text-decoration: none; }
     font-size: 24px; font-weight: 350; cursor: pointer; white-space: nowrap;
     transition: box-shadow var(--t-fast), color var(--t-fast), opacity var(--t-fast), transform var(--t-fast);
   }
-  .soft-btn:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--border-hover), 0 12px 30px rgba(5, 1, 15, .22); transform: translateY(-1px); }
+  /* hover-подъём только у мыши: на тач-экране hover срабатывает от тапа и кнопка «залипает» приподнятой */
+  @media (hover: hover) and (pointer: fine) {
+    .soft-btn:hover { color: var(--text); box-shadow: inset 0 0 0 1px var(--border-hover), 0 12px 30px rgba(5, 1, 15, .22); transform: translateY(-1px); }
+  }
   .soft-btn:active { transform: translateY(0) scale(.98); }
   .soft-btn:disabled { opacity: .45; cursor: not-allowed; }
   .soft-btn-ready { box-shadow: inset 0 0 0 1.5px var(--accent-light); color: var(--text); }

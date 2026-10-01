@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
+import { Button } from '../components/ui/kit';
 import { BatchLayout, GenerationsCard, ProcessingAside, ProgressTrack, TrackCard } from '../components/project/BatchCards';
 
 /** Средняя длительность рендера одной вариации — из неё считаем «осталось NN минут». */
@@ -16,6 +17,22 @@ const MINUTES_PER_VIDEO = 3;
  * Экран рисуется сразу и целиком: скелетонов здесь быть не должно — на этой странице
  * «загрузка» это и есть контент (прогресс в цифрах + заполнение шкалы).
  */
+/** Полоса статуса упавшего батча: сколько собралось и что генерация остановлена (без «осталось N минут»). */
+function FailedTrack({ done, total }: { done: number; total: number }) {
+  const { t } = useTranslation();
+  const pct = total ? done / total : 0;
+  return (
+    <div className="relative flex h-[60px] items-center overflow-hidden rounded-r15 bg-grad-soft-20 max-md:h-[44px]">
+      <span className="absolute inset-y-0 left-0 rounded-r15 bg-success-bg" style={{ width: `${pct * 100}%` }} aria-hidden="true" />
+      <span className="relative pl-[28px] text-ui-16 tabular-nums text-text max-md:pl-[14px] max-md:text-ui-14">{t('processing.failedDone', { done, total })}</span>
+      <span className="relative ml-auto mr-[20px] flex items-center gap-[8px] rounded-full bg-warning-bg px-[12px] py-[4px] text-ui-14 text-warning max-md:mr-[10px]">
+        <span className="h-[6px] w-[6px] rounded-full bg-warning" aria-hidden="true" />
+        {t('processing.stopped')}
+      </span>
+    </div>
+  );
+}
+
 export function ProcessingPage() {
   const { t } = useTranslation();
   const { jobId } = useParams();
@@ -105,45 +122,75 @@ export function ProcessingPage() {
   if (notFound) {
     return (
       <div className="card-2 flex flex-1 flex-col items-center justify-center gap-space-4 p-[40px] text-center">
-        <h1 className="text-[32px] font-[400]">{t('processing.notFound')}</h1>
-        <p className="max-w-[420px] text-[18px] leading-[23px] text-text-60">{t('processing.notFoundText')}</p>
-        <button type="button" className="soft-btn h-[60px] px-space-6 text-[20px]" onClick={() => navigate('/app/projects')}>{t('common.toProjects')}</button>
+        <h1 className="text-ui-32 font-[400]">{t('processing.notFound')}</h1>
+        <p className="max-w-[420px] text-ui-16 text-text-60">{t('processing.notFoundText')}</p>
+        <Button variant="primary" size="lg" onClick={() => navigate('/app/projects')}>{t('common.toProjects')}</Button>
       </div>
     );
   }
 
-  /* Генерация упала — редирект по allDone уже не случится, нужен явный выход. */
+  /*
+   * Генерация упала — редирект по allDone уже не случится, нужен явный выход. Экран держит
+   * тот же макет, что и генерация: слева трек и ролики (видно, что собралось, а что нет, и
+   * готовые можно открыть), справа — что случилось и что делать дальше.
+   */
   if (failed) {
     return (
-      <div className="card-2 flex flex-1 flex-col items-center justify-center gap-space-4 p-[40px] text-center">
-        <h1 className="text-[32px] font-[400]">{t('processing.failed')}</h1>
-        <p className="max-w-[420px] text-[18px] leading-[23px] text-text-60">{t('processing.failedText')}</p>
-        <div className="max-w-[620px] rounded-r15 border border-[rgba(246,245,253,0.16)] bg-grad-soft-10 px-[24px] py-[18px] text-left">
-          <p className="text-[17px] leading-[22px] text-text">{failureReason}</p>
-          <p className="mt-[8px] text-[15px] text-text-60">
-            {t('processing.failedProgress', { done: done.length, total: videos.length, failed: failedVideos.length })}
-          </p>
-          {rawFailure && (
-            <details className="mt-[12px] text-[14px] text-text-60">
-              <summary className="cursor-pointer text-accent-light">{t('processing.technicalReason')}</summary>
-              <code className="mt-[8px] block max-h-[96px] overflow-auto whitespace-pre-wrap break-words">{rawFailure}</code>
-            </details>
-          )}
-        </div>
-        <div className="flex flex-wrap items-center justify-center gap-space-3">
-          {job?.projectId && done.length > 0 && (
-            <button type="button" className="soft-btn h-[60px] px-space-6 text-[20px]" onClick={() => navigate(`/app/projects/${job.projectId}`)}>
-              {t('processing.openReady')}
-            </button>
-          )}
-          {job?.projectId && (
-            <button type="button" className="soft-btn h-[60px] px-space-6 text-[20px]" onClick={() => navigate(`/app/generate?project=${job.projectId}`)}>
-              {t('processing.retry')}
-            </button>
-          )}
-          <button type="button" className="soft-btn h-[60px] px-space-6 text-[20px]" onClick={() => navigate('/app/projects')}>{t('common.toProjects')}</button>
-        </div>
-      </div>
+      <BatchLayout
+        left={
+          <>
+            <TrackCard title={project?.name} artistNick={meQuery.data?.user.artistNick || undefined}>
+              <FailedTrack done={done.length} total={videos.length} />
+            </TrackCard>
+            <GenerationsCard
+              videos={videos}
+              postOne={project && done.length ? (video) => {
+                const index = done.findIndex((item) => item.id === video.id);
+                navigate(`/app/projects/${project.id}/post?batch=${job?.id}&video=${Math.max(0, index)}`);
+              } : undefined}
+            />
+          </>
+        }
+        right={
+          <aside className="wizard-aside card-2 flex shrink-0 flex-col p-[40px] max-md:order-first max-md:p-[20px]" aria-labelledby="failed-title">
+            <span className="flex h-[44px] w-[44px] items-center justify-center rounded-full bg-warning-bg text-warning" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8v5M12 16.5v.01" /><path d="M10.3 3.9 2.6 17.3A2 2 0 0 0 4.3 20.3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>
+            </span>
+            <h1 id="failed-title" className="mt-[20px] text-ui-24 font-[400] text-text">{t('processing.failed')}</h1>
+            <p className="mt-[8px] text-ui-16 text-text-60">{t('processing.failedText')}</p>
+
+            <div className="mt-[24px] rounded-r15 bg-panel p-[20px]">
+              <p className="text-ui-12 text-text-40">{t('processing.whatHappened')}</p>
+              <p className="mt-[6px] text-ui-16 text-text">{failureReason}</p>
+              <p className="mt-[6px] text-ui-14 tabular-nums text-text-60">
+                {t('processing.failedProgress', { done: done.length, total: videos.length, failed: failedVideos.length })}
+              </p>
+              {rawFailure && (
+                <details className="group mt-[12px] text-ui-14 text-text-60">
+                  <summary className="w-fit cursor-pointer list-none text-accent-light transition-colors hover:text-text [&::-webkit-details-marker]:hidden">
+                    {t('processing.technicalReason')} <span className="inline-block transition-transform duration-200 group-open:rotate-90" aria-hidden="true">›</span>
+                  </summary>
+                  <code className="mt-[8px] block max-h-[120px] overflow-auto whitespace-pre-wrap break-words rounded-r10 bg-field p-[12px] font-mono text-ui-12 text-text-60">{rawFailure}</code>
+                </details>
+              )}
+            </div>
+
+            <div className="mt-auto flex flex-col gap-[10px] pt-[28px]">
+              {job?.projectId && (
+                <Button variant="primary" size="lg" className="w-full" onClick={() => navigate(`/app/generate?project=${job.projectId}`)}>
+                  {t('processing.retry')}
+                </Button>
+              )}
+              {job?.projectId && done.length > 0 && (
+                <Button size="lg" className="w-full" onClick={() => navigate(`/app/projects/${job.projectId}`)}>
+                  {t('processing.openReady')}
+                </Button>
+              )}
+              <Button variant="ghost" size="md" className="w-full" onClick={() => navigate('/app/projects')}>{t('common.toProjects')}</Button>
+            </div>
+          </aside>
+        }
+      />
     );
   }
 

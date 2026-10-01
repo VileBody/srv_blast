@@ -1,30 +1,46 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../lib/cn';
-import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { useWizardStore } from '../../stores/wizardStore';
+import { useWizardAttempt } from './wizardAttempt';
+import './wizard12.css';
 
 /*
- * Каркас визарда по макетам Figma (Wireframe 7–17):
- * шапка с названием трека и табами этапов + правая панель «Текст».
- * Порядок табов — как в макете; stage хранит старую нумерацию стора.
- * Иконка активного таба — акцентная, неактивного — белая (W7: «Фон» белый; W12: «Фон» #8b6fe6).
+ * Каркас визарда — один в один по утверждённому макету «Трек / Фон» (артефакт wizard12 v3):
+ * слева шапка с этапами и карточка шага, справа колонка шага и нижняя карточка с итогом
+ * и строкой «Назад / Продолжить». Стили — wizard12.css (перенесены из макета как есть).
  */
-const tabs: { stage: number; label: string; icon: (color: string) => ReactNode }[] = [
-  { stage: 1, label: 'wizard.tabs.track', icon: (color) => <SvgMaskIcon src="/assets/figma/icon-note.svg" style={{ width: 12, height: 17, color }} /> },
-  {
-    stage: 2,
-    label: 'wizard.tabs.background',
-    icon: (color) => (
-      <span aria-hidden="true" className="relative inline-block h-[19px] w-[19px] shrink-0 max-md:h-[13px] max-md:w-[13px]">
-        <span className="absolute bottom-0 left-0 h-[11px] w-[11px] border border-dashed max-md:h-[8px] max-md:w-[8px]" style={{ borderColor: color }} />
-        <span className="absolute right-0 top-0 h-[15px] w-[15px] max-md:h-[10px] max-md:w-[10px]" style={{ backgroundColor: color }} />
-      </span>
-    )
-  },
-  { stage: 4, label: 'wizard.tabs.text', icon: (color) => <em className="font-bold italic text-[25px] leading-none max-md:text-[15px]" style={{ color }}>Т</em> },
-  { stage: 3, label: 'wizard.tabs.fx', icon: (color) => <SvgMaskIcon src="/assets/figma/icon-bolt.svg" style={{ width: 13, height: 20, color }} /> },
-  { stage: 5, label: 'wizard.tabs.pool', icon: (color) => <em className="font-bold italic text-[25px] leading-none max-md:text-[15px]" style={{ color }}>V</em> }
+
+/* Иконки макета — пути для viewBox 24, рисуются обводкой (svg.w12-i). */
+export const W12 = {
+  left: <path d="M14.5 6 8.5 12l6 6" />,
+  right: <path d="M9.5 6l6 6-6 6" />,
+  down: <path d="M6 9.5l6 6 6-6" />,
+  arrow: <path d="M4 12h15M13.5 6.5 19 12l-5.5 5.5" />,
+  back: <path d="M20 12H5M10.5 6.5 5 12l5.5 5.5" />,
+  check: <path d="M5 12.5 9.5 17 19 7.5" />,
+  plus: <path d="M12 5v14M5 12h14" />,
+  minus: <path d="M5 12h14" />,
+  pencil: <path d="M15.5 5.5l3 3L9 18l-4 1 1-4z" />,
+  reset: <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3M4.5 4.5v4h4" />,
+  upload: <path d="M12 15V4.5M7.5 9 12 4.5 16.5 9M5 15v3.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V15" />,
+  spark: <path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5 15 9M9 15l-2.5 2.5" />,
+  note: <><path d="M9 18V5.5l10-2V16" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="16.5" cy="16" r="2.5" /></>,
+  close: <path d="M6 6l12 12M18 6 6 18" />
+};
+export const PLAY = <svg viewBox="0 0 24 24" className="w12-pl"><path d="M7 4.5v15l12.5-7.5z" /></svg>;
+export const PAUSE = <svg viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></svg>;
+
+export function Svg({ children, className, style }: { children: ReactNode; className?: string; style?: React.CSSProperties }) {
+  return <svg viewBox="0 0 24 24" className={cn('w12-i', className)} style={style} aria-hidden="true">{children}</svg>;
+}
+
+const tabs: { stage: number; label: string; icon: ReactNode }[] = [
+  { stage: 1, label: 'wizard.tabs.track', icon: <span className="w12-mi w12-cap w12-heavy" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-note.svg)', '--r': 0.75 } as React.CSSProperties} /> },
+  { stage: 2, label: 'wizard.tabs.background', icon: <span className="w12-sq" aria-hidden="true" /> },
+  { stage: 4, label: 'wizard.tabs.text', icon: <span className="w12-t-it" aria-hidden="true">Т</span> },
+  { stage: 3, label: 'wizard.tabs.fx', icon: <span className="w12-mi w12-cap w12-heavy" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-bolt.svg)', '--r': 0.65 } as React.CSSProperties} /> },
+  { stage: 5, label: 'wizard.tabs.pool', icon: <span className="w12-t-it" aria-hidden="true">V</span> }
 ];
 
 export function StageTabs() {
@@ -32,48 +48,32 @@ export function StageTabs() {
   const stage = useWizardStore((state) => state.stage);
   const setStage = useWizardStore((state) => state.setStage);
   const reachedIndex = useWizardStore((state) => state.reachedIndex);
-  // Порядок прохождения = порядок табов (Фон → Текст → Хук)
   const currentIndex = tabs.findIndex((tab) => tab.stage === stage);
-  // Прогресс-подложка: заполняется от старта бара до правого края активного пила
-  const fillPct = ((currentIndex + 1) / tabs.length) * 100;
+  // Кликается всё, где человек уже был, — и левее, и правее текущего этапа
+  const reached = Math.max(currentIndex, reachedIndex);
   return (
-    <div className="relative flex h-[60px] w-full overflow-hidden rounded-r15 bg-grad-soft-10 max-md:h-[52px]" role="tablist" aria-label={t('wizard.stagesAria')}>
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-y-0 left-0 z-0 rounded-r15 transition-[width] duration-300 ease-out"
-        style={{ width: `${fillPct}%`, background: 'linear-gradient(90deg, rgba(139,111,230,0.28) 0%, rgba(95,66,185,0.22) 100%)' }}
-      />
+    <nav className="w12-tabs" role="tablist" aria-label={t('wizard.stagesAria')}>
       {tabs.map((tab, index) => {
-        const current = tab.stage === stage;
-        /*
-         * Кликается всё, где человек уже был, — и левее, и правее текущего этапа.
-         * Раньше «пройденным» считалось только то, что левее: вернувшись из Пула в Фон,
-         * вперёд можно было идти лишь кнопкой «Продолжить», заново подтверждая уже
-         * настроенные Текст и FX. Сами настройки при этом никуда не девались.
-         */
-        const passed = !current && index <= Math.max(currentIndex, reachedIndex);
+        const current = index === currentIndex;
+        const done = !current && index < reached;
         return (
           <button
             key={tab.stage}
             type="button"
             role="tab"
+            className="w12-tab"
+            // на телефоне у нетекущих шагов виден только значок — имя шага остаётся для скринридера
+            aria-label={t(tab.label)}
             aria-selected={current}
-            disabled={!passed && !current}
-            onClick={() => passed && setStage(tab.stage)}
-            className={cn(
-              // min-w-0 обязателен: иначе длинный лейбл (EN «Background») раздувает свой таб
-              // и ломает равные пилюли из макета (5×124)
-              'relative z-[1] flex h-full min-w-0 flex-1 items-center justify-center gap-space-2 rounded-r15 text-[24px] font-[350] text-text-80 transition disabled:cursor-default max-xl:gap-space-1 max-xl:text-[17px] max-md:gap-[4px] max-md:text-[13px]',
-              current && 'border-2 border-accent-light bg-grad-soft-20 text-text',
-              passed && 'cursor-pointer hover:text-text'
-            )}
+            disabled={index > reached}
+            onClick={() => setStage(tab.stage)}
           >
-            {tab.icon(current ? 'var(--accent-light)' : 'var(--text-80)')}
-            <span className="truncate">{t(tab.label)}</span>
+            {done ? <span className="w12-done"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 8.4 6.9 10.6 11.4 5.6" /></svg></span> : tab.icon}
+            <span className="w12-l">{t(tab.label)}</span>
           </button>
         );
       })}
-    </div>
+    </nav>
   );
 }
 
@@ -82,43 +82,57 @@ export function WizardHeaderCard({ title, artist, onRename }: { title: string; a
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   return (
-    <header className="card-2 flex h-[240px] shrink-0 flex-col px-space-7 py-space-6 max-lg:h-auto max-lg:px-space-5 max-md:px-[20px] max-md:py-[18px]">
-      <div className="flex items-center gap-space-3">
+    <header className="w12-card w12-head">
+      <div className="w12-head-row">
         {editing ? (
           <input
             ref={inputRef}
             defaultValue={title}
             autoFocus
-            className="wizard-h w-full max-w-[420px] rounded-r10 border border-border bg-transparent px-space-2 outline-none focus:border-accent-light"
+            aria-label={t('wizard.rename')}
+            className="w12-rename"
             onBlur={(e) => { onRename?.(e.target.value.trim()); setEditing(false); }}
             onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditing(false); }}
           />
-        ) : (
-          <h1 className="wizard-h truncate">{title}</h1>
-        )}
+        ) : <h1>{title}</h1>}
         {onRename && !editing && (
-          <button
-            type="button"
-            aria-label={t('wizard.rename')}
-            className="flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-r10 bg-transparent transition-colors hover:bg-accent-20 max-md:h-[24px] max-md:w-[24px]"
-            onClick={() => setEditing(true)}
-          >
-            <img src="/assets/figma/icon-pencil.svg" width="15" height="17" alt="" className="max-md:h-[12px] max-md:w-[11px]" />
-          </button>
+          <button type="button" className="w12-icon-btn" aria-label={t('wizard.rename')} onClick={() => setEditing(true)}><Svg>{W12.pencil}</Svg></button>
         )}
       </div>
-      <p className="wizard-body mt-space-2 max-md:mt-0">{artist ?? '—'}</p>
-      <div className="mt-auto pt-space-4 max-md:pt-[12px]">
-        <StageTabs />
-      </div>
+      <p className="w12-artist">{artist ?? '—'}</p>
+      <StageTabs />
     </header>
   );
 }
 
+/** Строка «Назад / Продолжить». «Продолжить» не бывает мёртвым: на неготовом шаге нажатие
+ *  подсвечивает пропуски, а над кнопками пишется, чего не хватает. */
+/** tone='field' — «дальше» не главное действие карточки: тон «Назад» вместо акцента. */
+export function WizardActions({ ready, loading, onBack, onNext, nextLabel, tone }: { ready: boolean; loading?: boolean; onBack?: () => void; onNext: () => void; nextLabel?: string; tone?: 'field' }) {
+  const { t } = useTranslation();
+  const stage = useWizardStore((state) => state.stage);
+  const missing = useWizardAttempt((state) => (state.stage === stage ? state.message : ''));
+  const next = (
+    <button type="button" className={cn('w12-cta', tone === 'field' ? 'w12-cta-field' : ready && 'w12-ready')} onClick={onNext} aria-busy={loading || undefined}>
+      {loading ? <span className="spinner" aria-hidden="true" /> : <><span className="w12-l">{nextLabel ?? t('wizard.continue')}</span><Svg>{W12.arrow}</Svg></>}
+    </button>
+  );
+  return (
+    <>
+      {!ready && missing && <p role="alert" className="w12-miss">{missing}</p>}
+      {onBack ? (
+        <div className="w12-cta-row">
+          <button type="button" className="w12-back" aria-label={t('wizard.back')} onClick={onBack}><Svg>{W12.back}</Svg></button>
+          {next}
+        </div>
+      ) : next}
+    </>
+  );
+}
+
 /**
- * Нижняя карточка рабочей зоны (Figma W22/W23/W18, 472×226):
- * пилюли — живое отражение настроенных разделов, «+» переводит к следующему разделу,
- * «Продолжить» подсвечивается только при непустом наборе.
+ * Нижняя карточка шага: итог (пилюли разделов — живое отражение настроенного, клик ведёт
+ * в раздел) и строка «Назад / Продолжить».
  */
 export function PillsFooter({
   pills,
@@ -128,121 +142,112 @@ export function PillsFooter({
   onPlus,
   plusDisabled,
   ready,
-  canContinue,
   loading,
   onBack,
   onNext,
-  nextLabel,
-  dragScroll
+  nextLabel
 }: {
-  /** trail — метка после подписи (варианты FX: цвет варианта) */
-  pills: { key: string; label: string; icon: ReactNode; trail?: ReactNode }[];
+  /** icon — счётчик или значок раздела; trail — метка после подписи (цвет варианта FX) */
+  pills: { key: string; label: string; icon: ReactNode; trail?: ReactNode; zero?: boolean }[];
   activeKey?: string;
   emptyLabel: string;
   onPill: (key: string) => void;
   onPlus?: () => void;
   plusDisabled?: boolean;
   ready: boolean;
-  canContinue: boolean;
+  canContinue?: boolean;
   loading?: boolean;
   onBack: () => void;
   onNext: () => void;
-  /** подпись кнопки «дальше» — на опциональном этапе это «Пропустить» */
   nextLabel?: string;
-  dragScroll: { ref: React.RefObject<HTMLDivElement>; moved: () => boolean; handlers: Record<string, unknown> };
+  /** устарело: лента больше не листается драгом, пилюли переносятся */
+  dragScroll?: unknown;
 }) {
   const { t } = useTranslation();
-  const hasPlus = Boolean(onPlus);
-  // Фейды зависят от прокрутки: левый появляется только когда есть контент слева,
-  // правый — только когда есть контент справа (иначе съедали пилюли в покое)
+  // Итог — одной строкой: лишние пилюли уходят за край и листаются (колесо/тач/драг скролла),
+  // край, за которым что-то есть, мягко затухает.
+  const sumRef = useRef<HTMLDivElement>(null);
   const [fade, setFade] = useState({ left: false, right: false });
-  const syncFades = () => {
-    const el = dragScroll.ref.current;
+  const sync = () => {
+    const el = sumRef.current;
     if (!el) return;
-    setFade({
-      left: el.scrollLeft > 4,
-      right: el.scrollLeft + el.clientWidth < el.scrollWidth - 4
-    });
+    setFade({ left: el.scrollLeft > 2, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 });
   };
   useEffect(() => {
-    syncFades();
+    sync();
+    const el = sumRef.current;
+    if (!el) return undefined;
+    const observer = new ResizeObserver(sync);
+    observer.observe(el);
+    // вертикальное колесо листает строку вбок
+    const onWheel = (event: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      event.preventDefault();
+      el.scrollLeft += event.deltaY;
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => { observer.disconnect(); el.removeEventListener('wheel', onWheel); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pills.length]);
-  // Маска вместо цветного оверлея: пилюли тают в прозрачность у краёв (в тон любого фона),
-  // справа фейд заканчивается перед «+», под кнопкой лента полностью прозрачна.
-  const rightGap = hasPlus ? 80 : 0;
-  const mask = `linear-gradient(to right, transparent 0px, #000 ${fade.left ? 40 : 0}px, #000 calc(100% - ${rightGap + (fade.right ? 40 : 0)}px), transparent calc(100% - ${rightGap}px))`;
-
   return (
-    <div className="card-2 flex h-[226px] shrink-0 flex-col justify-between px-space-6 py-space-6 max-lg:px-space-5 max-md:h-auto max-md:gap-[14px] max-md:px-[20px] max-md:py-[20px]">
-      <div className="relative">
-        <div
-          ref={dragScroll.ref}
-          className="media-row cursor-grab select-none items-center gap-[20px] active:cursor-grabbing"
-          style={{ height: 'var(--pill-row-h, 60px)', paddingRight: hasPlus ? 'var(--pill-row-pr, 80px)' : 0, maskImage: mask, WebkitMaskImage: mask }}
-          onScroll={syncFades}
-          {...dragScroll.handlers}
-        >
-          {pills.length === 0 ? (
-            <span className="soft-btn pointer-events-none h-[60px] w-[310px] shrink-0 !text-text-60 max-md:h-[44px] max-md:w-[220px]">{emptyLabel}</span>
-          ) : (
-            pills.map((pill) => (
-              <button
-                key={pill.key}
-                type="button"
-                className={cn('pool-pill', pill.key === activeKey && 'shadow-[inset_0_0_0_2px_var(--accent-light)]')}
-                onClick={() => { if (!dragScroll.moved()) onPill(pill.key); }}
-              >
-                <span className="pool-pill-count">{pill.icon}</span>
-                {pill.label}
-                {pill.trail}
-              </button>
-            ))
-          )}
-        </div>
-        {hasPlus && (
-          <button
-            type="button"
-            aria-label={t('wizard.nextSection')}
-            onClick={onPlus}
-            disabled={plusDisabled}
-            className="absolute right-0 top-0 z-[2] flex h-[60px] w-[60px] items-center justify-center rounded-r15 bg-text transition hover:opacity-90 active:scale-95 disabled:opacity-40 max-md:h-[44px] max-md:w-[44px]"
-          >
-            <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" className="max-md:h-[18px] max-md:w-[18px]">
-              <defs>
-                <linearGradient id="footerPlus" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stopColor="#8b6fe6" />
-                  <stop offset="1" stopColor="#5f42b9" />
-                </linearGradient>
-              </defs>
-              <path d="M12 4v16M4 12h16" stroke="url(#footerPlus)" strokeWidth="2.4" strokeLinecap="round" />
-            </svg>
+    <div className="w12-card w12-foot-card">
+      <div ref={sumRef} className="w12-sum" data-fade-l={fade.left || undefined} data-fade-r={fade.right || undefined} onScroll={sync}>
+        {pills.length === 0 && <span className="w12-sum-empty"><span className="w12-l">{emptyLabel}</span></span>}
+        {pills.map((pill) => (
+          <button key={pill.key} type="button" className={cn(pill.key === activeKey && 'w12-on', pill.zero && 'w12-zero')} onClick={() => onPill(pill.key)}>
+            <b>{pill.icon}</b><span className="w12-l">{pill.label}</span>{pill.trail}
           </button>
+        ))}
+        {onPlus && (
+          <button type="button" className="w12-sum-plus" aria-label={t('wizard.nextSection')} disabled={plusDisabled} onClick={onPlus}><Svg>{W12.plus}</Svg></button>
         )}
       </div>
-
-      <div className="flex items-center gap-[20px] max-md:gap-[10px]">
-        <BackSquareButton onClick={onBack} />
-        <button type="button" disabled={!canContinue || loading} onClick={onNext} className={cn('soft-btn h-[60px] flex-1 gap-space-4 max-md:h-[44px]', ready && 'soft-btn-ready')}>
-          {loading ? <span className="spinner" /> : (<>
-            {nextLabel ?? t('wizard.continue')}
-            <svg viewBox="0 0 26 16" width="25" height="15" fill="none" aria-hidden="true">
-              <path d="M1 8h22.5M17 1.5 24.5 8 17 14.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-          </>)}
-        </button>
-      </div>
+      <WizardActions ready={ready} loading={loading} onBack={onBack} onNext={onNext} nextLabel={nextLabel} />
     </div>
   );
 }
 
-export function BackSquareButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
-  const { t } = useTranslation();
+/* Модель макета (артефакт wizard12 v3): ширина композиции всегда 1240, высота плавает 700–860. */
+const CANVAS_W = 1240;
+const CANVAS_MIN_H = 700;
+
+/**
+ * Холст визарда — та же модель, что у макета. Ширина 1240 в единицах макета растянута на всю
+ * зону (zoom), поэтому кегли и колонки растут вместе с экраном в тех же пропорциях; высота —
+ * остаток зоны в тех же единицах, так что визард заполняет её целиком и ничего не режется.
+ * Только на очень широком и низком экране (высота меньше 700 единиц) масштаб берётся по высоте,
+ * и визард встаёт по центру. Ниже 1024 — обычная колонка без масштаба, как у всего приложения.
+ */
+export function WizardCanvas({ children }: { children: ReactNode }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+  const [fit, setFit] = useState<{ zoom: number; height: number } | null>(null);
+  useLayoutEffect(() => {
+    const box = boxRef.current;
+    if (!box) return undefined;
+    const desktop = window.matchMedia('(min-width: 1024px)');
+    const sync = () => {
+      const { clientWidth: w, clientHeight: h } = box;
+      if (!desktop.matches || !w || !h) { setFit(null); return; }
+      const zoom = Math.min(w / CANVAS_W, h / CANVAS_MIN_H);
+      setFit({ zoom, height: h / zoom });
+    };
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(box);
+    desktop.addEventListener('change', sync);
+    return () => {
+      observer.disconnect();
+      desktop.removeEventListener('change', sync);
+    };
+  }, []);
   return (
-    <button type="button" aria-label={t('wizard.back')} disabled={disabled} onClick={onClick} className="soft-btn h-[60px] w-[60px] shrink-0 max-md:h-[44px] max-md:w-[44px]">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" aria-hidden="true">
-        <path d="M14.5 5.5 8 12l6.5 6.5M8 12h11.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    </button>
+    <div ref={boxRef} className="w12-fit">
+      <div className="w12 w12-app" style={fit ? { zoom: fit.zoom, height: fit.height } : undefined}>{children}</div>
+    </div>
   );
+}
+
+/** Карточка правой колонки (текст, превью, рабочая зона). */
+export function AsideCard({ className, children }: { className?: string; children: ReactNode }) {
+  return <div className={cn('w12-card w12-aside', className)}>{children}</div>;
 }

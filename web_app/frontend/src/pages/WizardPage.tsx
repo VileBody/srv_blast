@@ -1,17 +1,12 @@
-import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
-import type { Vibe } from '../lib/types';
-import { Button } from '../components/ui/Button';
-import { Card, FlatCard } from '../components/ui/Card';
-import { FieldError, Input, Textarea } from '../components/ui/Input';
-import { Modal } from '../components/ui/Modal';
+import { ActionBar, Button, Dialog } from '../components/ui/kit';
 import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
-import { StatusBadge } from '../components/ui/StatusBadge';
-import { backgroundVariations, BackgroundWorkZone, StageBackground, type BackgroundGuideGraphic } from '../components/wizard/BackgroundPanel';
+import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
 import { hasTrackInput, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
@@ -19,47 +14,20 @@ import { useStoryboardBusy } from '../components/wizard/storyboardData';
 import { LabWorkZone, useFxLab, useLegacyHooksToVariants } from '../components/wizard/FxLab';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
-import { dropToSeconds, timingToSeconds, usePlaybackUrl } from '../components/wizard/useFragmentAudio';
+import { dropToSeconds, timingToSeconds } from '../components/wizard/useFragmentAudio';
+import { SEGMENT_SECONDS, segmentSeconds } from '../components/wizard/timing';
+import { TrackStage } from '../components/wizard/TrackStage';
+import { useWizardAttempt } from '../components/wizard/wizardAttempt';
 import { useAsrPreview } from '../components/wizard/useAsrPreview';
-import { BackSquareButton, WizardHeaderCard } from '../components/wizard/WizardFrame';
+import { WizardCanvas, WizardHeaderCard } from '../components/wizard/WizardFrame';
+import { demoTrackUrl } from '../dev/demoTrack';
 import { useToast } from '../contexts/ToastContext';
-import { cn } from '../lib/cn';
 import { useWizardStore } from '../stores/wizardStore';
-import { FigIcon } from '../components/ui/FigIcon';
-import { AUDIO_FILE_ACCEPT, isAudioFile } from '../lib/mediaFiles';
-import { ActionGuideOverlay, type ActionGuideVariant } from '../components/guidance/ActionGuideOverlay';
-import { useGuideDismiss } from '../components/guidance/useGuideDismiss';
+import { useCombos } from '../components/wizard/montage/combos';
+import { useFxTimelineOpen } from '../components/wizard/timelineGuides';
 
-/* Строгий формат тайминга мм:сс:мс — двоеточие ставится само после каждых двух цифр */
-function maskTiming(raw: string): string {
-  const digits = raw.replace(/\D/g, '').slice(0, 6);
-  return digits.replace(/(\d{2})(?=\d)/g, '$1:');
-}
-
-/* timingToSeconds переехал в useFragmentAudio: разбор тайминга нужен и превью с треком */
-
-function secondsToTiming(seconds: number): string {
-  const total = Math.max(0, seconds);
-  const mm = String(Math.floor(total / 60)).padStart(2, '0');
-  const ss = String(Math.floor(total % 60)).padStart(2, '0');
-  const cc = String(Math.round((total % 1) * 100)).padStart(2, '0');
-  return `${mm}:${ss}:${cc}`;
-}
-
-/** Тайминг не может выходить за реальную длительность трека (правка ревью) */
-export function clampTiming(value: string, durationS?: number): string {
-  const masked = maskTiming(value);
-  if (!durationS) return masked;
-  const sec = timingToSeconds(masked);
-  if (sec !== null && sec > durationS) return secondsToTiming(durationS);
-  return masked;
-}
-
-function parseTime(value: string): number | null {
-  const match = /^(\d+):([0-5]\d)$/.exec(value.trim());
-  if (!match) return null;
-  return Number(match[1]) * 60 + Number(match[2]);
-}
+// Монтажный стол — тяжёлый полноэкранный экран «Пула»: грузится, когда его открыли
+const MontageTable = lazy(() => import('../components/wizard/montage/MontageTable').then((m) => ({ default: m.MontageTable })));
 
 function apiErrorText(error: unknown): string | undefined {
   if (!(error instanceof ApiError)) return undefined;
@@ -72,376 +40,6 @@ function apiErrorText(error: unknown): string | undefined {
     }
   }
   return undefined;
-}
-
-/** Максимальная длина отрывка: 15 с на триале, 30 с на платном тарифе. */
-export const SEGMENT_SECONDS = { trial: 15, paid: 30 } as const;
-
-export function segmentSeconds(from: string, to: string): number | null {
-  const a = timingToSeconds(from);
-  const b = timingToSeconds(to);
-  return a === null || b === null ? null : b - a;
-}
-
-type TrackGuideConcept = 'cut' | 'marks' | 'focus';
-
-function TrackTimingGuideVisual({ concept, seconds }: { concept: TrackGuideConcept; seconds: number }) {
-  const bars = [10, 18, 25, 14, 30, 21, 27, 12, 23, 17, 9];
-
-  if (concept === 'marks') {
-    return (
-      <div className="flex w-full flex-col items-center justify-center gap-[7px]" aria-hidden="true">
-        <span className="guide-track-piece guide-mode-delay-1 flex h-[29px] w-full items-center justify-between rounded-[8px] border border-white/15 bg-black/15 px-[8px] text-[9px] text-white/45">
-          <span>от</span><strong className="action-guide-optical-text text-[10px] font-[400] text-white">00:10</strong>
-        </span>
-        <span className="guide-track-piece guide-mode-delay-2 flex h-[18px] items-center gap-[5px] text-[8px] text-accent-light">
-          <i className="h-[12px] w-px bg-accent-light/70" /><b className="action-guide-optical-text rounded-[5px] bg-accent-light/15 px-[5px] py-[3px] font-[400]">{seconds} сек</b><i className="h-[12px] w-px bg-accent-light/70" />
-        </span>
-        <span className="guide-track-piece guide-mode-delay-3 flex h-[29px] w-full items-center justify-between rounded-[8px] border border-accent-light/40 bg-accent-light/15 px-[8px] text-[9px] text-white/45">
-          <span>до</span><strong className="action-guide-optical-text text-[10px] font-[400] text-white">00:{String(10 + seconds).padStart(2, '0')}</strong>
-        </span>
-      </div>
-    );
-  }
-
-  if (concept === 'focus') {
-    return (
-      <div className="flex w-full items-center gap-[9px]" aria-hidden="true">
-        <div className="guide-track-piece guide-mode-delay-1 relative flex h-[42px] min-w-0 flex-1 items-center justify-center gap-[3px] overflow-hidden rounded-[10px] border border-white/10 bg-black/15 px-[9px]">
-          {bars.concat([16, 22, 13]).map((height, index) => (
-            <span key={`${height}-${index}`} className="w-[3px] shrink-0 rounded-full bg-white/20" style={{ height: Math.max(7, height - 5) }} />
-          ))}
-          <span className="absolute inset-y-[5px] left-[38%] right-[20%] rounded-[6px] border border-accent-light/55 bg-accent-light/15" />
-        </div>
-        <span className="guide-track-piece guide-mode-delay-2 text-[16px] text-white/55">→</span>
-        <div className="guide-track-piece guide-mode-delay-3 flex h-[42px] w-[82px] shrink-0 flex-col items-center justify-center rounded-[10px] border border-accent-light/55 bg-accent-light/15 shadow-[0_8px_18px_rgba(5,1,15,.28)]">
-          <span className="action-guide-optical-text text-[12px] font-[400] text-white">{seconds} сек</span>
-          <span className="mt-[3px] text-[7px] text-white/45">готовый отрывок</span>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="guide-track-piece guide-mode-delay-1 flex w-full items-center justify-center gap-[9px]" aria-hidden="true">
-      <span className="flex h-[38px] w-[58px] shrink-0 items-center justify-center whitespace-nowrap rounded-[8px] bg-white/[0.1] text-[15px] font-[400] leading-none text-white"><span className="action-guide-optical-text action-guide-timing-text">00:10</span></span>
-      <span className="relative h-[4px] min-w-0 flex-1 rounded-full bg-white/25">
-        {/* Заливка растягивается/сжимается синхронно с правым хендлом (scaleX от
-            левого края, те же тайминги) — иначе хендл гуляет сам по себе, а полоса
-            стоит как приклеенная. */}
-        <span className="guide-track-fill-move absolute inset-y-0 left-0 right-[24%] origin-left rounded-full bg-accent-light" />
-        {/* Левая палочка (начало отрывка) статична — двигаем только правую (конец),
-            иначе непонятно, что именно тянут: две одновременные анимации спорят
-            за внимание. Ход теперь в обе стороны и покрупнее (было еле видно). */}
-        <span className="absolute left-0 top-1/2 h-[14px] w-[2px] -translate-y-1/2 bg-white" />
-        <span className="guide-track-handle-right absolute right-[24%] top-1/2 h-[14px] w-[2px] bg-white" />
-      </span>
-      <span className="flex h-[38px] w-[58px] shrink-0 items-center justify-center whitespace-nowrap rounded-[8px] bg-white/[0.1] text-[15px] font-[400] leading-none text-white"><span className="action-guide-optical-text action-guide-timing-text">00:{String(10 + seconds).padStart(2, '0')}</span></span>
-    </div>
-  );
-}
-
-/* Этап «Трек» по Figma Wireframe 7–8: вводные трека + тайминг отрывка */
-function StageOne({ creditsLeft, maxSegmentSeconds, paidPlan, guideVariant = 'visual', guideConcept = 'cut' }: { creditsLeft: number | null; maxSegmentSeconds: number; paidPlan: boolean; guideVariant?: ActionGuideVariant; guideConcept?: TrackGuideConcept }) {
-  const { t } = useTranslation();
-  const { push } = useToast();
-  const track = useWizardStore((state) => state.track);
-  const setTrack = useWizardStore((state) => state.setTrack);
-  const lyrics = useWizardStore((state) => state.lyrics);
-  const timingFrom = useWizardStore((state) => state.timingFrom);
-  const timingTo = useWizardStore((state) => state.timingTo);
-  const setField = useWizardStore((state) => state.setField);
-  const projectId = useWizardStore((state) => state.projectId);
-  const reset = useWizardStore((state) => state.reset);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const timingToInputRef = useRef<HTMLInputElement>(null);
-  const timingGuideTargetRef = useRef<HTMLDivElement>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  // Трек из черновика / прошлого батча: blob-ссылки нет, играем по свежей presigned-ссылке
-  const playbackUrl = usePlaybackUrl(track);
-  const effectiveAudioUrl = audioUrl ?? playbackUrl;
-  const [playing, setPlaying] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const previousQuery = useQuery({
-    queryKey: ['wizard-previous-track'],
-    queryFn: api.previousTrack,
-    enabled: !track,
-    staleTime: 30_000
-  });
-
-  const uploadMutation = useMutation({
-    mutationFn: api.uploadTrack,
-    onSuccess: (data, file) => {
-      setTrack(data.track);
-      audioRef.current?.pause();
-      audioRef.current = null;
-      setPlaying(false);
-      const url = URL.createObjectURL(file);
-      setAudioUrl((prev) => {
-        if (prev) URL.revokeObjectURL(prev);
-        return url;
-      });
-      // Реальная длительность трека из метаданных файла (mock возвращает заглушку)
-      const probe = new Audio(url);
-      probe.onloadedmetadata = () => {
-        if (Number.isFinite(probe.duration)) setTrack({ ...data.track, durationS: probe.duration });
-      };
-      push({ variant: 'success', title: t('wizard.track.loaded'), text: data.track.filename });
-    },
-    // 402 — исчерпан лимит треков: показываем причину и куда идти, а не общий «не загрузилось»
-    onError: (error) => {
-      const limitReached = error instanceof ApiError && error.status === 402;
-      push({
-        variant: 'error',
-        title: limitReached ? t('wizard.track.limitReached') : t('wizard.track.loadFail'),
-        text: limitReached ? String((error.detail as { detail?: string })?.detail ?? '') : undefined,
-        action: limitReached ? { label: t('wizard.track.limitCta'), href: '/app/pricing' } : undefined
-      });
-    }
-  });
-
-  const handleFile = (file?: File | null) => {
-    if (!file) return;
-    if (!isAudioFile(file)) {
-      push({ variant: 'error', title: t('wizard.track.audioOnly') });
-      return;
-    }
-    uploadMutation.mutate(file);
-  };
-  const onUpload = (event: ChangeEvent<HTMLInputElement>) => {
-    handleFile(event.target.files?.[0]);
-    event.target.value = '';
-  };
-  const onDrop = (event: DragEvent) => {
-    event.preventDefault();
-    setDragOver(false);
-    handleFile(event.dataTransfer.files?.[0]);
-  };
-
-  // Плеер создаётся заранее и подгружает файл (preload=auto): клик по «плей» тогда
-  // не ждёт метаданных и сикает мгновенно.
-  useEffect(() => {
-    if (!effectiveAudioUrl) return;
-    const audio = new Audio();
-    audio.preload = 'auto';
-    audio.src = effectiveAudioUrl;
-    audio.onended = () => setPlaying(false);
-    audioRef.current = audio;
-    setPlaying(false);
-    return () => { audio.pause(); if (audioRef.current === audio) audioRef.current = null; };
-  }, [effectiveAudioUrl]);
-  const togglePlay = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    if (playing) {
-      audio.pause();
-      setPlaying(false);
-      return;
-    }
-    // Проигрываем именно выбранный отрезок — для верификации тайминга
-    const from = timingToSeconds(timingFrom);
-    const to = timingToSeconds(timingTo);
-    audio.ontimeupdate = to !== null && (from === null || to > from)
-      ? () => { if (audio.currentTime >= to) { audio.pause(); setPlaying(false); audio.ontimeupdate = null; } }
-      : null;
-    const start = () => { audio.currentTime = from ?? 0; void audio.play(); };
-    // Сик до загрузки метаданных браузер молча игнорирует — ждём их, если ещё не пришли
-    if (audio.readyState >= 1) start();
-    else audio.addEventListener('loadedmetadata', start, { once: true });
-    setPlaying(true);
-  };
-
-  // Только пауза при размонтировании. Blob-URL не отзываем здесь: в dev StrictMode
-  // cleanup эффекта срабатывает сразу после mount и убивает ссылку до воспроизведения.
-  // Старая ссылка отзывается в setAudioUrl при замене файла.
-  useEffect(() => () => {
-    audioRef.current?.pause();
-  }, []);
-
-  /*
-   * Раньше превышение лимита ловилось ПОСЛЕ ввода: тайминг обнулялся, и человек начинал
-   * заново, часто не поняв почему. Теперь лимит написан над полями, длина отрывка видна
-   * вживую, а перебор просто подсвечивается — введённое не стирается.
-   */
-  const commitTiming = (field: 'timingFrom' | 'timingTo', next: string) => {
-    /*
-     * Текст привязан к конкретному отрывку: если границы поехали, старые строки уже не
-     * совпадут со звуком. Для lyric-video рассинхрон недопустим, поэтому текст очищаем
-     * и прямо просим вписать новый — это ~30 секунд, зато результат всегда синхронный.
-     */
-    const changed = (field === 'timingFrom' ? timingFrom : timingTo) !== next;
-    if (changed && lyrics.trim()) {
-      setField('lyrics', '');
-      setField('fragmentLyrics', '');
-      setField('fragmentEnabled', false);
-      push({ variant: 'warning', title: t('wizard.text.resetTitle'), text: t('wizard.text.resetText') });
-    }
-    setField('timingMode', 'manual');
-    setField(field, next);
-    return true;
-  };
-
-  const ext = track ? (track.filename.split('.').pop() ?? 'mp3').toLowerCase() : null;
-  const baseName = track ? track.filename.replace(/\.[^.]+$/, '') : null;
-
-  const segment = segmentSeconds(timingFrom, timingTo);
-  const overLimit = segment !== null && segment > maxSegmentSeconds;
-  const backwards = segment !== null && segment <= 0;
-  const roundSeconds = (value: number) => Math.round(value * 10) / 10;
-  const [timingGuideDismissed, setTimingGuideDismissed] = useGuideDismiss(
-    'track-timing',
-    Boolean(track) && (segment === null || segment <= 0 || segment > maxSegmentSeconds),
-    // visible: тайминг-подсказку показываем всем, кто долистал до трека,
-    // разово — даже если отрывок уже корректно задан (принудительный тур).
-    Boolean(track)
-  );
-
-  return (
-    <div className="flex min-h-full flex-col">
-      {/* телефон: заголовок в одну строку, под ним «Доступно» и «Сбросить» одним кеглем */}
-      <div className="flex shrink-0 items-center justify-between gap-space-4 max-md:flex-col max-md:items-start max-md:gap-[6px]">
-        <h2 className="wizard-h flex items-center gap-space-3 whitespace-nowrap">
-          <FigIcon name="icon-note.svg" h={19} />
-          {t('wizard.track.intro')}
-        </h2>
-        <span className="flex items-baseline gap-space-4 max-md:gap-[12px]">
-          <span className="wizard-body max-md:text-[13px] max-md:leading-none max-md:text-text-60">{creditsLeft === null ? t('wizard.track.availableUnlimited') : t('wizard.track.available', { count: creditsLeft })}</span>
-          <button
-            type="button"
-            onClick={() => { audioRef.current?.pause(); audioRef.current = null; setPlaying(false); setAudioUrl(null); reset(projectId); }}
-            className="text-[14px] text-text-40 underline decoration-dotted underline-offset-4 transition hover:text-text-60 max-md:text-[13px] max-md:leading-none"
-          >
-            {t('wizard.track.reset')}
-          </button>
-        </span>
-      </div>
-
-      <input ref={fileInputRef} className="sr-only" type="file" accept={AUDIO_FILE_ACCEPT} onChange={onUpload} />
-      {!track ? (
-        <div className="mt-space-6 grid gap-space-3 max-md:mt-[14px] max-md:gap-[8px]">
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={onDrop}
-            className={cn('dash-panel flex h-[100px] w-full items-center justify-center gap-space-5 px-space-7 transition max-lg:px-space-5 max-md:h-[64px] max-md:gap-[10px]', dragOver && 'brightness-150')}
-          >
-            <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-r10 bg-text max-md:h-[28px] max-md:w-[28px]">
-              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" className="max-md:h-[16px] max-md:w-[16px]">
-                <defs>
-                  <linearGradient id="plusGrad" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0" stopColor="#8b6fe6" />
-                    <stop offset="1" stopColor="#5f42b9" />
-                  </linearGradient>
-                </defs>
-                <path d="M12 4v16M4 12h16" stroke="url(#plusGrad)" strokeWidth="2.4" strokeLinecap="round" />
-              </svg>
-            </span>
-            <span className="wizard-body">{uploadMutation.isPending ? t('wizard.track.uploading') : t('wizard.track.dropHint')}</span>
-          </button>
-          {previousQuery.data?.track && (
-            <button
-              type="button"
-              className="flex h-[56px] items-center justify-between rounded-r15 bg-grad-soft-10 px-space-5 text-left transition hover:brightness-125 max-md:h-[44px] max-md:px-[12px]"
-              onClick={() => {
-                const previous = previousQuery.data.track;
-                if (!previous) return;
-                setTrack(previous);
-                setAudioUrl(previous.localUrl || previous.s3Key);
-              }}
-            >
-              <span className="truncate text-[16px] text-text-80 max-md:text-[13px]">{t('wizard.track.previous')}</span>
-              <span className="ml-space-4 truncate text-[16px] text-text max-md:text-[13px]">{previousQuery.data.track.filename}</span>
-            </button>
-          )}
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          title={t('wizard.track.replaceFile')}
-          className="dash-panel mt-space-6 flex h-[90px] min-h-[90px] w-full shrink-0 items-center justify-between gap-space-4 px-space-5 max-md:mt-[14px] max-md:h-[56px] max-md:min-h-0 max-md:gap-[8px]"
-        >
-          <span className="wizard-body truncate text-left">{baseName}</span>
-          <span className="flex shrink-0 items-center gap-space-3">
-            <span className="soft-chip">{`${String(Math.floor(track.durationS / 60)).padStart(2, '0')}:${String(Math.round(track.durationS % 60)).padStart(2, '0')}`}</span>
-            <span className="soft-chip">{ext}</span>
-          </span>
-        </button>
-      )}
-
-      {/* Лимит длины отрывка виден ДО ввода — рядом с заголовком, а не тостом постфактум */}
-      <div className="mt-space-6 flex shrink-0 flex-wrap items-baseline justify-between gap-space-3 max-md:mt-[18px] max-md:flex-col max-md:gap-[6px]">
-        <h2 className="wizard-h">{t('wizard.track.timing')}</h2>
-        <span className="flex items-baseline gap-space-3 max-md:gap-[12px]">
-          <span className={cn('soft-chip max-md:hidden', overLimit && '!text-[var(--warning)]')}>{t('wizard.track.segmentCap', { seconds: maxSegmentSeconds })}</span>
-          {/* телефон: без пилюли — тем же текстом, что «Доступно: N видео» */}
-          <span className={cn('hidden text-[13px] leading-none text-text-60 max-md:inline', overLimit && '!text-[var(--warning)]')}>{t('wizard.track.segmentCap', { seconds: maxSegmentSeconds })}</span>
-          {!paidPlan && (
-            <a href="/app/pricing" className="text-[14px] text-text-40 underline decoration-dotted underline-offset-4 transition hover:text-text-60 max-md:text-[13px] max-md:leading-none">
-              {t('wizard.track.segmentUpgrade', { seconds: SEGMENT_SECONDS.paid })}
-            </a>
-          )}
-        </span>
-      </div>
-      {/* Акцентная обводка с момента загрузки трека и дальше — пройденный/активный этап */}
-      <div ref={timingGuideTargetRef} className={cn('mt-space-5 flex h-[190px] min-h-[190px] w-full shrink-0 items-center justify-center gap-space-4 px-space-5 max-md:mt-[12px] max-md:h-[84px] max-md:min-h-0 max-md:gap-[8px] max-md:px-[10px]', track ? 'dash-panel' : 'dash-panel-white', (overLimit || backwards) && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
-        <button
-          type="button"
-          aria-label={playing ? t('wizard.track.pause') : t('wizard.track.play')}
-          disabled={!effectiveAudioUrl}
-          onClick={togglePlay}
-          className="soft-btn h-[60px] w-[60px] shrink-0 max-md:h-[40px] max-md:w-[40px]"
-        >
-          {playing ? (
-            <span className="flex gap-[6px]" aria-hidden="true"><span className="h-[20px] w-[5px] rounded-[2px] bg-text max-md:h-[14px] max-md:w-[4px]" /><span className="h-[20px] w-[5px] rounded-[2px] bg-text max-md:h-[14px] max-md:w-[4px]" /></span>
-          ) : (
-            <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true" className="max-md:h-[14px] max-md:w-[14px]"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="currentColor" /></svg>
-          )}
-        </button>
-        <span className="wizard-body">{t('wizard.track.from')}</span>
-        <input
-          value={timingFrom}
-          onChange={(e) => {
-            const next = clampTiming(e.target.value, track?.durationS);
-            const accepted = commitTiming('timingFrom', next);
-            if (accepted && /^\d{2}:\d{2}:\d{2}$/.test(next)) window.requestAnimationFrame(() => timingToInputRef.current?.focus());
-          }}
-          inputMode="numeric"
-          maxLength={8}
-          aria-label={t('wizard.track.segStart')}
-          placeholder="00:00"
-          className="soft-input"
-        />
-        <span className="wizard-body">{t('wizard.track.to')}</span>
-        <input ref={timingToInputRef} value={timingTo} onChange={(e) => commitTiming('timingTo', clampTiming(e.target.value, track?.durationS))} inputMode="numeric" maxLength={8} aria-label={t('wizard.track.segEnd')} placeholder="00:00" className="soft-input" />
-      </div>
-      <ActionGuideOverlay
-        open={Boolean(track) && !timingGuideDismissed}
-        targetRef={timingGuideTargetRef}
-        title={t('wizard.track.guideTitle')}
-        text={t('wizard.track.guideText', { seconds: maxSegmentSeconds })}
-        dismissLabel={t('wizard.track.guideDismiss')}
-        progressLabel={t('wizard.guideProgress', { current: 1, total: 2 })}
-        onDismiss={() => setTimingGuideDismissed(true)}
-        variant={guideVariant}
-        shell={guideConcept === 'marks' ? 'track-reverse' : guideConcept === 'focus' ? 'track-wide' : 'track-top'}
-        visual={<TrackTimingGuideVisual concept={guideConcept} seconds={maxSegmentSeconds} />}
-      />
-      {/* Живая длина отрывка: перебор виден сразу, введённое не стирается */}
-      <p className={cn('mt-space-5 max-w-[520px] shrink-0 text-[15px] leading-[1.5] max-md:mt-[10px] max-md:text-[13px]', overLimit || backwards ? 'text-[var(--warning)]' : 'wizard-body max-md:!text-[13px]')}>
-        {backwards
-          ? t('wizard.track.segmentBackwards')
-          : overLimit
-            ? t('wizard.track.segmentOver', { seconds: roundSeconds(segment), max: maxSegmentSeconds })
-            : segment !== null
-              ? t('wizard.track.segmentLen', { seconds: roundSeconds(segment) })
-              : `${t('wizard.track.timingHint')} · ${t(paidPlan ? 'wizard.track.segmentCapPaid' : 'wizard.track.segmentCapTrial', { seconds: maxSegmentSeconds, paid: SEGMENT_SECONDS.paid })}`}
-      </p>
-    </div>
-  );
 }
 
 /* Этап «Фон» вынесен в components/wizard/BackgroundPanel.tsx (Figma W12/3/13/14/15) */
@@ -469,22 +67,15 @@ export function WizardPage() {
   const restoredServerDraft = useRef(false);
   const qaStage = import.meta.env.DEV ? Number(params.get('qaStage') || 0) : 0;
   const qaGuide = import.meta.env.DEV ? params.get('qaGuide') : null;
-  const qaGuideVariant = import.meta.env.DEV && ['minimal', 'balanced', 'visual'].includes(params.get('guideStyle') || '')
-    ? params.get('guideStyle') as ActionGuideVariant
-    : 'visual';
-  const qaGuideGraphic = import.meta.env.DEV && ['map', 'pairs', 'stack', 'studio'].includes(params.get('guideGraphic') || '')
-    ? params.get('guideGraphic') as BackgroundGuideGraphic
-    : 'studio';
-  const qaTrackGuideConcept = import.meta.env.DEV && ['cut', 'marks', 'focus'].includes(params.get('trackConcept') || '')
-    ? params.get('trackConcept') as TrackGuideConcept
-    : 'cut';
   useEffect(() => {
     if (qaStage < 1 || qaStage > 5) return;
     // Explicit development-only visual fixture: every Figma stage is directly auditable
     // without faking browser storage or calling an LLM. It is excluded from production use.
     state.setTrack({
       id: 'qa-track', userId: 'user_1', s3Key: 'qa/track.mp3', filename: 'Название трека.mp3',
-      durationS: 204, createdAt: '2026-07-15T00:00:00Z', expiresAt: '2026-07-22T00:00:00Z'
+      durationS: 204, createdAt: '2026-07-15T00:00:00Z', expiresAt: '2026-07-22T00:00:00Z',
+      // синтезированный демо-трек: у волны отрывка настоящая форма, отрывок слышно
+      localUrl: import.meta.env.DEV ? demoTrackUrl(204) : undefined
     });
     state.setField('lyrics', qaGuide === 'text' ? '' : 'Я знаю — этот город не уснёт\nПока музыка ведёт нас вперёд');
     state.setField('timingFrom', qaGuide === 'timing' ? '' : '00:10:00');
@@ -649,7 +240,7 @@ export function WizardPage() {
     && timingToSeconds(state.timingFrom) !== null
     && timingToSeconds(state.timingTo) !== null
     && !segmentInvalid;
-  const timingToComplete = /^\d{2}:\d{2}:\d{2}$/.test(state.timingTo);
+  const timingToComplete = timingToSeconds(state.timingTo) !== null;
   const dropSeconds = dropToSeconds(state.hooks.dropTime);
   const clipFromSeconds = timingToSeconds(state.timingFrom);
   const clipToSeconds = timingToSeconds(state.timingTo);
@@ -727,8 +318,35 @@ export function WizardPage() {
     stageEnteredRef.current = { stage, at: Date.now() };
   }, [stage]);
 
+  // Шаг сменился — прошлая попытка «Продолжить» больше не подсвечивает пропуски
+  useEffect(() => { useWizardAttempt.getState().clear(); }, [stage]);
+
+  /** Чего не хватает на шаге — пишется над кнопкой после нажатия на неготовом шаге. */
+  const missingText = (): string => {
+    if (stage === 1) {
+      if (!state.track) return t('wizard.missing.track');
+      if (!timingReady) return t('wizard.missing.cut');
+      return t('wizard.missing.lyrics');
+    }
+    if (stage === 2) return t('wizard.missing.background');
+    if (stage === 3) {
+      const needDrop = fxLab ? labVariants.some((v) => v.kind !== 'none') : configuredHooksNeedDrop;
+      const configured = fxLab ? labVariantsComplete : configuredHookCount > 0;
+      if (configured && needDrop && !dropReady) return t('wizard.missing.drop');
+      return t('wizard.missing.fx');
+    }
+    if (stage === 4) return t('wizard.missing.subtitles');
+    if (storyboardBusy) return t('wizard.missing.storyboard');
+    if (fxLab && !labVariantsComplete) return t('wizard.missing.fx');
+    return t('wizard.missing.pool');
+  };
+
   const next = async () => {
-    if (!canContinue) return;
+    if (!canContinue) {
+      useWizardAttempt.getState().mark(stage, missingText());
+      return;
+    }
+    useWizardAttempt.getState().clear();
     try {
       await saveSessionMutation.mutateAsync();
     } catch {
@@ -738,6 +356,23 @@ export function WizardPage() {
     if (idx < STAGE_ORDER.length - 1) setStage(STAGE_ORDER[idx + 1]);
     else submitMutation.mutate();
   };
+
+  // «Пул» и монтажный стол смотрят на одно видео батча: листалка «Комбинаций» и
+  // переключатель стола двигают один номер.
+  const [poolIndex, setPoolIndex] = useState(0);
+  const [tableOpen, setTableOpen] = useState(false);
+  const combos = useCombos();
+  const montageVideos = useWizardStore((s) => s.montage.videos);
+  const storyboardVideos = useWizardStore((s) => s.storyboard.videos);
+  const setTimelineFlag = useFxTimelineOpen((s) => s.setOpen);
+  useEffect(() => { setTimelineFlag(tableOpen && stage === 5); }, [tableOpen, stage, setTimelineFlag]);
+  // ушли с «Пула» — стол закрыт: возврат на «Пул» не должен сам открывать его поверх
+  useEffect(() => { if (stage !== 5) setTableOpen(false); }, [stage]);
+  useEffect(() => () => setTimelineFlag(false), [setTimelineFlag]);
+  const safePoolIndex = Math.min(poolIndex, Math.max(0, combos.length - 1));
+  const poolCombo = combos[safePoolIndex];
+  const poolEdited = Boolean(poolCombo && ((montageVideos[safePoolIndex]?.edited && montageVideos[safePoolIndex]?.sig === poolCombo.sig)
+    || Object.keys(storyboardVideos[poolCombo.slotIndex]?.pins ?? {}).length));
 
   /*
    * Генерировать некуда — сразу открываем создание проекта. Раньше здесь был экран
@@ -762,26 +397,31 @@ export function WizardPage() {
   };
   const busy = submitMutation.isPending || saveSessionMutation.isPending;
 
+
   // Тот же fill-height, что у Dashboard/Projects/ProjectDetail: верх контента = лого сайдбара,
-  // низ = аватар. Раньше визард жил на своём паттерне (-m-space-6 + h-dvh) и вставал по 32px,
-  // из-за чего ужимался не так, как остальные страницы.
+  // низ = аватар. Внутри — холст по модели макета (WizardCanvas): ширина 1240, высота по месту.
   return (
-    <div className="flex min-h-0 flex-1 gap-[20px] max-lg:h-auto max-lg:flex-col md:h-[var(--app-page-h)] md:flex-none md:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+    <div className="w12-zone">
+    <WizardCanvas>
       {/*
         Новый батч наследует трек, текст и тайминги прошлого — но молча подменять
         вводные нельзя: человек либо не заметит, что генерит по старому отрывку,
         либо решит, что визард потерял шаг. Спрашиваем один раз, при входе.
       */}
-      <Modal open={state.carriedOverInputs} title={t('wizard.page.carriedTitle')} onClose={() => state.ackCarriedOver()}>
-        <p className="text-text-80">{t('wizard.page.carriedText')}</p>
-        <div className="mt-space-5 flex flex-wrap gap-space-3">
-          <Button onClick={() => state.ackCarriedOver()}>{t('wizard.page.carriedKeep')}</Button>
-          <Button variant="ghost" onClick={() => { state.ackCarriedOver(); setStage(1); }}>
-            {t('wizard.page.carriedEdit')}
-          </Button>
-        </div>
-      </Modal>
-      <section className="flex min-w-0 flex-1 flex-col gap-[20px]">
+      <Dialog
+        open={state.carriedOverInputs}
+        title={t('wizard.page.carriedTitle')}
+        onClose={() => state.ackCarriedOver()}
+        footer={(
+          <ActionBar>
+            <Button variant="ghost" onClick={() => { state.ackCarriedOver(); setStage(1); }}>{t('wizard.page.carriedEdit')}</Button>
+            <Button variant="primary" onClick={() => state.ackCarriedOver()}>{t('wizard.page.carriedKeep')}</Button>
+          </ActionBar>
+        )}
+      >
+        <p className="text-ui-16 text-text-80">{t('wizard.page.carriedText')}</p>
+      </Dialog>
+      <div className="w12-col-main">
         <WizardHeaderCard
           title={headerTitle}
           artist={artist}
@@ -791,7 +431,7 @@ export function WizardPage() {
           } : undefined}
         />
         {/* data-limits-dim: хост затемнения для LimitsIndicator (Figma W46 — на всю карточку) */}
-        <div data-limits-dim className={cn('card-2 relative min-h-0 flex-1 px-space-7 py-space-6 max-lg:px-space-5', stage === 5 ? 'overflow-hidden' : 'subtle-scroll overflow-y-auto')}>
+        <section data-limits-dim className="w12-card w12-stage" style={stage === 5 ? { overflow: 'hidden' } : undefined}>
           {queryDown(projectsQuery) ? (
             /* без списка проектов визарду некуда сабмитить — честно говорим и даём повтор */
             <QueryError query={projectsQuery} className="!bg-transparent min-h-[420px]" />
@@ -799,21 +439,19 @@ export function WizardPage() {
             <Skeleton className="h-[420px]" />
           ) : (
             <>
-              {stage === 1 && <StageOne creditsLeft={creditsLeft} maxSegmentSeconds={maxSegmentSeconds} paidPlan={paidPlan} guideVariant={qaGuideVariant} guideConcept={qaTrackGuideConcept} />}
-              {stage === 2 && <StageBackground guideGraphic={qaGuideGraphic} guideVariant={qaGuideVariant} qaGuide={qaGuide} />}
+              {stage === 1 && <TrackStage creditsLeft={creditsLeft} maxSegmentSeconds={maxSegmentSeconds} paidPlan={paidPlan} />}
+              {stage === 2 && <StageBackground qaGuide={qaGuide} />}
               {stage === 3 && <StageHooks />}
               {stage === 4 && <StageSubtitles />}
               {stage === 5 && <StageSlice />}
             </>
           )}
-        </div>
-      </section>
+        </section>
+      </div>
       {stage === 1 ? (
         <TextPanel
-          canContinue={canContinue}
-          guideVariant={qaGuideVariant}
-          highlight={timingReady}
-          // поле текста открывается только после тайминга: текст относится к отрывку
+          ready={ready}
+          // поле текста открывается только после отрывка: текст относится к нему
           timingReady={timingReady}
           timingToComplete={timingToComplete}
           loading={busy}
@@ -826,8 +464,18 @@ export function WizardPage() {
       ) : stage === 4 ? (
         <SubtitlesWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
       ) : (
-        <SliceWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next} />
+        // Пока открыт стол, раскадровка «Пула» под ним не живёт: у неё свой звук и свои
+        // кнопки кадра. Сама раскадровка лежит в сторе — стол работает с ней.
+        tableOpen ? <aside className="w12-col-aside" aria-hidden="true" /> : <SliceWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next}
+          index={safePoolIndex} onIndex={setPoolIndex} edited={poolEdited}
+          onOpenTimeline={(index) => { setPoolIndex(index); setTableOpen(true); }} />
       )}
+    </WizardCanvas>
+    {stage === 5 && tableOpen && (
+      <Suspense fallback={null}>
+        <MontageTable index={safePoolIndex} onIndex={setPoolIndex} onClose={() => setTableOpen(false)} onGenerate={() => { if (!canContinue) { const reason = missingText(); useWizardAttempt.getState().mark(stage, reason); return reason; } void next(); return null; }} />
+      </Suspense>
+    )}
     </div>
   );
 }

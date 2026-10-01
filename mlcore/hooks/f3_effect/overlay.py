@@ -28,6 +28,7 @@ No f3 selection => caller passes nothing => `_build_f3_overlay_js` returns ""
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -59,6 +60,120 @@ F3_EXTRAS = (
     "xerox", "analog_glitch", "neon_extract", "old_camera",
     "blackwhite", "crystal_glow", "night_vision", "wave",
 )
+# Переходы, которые умеют работать по списку склеек (CONFIG.cuts). layer_shake
+# трясёт слой целиком и склейки не читает — назначить его на одну склейку нельзя.
+F3_CUT_TRANSITIONS = ("snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts")
+
+
+def _kantfx_ids(group: str) -> tuple:
+    """id эффектов Kant Tools (manifest: поле preset) группы extra / transition.
+
+    Все они идут через один скрипт kantfx/apply_kantfx.jsx, который читает CONFIG.cuts,
+    поэтому каждый Kant-переход годится и для склейки монтажного стола.
+    """
+    effects = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8")).get("effects", [])
+    return tuple(e["id"] for e in effects if isinstance(e, dict) and e.get("preset") and e.get("group") == group)
+
+
+_KANTFX_EXTRAS = _kantfx_ids("extra")
+_KANTFX_TRANSITIONS = _kantfx_ids("transition")
+F3_EXTRAS = F3_EXTRAS + _KANTFX_EXTRAS
+F3_TRANSITIONS = F3_TRANSITIONS + _KANTFX_TRANSITIONS
+F3_CUT_TRANSITIONS = F3_CUT_TRANSITIONS + _KANTFX_TRANSITIONS
+# Допуск сопоставления склейки монтажного стола со склейкой, найденной в компе
+# (inPoint слоя футажа): кадр-другой округления, но не соседняя склейка.
+_CUT_MATCH_S = 0.15
+
+
+def normalize_cut_transitions(items: Any) -> list:
+    """[{t, id}] -> проверенный список, отсортированный по времени (no-fallback).
+
+    t — секунды от начала компа (clip-relative), id — переход из F3_CUT_TRANSITIONS.
+    Пустой список допустим: «на этом ролике склейки без переходов».
+    """
+    if not isinstance(items, (list, tuple)):
+        raise ValueError(f"cut_transitions must be a list, got {type(items).__name__}")
+    out: list = []
+    for it in items:
+        if not isinstance(it, dict):
+            raise ValueError(f"cut_transitions item must be an object, got {it!r}")
+        tid = str(it.get("id") or "").strip().lower()
+        if tid not in F3_CUT_TRANSITIONS:
+            raise ValueError(f"cut transition {tid!r} cannot be placed on a single cut")
+        try:
+            t = float(it.get("t"))
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"cut transition time is invalid: {it.get('t')!r}") from e
+        if not (t > 0.0):
+            raise ValueError(f"cut transition time must be > 0 (got {t!r})")
+        out.append({"t": round(t, 3), "id": tid})
+    out.sort(key=lambda x: x["t"])
+    for a, b in zip(out, out[1:]):
+        if b["t"] - a["t"] < _CUT_MATCH_S:
+            raise ValueError(f"two cut transitions on the same cut near t={a['t']}")
+    return out
+
+
+def montage_items_for_comp(
+    cut_transitions_abs: Optional[list],
+    extra_ranges_abs: Optional[list],
+    *,
+    clip_start: float,
+    clip_len: float,
+) -> tuple:
+    """Правки стола в абсолютных секундах -> секунды от начала компа.
+
+    Возвращает (cut_transitions | None, extra_ranges | None, dropped_cuts, dropped_ranges).
+    Склейки и окна вне фактического окна компа отбрасываются: рендер подрезал закреплённые
+    склейки под окно джобы, и ставить эффект там не на что. Счётчики отброшенного —
+    для явного лога в оркестраторе. None на входе => None на выходе (режим стола выключен).
+    """
+    cuts = None
+    dropped_cuts = 0
+    if cut_transitions_abs is not None:
+        items = []
+        for item in cut_transitions_abs:
+            t = float(item["t_abs"]) - float(clip_start)
+            if 0.0 < t < float(clip_len):
+                items.append({"t": t, "id": item["id"]})
+            else:
+                dropped_cuts += 1
+        cuts = normalize_cut_transitions(items)
+    ranges = None
+    dropped_ranges = 0
+    if extra_ranges_abs is not None:
+        items = []
+        for item in extra_ranges_abs:
+            start = max(0.0, float(item["start_abs"]) - float(clip_start))
+            end = min(float(clip_len), float(item["end_abs"]) - float(clip_start))
+            if end > start:
+                items.append({"id": item["id"], "start": start, "end": end})
+            else:
+                dropped_ranges += 1
+        ranges = normalize_extra_ranges(items)
+    return cuts, ranges, dropped_cuts, dropped_ranges
+
+
+def normalize_extra_ranges(items: Any) -> list:
+    """[{id, start, end}] -> проверенный список (секунды от начала компа)."""
+    if not isinstance(items, (list, tuple)):
+        raise ValueError(f"extra_ranges must be a list, got {type(items).__name__}")
+    out: list = []
+    for it in items:
+        if not isinstance(it, dict):
+            raise ValueError(f"extra_ranges item must be an object, got {it!r}")
+        eid = str(it.get("id") or "").strip().lower()
+        if eid not in F3_EXTRAS:
+            raise ValueError(f"unknown f3 extra id in range: {eid!r}")
+        try:
+            start, end = float(it.get("start")), float(it.get("end"))
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"extra range bounds are invalid: {it!r}") from e
+        if start < 0.0 or not (end > start):
+            raise ValueError(f"extra range must satisfy 0 <= start < end (got {start}..{end})")
+        out.append({"id": eid, "start": round(start, 3), "end": round(end, 3)})
+    out.sort(key=lambda x: (x["start"], x["id"]))
+    return out
 
 
 def _load_manifest() -> Dict[str, Any]:
@@ -89,6 +204,28 @@ def _js(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def _preset_kv(eff: Dict[str, Any], *, span: Optional[float] = None) -> str:
+    """Доп. ключи __BLAST для эффектов Kant (manifest: preset) — "" у остальных.
+
+    Скрипт эффекта вставляется в render JSX текстом, а .ffx — бинарник, которого на ноде
+    нет. Поэтому пресет едет внутри JSX в base64 (presetB64), apply_kantfx.jsx
+    раскладывает его во временный файл. Режим (window/cuts) и длина перехода — из манифеста.
+    """
+    rel = eff.get("preset")
+    if not rel:
+        return ""
+    p = (_F3_DIR / str(rel)).resolve()
+    if _F3_DIR not in p.parents or p.suffix.lower() != ".ffx":
+        raise RuntimeError(f"f3 preset escapes pipeline dir or is not .ffx: {rel}")
+    if not p.exists():
+        raise FileNotFoundError(f"f3 preset missing: {p}")
+    kv = f", presetB64: {_js(base64.b64encode(p.read_bytes()).decode('ascii'))}, mode: {_js(eff.get('mode') or 'window')}"
+    kv += f", label: {_js(str(eff.get('label') or eff.get('id')))}"
+    if span is not None:
+        kv += f", span: {_js(float(span))}"
+    return kv
+
+
 # JS prelude: helpers ported from run_job.jsx, prefixed __f3_ to avoid clashes
 # with the render template globals. Operates on MAIN_COMP (template scope).
 _JS_PRELUDE = r"""
@@ -103,6 +240,16 @@ _JS_PRELUDE = r"""
     cuts.sort(function(a,b){return a-b;});
     var out=[], fr=comp.frameDuration;
     for (var k=0;k<cuts.length;k++){ if (!out.length || Math.abs(cuts[k]-out[out.length-1])>fr) out.push(cuts[k]); }
+    return out;
+  }
+  // Склейки монтажного стола -> склейки, найденные в компе. Не нашли — явная ошибка:
+  // переход, поставленный человеком на конкретную склейку, не должен молча пропасть.
+  function __f3_pick(want, cuts, tol){
+    var out=[], i, k;
+    for (i=0;i<want.length;i++){ var best=null;
+      for (k=0;k<cuts.length;k++){ var d=Math.abs(cuts[k]-want[i]); if (d<=tol && (best===null || d<Math.abs(best-want[i]))) best=cuts[k]; }
+      if (best===null) throw new Error("F3: cut at "+want[i]+"s not found in comp (cuts: "+cuts.join(",")+")");
+      out.push(best); }
     return out;
   }
   function __f3_contentEnd(comp){ var wa=comp.workAreaStart+comp.workAreaDuration; return (wa>0 && wa<=comp.duration)?wa:comp.duration; }
@@ -127,6 +274,8 @@ def build_overlay_jsx(
     extra: Optional[str] = None,
     extra_full: bool = False,
     hook_extend: Optional[str] = None,
+    cut_transitions: Optional[list] = None,
+    extra_ranges: Optional[list] = None,
     drop_time: float,
     assets: Optional[Dict[str, Any]] = None,
     seed: str = "f3",
@@ -150,7 +299,16 @@ def build_overlay_jsx(
     comp_var = str(comp_var or "MAIN_COMP").strip()
     if not comp_var.isidentifier():
         raise ValueError(f"comp_var must be a JS identifier, got {comp_var!r}")
-    if not (hook or transition or extra):
+    # Монтажный стол: переход на каждой склейке свой и стили с точными окнами.
+    # Режим задаётся самим наличием списка (пустой = «склейки без переходов»), и
+    # тогда общий transition/extra обязан быть пустым — иначе эффект встал бы дважды.
+    per_cut = normalize_cut_transitions(cut_transitions) if cut_transitions is not None else None
+    ranges = normalize_extra_ranges(extra_ranges) if extra_ranges is not None else None
+    if per_cut is not None and transition:
+        raise ValueError("cut_transitions and transition are mutually exclusive")
+    if ranges is not None and extra:
+        raise ValueError("extra_ranges and extra are mutually exclusive")
+    if not (hook or transition or extra or per_cut or ranges):
         return ""
 
     manifest = _load_manifest()
@@ -285,7 +443,7 @@ def build_overlay_jsx(
     if t_eff:
         t_dur = float(t_eff.get("default_duration") or 0.067)
         parts.append("  /* -- TRANSITION -- */")
-        parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(t_dur)}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv} }};")
+        parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(t_dur)}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv}{_preset_kv(t_eff, span=t_dur)} }};")
         parts.append("  (function(){")
         parts.append(_read_script(t_eff["script"]))
         parts.append("  })(); $.global.__BLAST = null;")
@@ -311,7 +469,7 @@ def build_overlay_jsx(
         parts.append("  /* -- EXTRA -- */")
         parts.append(
             "  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, "
-            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv}{_clips_kv} }};"
+            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv}{_clips_kv}{_preset_kv(e_eff)} }};"
         )
         parts.append("  (function(){")
         parts.append(_read_script(e_eff["script"]))
@@ -320,16 +478,83 @@ def build_overlay_jsx(
         if es_path_js:
             parts.append(_cut_sounds_js(es_path_js))
 
+    # ---------------- PER-CUT TRANSITIONS (монтажный стол) ----------------
+    if per_cut:
+        by_id: Dict[str, list] = {}
+        for it in per_cut:
+            by_id.setdefault(it["id"], []).append(it["t"])
+        t_sounds = assets.get("transition_sounds") if isinstance(assets.get("transition_sounds"), dict) else {}
+        parts.append("  /* -- PER-CUT TRANSITIONS -- */")
+        for tid, times in by_id.items():
+            eff = _eff_by_id(manifest, tid)
+            if not eff:
+                raise ValueError(f"unknown f3 transition id: {tid!r}")
+            dur = float(eff.get("default_duration") or 0.067)
+            var = f"__f3_pc_{tid}"
+            parts.append(f"  var {var} = __f3_pick({_js(times)}, __f3_cuts, {_js(_CUT_MATCH_S)});")
+            parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(dur)}, place: __f3_place, cuts: {var}, placeRef: __f3_place_ref{_fx_kv}{_preset_kv(eff, span=dur)} }};")
+            parts.append("  (function(){")
+            parts.append(_read_script(eff["script"]))
+            parts.append("  })(); $.global.__BLAST = null;")
+            snd_js = _asset_path_js_value(t_sounds.get(tid))
+            if snd_js:
+                parts.append(_cut_sounds_js(snd_js, cuts_js=var))
+
+    # ---------------- EXTRA RANGES (монтажный стол) ----------------
+    if ranges:
+        e_sounds = assets.get("extra_sounds") if isinstance(assets.get("extra_sounds"), dict) else {}
+        e_clips = assets.get("extra_clips_by") if isinstance(assets.get("extra_clips_by"), dict) else {}
+        parts.append("  /* -- EXTRA RANGES -- */")
+        for n, rng in enumerate(ranges):
+            eff = _eff_by_id(manifest, rng["id"])
+            if not eff:
+                raise ValueError(f"unknown f3 extra id: {rng['id']!r}")
+            clips_js = _asset_list_js_value(e_clips.get(rng["id"]))
+            clips_kv = f", clips: {clips_js}, seed: {_js(str(seed))}" if clips_js else ""
+            parts.append(
+                "  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, "
+                f"startTime: {_js(rng['start'])}, duration: {_js(round(rng['end'] - rng['start'], 3))}, "
+                f"place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv}{clips_kv}{_preset_kv(eff)} }};"
+            )
+            parts.append("  (function(){")
+            parts.append(_read_script(eff["script"]))
+            parts.append("  })(); $.global.__BLAST = null;")
+            snd_js = _asset_path_js_value(e_sounds.get(rng["id"]))
+            if snd_js:
+                rng_var = f"__f3_rc_{n}"
+                parts.append(
+                    f"  var {rng_var} = []; (function(){{ for (var i=0;i<__f3_cuts.length;i++){{ var c=__f3_cuts[i]; "
+                    f"if (c >= {_js(rng['start'])} && c < {_js(rng['end'])}) {rng_var}.push(c); }} }})();"
+                )
+                parts.append(_cut_sounds_js(snd_js, cuts_js=rng_var))
+
     parts.append("})();")
     return "\n".join(parts)
 
 
-def _cut_sounds_js(sound_path_js: str) -> str:
+def _asset_path_js_value(rel: Any) -> Optional[str]:
+    """relpath ассета -> JS-выражение абсолютного пути на ноде (или None)."""
+    rel = str(rel or "").strip().strip("/")
+    if not rel:
+        return None
+    return f'(String(__APP_DIR || "") + "/" + {_js(rel)})'
+
+
+def _asset_list_js_value(rels: Any) -> Optional[str]:
+    if not isinstance(rels, (list, tuple)) or not rels:
+        return None
+    items = [_asset_path_js_value(rel) for rel in rels]
+    items = [item for item in items if item]
+    return "[" + ", ".join(items) + "]" if items else None
+
+
+def _cut_sounds_js(sound_path_js: str, cuts_js: str = "__f3_cuts") -> str:
     """JS that plays `sound_path_js` on each cut strictly before the drop,
-    one per cut, skipping cuts already sounded (dedup transition+extra)."""
+    one per cut, skipping cuts already sounded (dedup transition+extra).
+    cuts_js — JS-выражение массива склеек (по умолчанию все склейки компа)."""
     return (
-        "  (function(){ var fr=__f3_comp.frameDuration, i, u;\n"
-        "    for (i=0;i<__f3_cuts.length;i++){ var ct=__f3_cuts[i];\n"
+        "  (function(){ var fr=__f3_comp.frameDuration, i, u, __cs=" + cuts_js + ";\n"
+        "    for (i=0;i<__cs.length;i++){ var ct=__cs[i];\n"
         "      if (ct >= __f3_drop - fr) continue;\n"
         "      var dup=false; for (u=0;u<__f3_used.length;u++){ if (Math.abs(__f3_used[u]-ct)<=fr){ dup=true; break; } }\n"
         "      if (dup) continue;\n"

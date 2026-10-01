@@ -13,7 +13,8 @@ import { useWizardStore } from '../../stores/wizardStore';
  */
 export function usePlaybackUrl(track: SavedTrack | null | undefined): string | null {
   const stored = track?.localUrl ?? null;
-  const needsFresh = Boolean(track?.id) && !(stored ?? '').startsWith('/static/');
+  // /static/ (mock) и blob: (файл из этой вкладки) играют как есть — свежая ссылка нужна только S3
+  const needsFresh = Boolean(track?.id) && !/^(\/static\/|blob:)/.test(stored ?? '');
   const fresh = useQuery({
     queryKey: ['track-playback', track?.id],
     queryFn: () => api.trackPlayback(String(track?.id)),
@@ -23,6 +24,19 @@ export function usePlaybackUrl(track: SavedTrack | null | undefined): string | n
   });
   if (!needsFresh) return stored;
   return fresh.data?.url ?? null;
+}
+
+/**
+ * Откуда браузеру скачать трек, чтобы посчитать волну. Плеер играет presigned-ссылку S3, но
+ * `fetch` с чужого домена упирается в CORS бакета — волна выходила ровной полосой. Поэтому для
+ * сохранённого трека данные идут со своего домена (`/api/wizard/track-audio`); /static (мок) и
+ * blob: (файл из этой вкладки) — как есть.
+ */
+export function useWaveSourceUrl(track: SavedTrack | null | undefined, blobUrl?: string | null): string | null {
+  if (blobUrl) return blobUrl;
+  const stored = track?.localUrl ?? null;
+  if (stored && /^(\/static\/|blob:)/.test(stored)) return stored;
+  return track?.id ? api.trackAudioUrl(String(track.id)) : null;
 }
 
 /**
