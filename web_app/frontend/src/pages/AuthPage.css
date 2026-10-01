@@ -1,0 +1,87 @@
+/*
+ * Экран входа/регистрации — в палитре визарда (поверхности panel/field, одна акцентная
+ * подсветка). Витрина — живые ролики сервиса (те же, что на лендинге): на десктопе слева
+ * веером, на телефоне — бегущей лентой над формой, чтобы продукт был виден и там.
+ */
+
+.auth-visual {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r25);
+  background:
+    radial-gradient(60% 55% at 70% 38%, rgba(139, 111, 230, 0.18), transparent 70%), /* ui-allow: одна акцентная подсветка витрины */
+    var(--card-2);
+  padding: 40px;
+}
+/* зерно поверх: плоская заливка выглядит стерильно */
+.auth-visual::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.07;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>");
+}
+
+.auth-reel {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* кадр ролика: 4:5 — квадратные и вертикальные примеры обрезаются по краям одинаково мало */
+.auth-frame {
+  position: absolute;
+  aspect-ratio: 4 / 5;
+  height: min(70%, 440px);
+  border-radius: var(--r25);
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  box-shadow: 0 30px 80px rgba(5, 1, 15, 0.55); /* ui-allow: тень кадра в цвет фона */
+  animation: auth-float 7s ease-in-out infinite alternate;
+}
+.auth-frame--l { transform: translateX(-70%) rotate(-5deg) scale(0.78); animation-delay: -2s; }
+.auth-frame--c { z-index: 2; }
+.auth-frame--r { transform: translateX(70%) rotate(5deg) scale(0.78); animation-delay: -4.5s; }
+.auth-frame--l, .auth-frame--r { filter: brightness(0.82); }
+.auth-media { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+/* телефон: бегущая лента живых превью над формой */
+.auth-strip {
+  overflow: hidden;
+  margin: 0 -20px;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); /* ui-allow: альфа-маска */
+  mask-image: linear-gradient(90deg, transparent, #000 24px, #000 calc(100% - 24px), transparent); /* ui-allow: альфа-маска */
+}
+.auth-strip-track { display: flex; gap: 10px; width: max-content; padding: 0 20px; animation: auth-marquee 28s linear infinite; }
+.auth-strip-item { width: 112px; aspect-ratio: 4 / 5; flex: none; border-radius: var(--r15); overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
+
+.auth-caption { position: relative; max-width: 520px; }
+
+/* мягкое появление колонок; без анимаций — если человек их отключил */
+.auth-rise { animation: auth-rise 0.6s cubic-bezier(0.23, 1, 0.32, 1) both; }
+.auth-rise--2 { animation-delay: 0.08s; }
+.auth-rise--3 { animation-delay: 0.16s; }
+
+@keyframes auth-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes auth-float { from { translate: 0 0; } to { translate: 0 -8px; } }
+@keyframes auth-marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+.auth-provider { transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.12s cubic-bezier(0.23, 1, 0.32, 1), filter 0.15s ease; }
+.auth-provider:active:not(:disabled) { transform: scale(0.985); }
+.auth-provider:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-frame, .auth-rise, .auth-strip-track { animation: none; }
+  .auth-strip { overflow-x: auto; }
+}

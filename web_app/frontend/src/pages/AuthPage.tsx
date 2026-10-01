@@ -10,42 +10,80 @@ import { Modal } from '../components/ui/Modal';
 import { NotchedInput } from '../components/ui/NotchedInput';
 import { FigIcon } from '../components/ui/FigIcon';
 import { useToast } from '../contexts/ToastContext';
+import './AuthPage.css';
 
 type Mode = 'login' | 'register';
-
-/** Светлый градиент-заливка заголовка (Figma 712:1038), как на W35–W37 */
-const gradLight = {
-  backgroundImage: 'linear-gradient(183deg, #f6f5fd 8.5%, rgba(246,245,253,.8) 94.6%)',
-  WebkitBackgroundClip: 'text',
-  backgroundClip: 'text'
-} as const;
 
 /** passwordless: и логин, и регистрация выдают token + deep-link в бота; вход завершает верификация */
 type VerifyResult = { token: string; deepLink: string; viaTelegram?: boolean };
 
 /*
- * Левый визуал-контейнер (Figma W38, 712:1031): клип-фрейм r15 на подложке #140e24 с
- * фирменной фиолетовой фигурой. Растёт по ширине страницы (flex-1 от базы 732), зазоры
- * до краёв и до формы одинаковые (60). Фигура preserveAspectRatio="none" — задаём И
- * width, И height из viewBox. Фото артиста убрано.
- *
- * `max-w` обязателен: рост был ничем не ограничен, и на широком мониторе визуал
- * растягивался на всю свободную ширину, а форма фиксированных 528 улетала к правому
- * краю — страница переставала читаться как макет. Излишек ширины теперь уходит во
- * ВНЕШНИЕ поля (`justify-center` у main), то есть форма подтягивается к центру.
+ * Живые примеры — настоящие ролики сервиса (те же, что на лендинге), лежат в сборке сайта:
+ * экран входа видят без авторизации, и каталог превью визарда ему недоступен.
+ */
+const REELS = ['hero', 'tape', 'jakson', 'tunnel', 'billie'] as const;
+const reelSrc = (name: string) => `/media/auth/${name}.mp4`;
+const reelPoster = (name: string) => `/media/auth/${name}.jpg`;
+
+function Reel({ name }: { name: string }) {
+  return <video className="auth-media" src={reelSrc(name)} poster={reelPoster(name)} muted loop playsInline autoPlay preload="metadata" />;
+}
+
+/*
+ * Левая витрина (десктоп): три живых ролика веером и подпись о том, что делает сервис. Раньше здесь была
+ * плоская фиолетовая фигура на пол-экрана — палитрой и характером из другого продукта.
  */
 function AuthVisual() {
+  const { t } = useTranslation();
   return (
-    <aside className="relative hidden basis-[732px] grow overflow-hidden rounded-r15 bg-card-2 lg:block xl:max-w-[880px]">
-      <span aria-hidden="true" className="absolute left-0 top-0 h-[980px] w-[980px] rounded-r15 bg-card-2" />
-      <img
-        aria-hidden="true"
-        src="/assets/figma/auth-shape.svg"
-        width="1413"
-        height="1044"
-        className="absolute left-[calc(50%+25.57px)] top-[calc(50%+60.78px)] h-[1044.289px] w-[1413.144px] max-w-none -translate-x-1/2 -translate-y-1/2"
-      />
+    <aside className="auth-visual auth-rise hidden basis-[732px] grow lg:flex xl:max-w-[880px]" aria-hidden="true">
+      <div className="flex items-center gap-[10px]">
+        <img src="/assets/figma/logo-star.svg" width="28" height="28" alt="" />
+        <span className="text-ui-20 text-text">Blast</span>
+      </div>
+      <div className="auth-reel">
+        <div className="auth-frame auth-frame--l"><Reel name="tape" /></div>
+        <div className="auth-frame auth-frame--c"><Reel name="hero" /></div>
+        <div className="auth-frame auth-frame--r"><Reel name="tunnel" /></div>
+      </div>
+      <div className="auth-caption">
+        <p className="text-ui-32 text-text [text-wrap:balance]">{t('auth.showTitle')}</p>
+        <p className="mt-[12px] text-ui-16 text-text-60 [text-wrap:pretty]">{t('auth.showText')}</p>
+      </div>
     </aside>
+  );
+}
+
+/** Телефон: витрины слева нет — живые примеры бегущей лентой над формой. */
+function MobileReel() {
+  const loop = [...REELS, ...REELS];
+  return (
+    <div className="auth-strip auth-rise mb-[28px] lg:hidden" aria-hidden="true">
+      <div className="auth-strip-track">
+        {loop.map((name, index) => <div key={`${name}-${index}`} className="auth-strip-item"><Reel name={name} /></div>)}
+      </div>
+    </div>
+  );
+}
+
+/** Что даёт сервис — три пункта под кнопками входа, вместо одной подписи «войди в аккаунт». */
+function AuthPoints({ className }: { className?: string }) {
+  const { t } = useTranslation();
+  const points = [t('auth.point1'), t('auth.point2'), t('auth.point3')];
+  return (
+    <ul className={cn('mt-[28px] flex flex-col gap-[12px]', className)}>
+      {points.map((text) => (
+        <li key={text} className="flex items-start gap-[12px] text-ui-16 text-text-80">
+          {/* ячейка высотой в строку текста — галочка по центру первой строки без подгонок */}
+          <span className="flex h-ctl-xs shrink-0 items-center" aria-hidden="true">
+            <span className="flex h-[20px] w-[20px] items-center justify-center rounded-full bg-accent-soft text-accent-light">
+              <svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 8.4 6.6 11 12 5.4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </span>
+          </span>
+          <span>{text}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -188,29 +226,28 @@ function ProviderButton({ kind, label, benefit, primary, disabled, onClick, href
 }) {
   const inner = (
     <>
-      <span className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-[rgba(5,1,15,0.06)]">
+      <span className={cn('flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-r10', primary ? 'bg-[rgba(246,245,253,0.14)]' : 'bg-panel')}>
         {kind === 'telegram' ? <TelegramMark /> : <GoogleMark />}
       </span>
       <span className="min-w-0 text-left">
-        <span className="block text-[20px] font-[400] leading-none">{label}</span>
-        <span className={cn('mt-[6px] block text-[14px] leading-[18px]', primary ? 'text-[rgba(5,1,15,0.55)]' : 'text-text-60')}>{benefit}</span>
+        <span className="block text-ui-20 text-text">{label}</span>
+        <span className={cn('block text-ui-14', primary ? 'text-text-80' : 'text-text-60')}>{benefit}</span>
       </span>
+      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" className="ml-auto shrink-0 opacity-70"><path d="M7.5 4.5 13 10l-5.5 5.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
     </>
   );
+  // Основной способ — заливка акцентом, как главные кнопки визарда; второй — поверхность field.
   const shell = cn(
-    'flex h-[76px] w-full items-center gap-[16px] rounded-[38px] px-[24px] transition disabled:opacity-60',
+    'auth-provider flex min-h-[72px] w-full items-center gap-[16px] rounded-r15 px-[16px] py-[12px] text-text disabled:cursor-wait disabled:opacity-60',
     primary
-      ? 'text-[#1b1035] hover:brightness-95'
-      : 'border border-[rgba(246,245,253,0.22)] text-text-80 hover:border-accent-light hover:text-text'
+      ? 'bg-accent-strong hover:brightness-110'
+      : 'border border-line bg-field hover:bg-field-hover'
   );
-  const style = primary
-    ? { backgroundImage: 'linear-gradient(154deg, #f6f5fd 8.6%, rgba(246,245,253,0.9) 95.4%)' }
-    : undefined;
 
   return href ? (
-    <a href={href} className={shell} style={style}>{inner}</a>
+    <a href={href} className={shell}>{inner}</a>
   ) : (
-    <button type="button" onClick={onClick} disabled={disabled} className={shell} style={style}>{inner}</button>
+    <button type="button" onClick={onClick} disabled={disabled} className={shell}>{inner}</button>
   );
 }
 
@@ -296,21 +333,32 @@ export function AuthPage({ mode }: { mode: Mode }) {
       внешние поля, а не в бесконечный рост левой колонки. На 1440 картина ровно как в
       макете (визуал 732, поля и зазор по 60), на 1920+ форма подтягивается к центру.
     */
-    <main className="flex min-h-dvh items-stretch justify-center gap-[60px] bg-bg p-[60px] max-lg:p-space-5">
+    <main className="flex min-h-dvh items-stretch justify-center gap-[40px] bg-bg p-[40px] max-lg:p-space-5">
       <AuthVisual />
       <section className="flex min-w-0 flex-1 items-center justify-center lg:flex-none lg:basis-[528px]">
         <form className="w-full max-w-[528px]" onSubmit={onSubmit} noValidate>
           {/* Язык переключается ДО входа: раньше переключатель жил только в сайдбаре, и
               англоязычный человек упирался в русский экран без единого способа это изменить. */}
-          <div className="mb-[24px] flex justify-end">
+          <div className="auth-rise mb-[40px] flex items-center justify-between max-lg:mb-[24px]">
+            {/* на телефоне витрины нет — бренд виден здесь */}
+            <span className="flex items-center gap-[10px] lg:invisible">
+              <img src="/assets/figma/logo-star.svg" width="28" height="28" alt="" />
+              <span className="text-ui-20 text-text">Blast</span>
+            </span>
             <LanguageSwitcher />
           </div>
-          {/* h=77 по Figma (712:1038): базовый line-height 1.5 дал бы 96 и увёл бы колонку вверх */}
-          <h1 className="text-[64px] font-[600] leading-[77px] text-transparent" style={gradLight}>
-            {mode === 'register' ? t('auth.registerTitle') : t('auth.loginTitle')}
+          <MobileReel />
+          <span className="auth-rise inline-flex h-ctl-xs items-center gap-[8px] rounded-full border border-accent-line bg-accent-soft px-[10px] text-ui-12 text-text-80">
+            <span className="h-[6px] w-[6px] rounded-full bg-accent-light" aria-hidden="true" />
+            {t('auth.eyebrow')}
+          </span>
+          {/* заголовок — сплошной цвет и плотный трекинг, без градиентной заливки текста */}
+          {/* ui-allow: дисплейный заголовок экрана входа крупнее шкалы контента */}
+          <h1 className="auth-rise auth-rise--2 mt-[16px] text-[52px] font-[400] leading-[56px] tracking-[-0.025em] text-text [text-wrap:balance] max-md:text-[36px] max-md:leading-[40px]">
+            {mode === 'register' ? t('auth.registerHeadline') : t('auth.loginHeadline')}
           </h1>
-          <p className="mt-[25px] max-w-[380px] text-[24px] font-[350] leading-[29px] text-text-80">
-            {mode === 'register' ? t('auth.registerSubtitle') : t('auth.loginSubtitle')}
+          <p className="auth-rise auth-rise--2 mt-[16px] max-w-[460px] text-ui-20 text-text-60 [text-wrap:pretty] max-md:text-ui-16">
+            {mode === 'register' ? t('auth.registerLead') : t('auth.loginLead')}
           </p>
 
           {/*
@@ -321,9 +369,10 @@ export function AuthPage({ mode }: { mode: Mode }) {
            * имя и фамилию сам. Поэтому поля стоят под своей кнопкой и подписаны — иначе
            * человек, выбравший Google, пытался бы заполнить ненужную форму.
            */}
-          <p className="mt-[48px] text-[16px] leading-none text-text-40">{t('auth.pickProvider')}</p>
+          <div className="auth-rise auth-rise--3">
+          <p className="mt-[32px] text-ui-14 text-text-40">{t('auth.pickProvider')}</p>
 
-          <div className="mt-[20px] flex flex-col gap-[16px]">
+          <div className="mt-[12px] flex flex-col gap-[12px]">
             <ProviderButton
               kind="telegram"
               label={t('auth.telegramCta')}
@@ -354,9 +403,9 @@ export function AuthPage({ mode }: { mode: Mode }) {
             {providersQuery.data?.google && (
               <>
                 <div className="flex items-center gap-[16px]" aria-hidden="true">
-                  <span className="h-px flex-1 bg-[rgba(246,245,253,0.12)]" />
-                  <span className="text-[14px] leading-none text-text-40">{t('auth.orDivider')}</span>
-                  <span className="h-px flex-1 bg-[rgba(246,245,253,0.12)]" />
+                  <span className="h-px flex-1 bg-line" />
+                  <span className="text-ui-12 text-text-40">{t('auth.orDivider')}</span>
+                  <span className="h-px flex-1 bg-line" />
                 </div>
                 <ProviderButton
                   kind="google"
@@ -375,7 +424,10 @@ export function AuthPage({ mode }: { mode: Mode }) {
            */}
           {/* Ширина ограничена и строки балансируются: иначе длинная «Политика
               конфиденциальности» уезжала за колонку формы и ломала строку пополам. */}
-          <p className="mx-auto mt-[24px] max-w-[400px] text-balance text-center text-[14px] leading-[19px] text-text-40">
+          {/* на телефоне в регистрации пункты прячем: там главное — поля и кнопка */}
+          <AuthPoints className={mode === 'register' ? 'max-lg:hidden' : undefined} />
+
+          <p className="mt-[28px] max-w-[440px] text-balance text-ui-12 text-text-40">
             {/* Названия документов здесь в винительном падеже (auth.legal*), а не заголовками
                 из legal.*: строка читалась «принимаешь Оферта и Политика конфиденциальности». */}
             {t('auth.legalPrefix')}{' '}
@@ -388,12 +440,13 @@ export function AuthPage({ mode }: { mode: Mode }) {
             </a>
           </p>
 
-          <p className="mt-[25px] text-center text-[16px] text-text-60">
+          <p className="mt-[32px] border-t border-line pt-[20px] text-ui-16 text-text-60">
             {mode === 'register' ? t('auth.haveAccount') : t('auth.noAccount')}{' '}
-            <Link className="text-accent-light underline underline-offset-2" to={mode === 'register' ? '/login' : '/register'}>
+            <Link className="text-accent-light underline-offset-4 transition hover:underline" to={mode === 'register' ? '/login' : '/register'}>
               {mode === 'register' ? t('auth.loginCta') : t('auth.registerCta')}
             </Link>
           </p>
+          </div>
         </form>
       </section>
       <TgVerifyModal

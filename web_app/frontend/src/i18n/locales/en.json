@@ -1059,7 +1059,17 @@
     "googleBenefit": "One click — your name comes from the account",
     "namesForTelegram": "Needed for the Telegram route. Google fills the name in for you.",
     "legalOffer": "Terms of service",
-    "legalPolicy": "Privacy policy"
+    "legalPolicy": "Privacy policy",
+    "eyebrow": "Lyric videos for artists",
+    "loginHeadline": "Welcome back to Blast",
+    "loginLead": "Your projects, batches and finished videos are right where you left them.",
+    "registerHeadline": "A clip for your track, no editing",
+    "registerLead": "One step via Telegram or Google. No password needed.",
+    "point1": "Pick the style, footage and effects yourself, or let the picker do it",
+    "point2": "Several versions of the video for one track at once",
+    "point3": "Finished videos arrive in Telegram, to TikTok in one click",
+    "showTitle": "Lyric videos for your track",
+    "showText": "Subtitles on the beat, footage that fits the mood, an effect on the drop. Ready 9:16 videos for Reels, TikTok and Shorts."
   },
   "processing": {
     "progress": "Progress: {{done}}/{{total}} videos",
