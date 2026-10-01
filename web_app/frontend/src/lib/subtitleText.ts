@@ -70,21 +70,22 @@ export function cssFamily(font: SubtitleFontEntry | undefined, fallbackPs?: stri
   return `"blast-${ps}", ${site}${font ? GENERIC[font.category] : 'Arial, sans-serif'}`;
 }
 
-let injected = false;
+const injectedFaces = new Set<string>();
 /**
- * @font-face на каждый шрифт, файл которого сайт раздаёт сам (каталог `files`): превью
- * субтитров рисует только ими. Шрифта без файла на сервере просто нет — превью об этом
- * пишет, а образцы в списках шрифтов показываются запасным жанром.
+ * @font-face на каждый шрифт, файл которого сайт раздаёт сам (lib/useSubtitleFonts: бандл по
+ * манифесту + сервер). Превью субтитров рисует только ими; добавляются по мере прихода файлов.
+ * Образцы в списках шрифтов без файла показываются запасным жанром — это подпись, не превью.
  */
-export function injectFontFaces(catalog: SubtitleFontCatalog | undefined): void {
-  if (injected || !catalog?.files || typeof document === 'undefined') return;
-  injected = true;
-  const css = Object.entries(catalog.files)
-    .map(([ps, url]) => `@font-face { font-family: "blast-${ps}"; src: url("${url}") format("woff2"); font-display: block; }`)
-    .join('\n');
+export function injectFontFaces(files: Record<string, string> | undefined): void {
+  if (!files || typeof document === 'undefined') return;
+  const fresh = Object.entries(files).filter(([ps]) => !injectedFaces.has(ps));
+  if (!fresh.length) return;
+  fresh.forEach(([ps]) => injectedFaces.add(ps));
   const style = document.createElement('style');
   style.dataset.blastSubtitleFonts = '1';
-  style.textContent = css;
+  style.textContent = fresh
+    .map(([ps, url]) => `@font-face { font-family: "blast-${ps}"; src: url("${url}") format("woff2"); font-display: block; }`)
+    .join('\n');
   document.head.appendChild(style);
 }
 

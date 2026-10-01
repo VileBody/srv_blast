@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Заливка шрифтов субтитров для превью сайта (и как единый набор для рендер-ноды).
 
-Превью субтитров на сайте рисует ТОЛЬКО настоящими шрифтами каталога — их файлы
-сайт раздаёт сам (web_app/backend/app/subtitle_fonts.py). Этот скрипт собирает их:
+Превью субтитров на сайте рисует ТОЛЬКО настоящими шрифтами каталога. Шрифты с правом
+веб-раздачи (OFL, Point) уже лежат в сборке фронта: web_app/frontend/public/fonts/subtitles/
++ manifest.json. Этот скрипт — для ОСТАЛЬНЫХ (на которые есть веб-лицензия): кладёт их на
+сервер, сайт раздаёт их через web_app/backend/app/subtitle_fonts.py.
 
     python scripts/upload_subtitle_fonts_to_s3.py --src "C:/.../fonts" --dry-run
     python scripts/upload_subtitle_fonts_to_s3.py --src "C:/.../fonts"
@@ -37,6 +39,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG = REPO_ROOT / "config" / "styles" / "subtitle_font_catalog.json"
+BUNDLE_MANIFEST = REPO_ROOT / "web_app" / "frontend" / "public" / "fonts" / "subtitles" / "manifest.json"
 FONT_SUFFIXES = {".ttf", ".otf", ".woff", ".woff2"}
 
 # Сверх каталога: стандартные шрифты стилей (app/subtitle_font_layout.STYLE_DEFAULT_FONTS)
@@ -54,6 +57,14 @@ def required_fonts() -> List[str]:
     names = {str(row["ps"]) for row in raw.get("fonts") or [] if row.get("roles")}
     names.update(EXTRA_FONTS)
     return sorted(names)
+
+
+def bundled_fonts() -> set:
+    """Шрифты, уже раздаваемые сборкой фронта (их на сервер заливать не нужно)."""
+    if not BUNDLE_MANIFEST.exists():
+        return set()
+    raw = json.loads(BUNDLE_MANIFEST.read_text(encoding="utf-8"))
+    return {str(f["ps"]) for f in raw.get("fonts") or []}
 
 
 def load_env_file(path: Path) -> None:
@@ -131,7 +142,9 @@ def main() -> int:
     except ImportError as exc:
         raise SystemExit(f"нужны fonttools и brotli: pip install fonttools brotli ({exc})")
 
-    need = set(required_fonts())
+    bundled = bundled_fonts()
+    need = set(required_fonts()) - bundled
+    print(f"в сборке фронта уже есть {len(bundled)} шрифтов — их не заливаем")
     found: Dict[str, Tuple[Path, Any]] = {}
     for path in sorted(src.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in FONT_SUFFIXES | {".ttc"}:
@@ -144,6 +157,8 @@ def main() -> int:
         for ps, font in names:
             if ps in need and ps not in found:
                 found[ps] = (path, font)
+            elif ps in bundled:
+                print(f"SKIP  уже в сборке фронта: {ps}")
             elif ps not in need:
                 print(f"SKIP  не из каталога: {ps}  ({path.name})")
 

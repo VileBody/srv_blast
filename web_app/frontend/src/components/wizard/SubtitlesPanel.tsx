@@ -9,11 +9,12 @@ import { PAUSE, PLAY, PillsFooter, Svg, W12 } from './WizardFrame';
 import { SubtitleTextSettings, activeTextTab, allBackgroundsWide, textSettingsFor, useWizardStore } from '../../stores/wizardStore';
 import {
   HEIGHT_SCALE, POSITION_CENTER_Y, SIZE_SCALE, styleAccentColor, accentFontsFor, baseFonts, cssFamily, findFont, fontBlockedFor, fontStyles,
-  injectFontFaces, styleIdOf, type SubtitleStyleId
+  styleIdOf, type SubtitleStyleId
 } from '../../lib/subtitleText';
 import { SubtitleTimeline } from './SubtitleTimeline';
 import { SubtitleCanvas, type SubtitleCanvasProps } from './SubtitleCanvas';
 import { useSubtitleClock } from '../../lib/subtitleClock';
+import { useSubtitleFonts } from '../../lib/useSubtitleFonts';
 
 const clockLabel = (s: number) => {
   const v = Math.max(0, s);
@@ -265,7 +266,8 @@ export function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: 
   const setSubtitles = useWizardStore((state) => state.setSubtitles);
   const catalogQuery = useQuery({ queryKey: ['subtitle-fonts'], queryFn: api.subtitleFonts, staleTime: Infinity });
   const catalog = catalogQuery.data;
-  useEffect(() => { injectFontFaces(catalog); }, [catalog]);
+  // @font-face шрифтов каталога — образцы в списках рисуются ими же, что и превью
+  useSubtitleFonts();
   // вкладка = стиль из пула, который сейчас настраивается (у каждого стиля свои настройки)
   const tab = activeTextTab(subtitles);
   const settings = textSettingsFor(subtitles, tab);

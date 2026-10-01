@@ -3,14 +3,16 @@ import { useTranslation } from 'react-i18next';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cssZoom } from '../../lib/zoom';
-import { findFont, injectFontFaces, type SubtitleStyleId } from '../../lib/subtitleText';
+import { findFont, type SubtitleStyleId } from '../../lib/subtitleText';
+import { useSubtitleFonts } from '../../lib/useSubtitleFonts';
 import { buildPlan, frameAt, wordsFromLyrics, type Line, type Seg, type SubtitleGeometry, type TimedWord } from '../../lib/subtitleGeometry';
 import type { SubtitleTextSettings } from '../../stores/wizardStore';
 
 /*
  * Превью субтитров на canvas: раскладка — lib/subtitleGeometry.ts (правила AE-шаблонов +
  * числа движка рендера с бэка), здесь — отрисовка. Рисуем ТОЛЬКО настоящими шрифтами
- * каталога, которые сайт раздаёт сам (GET /api/wizard/subtitle-font/<PS>.woff2): у подменного
+ * каталога, которые сайт раздаёт сам (lib/useSubtitleFonts: бандл public/fonts/subtitles по
+ * манифесту + залитые на сервер /api/wizard/subtitle-font/<PS>.woff2): у подменного
  * шрифта другие ширины, и строки с фокус-словами разъезжаются с роликом. Шрифта нет на
  * сервере или он не загрузился — превью прямо об этом пишет и ничего не рисует.
  */
@@ -215,16 +217,15 @@ export function SubtitleCanvas({ style, settings, color, words, lyrics, time, re
     retry: false,
     placeholderData: keepPreviousData,
   });
-  const catalog = useQuery({ queryKey: ['subtitle-fonts'], queryFn: api.subtitleFonts, staleTime: Infinity }).data;
-  useEffect(() => { injectFontFaces(catalog); }, [catalog]);
+  const { catalog, files, settled } = useSubtitleFonts();
   const g = geometry.data && geometry.data.style === style ? geometry.data : undefined;
 
   // Шрифты стиля: все должны лежать на сервере и загрузиться — иначе явная ошибка, не подмена
   const needKey = g ? neededFonts(g).join('|') : '';
   useEffect(() => {
-    if (!needKey || !catalog || typeof document === 'undefined' || !document.fonts) { setFonts({ status: 'loading', fonts: [] }); return; }
+    if (!needKey || !settled || typeof document === 'undefined' || !document.fonts) { setFonts({ status: 'loading', fonts: [] }); return; }
     const need = needKey.split('|');
-    const missing = need.filter((ps) => !catalog.files?.[ps]);
+    const missing = need.filter((ps) => !files[ps]);
     if (missing.length) { setFonts({ status: 'missing', fonts: missing }); return; }
     let alive = true;
     setFonts((prev) => (prev.status === 'ready' && prev.fonts.join('|') === needKey ? prev : { status: 'loading', fonts: need }));
@@ -234,7 +235,7 @@ export function SubtitleCanvas({ style, settings, color, words, lyrics, time, re
       setFonts(failed.length ? { status: 'failed', fonts: failed } : { status: 'ready', fonts: need });
     });
     return () => { alive = false; };
-  }, [needKey, catalog]);
+  }, [needKey, settled, files]);
 
   const label = (ps: string) => findFont(catalog, ps)?.label ?? ps;
   const geometryError = geometry.isError ? (geometry.error instanceof Error ? geometry.error.message : String(geometry.error)) : null;
