@@ -1,4 +1,5 @@
 import { WarmupInput } from './WarmupInput';
+import { DropListen } from './DropListen';
 import { ChangeEvent, CSSProperties, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
@@ -239,6 +240,8 @@ export function StageHooks() {
             <span className="w12-mi w12-cap w12-heavy w12-ttl-ic" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-bolt.svg)', '--r': 0.65 } as CSSProperties} />
             <span className="w12-l">{t('wizard.fx.dropTitle')}</span>
           </h2>
+          {/* послушать дроп, не возвращаясь на «Трек» */}
+          <div className="w12-side"><DropListen /></div>
         </div>
         {/*
           Пока кандидатов нет, ряд состоит из одной кнопки «свой тайминг», и это

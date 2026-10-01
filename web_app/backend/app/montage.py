@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from . import effect_map as em
+from .frames import validate_frame
 
 
 class MontageError(ValueError):
@@ -160,6 +161,15 @@ def _apply_one(variation, slot, entry, index, cuts, segment, text_by_style, reso
     branding = em.HOOK_BRANDING.get(resolved["hook"], {"enabled": False}) if resolved.get("hook") else {"enabled": False}
     variation["branding"] = {"enabled": bool(branding.get("enabled")), "style": branding.get("style")}
     variation["sound"] = {"userSound": cfg.get("sound") if kind in {"sound", "warmup"} else None}
+
+    # ── рамка ролика (PNG-маска поверх всех слоёв, как шаг «Рамка» в боте) ──
+    try:
+        variation["frame"] = validate_frame(entry.get("frame"))
+    except ValueError as exc:
+        raise MontageError(f"Видео {n}: {exc}") from exc
+    # маска нарисована под 9:16 и ложится cover-масштабом — на 16:9 её обрезало бы
+    if variation["frame"] and str((variation.get("background") or {}).get("sourceFormat") or "9:16") == "16:9":
+        raise MontageError(f"Видео {n}: рамка ставится только на вертикальное видео — сними её на столе")
 
     # ── стиль субтитров ролика ──
     sub = entry.get("sub")

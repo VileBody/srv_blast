@@ -148,6 +148,7 @@
 .w12 .w12-aside-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .w12 .w12-aside-head h2 { margin: 0; font-size: 18px; font-weight: 400; line-height: 24px; }
 .w12 .w12-aside-head .w12-meta { font-size: 13px; color: var(--w12-text-3); white-space: nowrap; }
+.w12 .w12-aside-head:has(.w12-drop-play) { align-items: center; }
 .w12 .w12-lyr { position: relative; flex: 1; min-height: 180px; border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); overflow: hidden; transition: border-color .15s ease; }
 .w12 .w12-lyr:focus-within { border-color: var(--w12-accent-line); }
 .w12 .w12-lyr.w12-invalid { border-color: var(--w12-warn-line); }
@@ -563,40 +564,10 @@
 .w12 .w12-help-dot:hover, .w12 .w12-help-dot:focus-visible { background: var(--w12-field-2); color: var(--w12-text); }
 .w12 .w12-sec-head h2 .w12-stl-tip-box { left: 0; right: auto; font-weight: 350; }
 
-/* ── превью субтитров по стилям: CSS-приближение AE-шаблонов (см. SubtitlePreview) ──
-   Размеры — в cqi плеера (кадр 1080 по ширине: 1cqi = 10.8px); цвет текста — --sub-color. */
-.w12 .w12-sub { position: absolute; left: 7%; right: 7%; z-index: 1; transform: translateY(-50%); display: flex; flex-direction: column; line-height: 1; pointer-events: none; }
-.w12 .w12-sub[data-align="center"] { align-items: center; text-align: center; }
-.w12 .w12-sub[data-align="left"] { align-items: flex-start; text-align: left; }
-.w12 .w12-sub[data-align="right"] { align-items: flex-end; text-align: right; }
-.w12 .w12-sub-row { max-width: 100%; }
-.w12 .w12-sub-lower { text-transform: lowercase; }
-/* фокус-слово шрифтом пары (рукописный акцент поверх строки, как TYPE_2 jakson) */
-.w12 .w12-sub-pair { text-transform: none; font-weight: 400; font-style: normal; font-size: 1.3em; line-height: 0; }
-/* jakson: Point-SemiBold капсом, две строки 80/120 */
-.w12 .w12-sub-jakson { font-weight: 600; text-transform: uppercase; gap: .25cqi; }
-.w12 .w12-sub-jakson .w12-sub-row { white-space: nowrap; line-height: 1.02; }
-.w12 .w12-sub-jakson.w12-sub-lower { text-transform: lowercase; }
-.w12 .w12-sub-jakson[data-shadow="soft"], .w12 .w12-sub-tape[data-shadow="soft"] { text-shadow: 0 0 2.8cqi rgba(0, 0, 0, .85); }
-.w12 .w12-sub-jakson[data-shadow="strong"], .w12 .w12-sub-tape[data-shadow="strong"] { text-shadow: 0 0 1.6cqi rgba(0, 0, 0, 1), 0 0 .6cqi rgba(0, 0, 0, .9); }
-/* impulse: Point-Light строчными, обводка 3px в цвет текста, три тени прода */
-.w12 .w12-sub-impulse { font-weight: 350; letter-spacing: -.025em; -webkit-text-stroke: .28cqi currentColor; white-space: nowrap; }
-.w12 .w12-sub-impulse[data-shadow="soft"] { text-shadow: 0 0 .1cqi #000, 0 0 2.3cqi #000, 0 0 4.6cqi rgba(0, 0, 0, .5); }
-.w12 .w12-sub-impulse[data-shadow="strong"] { text-shadow: 0 0 .1cqi #000, 0 0 3.7cqi #000, 0 0 7.9cqi rgba(0, 0, 0, .82); }
-/* tape: Montserrat-BoldItalic капсом, короб 900px (83% кадра), интерлиньяж 80/60, две тени 135° */
-.w12 .w12-sub-tape { left: 8.3%; right: 8.3%; font-weight: 700; font-style: italic; text-transform: uppercase; letter-spacing: -.025em; line-height: 1.333; }
-.w12 .w12-sub-tape.w12-sub-lower { text-transform: lowercase; }
-.w12 .w12-sub-tape[data-shadow="soft"] { text-shadow: .2cqi .2cqi .46cqi #000, .2cqi .2cqi 1.4cqi #000; }
-/* trendy: одно слово, вертикаль ×4, градиент белый→чёрный, чёрная обводка под заливкой */
-.w12 .w12-sub-trendy .w12-sub-word { display: inline-block; font-weight: 700; text-transform: uppercase; letter-spacing: -.055em; line-height: 1; transform: scaleY(var(--sub-vs, 4)); background: linear-gradient(180deg, var(--sub-color) 30%, #0b0b0b 100%); -webkit-background-clip: text; background-clip: text; color: transparent; -webkit-text-stroke: .46cqi #000; paint-order: stroke fill; }
-.w12 .w12-sub-trendy[data-shadow="soft"] { filter: drop-shadow(0 0 5cqi rgba(0, 0, 0, .9)); }
-.w12 .w12-sub-trendy[data-shadow="strong"] { filter: drop-shadow(0 0 3cqi #000) drop-shadow(0 0 1cqi #000); }
-/* brat: Arial Narrow строчными, по два слова с полной выключкой в коробе 80%, Minimax+Blur */
-.w12 .w12-sub-brat { left: 10%; right: 10%; align-items: stretch; letter-spacing: -.02em; font-family: "Arial Narrow", Arial, sans-serif; filter: blur(.2cqi); -webkit-text-stroke: .32cqi currentColor; }
-.w12 .w12-sub-brat .w12-sub-row { display: flex; justify-content: space-between; gap: .6em; width: 100%; line-height: 1; }
-.w12 .w12-sub-brat .w12-sub-row.w12-one { justify-content: center; }
-.w12 .w12-sub-brat[data-shadow="soft"], .w12 .w12-sub-brat[data-shadow="strong"] { text-shadow: 0 .55cqi 2cqi rgba(0, 0, 0, .6); }
-.w12 .w12-sub-brat[data-shadow="strong"] { text-shadow: 0 .55cqi 1.4cqi rgba(0, 0, 0, .9); }
+/* ── превью субтитров: canvas по AE-геометрии стиля (SubtitleCanvas + lib/subtitleGeometry) ── */
+.w12 .w12-sub-canvas { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.w12 .w12-sub-canvas canvas { display: block; width: 100%; height: 100%; }
+.w12 .w12-sub-error { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 2; padding: 8px 10px; border-radius: 10px; background: rgba(5, 1, 15, .82); color: var(--w12-text-2); font-size: 13px; line-height: 18px; text-align: center; }
 /* Итог шага — одна строка с прокруткой вбок; затухает только тот край, за которым есть пилюли */
 .w12 .w12-sum { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
 .w12 .w12-sum::-webkit-scrollbar { display: none; }
@@ -770,3 +741,32 @@
 /* «Сгенерировать» тоном «Назад» — рядом с главной фиолетовой строкой */
 .w12 .w12-cta.w12-cta-field { background: var(--w12-field); color: var(--w12-text); }
 .w12 .w12-cta.w12-cta-field:hover { background: var(--w12-field-2); }
+
+/* ── волна шага «Трек»: своя подложка по краям столбиков + зум ── */
+.w12 .w12-wave-frame { border-radius: 12px; background: rgba(5, 1, 15, .35); box-shadow: inset 0 0 0 1px var(--w12-line); padding: 0 12px 8px; }
+.w12 .w12-wave-scroll { flex: 1; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden; padding-top: 36px; scrollbar-width: thin; scrollbar-color: rgba(246, 245, 253, .16) transparent; }
+.w12 .w12-wave-scroll::-webkit-scrollbar { height: 6px; }
+.w12 .w12-wave-scroll::-webkit-scrollbar-thumb { background: rgba(246, 245, 253, .16); border-radius: 999px; }
+.w12 .w12-wave-inner { flex: none; min-width: 100%; display: flex; flex-direction: column; }
+.w12 .w12-wave-inner .w12-wave { flex: 1; height: auto; min-height: 96px; margin-top: 0; }
+.w12 .w12-wave-inner .w12-ruler { margin-top: 10px; }
+.w12 .w12-zoom { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 3px; border-radius: 12px; background: rgba(246, 245, 253, .04); }
+.w12 .w12-zoom-btn { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--w12-panel-3, rgba(246, 245, 253, .06)); color: var(--w12-text-2); font-size: 18px; line-height: 1; transition: background-color .15s ease, color .15s ease, transform .12s ease; }
+.w12 .w12-zoom-btn:active:not(:disabled) { transform: scale(.94); }
+.w12 .w12-zoom-btn:disabled { opacity: .35; cursor: default; }
+@media (hover: hover) and (pointer: fine) { .w12 .w12-zoom-btn:hover:not(:disabled) { color: var(--w12-text); background: rgba(246, 245, 253, .1); } }
+.w12 .w12-zoom-val { min-width: 2.6em; text-align: center; font-size: 14px; color: var(--w12-text-2); }
+@media (max-width: 767px) { .w12 .w12-zoom { margin-left: 0; } }
+
+/* ── прослушивание дропа на шаге FX ── */
+.w12 .w12-drop-listen { display: inline-flex; align-items: center; gap: 10px; }
+.w12 .w12-drop-play { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px 0 4px; border-radius: 10px; background: var(--w12-field); font-size: 14px; line-height: 20px; color: var(--w12-text); transition: background-color .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-drop-play:active:not(:disabled) { transform: scale(.97); }
+.w12 .w12-drop-play:disabled { opacity: .45; cursor: default; }
+@media (hover: hover) and (pointer: fine) { .w12 .w12-drop-play:hover:not(:disabled) { background: var(--w12-field-2); } }
+.w12 .w12-drop-play .w12-dot { width: 24px; height: 24px; border-radius: 50%; background: var(--w12-text); color: var(--w12-bg); display: grid; place-items: center; }
+.w12 .w12-drop-play .w12-dot svg { width: 10px; height: 10px; fill: currentColor; stroke: none; }
+/* ui-allow: Point в контролах сидит выше центра — опускаем цифры на 1px */
+.w12 .w12-drop-clock { min-width: 3.4em; font-variant-numeric: tabular-nums; transform: translateY(1px); }
+.w12 .w12-drop-left { font-size: 13px; line-height: 18px; color: var(--w12-text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 767px) { .w12 .w12-drop-left { display: none; } }

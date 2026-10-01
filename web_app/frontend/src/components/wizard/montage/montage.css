@@ -35,7 +35,7 @@
 /* ── панель выделенного: куда ложится правка ── */
 .mt .fxt-pace { margin-inline: 2px; }
 /* ── превью ── */
-.mt-sub { position: absolute; inset: 0; z-index: 3; pointer-events: none; background: none; font-size: 15px; }
+.mt-sub { position: absolute; inset: 0; z-index: 3; pointer-events: none; background: none; }
 .mt-cover { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; background: rgba(5, 1, 15, .62); pointer-events: none; }
 .mt-cover span { font-size: 4.2cqi; letter-spacing: .14em; text-transform: uppercase; color: var(--fxt-t60); transform: translateY(-160%); }
 .mt-next { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 6; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 9px; border-radius: 11px; background: rgba(8, 5, 20, .6); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-size: 12px; color: var(--fxt-t80); pointer-events: none; }
@@ -137,7 +137,6 @@ img.mt-fv-cover { object-fit: cover; }
 .mt .mt-dock .psb-seg.mt-cur { box-shadow: 0 0 0 2px var(--accent-light); }
 .mt .mt-dock .psb-seg .mt-fv { opacity: .85; }
 .mt .mt-dock .psb-seg.cur .mt-fv, .mt .mt-dock .psb-seg:hover .mt-fv { opacity: 1; }
-.mt .fxt-stage:has(.mt-dock) .mt-sub { bottom: 120px; }
 /* «+» у «Стиля 1» — вторая дорожка стиля по запросу */
 .mt-laneadd { display: grid; place-items: center; width: 24px; height: 24px; margin-right: 2px; border-radius: 50%; background: var(--fxt-style-soft); color: var(--fxt-style); flex: none; transition: background-color .15s ease, color .15s ease, transform .12s var(--fxt-ease); }
 @media (hover: hover) and (pointer: fine) { .mt-laneadd:hover { background: var(--fxt-style); color: var(--fxt-style-ink); } }
@@ -161,3 +160,15 @@ img.mt-fv-cover { object-fit: cover; }
 .fxt-opt-group { display: flex; align-items: center; gap: 6px; padding: 8px 8px 2px; color: var(--fxt-t40, rgba(246, 245, 253, .45)); font-size: 12px; line-height: 16px; letter-spacing: .01em; }
 .fxt-opt-group svg { opacity: .8; }
 .fxt-cutpop .mtop .grp { font-style: normal; color: var(--fxt-t60, rgba(246, 245, 253, .6)); }
+
+/* рамки: плашки 9:16 (кадр ролика + PNG-маска поверх) и наложение рамки на превью */
+.mt-frames { grid-template-columns: repeat(4, minmax(0, 132px)); justify-content: start; gap: 12px; }
+.mt-frame-plate { aspect-ratio: 9 / 16; }
+.mt-frame-plate:disabled { opacity: .4; cursor: not-allowed; }
+.mt-frame-plate .mt-frame-base { position: absolute; inset: 0; }
+.mt-frame-plate .mt-frame-base > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.mt-frame-plate img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
+.mt-frame-plate .nm { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 1; padding: 3px 8px; border-radius: 8px; background: rgba(5, 1, 15, .62); font-size: 12px; line-height: 16px; color: var(--fxt-t80); text-align: center; }
+.mt-frame-all { display: flex; justify-content: flex-start; padding-top: 12px; }
+.fxt-stage .mt-frame { position: absolute; inset: 0; z-index: 9; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+

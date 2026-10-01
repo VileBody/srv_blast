@@ -1,17 +1,25 @@
-import { CSSProperties, ReactNode, RefObject, useEffect, useId, useRef, useState } from 'react';
+import { ReactNode, RefObject, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
 import { MediaCard, Rail, useBackdrop } from './BackgroundPanel';
-import { PillsFooter, Svg, W12 } from './WizardFrame';
+import { PAUSE, PLAY, PillsFooter, Svg, W12 } from './WizardFrame';
 import { SubtitleTextSettings, activeTextTab, allBackgroundsWide, textSettingsFor, useWizardStore } from '../../stores/wizardStore';
 import {
   HEIGHT_SCALE, POSITION_CENTER_Y, SIZE_SCALE, styleAccentColor, accentFontsFor, baseFonts, cssFamily, findFont, fontBlockedFor, fontStyles,
   injectFontFaces, styleIdOf, type SubtitleStyleId
 } from '../../lib/subtitleText';
 import { SubtitleTimeline } from './SubtitleTimeline';
+import { SubtitleCanvas, type SubtitleCanvasProps } from './SubtitleCanvas';
+import { useSubtitleClock } from '../../lib/subtitleClock';
+
+const clockLabel = (s: number) => {
+  const v = Math.max(0, s);
+  const m = Math.floor(v / 60);
+  return `${m}:${(v - m * 60).toFixed(1).padStart(4, '0')}`;
+};
 import { InlineError, queryDown } from '../ui/ErrorState';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
@@ -469,100 +477,27 @@ export function StageSubtitles() {
 
 const WHITE_TEXT = '#f6f5fd'; // ui-allow: цвет данных (дефолтный цвет субтитров), не цвет интерфейса
 
-/** px кадра 1080 по ширине → cqi плеера (1cqi = 10.8px): числа берутся прямо из AE-шаблонов. */
-const cqi = (px: number) => `${(px / 10.8).toFixed(2)}cqi`;
-
-/**
- * Строка субтитров в превью — CSS-приближение AE-шаблонов стиля, не одна «общая» надпись:
- *   jakson — app/scenes_3rd_reference_builder + subtitle_font_layout: TYPE_1 две строки 80/120px капсом,
- *            фокус — красный TYPE_4 или рукописный шрифт пары (TYPE_2);
- *   impulse — 2nd_template/impulse_template.jsx: Point-Light 100px строчными, трекинг −25, обводка 3px
- *            в цвет текста, длинная строка до ~16 знаков, три чёрные тени;
- *   tape — 4th_template/tape.jsx: Montserrat-BoldItalic 60px капсом, интерлиньяж 80, короб 900px,
- *            фокус красным, две тени (135°, 3px);
- *   trendy — 5th_template/trendy_subtitles.jsx: ОДНО слово, Montserrat-Bold 130px, вертикаль ×4,
- *            трекинг −55, градиент белый→чёрный, чёрная обводка под заливкой, большая тень;
- *   brat — 5th_template/brat_subtitles.jsx: Arial Narrow строчными, по 2 слова в строке с полной
- *            выключкой в коробе 80% кадра, Minimax+Blur (жирно и мягко), тень под словом.
- * Настройки человека (размер, высота, позиция, тень, цвета, шрифт пары) ложатся поверх — как у рендера.
- */
-export function SubtitlePreview({ style, words, settings, color, accentColor, family, accentFamily, lowercase, heightScale }: {
-  style: SubtitleStyleId; words: string[]; settings: SubtitleTextSettings; color: string; accentColor: string;
-  family: string; accentFamily?: string; lowercase: boolean; heightScale: number;
-}) {
-  const k = SIZE_SCALE[settings.size];
-  const align = settings.position === 'left' ? 'left' : settings.position === 'right' ? 'right' : 'center';
-  const common = { top: `${POSITION_CENTER_Y[settings.position] * 100}%`, color, '--sub-color': color } as CSSProperties;
-  const focusWord = (word: string, key: number) => {
-    if (style === 'brat') {
-      const fs = settings.focusStyle;
-      const look: CSSProperties = fs === 'italic' ? { fontStyle: 'italic' } : fs === 'bold_italic' ? { fontStyle: 'italic', fontWeight: 700 } : fs === 'faux_italic' ? { display: 'inline-block', transform: 'skewX(-12deg)' } : {};
-      return <span key={key} style={{ ...look, color: accentColor }}>{word}</span>;
-    }
-    return accentFamily
-      ? <span key={key} className="w12-sub-pair" style={{ color: accentColor, fontFamily: accentFamily }}>{word.toLowerCase()}</span>
-      : <span key={key} style={{ color: accentColor }}>{word}</span>;
-  };
-  const line = (list: string[], focusAt: number) => list.flatMap((word, index) => [
-    index > 0 ? ' ' : '',
-    index === focusAt ? focusWord(word, index) : word
-  ]);
-  const caseClass = lowercase ? 'w12-sub-lower' : undefined;
-
-  if (style === 'trendy') {
-    const word = (words[words.length - 1] ?? '').toUpperCase();
-    // слово вписывается в 90% ширины кадра (fitWidthFactor), как в шаблоне
-    const size = Math.min(130 * k, 86 * 10.8 / Math.max(1, word.length * 0.62));
-    return (
-      <div className="w12-sub w12-sub-trendy" data-align={align} data-shadow={settings.shadow} style={common}>
-        <span className="w12-sub-word" style={{ fontFamily: family, fontSize: cqi(size), '--sub-vs': 4 * heightScale } as CSSProperties}>{accentFamily ? word.toLowerCase() : word}</span>
-      </div>
-    );
-  }
-  if (style === 'brat') {
-    const rows: string[][] = [];
-    words.slice(0, 6).forEach((word, index) => { if (index % 2 === 0) rows.push([word]); else rows[rows.length - 1].push(word); });
-    const last = words.slice(0, 6).length - 1;
-    return (
-      <div className="w12-sub w12-sub-brat" data-align={align} data-shadow={settings.shadow} style={{ ...common, fontSize: cqi(104 * k) }}>
-        {rows.map((row, r) => (
-          <div key={r} className={cn('w12-sub-row', row.length === 1 && 'w12-one')}>
-            {row.map((word, i) => (r * 2 + i === last ? focusWord(word.toLowerCase(), i) : <span key={i}>{word.toLowerCase()}</span>))}
-          </div>
-        ))}
-      </div>
-    );
-  }
-  if (style === 'impulse') {
-    // длинный слой — одна строка до ~16 знаков
-    const long: string[] = [];
-    for (const word of words) { if ([...long, word].join(' ').length > 16 && long.length) break; long.push(word); }
-    return (
-      <div className={cn('w12-sub w12-sub-impulse', caseClass)} data-align={align} data-shadow={settings.shadow}
-        style={{ ...common, fontFamily: family, fontSize: cqi(100 * k), transform: `translateY(-50%) scaleY(${heightScale})` }}>
-        <div className="w12-sub-row">{line(long.map((word) => word.toLowerCase()), long.length > 1 ? long.length - 1 : -1)}</div>
-      </div>
-    );
-  }
-  if (style === 'tape') {
-    const list = words.slice(0, 6);
-    return (
-      <div className={cn('w12-sub w12-sub-tape', caseClass)} data-align={align} data-shadow={settings.shadow}
-        style={{ ...common, fontFamily: family, fontSize: cqi(60 * k), transform: `translateY(-50%) scaleY(${heightScale})` }}>
-        <div className="w12-sub-row">{line(list, list.length - 1)}</div>
-      </div>
-    );
-  }
-  // jakson: TYPE_1 — первая строка 80px, вторая 120px; фокус — последнее слово второй строки
-  const first = words.slice(0, 2);
-  const second = words.slice(2, 4).length ? words.slice(2, 4) : words.slice(0, 1);
+/* Часы плеера тикают каждые 50 мс — на них подписаны только эти два маленьких компонента,
+   а не вся правая колонка с видео-фоном и итогом шага. */
+function PreviewPlay({ clipStart }: { clipStart: number }) {
+  const { t } = useTranslation();
+  const time = useSubtitleClock((c) => c.time);
+  const playing = useSubtitleClock((c) => c.playing);
+  const toggle = useSubtitleClock((c) => c.toggle);
+  if (!toggle) return null;
   return (
-    <div className={cn('w12-sub w12-sub-jakson', caseClass)} data-align={align} data-shadow={settings.shadow}
-      style={{ ...common, fontFamily: family, transform: `translateY(-50%) scaleY(${heightScale})` }}>
-      {words.length > 2 && <div className="w12-sub-row" style={{ fontSize: cqi(80 * k) }}>{line(first, -1)}</div>}
-      <div className="w12-sub-row" style={{ fontSize: cqi(120 * k) }}>{line(second, second.length - 1)}</div>
-    </div>
+    <button type="button" className="w12-drop-play" onClick={() => toggle()}
+      aria-label={playing ? t('wizard.subs.timeline.pause') : t('wizard.subs.timeline.play')}>
+      <span className="w12-dot">{playing ? PAUSE : PLAY}</span>
+      <span className="w12-num w12-drop-clock">{clockLabel((time ?? clipStart) - clipStart)}</span>
+    </button>
   );
+}
+
+function ClockedSubtitles(props: Omit<SubtitleCanvasProps, 'time' | 'rest'>) {
+  const time = useSubtitleClock((c) => c.time);
+  const playing = useSubtitleClock((c) => c.playing);
+  return <SubtitleCanvas {...props} time={props.words.length ? time : null} rest={!playing} />;
 }
 
 export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext }: { ready: boolean; canContinue: boolean; loading?: boolean; onBack: () => void; onNext: () => void }) {
@@ -576,24 +511,23 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
   const previewLyrics = (fragmentLyrics.trim() || lyrics.trim()) || t('wizard.subs.lyricsPlaceholder');
   const tab = activeTextTab(subtitles);
   const textSettings = textSettingsFor(subtitles, tab);
-  // слова — как их отдаёт распознавание: без тире и прочих знаков-одиночек
-  const words = previewLyrics.split(/[\n.!?]+/).filter(Boolean).slice(0, 2).join(' ').split(/\s+/).filter((word) => /[\p{L}\p{N}]/u.test(word));
-  // Шрифты — как у рендера (lib/subtitleText.ts ↔ app/subtitle_font_layout.py): стандартный шрифт
-  // стиля из каталога, свой основной — если выбран (у brat зафиксирован), пара — для фокус-слова.
-  const catalog = useQuery({ queryKey: ['subtitle-fonts'], queryFn: api.subtitleFonts, staleTime: Infinity }).data;
-  useEffect(() => { injectFontFaces(catalog); }, [catalog]);
   const tabStyle = tab ? styleIdOf(tab) : null;
-  const base = tabStyle === 'brat' ? undefined : findFont(catalog, textSettings.font);
-  const accent = findFont(catalog, textSettings.accentFont);
-  const defaultPs = tabStyle === 'brat' ? 'ArialNarrow' : catalog?.defaults[tabStyle ?? 'jakson'];
-  const family = base ? cssFamily(base) : tabStyle === 'brat' ? '"Arial Narrow", Arial, sans-serif' : cssFamily(findFont(catalog, defaultPs), defaultPs);
-  const accentColor = textSettings.accentColor ?? styleAccentColor(catalog, tabStyle, subtitles.color);
+  // слова — из «Проверки субтитров» (тайминги и фокус человека); до распознавания — заглушка из текста
+  const asr = useWizardStore((state) => state.asr);
+  const timed = useMemo(() => (asr.status === 'COMPLETED'
+    ? asr.words.map((w) => ({ text: w.text, start: w.tStart, end: w.tEnd, focus: w.focus }))
+    : []), [asr.status, asr.words]);
+  const [geomError, setGeomError] = useState<string | null>(null);
   const wideFrame = allBackgroundsWide(background);
 
   return (
     <aside className="w12-col-aside">
       <div className="w12-card w12-pv-card">
-        <div className="w12-aside-head"><h2>{t('wizard.subs.preview')}</h2><span className="w12-meta">{tab ?? ''}</span></div>
+        <div className="w12-aside-head">
+          <h2>{t('wizard.subs.preview')}</h2>
+          {/* тот же плеер, что в «Проверке субтитров»: превью идёт по таймингам слов */}
+          {timed.length > 0 && <PreviewPlay clipStart={asr.clipStart ?? 0} />}
+        </div>
         {/* кадр — выбранный на «Фоне» (первый футаж/фото или цвет): субтитры видно так, как они лягут */}
         <div className={cn('w12-pv-stage', wideFrame && 'w12-pv-ambient')}>
           {wideFrame && backdrop.url && (backdrop.isVideo
@@ -606,10 +540,10 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
             {backdrop.color && <div className="w12-media-el" style={{ background: backdrop.color }} />}
             <div className="w12-shade" />
             {tabStyle
-              ? <SubtitlePreview style={tabStyle} words={words.length ? words : [t('wizard.subs.previewEmpty')]} settings={textSettings}
-                  color={subtitles.color} accentColor={accentColor} family={family} accentFamily={accent ? cssFamily(accent) : undefined}
-                  lowercase={Boolean(base?.lowercase)} heightScale={base?.serif ? HEIGHT_SCALE[textSettings.height] : 1} />
+              ? <ClockedSubtitles style={tabStyle} settings={textSettings} color={subtitles.color} words={timed} lyrics={previewLyrics}
+                  wide={wideFrame} onError={setGeomError} />
               : <div className="w12-empty">{t('wizard.subs.previewPickStyle')}</div>}
+            {tabStyle && geomError && <div className="w12-sub-error">{geomError}</div>}
             {tab && <span className="w12-pv-tag">{tab}</span>}
           </div>
         </div>

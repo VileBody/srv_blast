@@ -198,3 +198,21 @@ def subtitle_svg(style_id: str) -> str:
         palette = ["#f6f5fd", "#ffd166", "#f6f5fd", "#7ae3ff"]
         body = _sub_words([(t.upper(), {**caps, "fill": palette[i % 4]}) for i, t in enumerate(_SUB_WORDS)], 262, 16, w)
     return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}" preserveAspectRatio="xMidYMid slice">{bg}{body}</svg>'
+
+
+def frame_svg(frame_id: str) -> str:
+    """Демо-рамка 9:16 для мока: чёрная маска с прозрачным окном, как PNG рамок рендера
+    (на проде превью — сам PNG из бакета ассетов)."""
+    w, h = 1080, 1920
+    if frame_id == "rounded":
+        mask = '<path fill-rule="evenodd" fill="#000" d="M0 0H1080V1920H0Z M140 260H940A90 90 0 0 1 1030 350V1570A90 90 0 0 1 940 1660H140A90 90 0 0 1 50 1570V350A90 90 0 0 1 140 260Z"/>'
+    elif frame_id == "soft_bars":
+        mask = (
+            '<defs><linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#000"/><stop offset=".72" stop-color="#000"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>'
+            '<linearGradient id="b" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#000"/><stop offset=".72" stop-color="#000"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient></defs>'
+            '<rect width="1080" height="360" fill="url(#t)"/><rect y="1560" width="1080" height="360" fill="url(#b)"/>'
+        )
+    else:  # letterbox
+        mask = '<rect width="1080" height="300" fill="#000"/><rect y="1620" width="1080" height="300" fill="#000"/>'
+    return f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w} {h}">{mask}</svg>'
+

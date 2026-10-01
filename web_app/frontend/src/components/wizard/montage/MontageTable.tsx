@@ -4,11 +4,12 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
 import effectsRegistry from '../../../data/effects-registry.json';
 import { HookConfig, HookKind, MontageVideo, TimelinePace, TimelineRecipe, TimelineStyleRange, textSettingsFor, useWizardStore } from '../../../stores/wizardStore';
-import { HEIGHT_SCALE, cssFamily, findFont, injectFontFaces, styleAccentColor, styleIdOf, type SubtitleStyleId } from '../../../lib/subtitleText';
+import { styleIdOf } from '../../../lib/subtitleText';
 import { EFFECT_HOOKS, MOTIONS, NO_GLUE, OBJECTS, THOUGHTS } from '../hookCatalog';
 import { PACES, useRecipeCuts } from '../storyboardData';
 import { usePlaybackUrl } from '../useFragmentAudio';
-import { SubtitlePreview, SubtitleTextCustomization } from '../SubtitlesPanel';
+import { SubtitleTextCustomization } from '../SubtitlesPanel';
+import { SubtitleCanvas, type SubtitleCanvasProps } from '../SubtitleCanvas';
 import { StoryboardReplaceGuideVisual, TimelineEntryGuideVisual } from '../timelineGuides';
 import { useGuideDismiss, useMarkGuideSeen } from '../../guidance/useGuideDismiss';
 import { useTranslation } from 'react-i18next';
@@ -172,24 +173,17 @@ function styleFilter(active: string[], t: number): string {
 const frameIndex = (bounds: number[], v: number) => { let f = 0; while (f < bounds.length - 2 && v >= bounds[f + 1]) f++; return f; };
 
 /* ── субтитры в превью: стиль ролика и настройки текста шага «Текст», слова по таймингам примерки ── */
-interface SubProps { style: string; words: string[]; settings: ReturnType<typeof textSettingsFor>; color: string; accentColor: string; family: string; accentFamily?: string; lowercase: boolean; heightScale: number }
-const SUB_FAMILY: Record<string, string> = { brat: '"Arial Narrow", Arial, sans-serif', jakson: 'Point, sans-serif', impulse: 'Point, sans-serif', tape: '"Montserrat", sans-serif', trendy: 'Point, sans-serif' };
+// раскладка и тайминг — тот же JS-модуль AE-геометрии, что в превью шага «Текст»
+type SubProps = Omit<SubtitleCanvasProps, 'time' | 'rest'>;
 interface Word { a: number; b: number; text: string; focus: boolean; idx: number }
-function phraseAt(words: Word[], t: number): string[] {
-  const groups: Word[][] = [];
-  for (const w of words) { const last = groups[groups.length - 1]; if (last && w.a - last[last.length - 1].b < 0.45) last.push(w); else groups.push([w]); }
-  const g = groups.find((x) => t >= x[0].a && t < x[x.length - 1].b + 0.35);
-  if (!g) return [];
-  const shown = g.filter((w) => w.a <= t);
-  return shown.slice(-6).map((w) => w.text);
-}
 
 /* ── кадр ролика: клипы по склейкам, переход на стыке, стили, вспышка хука, субтитры ── */
-export interface StageFx { transitionAt: (i: number) => string; styles: TimelineStyleRange[]; hookKind?: HookKind; hookLabel?: string; hookRange: [number, number] | null }
+export interface StageFx { transitionAt: (i: number) => string; styles: TimelineStyleRange[]; hookKind?: HookKind; hookLabel?: string; hookRange: [number, number] | null; frameUrl?: string | null }
 export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, className = '', children }: {
   frames: Frame[]; bounds: number[]; t: number; playing?: boolean; fx: StageFx;
   sub?: SubProps; w: number; h: number; className?: string; children?: ReactNode;
 }) {
+  const [subError, setSubError] = useState<string | null>(null);
   const shots = Math.max(1, bounds.length - 1);
   const fNow = frameIndex(bounds, t);
   const since = t - (bounds[fNow] ?? 0);
@@ -225,11 +219,14 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
         })}
       </div>
       {cover && <div className="mt-cover"><span>{fx.hookLabel}</span></div>}
+      {/* рамка ролика — поверх всего, как в рендере (PNG-маска на весь кадр) */}
+      {fx.frameUrl && <img className="mt-frame" src={fx.frameUrl} alt="" draggable={false} />}
       <div className="fxt-ov fxt-flash" style={{ opacity: flash }} />
       <div className="fxt-ov fxt-trflash" style={{ opacity: trFlash }} />
       {sub && sub.words.length > 0 && (
         <div className="w12 mt-sub">
-          <SubtitlePreview {...sub} style={sub.style as SubtitleStyleId} />
+          <SubtitleCanvas {...sub} time={t} rest={!playing} onError={setSubError} />
+          {subError && <div className="w12-sub-error">{subError}</div>}
         </div>
       )}
       {children}
@@ -250,7 +247,7 @@ function LoopStage({ frames, bounds, at, dur, fx }: { frames: Frame[]; bounds: n
 }
 
 type Sel = { type: 'frame'; i: number } | { type: 'cut'; i: number } | { type: 'hook' } | { type: 'style'; uid: number } | { type: 'sub'; i: number } | null;
-type LibKind = 'src' | 'text' | 'hook' | 'trans' | 'style';
+type LibKind = 'src' | 'text' | 'hook' | 'trans' | 'style' | 'frame';
 interface LibItem { kind: LibKind; label: string; hookKind?: HookCatalogKind; url?: string | null }
 type PlaceTarget = { lane: string; a: number; b: number; bad?: boolean; label?: string } | { join: number };
 interface Snapshot { transitions: Record<number, string>; styles: TimelineStyleRange[] }
@@ -335,12 +332,14 @@ const STYLE_GROUPS: Group[] = [
 ];
 
 /* ── библиотека ── */
-const Library = memo(function Library({ tab, setTab, open, setOpen, used, activeHookKind, subStyle, subPreviews, onPickSub, textCfg, onAdd, onDragStart }: {
+const Library = memo(function Library({ tab, setTab, open, setOpen, used, activeHookKind, subStyle, subPreviews, onPickSub, textCfg, onAdd, onDragStart, frames, frameId, onPickFrame, frameNote, frameBase, frameAll }: {
   tab: LibKind; setTab: (tab: LibKind) => void; open: Record<string, boolean>; setOpen: (kind: string) => void;
   used: (item: LibItem) => boolean; activeHookKind?: HookKind;
 
   subStyle?: string; subPreviews: Record<string, string | undefined>; onPickSub: (name: string) => void; textCfg: ReactNode;
   onAdd: (item: LibItem) => void; onDragStart: (item: LibItem, e: ReactPointerEvent) => void;
+  /** рамки: каталог, выбранная у ролика, выбор; frameNote — почему ролик рамку не принимает */
+  frames: { id: string; label: string; previewUrl: string }[]; frameId?: string | null; onPickFrame: (id: string | null) => void; frameNote?: string; frameBase?: ReactNode; frameAll?: ReactNode;
 }) {
   const row = (item: LibItem, lead: ReactNode, meta?: string, disabled = false) => {
     const on = used(item);
@@ -378,7 +377,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
       </div>
     );
   });
-  const tabs: [LibKind, string, number][] = [['text', 'Субтитры', SUB_STYLES.length], ['hook', 'Хуки', HOOK_CATS.reduce((n, c) => n + c.options.length, 0)], ['trans', 'Переходы', GLUES.length], ['style', 'Стилизации', STYLES.length]];
+  const tabs: [LibKind, string, number][] = [['text', 'Субтитры', SUB_STYLES.length], ['hook', 'Хуки', HOOK_CATS.reduce((n, c) => n + c.options.length, 0)], ['trans', 'Переходы', GLUES.length], ['style', 'Стилизации', STYLES.length], ['frame', 'Рамки', frames.length]];
   return (
     <section className="fxt-panel fxt-lib" aria-label="Библиотека">
       <div className="fxt-lib-h">
@@ -435,6 +434,25 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
           </>
         )}
         {tab === 'style' && groups(STYLE_GROUPS, 'style')}
+        {tab === 'frame' && (
+          <>
+            {/* плашки — кадр этого ролика с рамкой поверх: видно, как она ляжет именно на него */}
+            <div className="mt-plates mt-frames" role="radiogroup" aria-label="Рамка ролика">
+              {[{ id: '', label: 'Без рамки', previewUrl: '' }, ...frames].map((f) => {
+                const on = (frameId ?? '') === f.id;
+                return (
+                  <button key={f.id || 'none'} type="button" role="radio" aria-checked={on} aria-label={f.label} className="mt-plate mt-frame-plate" disabled={Boolean(frameNote) && Boolean(f.id)} onClick={() => onPickFrame(f.id || null)} data-tip={f.label}>
+                    <span className="mt-frame-base">{frameBase}</span>
+                    {f.previewUrl && <img src={f.previewUrl} alt="" draggable={false} />}
+                    <span className="nm">{f.label}</span>
+                    {on && <span className="ck"><Glyph name="check" size={14} sw={2.2} /></span>}
+                  </button>
+                );
+              })}
+            </div>
+            {frameNote ? <p className="mt-lib-note"><span className="tx">{frameNote}</span></p> : frameAll && <div className="mt-frame-all">{frameAll}</div>}
+          </>
+        )}
       </div>
     </section>
   );
@@ -624,20 +642,18 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const toggleAsrFocus = useWizardStore((s) => s.toggleAsrFocus);
   const subtitles = useWizardStore((s) => s.subtitles);
   const setSubtitles = useWizardStore((s) => s.setSubtitles);
-  const catalog = useQuery({ queryKey: ['subtitle-fonts'], queryFn: api.subtitleFonts, staleTime: Infinity }).data as never;
-  useEffect(() => { injectFontFaces(catalog); }, [catalog]);
-  const subProps = (name: string | undefined, words: string[]): SubProps | undefined => {
-    const id = subStyleId(name); if (!id || !name) return undefined;
-    const settings = textSettingsFor(subtitles, name);
-    const style = styleIdOf(name);
-    const base = style === 'brat' ? undefined : findFont(catalog, settings.font);
-    const accent = findFont(catalog, settings.accentFont);
-    const defaultPs = style === 'brat' ? 'ArialNarrow' : (catalog as { defaults?: Record<string, string> } | undefined)?.defaults?.[style ?? 'jakson'];
-    const family = base ? cssFamily(base) : style === 'brat' ? '"Arial Narrow", Arial, sans-serif' : cssFamily(findFont(catalog, defaultPs), defaultPs) || SUB_FAMILY[id];
-    return { style: id, words, settings, color: subtitles.color, accentColor: settings.accentColor ?? styleAccentColor(catalog, style, subtitles.color),
-      family, accentFamily: accent ? cssFamily(accent) : undefined, lowercase: Boolean(base?.lowercase), heightScale: base?.serif ? HEIGHT_SCALE[settings.height] : 1 };
+  const lyrics = useWizardStore((s) => s.lyrics);
+  const fragmentLyrics = useWizardStore((s) => s.fragmentLyrics);
+  const timedSubs = useMemo(() => subs.map((w) => ({ text: w.text, start: w.a, end: w.b, focus: w.focus })), [subs]);
+  const subProps = (name: string | undefined, wide: boolean): SubProps | undefined => {
+    const style = styleIdOf(name ?? '');
+    if (!subStyleId(name) || !name || !style) return undefined;
+    return { style, settings: textSettingsFor(subtitles, name), color: subtitles.color, words: timedSubs, lyrics: fragmentLyrics.trim() || lyrics.trim() || undefined, wide };
   };
   // Конфигуратор текста правит стиль этого ролика: вкладка шага «Текст» = стиль ролика
+  const framesQuery = useQuery({ queryKey: ['wizard-frames'], queryFn: api.frames, staleTime: 30 * 60_000 });
+  const frameCatalog = framesQuery.data?.frames ?? [];
+  const frameUrlOf = (id?: string | null) => (id ? frameCatalog.find((f) => f.id === id)?.previewUrl ?? null : null);
   const pickSub = (name: string) => {
     fxEdit((v) => ({ ...v, sub: name }));
     setSubtitles({ pool: subtitles.pool.includes(name) ? subtitles.pool : [...subtitles.pool, name], textTab: name });
@@ -797,6 +813,12 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     say(`${label} — на всех склейках${scopeNote}`);
   };
   const setSub = (name: string) => { pickSub(name); say(`Субтитры ролика: ${name}`); };
+  const frameLabel = (id: string | null) => (id ? frameCatalog.find((f) => f.id === id)?.label ?? id : 'без рамки');
+  const pickFrame = (id: string | null) => {
+    if (id && !combo.vertical) { say('Рамка ставится только на вертикальное видео — на 16:9 её обрезало бы'); return; }
+    fxEdit((v) => ({ ...v, frame: id }));
+    say(`Рамка ролика: ${frameLabel(id)}`);
+  };
   const toAll = (fn: (v: VideoFx) => VideoFx, msg: string, only?: number[]) => {
     const idx = only ?? allIdx;
     if (!idx.length) { say('Нет роликов, куда это можно поставить'); return; }
@@ -805,6 +827,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   };
   // Хук рендер собирает только на вертикальном видео: фото, цвет и 16:9 его не принимают
   const hookIdx = combos.filter((c) => c.hookAllowed).map((c) => c.index);
+  // рамка нарисована под 9:16 — «Во все» ставит её только вертикальным роликам
+  const verticalIdx = combos.filter((c) => c.vertical).map((c) => c.index);
   const allPill = (onClick: () => void, count = total) => count > 1 ? <button type="button" className="fxt-pill mt-all" data-tip={`Поставить то же самое во все ${count} ${rolik(count)} батча`} onClick={onClick}><span className="tx">Во все {count}</span></button> : null;
   const addHook = (item: LibItem) => {
     const cat = HOOK_CATS.find((c) => c.kind === item.hookKind);
@@ -1035,8 +1059,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     const v = fxOf(c.index);
     return [c.bgLabel, v.sub ?? c.sub ?? '—', hookLabel(v.kind, v.config) ?? 'без хука'].join(' · ');
   };
-  const stageFxFor = (c: Combo): StageFx => { const v = fxOf(c.index); return { transitionAt: transitionAtFor(v), styles: v.styles, hookKind: v.kind, hookLabel: hookLabel(v.kind, v.config), hookRange: hookRangeFor(v) }; };
-  const subFor = (c: Combo) => subProps(fxOf(c.index).sub ?? c.sub, phraseAt(subs, t));
+  const stageFxFor = (c: Combo): StageFx => { const v = fxOf(c.index); return { transitionAt: transitionAtFor(v), styles: v.styles, hookKind: v.kind, hookLabel: hookLabel(v.kind, v.config), hookRange: hookRangeFor(v), frameUrl: frameUrlOf(v.frame) }; };
+  const subFor = (c: Combo) => subProps(fxOf(c.index).sub ?? c.sub, !c.vertical);
   const showFramesGuide = view === 'table' && Boolean(sbVideo) && !framesGuideDismissed && editK === null;
   const showLanesGuide = view === 'table' && (framesGuideDismissed || !sbVideo) && !lanesGuideDismissed && editK === null && !pop && !keysOpen;
   useMarkGuideSeen('table-frames', showFramesGuide);
@@ -1119,10 +1143,14 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         <main ref={mainRef} className="fxt-main">
           <Library tab={tab} setTab={setTab} open={open} setOpen={toggleOpen} used={used} activeHookKind={kind}
             subStyle={vfx.sub} subPreviews={subPreviews} onPickSub={setSub} textCfg={<SubtitleTextCustomization guideTargetRef={cfgRef} />}
-            onAdd={addFromLib} onDragStart={onLibDragStart} />
+            onAdd={addFromLib} onDragStart={onLibDragStart}
+            frames={frameCatalog} frameId={vfx.frame} onPickFrame={pickFrame}
+            frameNote={combo.vertical ? undefined : 'Это видео 16:9 — рамка нарисована под вертикальный кадр и на нём не ставится'}
+            frameBase={clips[0] ? <FrameView frame={clips[0]} thumb /> : null}
+            frameAll={vfx.frame ? allPill(() => toAll((v) => ({ ...v, frame: vfx.frame ?? null }), `Рамка: ${frameLabel(vfx.frame ?? null)}`, verticalIdx), verticalIdx.length) : null} />
 
           <section className="fxt-panel fxt-pv" aria-label="Превью">
-            <Stage frames={clips} bounds={bounds} t={t} playing={playing} fx={{ transitionAt, styles, hookKind: kind, hookLabel: activeHookLabel, hookRange }} sub={subFor(combo)} w={stageSize.w} h={stageSize.h}>
+            <Stage frames={clips} bounds={bounds} t={t} playing={playing} fx={{ transitionAt, styles, hookKind: kind, hookLabel: activeHookLabel, hookRange, frameUrl: frameUrlOf(vfx.frame) }} sub={subFor(combo)} w={stageSize.w} h={stageSize.h}>
               <div className="fxt-chip"><Glyph name="film" size={12} /><span className="tx">Ролик {index + 1} из {total} · {combo.bgLabel}</span></div>
               {editK === null && <button type="button" className="fxt-play" aria-label={playing ? 'Пауза' : 'Воспроизвести'} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
                 <Glyph name={playing ? 'pause' : 'play'} size={20} />

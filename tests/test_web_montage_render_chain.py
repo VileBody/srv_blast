@@ -138,3 +138,18 @@ def test_comp_window_conversion_drops_only_what_the_render_trimmed():
     assert cuts == [{"t": 3.0, "id": "minimax"}] and dropped_c == 1
     assert ranges == [{"id": "wave", "start": 0.0, "end": 10.0}] and dropped_r == 1
     assert montage_items_for_comp(None, None, clip_start=0, clip_len=5) == (None, None, 0, 0)
+
+
+def test_site_frame_catalog_matches_the_render_catalog():
+    # сайт шлёт frame_id, рендер резолвит его по своему каталогу — ids и файлы обязаны совпадать
+    import importlib.util
+    from pathlib import Path
+    from mlcore.hooks.frames.catalog import FRAMES as RENDER_FRAMES
+    spec = importlib.util.spec_from_file_location("web_frames", Path("web_app/backend/app/frames.py"))
+    web = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(web)
+    assert set(web.FRAMES) == set(RENDER_FRAMES)
+    for fid, (file, ru, _en) in web.FRAMES.items():
+        assert RENDER_FRAMES[fid][0] == f"frames/{file}" and RENDER_FRAMES[fid][1] == ru
+    schemas = pytest.importorskip("services.orchestrator.schemas")
+    schemas.SendAudioS3Request.model_validate({"audio_s3_url": "s3://a/t.mp3", "frame_id": "letterbox"})

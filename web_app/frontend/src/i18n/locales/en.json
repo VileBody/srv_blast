@@ -441,7 +441,10 @@
       "waveHint": "Click the waveform to select a fragment",
       "playCut": "Play fragment",
       "segmentOf": "<b>{{seconds}} s</b> of {{max}} s",
-      "needCut": "Select a fragment on the waveform."
+      "needCut": "Select a fragment on the waveform.",
+      "zoom": "Waveform zoom",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out"
     },
     "text": {
       "placeholder": "Lines sung in the fragment, one per line.",
@@ -582,7 +585,14 @@
       "guideNext": "Next",
       "guideDismiss": "Got it",
       "dropTitle": "Drop timing",
-      "typeTitle": "FX type"
+      "typeTitle": "FX type",
+      "dropListen": "Listen to the drop",
+      "dropListenClip": "Listen to the clip",
+      "dropListenStop": "Stop",
+      "dropListenHint": "3 s before the drop, 2 after",
+      "dropListenClipHint": "the whole clip",
+      "dropIn": "drop in {{seconds}} s",
+      "dropNow": "drop"
     },
     "subs": {
       "title": "Subtitles",
@@ -674,7 +684,9 @@
       "stylesTitle": "Subtitle style",
       "preview": "Preview",
       "previewEmpty": "Your lyrics will appear here",
-      "previewPickStyle": "Pick a style to see it here"
+      "previewPickStyle": "Pick a style to see it here",
+      "fontMissing": "Font {{fonts}} is not on the server yet — no preview, so we never show the wrong geometry",
+      "fontFailed": "Could not load font {{fonts}} — reload the page"
     },
     "fxv": {
       "stepSound": "Warm-up",

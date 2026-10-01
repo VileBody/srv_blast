@@ -1575,6 +1575,8 @@ def api_demo_media(item_id: str, aspect: str = "9:16", still: int = 0) -> Respon
         raise HTTPException(status_code=422, detail=f"Неизвестный формат превью: {aspect}")
     if item_id.startswith("sub-"):
         svg = demo_media.subtitle_svg(item_id.removeprefix("sub-"))
+    elif item_id.startswith("frame-"):
+        svg = demo_media.frame_svg(item_id.removeprefix("frame-"))
     else:
         svg = demo_media.animated_svg(item_id, aspect=aspect, still=bool(still))
     return Response(content=svg, media_type="image/svg+xml", headers={"Cache-Control": "no-cache"})
@@ -1652,12 +1654,85 @@ def api_subtitle_styles() -> dict[str, Any]:
     return {"status": "COMPLETED", "styles": store.SUBTITLE_STYLES, "mock": True}
 
 
+@app.get("/api/wizard/frames", tags=["wizard"])
+def api_frames() -> dict[str, Any]:
+    """Рамки для монтажного стола: тот же каталог, что у бота и рендера (app/frames.py).
+
+    Превью — сам PNG рамки: на проде подписанная ссылка на бакет ассетов, в моке — демо-SVG."""
+    from . import frames as frames_catalog
+
+    if RUNTIME.backend == "production":
+        try:
+            backend = _production_backend()
+            items = [
+                {"id": fid, "label": ru, "labelEn": en, "previewUrl": backend.frame_preview_url(file)}
+                for fid, (file, ru, en) in frames_catalog.FRAMES.items()
+            ]
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        return {"status": "COMPLETED", "frames": items, "mock": False}
+    items = [
+        {"id": fid, "label": ru, "labelEn": en, "previewUrl": f"/api/wizard/demo-media/frame-{fid}.svg"}
+        for fid, (_file, ru, en) in frames_catalog.FRAMES.items()
+    ]
+    return {"status": "COMPLETED", "frames": items, "mock": True}
+
+
+def _font_store() -> dict[str, Any]:
+    """Где лежат файлы шрифтов субтитров: прод — S3 бэкенда, мок — локальная папка."""
+    if RUNTIME.backend == "production":
+        backend = _production_backend()
+        return {"production": True, "s3": backend._s3, "asset_bucket": backend.config.asset_bucket}
+    return {"production": False}
+
+
 @app.get("/api/wizard/subtitle-fonts", tags=["wizard"])
 def api_subtitle_fonts() -> dict[str, Any]:
-    """Каталог шрифтов субтитров из движка рендера: роли, пары, засечки, стили."""
+    """Каталог шрифтов субтитров из движка рендера: роли, пары, засечки, стили —
+    и файлы шрифтов, которыми превью рисует субтитры (только залитые в хранилище)."""
+    from . import subtitle_fonts, subtitle_text
+
+    catalog = subtitle_text.font_catalog()
+    try:
+        files = subtitle_fonts.font_files(**_font_store())
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    return {**catalog, "files": files, "required": subtitle_fonts.required_fonts()}
+
+
+@app.get("/api/wizard/subtitle-font/{name}", tags=["wizard"])
+def api_subtitle_font(name: str) -> Response:
+    """Файл шрифта субтитров (woff2). Имя — только из каталога; версия — в query (?v=)."""
+    from . import subtitle_fonts
+
+    ps = name[: -len(subtitle_fonts.FONT_EXT)] if name.endswith(subtitle_fonts.FONT_EXT) else ""
+    try:
+        data = subtitle_fonts.read_font(ps, **_font_store())
+    except (KeyError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=f"Шрифт {ps or name} не загружен") from exc
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    return Response(content=data, media_type=subtitle_fonts.CONTENT_TYPE,
+                    headers={"Cache-Control": "public, max-age=31536000, immutable"})
+
+
+class SubtitleGeometryPayload(BaseModel):
+    style: str
+    settings: dict[str, Any] = Field(default_factory=dict)
+    renderPreset: str = "vertical"
+
+
+@app.post("/api/wizard/subtitle-geometry", tags=["wizard"])
+def api_subtitle_geometry(payload: SubtitleGeometryPayload) -> dict[str, Any]:
+    """Числа раскладки стиля для JS-превью субтитров — из того же движка, что сборка."""
     from . import subtitle_text
 
-    return subtitle_text.font_catalog()
+    if payload.renderPreset not in ("vertical", "wide"):
+        raise HTTPException(status_code=422, detail=f"Неизвестный формат кадра: {payload.renderPreset}")
+    try:
+        return subtitle_text.geometry(payload.settings, style=payload.style, render_preset=payload.renderPreset)
+    except subtitle_text.SubtitleTextError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get("/api/wizard/session", tags=["wizard"])

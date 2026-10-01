@@ -542,6 +542,14 @@ class ProductionBackend:
             for item in source
         ]
 
+    def frame_preview_url(self, file: str) -> str:
+        """Подписанная ссылка на PNG рамки. Рамки рендер берёт из бакета ассетов эффектов —
+        деплой ставит его равным S3_BUCKET_ASSET_STORAGE с префиксом fx_assets/."""
+        prefix = (os.environ.get("FX_ASSETS_S3_PREFIX") or "fx_assets/").strip().strip("/")
+        bucket = (os.environ.get("FX_ASSETS_S3_BUCKET") or "").strip() or self.config.asset_bucket
+        key = f"{prefix}/frames/{file}" if prefix else f"frames/{file}"
+        return self._presign(bucket, key, filename=file, attachment=False, content_type="image/png")
+
     def upload_track(
         self,
         *,
@@ -1328,6 +1336,9 @@ class ProductionBackend:
             ]
             payload.pop("effect_extra", None)
             payload["effect_extra_full"] = False
+        # Рамка со стола: id уходит как есть, рендер сам резолвит PNG (как у бота).
+        if variation.get("frame"):
+            payload["frame_id"] = str(variation["frame"])
         recipe = render_job.get("recipe")
         montage_cuts = hook.get("cutsAbs") if cut_transitions else None
         if montage_cuts and not recipe and not footage_plan:

@@ -8,6 +8,7 @@ import { cssZoom } from '../../lib/zoom';
 import { PAUSE, PLAY, Svg, W12 } from './WizardFrame';
 import { AsrWord, useWizardStore } from '../../stores/wizardStore';
 import { usePlaybackUrl } from './useFragmentAudio';
+import { useSubtitleClock } from '../../lib/subtitleClock';
 
 /*
  * Примерка субтитров (этап «Текст»): плеер отрывка + таймлайн слов из ASR.
@@ -273,8 +274,11 @@ export function SubtitleTimeline() {
     const el = audioRef.current;
     if (!el) return;
     if (playing) { el.pause(); setPlaying(false); return; }
-    const restart = el.readyState < 1 || el.currentTime < clipStart || el.currentTime >= clipEnd - 0.05;
-    if (restart) seekEl(el, Math.max(clipStart, time), () => { void el.play(); });
+    // доиграли до конца отрывка — плей начинает заново с его начала, а не с той же точки конца
+    const atEnd = time >= clipEnd - 0.05 || el.currentTime >= clipEnd - 0.05 || el.ended;
+    const from = atEnd ? clipStart : Math.max(clipStart, time);
+    const restart = atEnd || el.readyState < 1 || el.currentTime < clipStart;
+    if (restart) { setTime(from); seekEl(el, from, () => { void el.play(); }); }
     else void el.play();
     setPlaying(true);
   };
@@ -295,6 +299,21 @@ export function SubtitleTimeline() {
     }, PLAYHEAD_TICK_MS);
     return () => window.clearInterval(id);
   }, [playing, clipEnd, clipStart, pxPerSec]);
+
+  // Время плеера — в общие часы: превью субтитров справа рисует кадр по нему, а его кнопка
+  // плея управляет этим же плеером (звук один). Пока плеер не трогали — null: превью
+  // показывает первую фразу целиком, а не пустой кадр до первого слова.
+  const publishClock = useSubtitleClock((state) => state.publish);
+  const toggleRef = useRef(toggle);
+  toggleRef.current = toggle;
+  const touched = useRef(false);
+  if (playing || time !== clipStart) touched.current = true;
+  useEffect(() => { publishClock({ time: touched.current ? time : null, playing }); }, [publishClock, time, playing]);
+  useEffect(() => {
+    touched.current = false;
+    publishClock({ toggle: () => toggleRef.current(), time: null, playing: false });
+    return () => publishClock({ toggle: null, time: null, playing: false });
+  }, [publishClock, url, clipStart]);
 
   // --- перетаскивание ---
   const onPillDown = (index: number, mode: Drag['mode']) => (e: ReactPointerEvent<HTMLElement>) => {

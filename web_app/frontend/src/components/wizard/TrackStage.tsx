@@ -1,4 +1,4 @@
-import { KeyboardEvent, PointerEvent, useEffect, useRef, useState } from 'react';
+import { KeyboardEvent, PointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
@@ -24,6 +24,9 @@ import { useLyricsUndo, useTried } from './wizardAttempt';
  * отрывка, но с «Вернуть» справа (TextPanel).
  */
 const BARS = 96;
+/** Зум волны: ×1…×8. Пики считаются сразу с запасом (BARS × MAX_ZOOM), чтобы при приближении
+    волна оставалась детальной, а не растягивала те же 96 столбиков. */
+const MAX_ZOOM = 8;
 const MIN_CUT = 0.5;
 
 export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { creditsLeft: number | null; maxSegmentSeconds: number; paidPlan: boolean }) {
@@ -216,7 +219,29 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     </label>
   );
 
-  const peaks = useWavePeaks(audioUrl, BARS);
+  const peaksHi = useWavePeaks(audioUrl, BARS * MAX_ZOOM);
+  const [zoom, setZoom] = useState(1);
+  const barCount = BARS * zoom;
+  // столбики текущего зума: максимум по группе пиков высокого разрешения
+  const peaks = useMemo(() => {
+    if (!peaksHi) return null;
+    const group = peaksHi.length / barCount;
+    return Array.from({ length: barCount }, (_, i) => {
+      let max = 0;
+      for (let k = Math.floor(i * group); k < Math.floor((i + 1) * group); k++) max = Math.max(max, peaksHi[k] ?? 0);
+      return max;
+    });
+  }, [peaksHi, barCount]);
+  // при смене зума окно отрывка держим в центре видимой части
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const box = scrollRef.current;
+    if (!box || !duration) return;
+    const focus = selected ? (from + to) / 2 : (head ?? 0);
+    box.scrollLeft = Math.max(0, (focus / duration) * box.scrollWidth - box.clientWidth / 2);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoom]);
+  const rulerTicks = 4 * zoom + 1;
   const cutMessage = backwards
     ? t('wizard.track.segmentBackwards')
     : over
@@ -301,11 +326,14 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
           </div>
         </div>
         <div ref={cutRef} className={cn('w12-cut w12-fill', !track && 'w12-off', (backwards || over || (tried && track && !selected)) && 'w12-invalid')}>
-          <div className="w12-wave-box">
+          {/* волна в своей подложке по краям столбиков; при зуме растягивается и листается вбок */}
+          <div className="w12-wave-box w12-wave-frame">
+            <div ref={scrollRef} className="w12-wave-scroll">
+            <div className="w12-wave-inner" style={{ width: `${zoom * 100}%` }}>
             <div ref={waveRef} className="w12-wave" onPointerDown={onWaveDown} onPointerMove={onWaveMove} onPointerUp={() => { drag.current = null; }}>
               <div className="w12-bars" aria-hidden="true">
-                {Array.from({ length: BARS }, (_, i) => {
-                  const at = ((i + 0.5) / BARS) * duration;
+                {Array.from({ length: barCount }, (_, i) => {
+                  const at = ((i + 0.5) / barCount) * duration;
                   const inside = selected && at >= from && at <= to;
                   const height = peaks ? Math.max(0.12, peaks[i] ?? 0) : 0.3;
                   return <i key={i} className={cn(inside && 'w12-in')} style={{ height: `${Math.round(height * 100)}%` }} />;
@@ -335,7 +363,9 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
               {track && !selected && <div className="w12-wave-hint"><span>{t('wizard.track.waveHint')}</span></div>}
             </div>
             <div className="w12-ruler w12-num" aria-hidden="true">
-              {[0, 0.25, 0.5, 0.75, 1].map((k) => <span key={k}>{formatClock(Math.round((duration || 95) * k))}</span>)}
+              {Array.from({ length: rulerTicks }, (_, i) => i / (rulerTicks - 1)).map((k) => <span key={k}>{formatClock(Math.round((duration || 95) * k))}</span>)}
+            </div>
+            </div>
             </div>
           </div>
           <div className="w12-cut-row">
@@ -345,9 +375,12 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
             </button>
             {field('from')}
             {field('to')}
-            <span className={cn('w12-dur w12-num', (over || backwards) && 'w12-over')}>
-              <Trans i18nKey="wizard.track.segmentOf" values={{ seconds: selected ? formatSeconds(Math.max(0, length)) : '0', max: maxSegmentSeconds }} components={{ b: <b /> }} />
-            </span>
+            {/* зум вместо «12,0 с из 15 с»: длина и так видна на окне, а точный тайминг ловится приближением */}
+            <div className="w12-zoom" role="group" aria-label={t('wizard.track.zoom')}>
+              <button type="button" className="w12-zoom-btn" onClick={() => setZoom((z) => Math.max(1, z - 1))} disabled={!track || zoom <= 1} aria-label={t('wizard.track.zoomOut')}>−</button>
+              <span className="w12-zoom-val w12-num" aria-live="polite">×{zoom}</span>
+              <button type="button" className="w12-zoom-btn" onClick={() => setZoom((z) => Math.min(MAX_ZOOM, z + 1))} disabled={!track || zoom >= MAX_ZOOM} aria-label={t('wizard.track.zoomIn')}>+</button>
+            </div>
           </div>
           {cutMessage && <p className="w12-cut-msg" role="alert">{cutMessage}</p>}
         </div>

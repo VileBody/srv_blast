@@ -34,7 +34,7 @@ function StatCard({ label, value, to, onClick, variant }: { label: string; value
     ? 'linear-gradient(90deg, #2a1e49 0%, #2a1e49 55%, rgba(42,30,73,0) 80%)'
     : 'linear-gradient(90deg, #241a3c 0%, #241a3c 55%, rgba(36,26,60,0) 80%)';
   // «Сделать ещё» ведёт не по ссылке, а в визард: карта умеет быть и ссылкой, и кнопкой
-  const className = 'group relative flex h-[192px] w-[299px] shrink-0 flex-col overflow-hidden rounded-[15px] text-left max-md:h-[112px] max-md:w-[210px]';
+  const className = 'group relative flex h-[200px] w-[360px] shrink-0 flex-col overflow-hidden rounded-r15 text-left max-md:h-[112px] max-md:w-[210px]';
   // телефон: непрозрачный фон (grad-soft-20 полупрозрачен и просвечивал линии подложки)
   const style = muted ? { background: '#2a1e49' } : { background: phone ? '#241a3c' : 'var(--grad-soft-20)' };
   const body = (
@@ -52,10 +52,10 @@ function StatCard({ label, value, to, onClick, variant }: { label: string; value
       <div className="pointer-events-none absolute inset-y-0 left-0 right-0" style={{ background: fade }} />
       {/* заголовок со стрелкой сразу после текста (Figma: стрелка привязана к тексту, не к углу) */}
       <div className="relative flex items-center gap-[12px] px-[28px] pt-[28px] max-md:gap-[8px] max-md:px-[16px] max-md:pt-[14px]">
-        <span className="text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{label}</span>
-        <FigIcon name="home-arrow.svg" h={16} className="transition-transform duration-200 group-hover:translate-x-[3px]" />
+        <span className="text-ui-20 font-[400] text-transparent" style={gradLight}>{label}</span>
+        <FigIcon name="home-arrow.svg" h={12} className="transition-transform duration-200 group-hover:translate-x-[3px]" />
       </div>
-      <span className={cn('relative mt-[24px] px-[28px] font-[350] leading-none text-transparent max-md:mt-[4px] max-md:px-[16px]', wordy ? 'text-[44px]' : 'text-[104px]')} style={gradLight}>{value}</span>
+      <span className={cn('relative mt-[20px] px-[28px] font-[350] leading-none tabular-nums text-transparent max-md:mt-[4px] max-md:px-[16px]', wordy ? 'text-[44px]' : 'text-[104px]')} style={gradLight}>{value}</span>
     </>
   );
   return to
@@ -85,7 +85,7 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
   return (
     <Link
       to={`/app/projects/${project.id}`}
-      className={cn('group relative flex max-h-[358px] w-[263px] shrink-0 flex-col overflow-hidden rounded-[15px] max-md:h-[112px] max-md:w-[150px]', project.archived && 'opacity-60')}
+      className={cn('group relative flex max-h-[380px] w-[300px] shrink-0 flex-col overflow-hidden rounded-r15 max-md:h-[112px] max-md:w-[150px]', project.archived && 'opacity-60')}
       style={{ background: 'var(--grad-soft-20)' }}
     >
       {/* обложка: отступ 14 слева/сверху, уходит за правый край (bleed 38px) и перекрыта фейдом в #281e47 */}
@@ -127,10 +127,10 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
         </div>
       )}
 
-      <div className="mx-[14px] mb-[14px] mt-[14px] flex translate-y-[2px] items-center gap-[10px] max-md:mx-[10px] max-md:mb-[10px] max-md:mt-[8px] max-md:gap-[6px]">
-        <span className="truncate text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{project.name}</span>
+      <div className="mx-[16px] mb-[14px] mt-[12px] flex items-center gap-[8px] max-md:mx-[10px] max-md:mb-[10px] max-md:mt-[8px] max-md:gap-[6px]">
+        <span className="truncate text-ui-20 font-[400] text-transparent" style={gradLight}>{project.name}</span>
         {project.archived && <span className="shrink-0 whitespace-nowrap rounded-[5px] bg-grad-soft-20 px-[8px] py-[4px] text-[12px] leading-none text-text-60">{t('projects.archivedBadge')}</span>}
-        <FigIcon name="home-arrow.svg" h={12} className="shrink-0 translate-y-[1px] transition-transform duration-200 group-hover:translate-x-[3px]" />
+        <FigIcon name="home-arrow.svg" h={11} className="shrink-0 transition-transform duration-200 group-hover:translate-x-[3px]" />
       </div>
     </Link>
   );
@@ -145,7 +145,7 @@ function AddProjectButton({ onClick }: { onClick: () => void }) {
       type="button"
       onClick={onClick}
       aria-label={t('projects.createProject')}
-      className="group flex max-h-[358px] w-[263px] shrink-0 flex-col items-center justify-center gap-[16px] rounded-[15px] border-2 border-dashed border-[rgba(139,111,230,0.35)] bg-grad-soft-10 transition hover:border-accent-light hover:bg-grad-soft-20"
+      className="group flex max-h-[380px] w-[300px] shrink-0 flex-col items-center justify-center gap-[16px] rounded-r15 border-2 border-dashed border-[rgba(139,111,230,0.35)] bg-grad-soft-10 transition hover:border-accent-light hover:bg-grad-soft-20"
     >
       {/* «+» рисуем вектором: текстовый глиф центрируется по своим метрикам и визуально
           сидел выше середины круга */}
@@ -154,7 +154,7 @@ function AddProjectButton({ onClick }: { onClick: () => void }) {
           <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
         </svg>
       </span>
-      <span className="text-[18px] font-[400] leading-none text-text-80 transition group-hover:text-text">{t('projects.createProject')}</span>
+      <span className="text-ui-16 font-[400] text-text-80 transition group-hover:text-text">{t('projects.createProject')}</span>
     </button>
   );
 }
@@ -173,13 +173,13 @@ function CurrentProjectCard({ active, onCreate }: { active?: Project | null; onC
       <img src="/assets/figma/proj-lines.svg" alt="" aria-hidden className="pointer-events-none absolute right-[-378px] top-[-20px] h-[509px] w-[835px] max-w-none rotate-[-16.44deg] select-none" />
       <div className="relative">
         <h1 className="text-ui-32 font-[400] text-transparent" style={gradLight}>{active?.name ?? t('projects.noActive')}</h1>
-        <div className="mt-[16px] flex items-center gap-[10px] max-md:mt-[8px]">
-          <img src="/assets/figma/home-note.svg" width="12" height="17" alt="" aria-hidden />
-          <span className="text-[24px] font-[350] leading-none text-transparent" style={gradLight}>{active ? t('projects.currentProject') : t('projects.createFirst')}</span>
+        <div className="mt-[4px] flex items-center gap-[8px] max-md:mt-[4px]">
+          <img src="/assets/figma/home-note.svg" width="10" height="14" alt="" aria-hidden />
+          <span className="text-ui-16 text-text-60">{active ? t('projects.currentProject') : t('projects.createFirst')}</span>
         </div>
       </div>
       {active ? (
-        <div className="no-scrollbar relative mt-[28px] flex gap-space-5 max-md:-mx-[20px] max-md:gap-[10px] max-md:overflow-x-auto max-md:px-[20px]">
+        <div className="no-scrollbar relative mt-[24px] flex gap-space-5 max-md:-mx-[20px] max-md:gap-[10px] max-md:overflow-x-auto max-md:px-[20px]">
           <StatCard label={t('projects.currentVideos')} value={generated} to={`/app/projects/${active.id}`} variant="primary" />
           {/* «Сделать ещё» = новый батч по тому же треку, а не повторный вход в тот же проект */}
           <StatCard label={t('projects.makeMore')} value={remaining} onClick={() => navigate(startNextBatch(active.id))} variant="muted" />
@@ -255,7 +255,7 @@ export function ProjectsPage() {
 
       <section className="card-2 relative flex min-h-[420px] flex-col overflow-hidden p-[24px] sm:p-[32px] lg:min-h-0 lg:flex-1 lg:p-[40px] max-md:min-h-0 max-md:p-[20px]">
         <div className="flex items-center justify-between gap-space-4">
-          <h2 className="text-ui-24 font-[400] text-transparent" style={gradLight}>{t('projects.allProjects')}</h2>
+          <h2 className="text-ui-32 font-[400] text-transparent" style={gradLight}>{t('projects.allProjects')}</h2>
           {archivedCount > 0 && (
             <button
               type="button"

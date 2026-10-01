@@ -268,6 +268,8 @@ export interface MontageVideo {
   transitions: Record<number, string>;
   styles: TimelineStyleRange[];
   sub?: string;
+  /** рамка ролика (id каталога рамок) — PNG-маска поверх всех слоёв, как шаг «Рамка» в боте */
+  frame?: string | null;
   edited: boolean;
 }
 
@@ -752,10 +754,10 @@ export const useWizardStore = create<WizardStore>()(
             // пересчитались при закрытом столе), подрезаем — рендер их иначе отклонит.
             videos: Object.fromEntries(Object.entries(state.montage.videos)
               .filter(([, video]) => video.edited)
-              .map(([index, { sig, kind, config, transitions, styles, sub }]) => {
+              .map(([index, { sig, kind, config, transitions, styles, sub, frame }]) => {
                 const shots = Array.isArray(state.timeline.cuts) ? state.timeline.cuts.length + 1 : null;
                 const fit = shots === null ? styles : styles.filter((st) => st.a < shots).map((st) => ({ ...st, b: Math.min(st.b, shots) }));
-                return [index, { sig, kind, config, transitions, styles: fit, sub }];
+                return [index, { sig, kind, config, transitions, styles: fit, sub, frame: frame ?? null }];
               }))
           },
           final: state.final

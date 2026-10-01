@@ -538,4 +538,8 @@ export interface SubtitleFontCatalog {
   /** прод-цвет акцента стиля (нет — фокус как основной текст) */
   accentColors: Record<string, string>;
   lockedFontStyles: string[];
+  /** PostScript-имя → файл шрифта на нашем сервере (только залитые) */
+  files?: Record<string, string>;
+  /** все шрифты, которыми может рисовать превью */
+  required?: string[];
 }

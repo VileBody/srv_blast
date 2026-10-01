@@ -586,6 +586,8 @@ export interface Combo {
   variant?: FxVariant;
   /** хук возможен: вертикальное видео (не фото, не цвет, не 16:9) — как hook_allowed рендера */
   hookAllowed: boolean;
+  /** выход 9:16 (всё, кроме 16:9-футажа и своего видео 16:9) — на нём встаёт рамка */
+  vertical: boolean;
   /** комбинация целиком — под неё сделаны правки стола */
   sig: string;
 }
@@ -612,6 +614,7 @@ export function combosOf(state: Pick<WizardStateData, 'background' | 'allocation
       variant,
       // хук рендер ставит только на вертикальное видео (зеркало hook_allowed в render_job)
       hookAllowed: Boolean(unit && !unit.noHook),
+      vertical: c.bg === '__color__' || Boolean(c.bg?.startsWith('photo:')) || Boolean(unit && !unit.noHook),
       sig: [c.bg ?? '', c.sub ?? '', variant?.id ?? ''].join('|')
     };
   });

@@ -194,3 +194,30 @@ def test_table_hooks_join_the_upload_checks(rj) -> None:
     configs = rj.selected_hook_configs(stage)
     assert ("warmup", stage["montage"]["videos"]["0"]["config"]) in configs
     assert all(kind != "none" for kind, _ in configs)
+
+
+def test_frame_from_the_table_reaches_the_render(monkeypatch) -> None:
+    module = _module(monkeypatch)
+    rj = importlib.import_module("app.render_job")
+    stage = _stage()
+    stage["montage"] = {"videos": {"0": _edit(SIG, frame="letterbox")}}
+    job = rj.build_render_job("b1", "p1", "u1", stage, 2)
+    assert job["variations"][0]["frame"] == "letterbox"
+    backend = _backend(module, _config(module))
+    web_job = {"id": "web-job", "projectId": "p1", "stageData": stage, "renderJob": job}
+    edited = backend._request_payload(job=web_job, variation=job["variations"][0], index=1, total=2, master_id=None)
+    plain = backend._request_payload(job=web_job, variation=job["variations"][1], index=2, total=2, master_id=None)
+    assert edited["frame_id"] == "letterbox" and "frame_id" not in plain
+
+
+def test_unknown_or_wide_frame_is_explicit(rj) -> None:
+    stage = _stage()
+    stage["montage"] = {"videos": {"0": _edit(SIG, frame="neon")}}
+    with pytest.raises(ValueError, match="Неизвестная рамка"):
+        rj.build_render_job("b1", "p1", "u1", stage, 2)
+    stage = _stage()
+    stage["background"]["footageFormats"] = {"Неон": "16:9"}
+    stage["allocation"]["variants"] = {"v-light": 0}
+    stage["montage"] = {"videos": {"0": _edit("footage:Неон|Impulse|", kind="none", config={}, frame="rounded")}}
+    with pytest.raises(ValueError, match="только на вертикальное видео"):
+        rj.build_render_job("b1", "p1", "u1", stage, 2)

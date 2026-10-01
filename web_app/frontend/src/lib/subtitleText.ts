@@ -71,17 +71,17 @@ export function cssFamily(font: SubtitleFontEntry | undefined, fallbackPs?: stri
 }
 
 let injected = false;
-/** @font-face на каждый шрифт каталога: браузер берёт его, если он установлен в системе. */
+/**
+ * @font-face на каждый шрифт, файл которого сайт раздаёт сам (каталог `files`): превью
+ * субтитров рисует только ими. Шрифта без файла на сервере просто нет — превью об этом
+ * пишет, а образцы в списках шрифтов показываются запасным жанром.
+ */
 export function injectFontFaces(catalog: SubtitleFontCatalog | undefined): void {
-  if (injected || !catalog || typeof document === 'undefined') return;
+  if (injected || !catalog?.files || typeof document === 'undefined') return;
   injected = true;
-  const names = new Set<string>([...catalog.fonts.map((font) => font.ps), ...Object.values(catalog.defaults)]);
-  const labels = new Map(catalog.fonts.map((font) => [font.ps, font.label]));
-  const css = [...names].map((ps) => {
-    const label = labels.get(ps);
-    const sources = [`local("${ps}")`, label ? `local("${label}")` : null].filter(Boolean).join(', ');
-    return `@font-face { font-family: "blast-${ps}"; src: ${sources}; font-display: swap; }`;
-  }).join('\n');
+  const css = Object.entries(catalog.files)
+    .map(([ps, url]) => `@font-face { font-family: "blast-${ps}"; src: url("${url}") format("woff2"); font-display: block; }`)
+    .join('\n');
   const style = document.createElement('style');
   style.dataset.blastSubtitleFonts = '1';
   style.textContent = css;
