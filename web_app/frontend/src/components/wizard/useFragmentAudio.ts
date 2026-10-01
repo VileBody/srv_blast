@@ -27,6 +27,19 @@ export function usePlaybackUrl(track: SavedTrack | null | undefined): string | n
 }
 
 /**
+ * Откуда браузеру скачать трек, чтобы посчитать волну. Плеер играет presigned-ссылку S3, но
+ * `fetch` с чужого домена упирается в CORS бакета — волна выходила ровной полосой. Поэтому для
+ * сохранённого трека данные идут со своего домена (`/api/wizard/track-audio`); /static (мок) и
+ * blob: (файл из этой вкладки) — как есть.
+ */
+export function useWaveSourceUrl(track: SavedTrack | null | undefined, blobUrl?: string | null): string | null {
+  if (blobUrl) return blobUrl;
+  const stored = track?.localUrl ?? null;
+  if (stored && /^(\/static\/|blob:)/.test(stored)) return stored;
+  return track?.id ? api.trackAudioUrl(String(track.id)) : null;
+}
+
+/**
  * «01:02:44» или «01:02» → секунды (мм:сс[:мс], мс — сотые и необязательны).
  * Раньше без третьей пары визард молча не пускал дальше — «00:11» считался невалидным,
  * и никто не понимал, что не так. Бэк (`render_job.mmss_seconds`) обе формы читает одинаково.

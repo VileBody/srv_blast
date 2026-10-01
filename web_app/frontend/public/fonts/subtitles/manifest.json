@@ -1,5 +1,5 @@
 {
-  "_doc": "Шрифты для CSS/JS-превью субтитров: только с правом веб-раздачи (OFL или собственный Point). Остальные шрифты каталога рендера (платные/неясная лицензия) сюда не кладём. ps совпадает с PostScript-именем каталога config/styles/subtitle_font_catalog.json.",
+  "_doc": "Шрифты для CSS/JS-превью субтитров: весь каталог рендера + дополнительные. license: OFL-1.1 / собственный Point / unverified (право веб-раздачи не подтверждено — решение владельца). ps совпадает с PostScript-именем каталога config/styles/subtitle_font_catalog.json.",
   "fonts": [
     {
       "ps": "Point-SemiBold",
@@ -254,6 +254,327 @@
       "fullName": "Cormorant Garamond Light Italic",
       "url": "/fonts/subtitles/CormorantGaramond-LightItalic.woff2",
       "license": "OFL-1.1",
+      "source": "extra"
+    },
+    {
+      "ps": "HelveticaNeueCyr-Bold",
+      "family": "HelveticaNeueCyr",
+      "style": "Bold",
+      "fullName": "HelveticaNeueCyr-Bold",
+      "url": "/fonts/subtitles/HelveticaNeueCyr-Bold.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Helvetica Neue",
+      "category": "sans_system",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "AKONY-Bold",
+      "family": "AKONY",
+      "style": "Bold",
+      "fullName": "AKONY Bold",
+      "url": "/fonts/subtitles/AKONY-Bold.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "AKONY",
+      "category": "display",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Kudry-WeirdHeadline",
+      "family": "Kudry",
+      "style": "Weird Headline",
+      "fullName": "Kudry Weird Headline",
+      "url": "/fonts/subtitles/Kudry-WeirdHeadline.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Kudry",
+      "category": "display",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "BazaART",
+      "family": "BazaART",
+      "style": "Regular",
+      "fullName": "BazaART",
+      "url": "/fonts/subtitles/BazaART.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "BazaART",
+      "category": "editorial",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Bergamasco",
+      "family": "Bergamasco",
+      "style": "Regular",
+      "fullName": "Bergamasco",
+      "url": "/fonts/subtitles/Bergamasco.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Bergamasco",
+      "category": "editorial",
+      "roles": [
+        "base"
+      ],
+      "serif": true,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Katherine-Plus",
+      "family": "Katherine Plus",
+      "style": "Regular",
+      "fullName": "Katherine Plus",
+      "url": "/fonts/subtitles/Katherine-Plus.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Katherine Plus",
+      "category": "script",
+      "roles": [
+        "accent",
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "SimphonyRegular",
+      "family": "Simphony",
+      "style": "Regular",
+      "fullName": "Simphony",
+      "url": "/fonts/subtitles/SimphonyRegular.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Simphony",
+      "category": "script",
+      "roles": [
+        "accent",
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "PrincessDiana",
+      "family": "Princess Diana",
+      "style": "Regular",
+      "fullName": "Princess Diana",
+      "url": "/fonts/subtitles/PrincessDiana.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Princess Diana",
+      "category": "script",
+      "roles": [
+        "accent",
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "AnastasiaScript",
+      "family": "AnastasiaScript",
+      "style": "Regular",
+      "fullName": "AnastasiaScript",
+      "url": "/fonts/subtitles/AnastasiaScript.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Anastasia",
+      "category": "script",
+      "roles": [
+        "accent",
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "DisruptorsScript-Regular",
+      "family": "Disruptors Script",
+      "style": "Regular",
+      "fullName": "DisruptorsScript-Regular",
+      "url": "/fonts/subtitles/DisruptorsScript-Regular.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Disruptors",
+      "category": "script",
+      "roles": [
+        "accent",
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Beryozki",
+      "family": "Beryozki",
+      "style": "Regular",
+      "fullName": "Beryozki",
+      "url": "/fonts/subtitles/Beryozki.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Beryozki",
+      "category": "script",
+      "roles": [
+        "accent",
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "AuroraScript",
+      "family": "Aurora Script",
+      "style": "Regular",
+      "fullName": "Aurora Script",
+      "url": "/fonts/subtitles/AuroraScript.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Aurora",
+      "category": "script",
+      "roles": [
+        "accent",
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "ScriptThinPen",
+      "family": "Script Thin Pen",
+      "style": "Regular",
+      "fullName": "Script Thin Pen",
+      "url": "/fonts/subtitles/ScriptThinPen.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Script Thin Pen",
+      "category": "script",
+      "roles": [
+        "accent",
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Floriselscript-Thin",
+      "family": "Florisel script",
+      "style": "Thin",
+      "fullName": "Florisel script Thin",
+      "url": "/fonts/subtitles/Floriselscript-Thin.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "catalog",
+      "label": "Florisel",
+      "category": "script",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "ArialNarrow",
+      "family": "Arial",
+      "style": "Narrow",
+      "fullName": "Arial Narrow",
+      "url": "/fonts/subtitles/ArialNarrow.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "brat",
+      "label": "Arial Narrow"
+    },
+    {
+      "ps": "ArialNarrow-Italic",
+      "family": "Arial",
+      "style": "Narrow Italic",
+      "fullName": "Arial Narrow Italic",
+      "url": "/fonts/subtitles/ArialNarrow-Italic.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "brat",
+      "label": "Arial Narrow"
+    },
+    {
+      "ps": "ArialNarrow-BoldItalic",
+      "family": "Arial",
+      "style": "Narrow Bold Italic",
+      "fullName": "Arial Narrow Bold Italic",
+      "url": "/fonts/subtitles/ArialNarrow-BoldItalic.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "brat",
+      "label": "Arial Narrow"
+    },
+    {
+      "ps": "Arial-BoldMT",
+      "family": "Arial",
+      "style": "Bold",
+      "fullName": "Arial Bold",
+      "url": "/fonts/subtitles/Arial-BoldMT.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "extra"
+    },
+    {
+      "ps": "CoolveticaRg-Regular",
+      "family": "Coolvetica",
+      "style": "Regular",
+      "fullName": "CoolveticaRg-Regular",
+      "url": "/fonts/subtitles/CoolveticaRg-Regular.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "extra"
+    },
+    {
+      "ps": "NirmalaText-Semilight",
+      "family": "Nirmala Text",
+      "style": "Semilight",
+      "fullName": "Nirmala Text Semilight",
+      "url": "/fonts/subtitles/NirmalaText-Semilight.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "extra"
+    },
+    {
+      "ps": "TagType",
+      "family": "TagType",
+      "style": "Regular",
+      "fullName": "TagType Regular",
+      "url": "/fonts/subtitles/TagType.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
+      "source": "extra"
+    },
+    {
+      "ps": "AdobeArabic-BoldItalic",
+      "family": "Adobe Arabic",
+      "style": "Bold Italic",
+      "fullName": "Adobe Arabic Bold Italic",
+      "url": "/fonts/subtitles/AdobeArabic-BoldItalic.woff2",
+      "license": "unverified: web-serving rights not confirmed (commercial or no licence in file)",
       "source": "extra"
     }
   ]

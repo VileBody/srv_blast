@@ -1055,6 +1055,16 @@ class ProductionBackend:
             raise ProductionBackendError(f"invalid S3 locator {value!r}")
         return bucket, key
 
+    def open_track_audio(self, value: str) -> tuple[Any, str, int | None]:
+        """Поток байтов сохранённого трека (тело, content-type, длина) — для своего домена.
+
+        Волну трека браузер считает сам (WebAudio), а `fetch` presigned-ссылки S3 с другого
+        домена упирается в CORS бакета — и волна становилась ровной полосой."""
+        bucket, key = self._parse_s3_locator(value)
+        obj = self._s3.get_object(Bucket=bucket, Key=key)
+        length = obj.get("ContentLength")
+        return obj["Body"], str(obj.get("ContentType") or "application/octet-stream"), int(length) if length is not None else None
+
     def _preview_url(self, value: str, *, filename: str) -> str:
         if value.startswith("https://"):
             return value

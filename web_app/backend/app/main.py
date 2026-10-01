@@ -15,7 +15,7 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import JSONResponse, RedirectResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
@@ -1254,6 +1254,31 @@ def api_track_playback(trackId: str = "") -> dict[str, Any]:
     if not url:
         raise HTTPException(status_code=404, detail="track has no playable source")
     return {"url": url, "mock": RUNTIME.backend == "mock"}
+
+
+@app.get("/api/wizard/track-audio", tags=["wizard"])
+def api_track_audio(trackId: str = "") -> Response:
+    """Файл сохранённого трека текущего юзера со СВОЕГО домена — для волны.
+
+    Волну браузер считает из самого файла (WebAudio). Presigned-ссылка S3 — чужой домен,
+    и без CORS на бакете `fetch` падал: волна на проде была ровной полосой. Плеер по-прежнему
+    играет presigned-ссылку (`/api/wizard/track-playback`), этот маршрут — только для данных.
+    """
+    track = next((item for item in store.ws().saved_tracks if item.get("id") == trackId), None)
+    if track is None:
+        raise HTTPException(status_code=404, detail="track not found")
+    if RUNTIME.backend == "production":
+        try:
+            body, content_type, length = _production_backend().open_track_audio(str(track["s3Key"]))
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        headers = {"Cache-Control": "private, max-age=3600"}
+        if length is not None:
+            headers["Content-Length"] = str(length)
+        return StreamingResponse(body.iter_chunks(chunk_size=256 * 1024), media_type=content_type, headers=headers)
+    # mock: трек лежит в /static (тот же домен) — отдаём туда
+    url = str(track.get("localUrl") or "") or "/static/uploads/tracks/demo-last-night.wav"
+    return RedirectResponse(url, status_code=307)
 
 
 @app.get("/api/wizard/drops", tags=["wizard"])

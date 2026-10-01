@@ -9,7 +9,7 @@ import { useWizardStore } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss } from '../guidance/useGuideDismiss';
 import { formatClock, formatSeconds, parseClock, snapTenth, SEGMENT_SECONDS, toStoreTiming } from './timing';
-import { timingToSeconds, usePlaybackUrl } from './useFragmentAudio';
+import { timingToSeconds, usePlaybackUrl, useWaveSourceUrl } from './useFragmentAudio';
 import { useWavePeaks } from './useWavePeaks';
 import { PAUSE, PLAY, Svg, W12 } from './WizardFrame';
 import { useLyricsUndo, useTried } from './wizardAttempt';
@@ -48,6 +48,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
   // Трек из черновика / прошлого батча: blob-ссылки нет, играем по свежей presigned-ссылке
   const playbackUrl = usePlaybackUrl(track);
   const audioUrl = blobUrl ?? playbackUrl;
+  const waveSourceUrl = useWaveSourceUrl(track, blobUrl);
   const previousQuery = useQuery({ queryKey: ['wizard-previous-track'], queryFn: api.previousTrack, enabled: !track, staleTime: 30_000 });
   const upload = useMutation({
     mutationFn: api.uploadTrack,
@@ -219,7 +220,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     </label>
   );
 
-  const peaksHi = useWavePeaks(audioUrl, BARS * MAX_ZOOM);
+  const peaksHi = useWavePeaks(waveSourceUrl, BARS * MAX_ZOOM);
   const [zoom, setZoom] = useState(1);
   const barCount = BARS * zoom;
   // столбики текущего зума: максимум по группе пиков высокого разрешения

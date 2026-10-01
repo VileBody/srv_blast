@@ -227,6 +227,8 @@ export const api = {
 
   previousTrack: () => request<{ track: SavedTrack | null }>('/api/wizard/previous-track'),
   trackPlayback: (trackId: string) => request<{ url: string }>(`/api/wizard/track-playback?trackId=${encodeURIComponent(trackId)}`),
+  // байты трека со своего домена — для волны (fetch presigned-ссылки S3 упирается в CORS бакета)
+  trackAudioUrl: (trackId: string) => `${API_BASE}/api/wizard/track-audio?trackId=${encodeURIComponent(trackId)}`,
   uploadTrack: (file: File) => {
     const form = new FormData();
     form.append('file', file);

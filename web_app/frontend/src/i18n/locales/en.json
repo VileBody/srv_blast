@@ -1105,7 +1105,8 @@
     "allDone": "Done",
     "whatHappened": "What happened",
     "failedDone": "{{done}} of {{total}} ready",
-    "stopped": "Stopped"
+    "stopped": "Stopped",
+    "failedNoReason": "The server sent no reason — contact support with the batch number"
   },
   "tiktok": {
     "captionPlaceholder": "What is this video about?",

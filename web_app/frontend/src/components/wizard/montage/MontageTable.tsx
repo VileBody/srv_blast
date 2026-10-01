@@ -2,6 +2,7 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
+import { isVideoUrl } from '../../../lib/media';
 import effectsRegistry from '../../../data/effects-registry.json';
 import { HookConfig, HookKind, MontageVideo, TimelinePace, TimelineRecipe, TimelineStyleRange, textSettingsFor, useWizardStore } from '../../../stores/wizardStore';
 import { styleIdOf } from '../../../lib/subtitleText';
@@ -492,7 +493,10 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
             <div className="mt-plates" role="radiogroup" aria-label="Стиль субтитров ролика">
               {SUB_STYLES.map((s) => (
                 <button key={s.id} type="button" role="radio" aria-checked={subStyle === s.name} aria-label={s.name} className="mt-plate" onClick={() => onPickSub(s.name)} data-tip={s.name}>
-                  {subPreviews[s.name] && <img src={subPreviews[s.name]} alt="" draggable={false} />}
+                  {/* на проде пример стиля — видео (как на шаге «Текст»), в моке — svg */}
+                  {subPreviews[s.name] && (isVideoUrl(subPreviews[s.name]!)
+                    ? <video src={subPreviews[s.name]} muted loop playsInline autoPlay preload="metadata" draggable={false} />
+                    : <img src={subPreviews[s.name]} alt="" draggable={false} />)}
                   {subStyle === s.name && <span className="ck"><Glyph name="check" size={14} sw={2.2} /></span>}
                 </button>
               ))}

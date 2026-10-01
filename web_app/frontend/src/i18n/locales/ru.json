@@ -1109,7 +1109,8 @@
     "allDone": "Готово",
     "whatHappened": "Что случилось",
     "failedDone": "Готово {{done}} из {{total}}",
-    "stopped": "Остановлено"
+    "stopped": "Остановлено",
+    "failedNoReason": "Причина не пришла от сервера — напиши в поддержку, приложи номер батча"
   },
   "tiktok": {
     "captionPlaceholder": "О чём этот ролик?",

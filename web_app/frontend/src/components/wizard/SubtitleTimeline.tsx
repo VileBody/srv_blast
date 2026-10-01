@@ -7,7 +7,7 @@ import { cn } from '../../lib/cn';
 import { cssZoom } from '../../lib/zoom';
 import { PAUSE, PLAY, Svg, W12 } from './WizardFrame';
 import { AsrWord, useWizardStore } from '../../stores/wizardStore';
-import { usePlaybackUrl } from './useFragmentAudio';
+import { usePlaybackUrl, useWaveSourceUrl } from './useFragmentAudio';
 import { useSubtitleClock } from '../../lib/subtitleClock';
 
 /*
@@ -158,7 +158,7 @@ export function SubtitleTimeline() {
   const [audioReady, setAudioReady] = useState(false);
   const waveRef = useRef<HTMLCanvasElement>(null);
   const [wave, setWave] = useState<{ url: string; data: Float32Array; rate: number } | null>(null);
-  const waveUrl = playbackUrl;
+  const waveUrl = useWaveSourceUrl(track);
   useEffect(() => {
     if (!waveUrl || asr.status !== 'COMPLETED' || !audioReady) return;
     if (wave && wave.url === waveUrl) return;
