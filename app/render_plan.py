@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from core.subtitles_mode import (
     SUBTITLES_MODE_BRAT_5TH,
     SUBTITLES_MODE_JSX_5TH,
+    SUBTITLES_MODE_KANT_TITLES,
     SUBTITLES_MODE_LEGACY_BLOCKS,
     SUBTITLES_MODE_TRENDY_5TH,
 )
@@ -309,7 +310,7 @@ class RenderPlanV1(BaseModel):
         config: Dict[str, Any] = {}
         for operation in self.visual_ops:
             params = dict(operation.params)
-            if operation.type in {"subtitle.trendy.v1", "subtitle.brat.v1"}:
+            if operation.type in {"subtitle.trendy.v1", "subtitle.brat.v1", "subtitle.kant_title.v1"}:
                 config["subtitles_jsx"] = {
                     "mode": params.get("source_mode"),
                     "word_timings": list(params.get("word_timings") or []),
@@ -757,6 +758,14 @@ def _subtitle_operation(mode: str, cfg: Dict[str, Any]) -> Optional[VisualOperat
             params["bpm"] = float(block["bpm"])
         return VisualOperationV1(id="subtitles_brat_5th", kind="subtitle.brat.v1", params=params)
 
+    if mode in SUBTITLES_MODE_KANT_TITLES:
+        block = _dict(cfg.get("subtitles_jsx"))
+        return VisualOperationV1(
+            id=f"subtitles_{mode}",
+            kind="subtitle.kant_title.v1",
+            params={"source_mode": mode, "word_timings": list(block.get("word_timings") or [])},
+        )
+
     # Legacy is intentionally out of native scope, but we still preserve it as
     # a required operation so Rust reports not_implemented instead of dropping it.
     if mode == SUBTITLES_MODE_LEGACY_BLOCKS:
@@ -1114,6 +1123,7 @@ def _native_effects_for_visual_op(op: VisualOperationV1) -> str:
     mapped = {
         "subtitle.trendy.v1": "ANR Subtitle Trendy",
         "subtitle.brat.v1": "ANR Subtitle Brat",
+        "subtitle.kant_title.v1": "ANR Subtitle Kant Title",
         "hook.f1.sound.v1": "ANR Hook F1 Sound",
         "hook.f2.object.v1": "ANR Shape Overlay",
         "hook.f3.effect.v1": "ANR F3 Stylize",

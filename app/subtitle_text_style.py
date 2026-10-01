@@ -104,7 +104,13 @@ def jsx_style_config(mode: str, style: Optional[SubtitleTextStyle] = None,
                      accent_color: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """trendy/brat: CONFIG-оверрайды для скрипта (None — прод)."""
     from app.subtitle_font_layout import brat_layout, hex_to_rgb01, trendy_layout
+    from core.subtitles_mode import SUBTITLES_MODE_KANT_TITLES
 
+    if mode in SUBTITLES_MODE_KANT_TITLES:
+        # у тайтлов Kant шрифт, цвет и анимация зашиты в .aep — настроек текста нет
+        if (style is not None and not style.is_default()) or accent_color is not None:
+            raise ValueError(f"{mode}: Kant titles have no text settings")
+        return None
     if style is None or style.is_default():
         # выбран только цвет — прод-CONFIG скрипта, меняется лишь цвет фокус-слов
         return None if accent_color is None else {"focusFillColor": hex_to_rgb01(accent_color)}

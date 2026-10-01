@@ -394,6 +394,10 @@ SUBTITLE_STYLES: list[dict[str, Any]] = [
     {"id": "impulse", "name": "Impulse", "previewUrl": "/api/wizard/demo-media/sub-impulse.svg?v=3"},
     {"id": "tape", "name": "Tape", "previewUrl": "/api/wizard/demo-media/sub-tape.svg?v=3"},
     {"id": "trendy", "name": "Trendy", "previewUrl": "/api/wizard/demo-media/sub-trendy.svg?v=3"},
+    # тайтлы Kant (5th_template/kant_titles): имя = ключ WEB_SUBTITLE_MODE_MAP_JSON
+    *({"id": mode, "name": name, "previewUrl": f"/api/wizard/demo-media/sub-{mode}.svg?v=3"} for name, mode in (
+        ("Duo", "kant_two_frames"), ("Bubble", "kant_gum"), ("Code", "kant_matrix"),
+        ("Novel", "kant_edit"), ("Retro", "kant_vhs"), ("Scribble", "kant_lani_style"))),
 ]
 
 DROPS: list[dict[str, Any]] = [

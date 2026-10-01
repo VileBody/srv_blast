@@ -480,6 +480,11 @@ def _build_jsx_subtitles_js(
     # Text settings of the wizard (font/size/position/shadow/focus) → script CONFIG.
     from app.subtitle_text_style import accent_color_from_env, jsx_style_config, style_from_env
     style_config = jsx_style_config(mode, style_from_env(), accent_color_from_env())
+    from core.subtitles_mode import SUBTITLES_MODE_KANT_TITLES
+    if mode in SUBTITLES_MODE_KANT_TITLES:
+        # Тайтл Kant несёт свой цвет и эффект внутри .aep: глобальный цвет субтитров и
+        # Difference стробоскопа к нему не применяются (настройки текста уже отвергнуты выше).
+        fill_hex, subs_blend = None, None
     overlay = build_jsx_subtitles_overlay(
         mode=mode,
         word_timings=list(word_timings),

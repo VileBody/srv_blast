@@ -38,7 +38,8 @@ _bytes: dict[str, tuple[int, bytes]] = {}
 
 def required_fonts() -> list[str]:
     """Все шрифты, которыми превью может рисовать: выбираемые в каталоге (основной/акцент),
-    стандартные шрифты стилей и зафиксированный шрифт brat с курсивами фокус-слова."""
+    стандартные шрифты стилей, зафиксированный шрифт brat с курсивами фокус-слова и шрифты
+    тайтлов Kant."""
     eng = subtitle_text.engine()
     names: list[str] = []
     for ps, row in eng.load_catalog().items():
@@ -47,6 +48,7 @@ def required_fonts() -> list[str]:
     names.extend(eng.STYLE_DEFAULT_FONTS.values())
     names.append(eng.BRAT_FONT)
     names.extend(font for font, _faux in eng.BRAT_FOCUS_STYLES.values() if font)
+    names.extend(subtitle_text.kant_fonts())   # тайтлы Kant: свои шрифты шаблонов
     return sorted(set(names))
 
 

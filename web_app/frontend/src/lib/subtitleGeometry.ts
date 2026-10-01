@@ -18,6 +18,11 @@ import type { SubtitleStyleId } from './subtitleText';
  *   brat    — 5th_template/brat_subtitles.jsx: блоки по 2 слова в строке до 4 строк (хвост
  *             вливается в прошлую строку), полная выключка в коробе, один кегль на весь ролик,
  *             слово висит от своего старта до конца блока.
+ *   kant_*  — тайтлы Kant (5th_template/kant_titles, числа — kant_titles.json): фразы как
+ *             kant_phrases сборки, экраны как KantTitles.splitLine (≤ 2 длинных / 3 коротких слов,
+ *             предлог липнет к следующему, кусок, которому нужен кегль < 80%, делится), кегль
+ *             шаблона ужимается под 87% кадра, длинный вход ускоряется (stretch), хвост гаснет за
+ *             3 кадра. Вход тайтла (перелёт букв / дешифровка / машинка / вспышки шрифтов / смаз) — похоже.
  * Эффекты (Minimax, Turbulent, Sapphire) не воспроизводим — только расстановку, тайминг и
  * характер начертания; поэтому превью приблизительное, но строки, переносы и размеры — как в AE.
  */
@@ -71,6 +76,48 @@ export interface SubtitleGeometry {
     focusFont?: string; focusFauxItalic?: boolean; focusFillColor?: number[];
     wordShadow?: boolean; wordShadowOpacity?: number; wordShadowDistance?: number; wordShadowSoftness?: number;
   };
+  kant?: KantSpec;
+}
+
+export type KantLook = 'smear' | 'overshoot' | 'decode' | 'flashes' | 'typewriter';
+export interface KantSpec {
+  id: string;
+  fonts: string[];
+  cyr: Record<string, string>;
+  cyrSqueeze: number | null;
+  intro: number;
+  text: {
+    font: string; size: number; scale: [number, number]; tracking: number; fill: string;
+    glow?: string; stroke?: string; strokeWidth?: number;
+  };
+  flashes: { from: number; to: number; box?: boolean; font?: string; scale?: [number, number]; tracking?: number }[];
+  look: KantLook;
+  split: { maxWeight: number; minFit: number; minScreen: number; introShare: number; minStretch: number; maxWidth: number; fadeFrames: number };
+  phrase: { gap: number; maxWords: number; tail: number };
+}
+
+/** Буква тайтла на кадре: видимость, масштаб вокруг её низа, подмена знака (дешифровка). */
+export interface KantGlyph { alpha: number; sx: number; sy: number; text?: string }
+
+/** Кадр тайтла: то, что отрисовщик не выведет из Seg (эффекты входа). */
+export interface KantFrame {
+  look: KantLook;
+  /** масштаб слоя по X/Y (шаблон × кириллическое поджатие; кегль уже подогнан) */
+  sx: number;
+  sy: number;
+  fill: string;
+  glow?: string;
+  stroke?: string;
+  strokeWidth?: number;
+  glyph: (i: number) => KantGlyph;
+  /** смаз/размытие входа, px компа */
+  blur: number;
+  /** дрожание кадра (VHS), px компа */
+  jitter: [number, number];
+  /** кадр-плашка (Edit) вместо текста */
+  box: boolean;
+  /** полосы развёртки (VHS) */
+  scan: boolean;
 }
 
 /** Слово с таймингом (секунды — в той же шкале, что и время превью). */
@@ -105,6 +152,8 @@ export interface Line {
   blur?: number;
   /** trendy: градиент заливки по Y компа (как S_Gradient шаблона) */
   gradient?: { y0: number; y1: number; to: string };
+  /** тайтл Kant: рисуется своим путём (paintKant) */
+  kant?: KantFrame;
 }
 
 export type Measure = (seg: Seg) => number;
@@ -574,6 +623,195 @@ function bratGroups(g: SubtitleGeometry, words: TimedWord[], o: FrameOptions, me
   });
 }
 
+/* ───────────────────────── тайтлы Kant ───────────────────────── */
+
+const CYRILLIC = /[Ѐ-ӿ]/;
+const KANT_FRAME = 1 / 30;           // кадр композиции тайтла (30 fps шаблона)
+const SCRAMBLE = 'абвгдежзийклмнопрстуфхцчшщыэюяАБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЭЮЯ0123456789';
+const bare = (w: string) => w.replace(/[^A-Za-z0-9Ѐ-ӿ]/g, '');
+const wordWeight = (w: string) => (bare(w).length <= 3 ? 0.5 : 1);
+const backOut = (p: number) => { const c = 1.70158; const x = p - 1; return 1 + (c + 1) * x ** 3 + c * x ** 2; };
+/** детерминированный «шум» кадра: превью не мерцает по-разному при каждой перерисовке */
+const noise = (a: number, b: number) => { const v = Math.sin(a * 127.1 + b * 311.7) * 43758.5453; return v - Math.floor(v); };
+
+/** Фразы как kant_phrases сборки: слова без паузы > gap, не длиннее maxWords; на стыке по длине
+ *  предлог/частица уходит в следующую фразу вместе со своим словом. */
+export function kantPhrases(words: TimedWord[], ph: KantSpec['phrase']): { words: TimedWord[]; start: number; end: number }[] {
+  const groups: TimedWord[][] = [];
+  for (const w of words) {
+    const cur = groups[groups.length - 1];
+    const joined = cur && w.start - cur[cur.length - 1].end <= ph.gap;
+    if (joined && cur.length < ph.maxWords) cur.push(w);
+    else if (joined && cur.length > 1 && bare(cur[cur.length - 1].text).length <= 2) groups.push([cur.pop()!, w]);
+    else groups.push([w]);
+  }
+  return groups.map((g, i) => {
+    const last = g[g.length - 1].end;
+    const next = groups[i + 1]?.[0].start ?? Infinity;
+    return { words: g, start: g[0].start, end: Math.max(last, Math.min(next, last + ph.tail)) };
+  });
+}
+
+/** Шрифт (кириллическая замена) и поджатие по X для текста экрана — как fontMapFor/styleFor JSX. */
+function kantFace(K: KantSpec, text: string, font = K.text.font): { font: string; squeeze: number } {
+  const cyr = CYRILLIC.test(text);
+  return { font: cyr && K.cyr[font] ? K.cyr[font] : font, squeeze: cyr && K.cyrSqueeze ? K.cyrSqueeze : 1 };
+}
+
+/** Ширина текста в тайтле при шаблонном кегле (px компа, с масштабом слоя и поджатием). */
+function kantWidth(K: KantSpec, text: string, measure: Measure): number {
+  const face = kantFace(K, text);
+  const seg: Seg = { text, font: face.font, size: K.text.size, tracking: K.text.tracking, upper: false, color: K.text.fill };
+  return measure(seg) * (K.text.scale[0] / 100) * face.squeeze;
+}
+
+/** Экраны фразы — порт KantTitles.splitLine (слова с таймингами). */
+export function kantScreens(K: KantSpec, words: TimedWord[], end: number, measure: Measure): { text: string; start: number; end: number }[] {
+  const S = K.split;
+  const units: TimedWord[][] = [];
+  let carry: TimedWord[] = [];
+  words.forEach((w, i) => {
+    carry.push(w);
+    // предлог/частица (≤ 2 букв) прилипает к следующему слову
+    if (bare(w.text).length > 2 || i === words.length - 1) { units.push(carry); carry = []; }
+  });
+  const textOf = (ws: TimedWord[]) => ws.map((w) => w.text).join(' ');
+  const fits = (ws: TimedWord[]) => {
+    if (ws.length > 1 && ws.reduce((a, w) => a + wordWeight(w.text), 0) > S.maxWeight) return false;
+    const width = kantWidth(K, textOf(ws), measure);
+    return ws.length === 1 || width <= 0 || S.maxWidth / width >= S.minFit;
+  };
+  const chunks: TimedWord[][] = [];
+  let cur: TimedWord[] = [];
+  for (const unit of units) {
+    const next = [...cur, ...unit];
+    if (cur.length && !fits(next)) { chunks.push(cur); cur = [...unit]; } else cur = next;
+    // единица из нескольких слов сама может не влезть — режем её по словам
+    while (cur.length > 1 && !fits(cur)) {
+      let cut = cur.length - 1;
+      while (cut > 1 && !fits(cur.slice(0, cut))) cut--;
+      chunks.push(cur.slice(0, cut));
+      cur = cur.slice(cut);
+    }
+  }
+  if (cur.length) chunks.push(cur);
+  const out = chunks.map((c, i) => ({ text: textOf(c), start: c[0].start, end: i + 1 < chunks.length ? chunks[i + 1][0].start : end }));
+  // слишком короткие экраны склеиваем с соседним
+  for (let i = out.length - 1; i > 0; i--) {
+    if (out[i].end - out[i].start < S.minScreen || out[i - 1].end - out[i - 1].start < S.minScreen) {
+      out[i - 1] = { text: `${out[i - 1].text} ${out[i].text}`, start: out[i - 1].start, end: out[i].end };
+      out.splice(i, 1);
+    }
+  }
+  return out;
+}
+
+/** Кадр тайтла в момент tau (секунды композиции тайтла). */
+function kantLook(K: KantSpec, base: Seg, sx: number, sy: number, fit: number, tau: number): Pick<KantFrame, 'sx' | 'sy' | 'glyph' | 'blur' | 'box' | 'jitter'> & { seg: Seg } {
+  const T = K.text;
+  const n = [...base.text].length;
+  const frame = Math.floor(tau / KANT_FRAME);
+  const p = clamp(tau / Math.max(K.intro, KANT_FRAME), 0, 1);
+  const out = {
+    seg: base, sx, sy, blur: 0, box: false, jitter: [0, 0] as [number, number],
+    glyph: (() => ({ alpha: 1, sx: 1, sy: 1 })) as (i: number) => KantGlyph,
+  };
+  switch (K.look) {
+    case 'flashes': {
+      // Edit: кадр плашки → узкий высокий шрифт → широкий, потом основной со смазом
+      const fl = K.flashes.find((f) => tau >= f.from && tau < f.to);
+      if (fl?.box) out.box = true;
+      else if (fl?.font) {
+        out.seg = { ...base, font: kantFace(K, base.text, fl.font).font, tracking: fl.tracking ?? 0 };
+        out.sx = ((fl.scale?.[0] ?? 100) / 100) * fit;
+        out.sy = ((fl.scale?.[1] ?? 100) / 100) * fit;
+        out.seg.size = T.size;
+      } else if (tau < 0.35) out.blur = 10 * (1 - clamp((tau - 0.1) / 0.25, 0, 1));
+      break;
+    }
+    case 'smear':
+      // Two Frames: вход в два кадра — растянутый смаз, потом текст как есть
+      if (tau < K.intro) { out.sx = sx * 1.35; out.blur = 8; }
+      break;
+    case 'overshoot': {
+      // Gum / Lani: буквы по очереди вырастают с перелётом (AC Overshoot), у Gum ещё и сходится трекинг
+      const per = K.intro * 0.45;
+      const step = n > 1 ? (K.intro - per) / (n - 1) : 0;
+      const from = K.id === 'gum' ? [0.1, 0] : [0.69, 0];
+      out.glyph = (i) => {
+        const q = clamp((tau - i * step) / per, 0, 1);
+        if (q <= 0) return { alpha: 0, sx: 1, sy: 1 };
+        const e = backOut(q);
+        return { alpha: clamp(q * 4, 0, 1), sx: from[0] + (1 - from[0]) * e, sy: from[1] + (1 - from[1]) * e };
+      };
+      if (K.id === 'gum') out.seg = { ...base, tracking: T.tracking - 80 * (1 - easeOut(p)) };
+      break;
+    }
+    case 'decode': {
+      // Matrix: текст вырастает из мелкого, буквы перебираются, пока не встанут на место
+      const grow = easeOut(clamp(tau / (K.intro * 0.2), 0, 1));
+      out.sx = sx * (0.3 + 0.7 * grow);
+      out.sy = sy * (0.3 + 0.7 * grow);
+      const chars = [...base.text];
+      out.glyph = (i) => {
+        const settle = (K.intro * 0.55 * (i + 1)) / Math.max(1, n);
+        if (tau >= settle || chars[i] === ' ') return { alpha: 1, sx: 1, sy: 1 };
+        return { alpha: 0.55 + 0.45 * noise(frame, i), sx: 1, sy: 1, text: SCRAMBLE[Math.floor(noise(i, frame) * SCRAMBLE.length)] };
+      };
+      break;
+    }
+    case 'typewriter':
+      // VHS: печатная машинка по буквам за вход, дрожание кадра (S_Shake)
+      out.glyph = (i) => ({ alpha: tau >= (K.intro * 0.8 * i) / Math.max(1, n) ? 1 : 0, sx: 1, sy: 1 });
+      out.jitter = [(noise(frame, 1) - 0.5) * 6, (noise(frame, 2) - 0.5) * 4];
+      break;
+  }
+  return out;
+}
+
+function kantGroups(g: SubtitleGeometry, words: TimedWord[], measure: Measure): Group[] {
+  const K = g.kant!;
+  const T = K.text;
+  const cx = COMP_W / 2;
+  const cy = COMP_H * g.centerY;
+  const maxW = COMP_W * 0.87;                // place(): maxWidth = target.width × 0.87
+  const groups: Group[] = [];
+  for (const ph of kantPhrases(words, K.phrase)) {
+    for (const scr of kantScreens(K, ph.words, ph.end, measure)) {
+      const face = kantFace(K, scr.text);
+      const natural = kantWidth(K, scr.text, measure);
+      const fit = natural > maxW ? maxW / natural : 1;
+      const base: Seg = { text: scr.text, font: face.font, size: T.size * fit, tracking: T.tracking, upper: false, color: T.fill };
+      const sx = (T.scale[0] / 100) * face.squeeze;
+      const sy = T.scale[1] / 100;
+      // длинный вход на коротком экране ускоряется (layer.stretch в place())
+      const dur = Math.max(FRAME, scr.end - scr.start);
+      const stretch = K.intro > K.split.introShare * dur ? Math.max(K.split.minStretch, (100 * K.split.introShare * dur) / K.intro) : 100;
+      const fade = K.split.fadeFrames * FRAME;
+      const tIn = scr.start;
+      const tOut = scr.end;
+      groups.push({
+        tIn, tOut,
+        restT: Math.min(tOut - 0.01, tIn + (K.intro * stretch) / 100 + 0.05),
+        lines: (t: number, mode: FrameMode = 'play') => {
+          // время внутри композиции тайтла; на паузе и «фразой целиком» вход уже отыгран
+          const tau = mode === 'play' ? ((t - tIn) * 100) / stretch : K.intro + 1;
+          const alpha = mode === 'play' && tOut - t < fade ? clamp((tOut - t) / fade, 0, 1) : 1;
+          const look = kantLook(K, base, sx, sy, fit, tau);
+          return [{
+            segs: [look.seg], x: cx, y: cy, align: 'center' as const, vScale: 1, alpha,
+            kant: {
+              look: K.look, sx: look.sx, sy: look.sy, fill: T.fill, glow: T.glow, stroke: T.stroke, strokeWidth: T.strokeWidth,
+              glyph: look.glyph, blur: look.blur, jitter: look.jitter, box: look.box, scan: K.look === 'typewriter',
+            },
+          }];
+        },
+      });
+    }
+  }
+  return groups;
+}
+
 /* ───────────────────────── кадр ───────────────────────── */
 
 export interface SubtitlePlan { groups: Group[] }
@@ -587,7 +825,7 @@ export function buildPlan(g: SubtitleGeometry, words: TimedWord[], lyrics: strin
     case 'tape': return { groups: g.tape ? tapeGroups(g, list, lyrics, o) : [] };
     case 'trendy': return { groups: g.trendy ? trendyGroups(g, list, o, measure) : [] };
     case 'brat': return { groups: g.brat ? bratGroups(g, list, o, measure) : [] };
-    default: return { groups: [] };
+    default: return { groups: g.kant ? kantGroups(g, list, measure) : [] };
   }
 }
 
