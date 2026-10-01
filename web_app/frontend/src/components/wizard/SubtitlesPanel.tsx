@@ -9,7 +9,7 @@ import { PAUSE, PLAY, PillsFooter, Svg, W12 } from './WizardFrame';
 import { SubtitleTextSettings, activeTextTab, allBackgroundsWide, textSettingsFor, useWizardStore } from '../../stores/wizardStore';
 import {
   HEIGHT_SCALE, POSITION_CENTER_Y, SIZE_SCALE, styleAccentColor, accentFontsFor, baseFonts, cssFamily, findFont, fontBlockedFor, fontStyles,
-  styleIdOf, type SubtitleStyleId
+  styleIdOf, isFixedStyle, type SubtitleStyleId
 } from '../../lib/subtitleText';
 import { SubtitleTimeline } from './SubtitleTimeline';
 import { SubtitleCanvas, type SubtitleCanvasProps } from './SubtitleCanvas';
@@ -328,7 +328,9 @@ export function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: 
             ))}
           </div>
         )}
-        {!tab ? <p className="w12-set-empty">{t('wizard.subs.customization.pickStyleFirst')}</p> : (
+        {!tab ? <p className="w12-set-empty">{t('wizard.subs.customization.pickStyleFirst')}</p> : isFixedStyle(tabStyle) ? (
+          <p className="w12-set-empty">{t('wizard.subs.customization.fixedTitle')}</p>
+        ) : (
           <div className="w12-set-rows">
             {queryDown(catalogQuery) && <InlineError error={catalogQuery.error} offline={catalogQuery.fetchStatus === 'paused'} onRetry={() => catalogQuery.refetch()} retrying={catalogQuery.isFetching} />}
             {pickable.length > 0 && <FontMenu label={t('wizard.subs.customization.font')} value={settings.font ?? ''} options={fontOptions} onChange={onFont} />}

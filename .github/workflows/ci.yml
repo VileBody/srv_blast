@@ -144,7 +144,7 @@ jobs:
       - name: Run subtitle text settings tests
         run: |
           set -euo pipefail
-          python -m pytest -q             tests/test_subtitle_text_contract.py             tests/test_jsx_subtitles_builder.py             tests/test_template_layout_audio_hooks.py
+          python -m pytest -q             tests/test_subtitle_text_contract.py             tests/test_jsx_subtitles_builder.py             tests/test_kant_titles.py             tests/test_template_layout_audio_hooks.py
 
       - name: Run F3 effects tests and registry check
         run: |

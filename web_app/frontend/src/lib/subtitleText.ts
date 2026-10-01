@@ -6,14 +6,26 @@ import type { SubtitleFontCatalog, SubtitleFontEntry } from './types';
  * Здесь только то, что нужно, чтобы не предлагать человеку невозможного.
  */
 
-export type SubtitleStyleId = 'jakson' | 'impulse' | 'tape' | 'trendy' | 'brat';
+/** Тайтлы Kant: id стиля = subtitles_mode рендера (5th_template/kant_titles/kant_titles.json). */
+export type KantStyleId = 'kant_two_frames' | 'kant_gum' | 'kant_matrix' | 'kant_edit' | 'kant_vhs' | 'kant_lani_style';
+export type SubtitleStyleId = 'jakson' | 'impulse' | 'tape' | 'trendy' | 'brat' | KantStyleId;
 
 const STYLE_IDS: SubtitleStyleId[] = ['jakson', 'impulse', 'tape', 'trendy', 'brat'];
+/** Имя в пуле (ключ WEB_SUBTITLE_MODE_MAP_JSON) → тайтл. */
+export const KANT_STYLE_BY_NAME: Record<string, KantStyleId> = {
+  'two frames': 'kant_two_frames', gum: 'kant_gum', matrix: 'kant_matrix', edit: 'kant_edit', vhs: 'kant_vhs', lani: 'kant_lani_style',
+};
 
-/** Имя стиля из пула («Jakson», «Brat»…) → id стиля каталога. */
+/** Имя стиля из пула («Jakson», «Brat», «Gum»…) → id стиля каталога. */
 export function styleIdOf(name: string): SubtitleStyleId | null {
   const id = name.trim().toLowerCase();
-  return (STYLE_IDS as string[]).includes(id) ? (id as SubtitleStyleId) : null;
+  if ((STYLE_IDS as string[]).includes(id)) return id as SubtitleStyleId;
+  return KANT_STYLE_BY_NAME[id] ?? null;
+}
+
+/** Тайтл: шрифт, цвет, размер и положение зашиты в шаблон — настроек текста нет. */
+export function isFixedStyle(style: SubtitleStyleId | null | undefined): style is KantStyleId {
+  return !!style && style.startsWith('kant_');
 }
 
 export function poolStyles(pool: string[]): SubtitleStyleId[] {
@@ -23,7 +35,7 @@ export function poolStyles(pool: string[]): SubtitleStyleId[] {
 /** Стили, где шрифт выбирается (у brat он зафиксирован). */
 export function fontStyles(styles: SubtitleStyleId[], catalog: SubtitleFontCatalog | undefined): SubtitleStyleId[] {
   const locked = new Set(catalog?.lockedFontStyles ?? ['brat']);
-  return styles.filter((style) => !locked.has(style));
+  return styles.filter((style) => !locked.has(style) && !isFixedStyle(style));
 }
 
 /** Для каких из выбранных стилей шрифт недоступен (пусто — подходит всем). */

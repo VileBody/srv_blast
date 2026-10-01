@@ -51,6 +51,7 @@ const SHADOW = {
 function paintLines(ctx: CanvasRenderingContext2D, lines: Line[], g: SubtitleGeometry, k: number) {
   for (const line of lines) {
     if (line.alpha <= 0.001) continue;
+    if (line.kant) { paintKant(ctx, line, k); continue; }
     const widths = line.segs.map(measureSeg);
     const total = widths.reduce((a, b) => a + b, 0);
     let x = line.align === 'left' ? line.x : line.align === 'right' ? line.x - total : line.x - total / 2;
@@ -109,7 +110,8 @@ function paintSeg(ctx: CanvasRenderingContext2D, seg: Seg, line: Line, x: number
   };
 
   const style = g.style;
-  const shadows = g.shadow === 'none' ? [] : style === 'brat' ? [] : SHADOW[style][g.shadow];
+  // brat — своя тень под словом; тайтлы Kant сюда не попадают (paintKant)
+  const shadows = g.shadow === 'none' || !(style in SHADOW) ? [] : SHADOW[style as keyof typeof SHADOW][g.shadow];
   const withShadows = (paint: () => void) => {
     for (const [blur, a] of shadows) {
       ctx.shadowBlur = blur * k;
@@ -172,6 +174,82 @@ function paintSeg(ctx: CanvasRenderingContext2D, seg: Seg, line: Line, x: number
     }
     withShadows(() => draw((t, cx) => ctx.fillText(t, cx, 0)));
     draw((t, cx) => ctx.fillText(t, cx, 0));
+  }
+  ctx.restore();
+}
+
+/**
+ * Тайтл Kant: буквы по одной (вход шаблона — масштаб/видимость/подмена знака), заливка,
+ * обводка и свечение шаблона; у Edit — кадр-плашка, у VHS — дрожание и полосы развёртки.
+ * Эффекты AE (Deep Glow, S_Flicker, fisheye) не воспроизводим — только характер.
+ */
+function paintKant(ctx: CanvasRenderingContext2D, line: Line, k: number) {
+  const K = line.kant!;
+  const seg = line.segs[0];
+  ctx.save();
+  ctx.translate(line.x + K.jitter[0], line.y + K.jitter[1]);
+  ctx.scale(K.sx, K.sy);
+  ctx.font = cssFont(seg.font, seg.size);
+  if ('letterSpacing' in ctx) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = '0px';
+  const trackPx = (seg.tracking / 1000) * seg.size;
+  const chars = [...seg.text];
+  const widths = chars.map((ch) => ctx.measureText(ch).width + trackPx);
+  const total = widths.reduce((a, b) => a + b, 0);
+  // строка по центру кадра: базовая линия на полвысоты заглавных ниже центра
+  const baseY = seg.size * 0.35;
+  const layerK = k * Math.max(K.sx, K.sy);
+  if (K.box) {
+    const side = seg.size * 0.45;
+    ctx.globalAlpha = line.alpha;
+    ctx.fillStyle = K.fill;
+    ctx.fillRect(-total / 2 - side, -side / 2, side, side);
+    ctx.restore();
+    return;
+  }
+  if (K.blur > 0) ctx.filter = `blur(${(K.blur * k).toFixed(2)}px)`;
+  const strokeW = K.stroke && K.strokeWidth ? K.strokeWidth * (seg.size / 195) : 0;
+  const draw = (text: string, x: number) => {
+    if (strokeW) {
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = strokeW;
+      ctx.strokeStyle = K.stroke!;
+      ctx.strokeText(text, x, 0);
+    }
+    ctx.fillStyle = K.fill;
+    ctx.fillText(text, x, 0);
+  };
+  let x = -total / 2;
+  chars.forEach((ch, i) => {
+    const w = widths[i];
+    const gl = K.glyph(i);
+    if (gl.alpha > 0.001 && gl.sx > 0.001 && gl.sy > 0.001 && ch.trim()) {
+      const text = gl.text ?? ch;
+      ctx.save();
+      ctx.globalAlpha = line.alpha * gl.alpha;
+      ctx.translate(x + w / 2, baseY);
+      ctx.scale(gl.sx, gl.sy);
+      const cw = ctx.measureText(text).width;
+      if (K.glow) {
+        // свечение цветом текста (Deep Glow / Glow шаблона)
+        ctx.shadowColor = K.glow;
+        ctx.shadowBlur = 28 * layerK;
+        draw(text, -cw / 2);
+        ctx.shadowBlur = 0;
+        ctx.shadowColor = 'transparent';
+      }
+      draw(text, -cw / 2);
+      ctx.restore();
+    }
+    x += w;
+  });
+  ctx.filter = 'none';
+  if (K.scan) {
+    // Venetian Blinds шаблона: тонкие тёмные полосы по тексту
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = '#000'; // ui-allow: маска полос развёртки (данные кадра)
+    const top = baseY - seg.size;
+    for (let y = top; y < baseY + seg.size * 0.3; y += 6) ctx.fillRect(-total / 2 - 20, y, total + 40, 2);
   }
   ctx.restore();
 }

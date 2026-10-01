@@ -79,6 +79,13 @@ SUBTITLE_MODES = {
     "Impulse": "impulse_2nd",
     "Jakson": "scenes_3rd",
     "Tape": "template_4th",
+    # тайтлы Kant Tools (5th_template/kant_titles)
+    "Duo": "kant_two_frames",
+    "Bubble": "kant_gum",
+    "Code": "kant_matrix",
+    "Novel": "kant_edit",
+    "Retro": "kant_vhs",
+    "Scribble": "kant_lani_style",
 }
 
 
