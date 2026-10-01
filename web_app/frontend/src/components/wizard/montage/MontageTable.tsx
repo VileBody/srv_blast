@@ -5,7 +5,7 @@ import { api } from '../../../lib/api';
 import effectsRegistry from '../../../data/effects-registry.json';
 import { HookConfig, HookKind, MontageVideo, TimelinePace, TimelineRecipe, TimelineStyleRange, textSettingsFor, useWizardStore } from '../../../stores/wizardStore';
 import { styleIdOf } from '../../../lib/subtitleText';
-import { EFFECT_HOOKS, MOTIONS, NO_GLUE, OBJECTS, THOUGHTS } from '../hookCatalog';
+import { EFFECT_HOOKS, MOTIONS, NO_GLUE, OBJECTS, THOUGHTS, previewIdFor } from '../hookCatalog';
 import { PACES, useRecipeCuts } from '../storyboardData';
 import { usePlaybackUrl } from '../useFragmentAudio';
 import { SubtitleTextCustomization } from '../SubtitlesPanel';
@@ -234,16 +234,81 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
   );
 }
 
-/** Пример перехода на своём ролике: стык крутится по кругу, пока открыто окно. */
-function LoopStage({ frames, bounds, at, dur, fx }: { frames: Frame[]; bounds: number[]; at: number; dur: number; fx: StageFx }) {
+/** Пример эффекта на своём ролике: окно [at − lead, at − lead + span] крутится по кругу. */
+function LoopStage({ frames, bounds, at, dur, fx, w = 169, h = 300, lead = 0.5, span = 1.5 }: {
+  frames: Frame[]; bounds: number[]; at: number; dur: number; fx: StageFx; w?: number; h?: number; lead?: number; span?: number;
+}) {
   const [t, setT] = useState(at - 0.4);
   useEffect(() => {
     let raf = 0; const t0 = performance.now();
-    const tick = (now: number) => { setT(clamp(at - 0.5 + ((now - t0) / 1000) % 1.5, 0, dur - 0.01)); raf = requestAnimationFrame(tick); };
+    const tick = (now: number) => { setT(clamp(at - lead + ((now - t0) / 1000) % span, 0, dur - 0.01)); raf = requestAnimationFrame(tick); };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [at, dur]);
-  return <Stage frames={frames} bounds={bounds} t={t} fx={fx} w={169} h={300} className="mt-loop" />;
+  }, [at, dur, lead, span]);
+  return <Stage frames={frames} bounds={bounds} t={t} fx={fx} w={w} h={h} className="mt-loop" />;
+}
+
+/** Плитка живёт (видео/цикл), только пока видна в библиотеке: десятки автоплеев не грузят страницу. */
+function useInView<T extends Element>(): [React.RefObject<T>, boolean] {
+  const ref = useRef<T>(null);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([entry]) => setSeen(entry.isIntersecting), { rootMargin: '80px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return [ref, seen];
+}
+
+/**
+ * Лента плиток: в группе их бывает больше, чем влезает, — скролл вбок (тачпад, Shift+колесо),
+ * стрелки на краях и фейд там, где за краем ещё есть плитки. Без перетаскивания ленты мышью:
+ * плитки сами тянутся на таймлайн.
+ */
+function TileRow({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: true, right: true });
+  const sync = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    setEdges({ left: el.scrollLeft < 4, right: el.scrollLeft + el.clientWidth > el.scrollWidth - 4 });
+  }, []);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [sync]);
+  const by = (dir: 1 | -1) => { const el = ref.current; el?.scrollBy({ left: dir * el.clientWidth * 0.8, behavior: 'smooth' }); };
+  return (
+    <div className="mt-fxrow" data-fade-l={!edges.left || undefined} data-fade-r={!edges.right || undefined}>
+      <button type="button" className="mt-fxrow-btn l" data-off={edges.left || undefined} aria-label="Предыдущие" tabIndex={-1} onClick={() => by(-1)}><Glyph name="back" size={16} sw={1.8} /></button>
+      <div ref={ref} className="mt-fxtiles" onScroll={sync}>{children}</div>
+      <button type="button" className="mt-fxrow-btn r" data-off={edges.right || undefined} aria-label="Следующие" tabIndex={-1} onClick={() => by(1)}><Glyph name="fwd" size={16} sw={1.8} /></button>
+    </div>
+  );
+}
+
+/** Медиа плитки: настоящий отрендеренный пример из каталога эффектов, иначе эффект на кадрах ролика. */
+export interface LibPreview { url?: string | null; sim?: (size: { w: number; h: number }) => ReactNode; state?: 'loading' | 'error' }
+const TILE = { w: 180, h: 320 };
+function TileMedia({ preview }: { preview: LibPreview }) {
+  const [ref, seen] = useInView<HTMLSpanElement>();
+  return (
+    <span ref={ref} className="mt-fxtile-media">
+      {seen && (preview.url
+        ? <video src={preview.url} autoPlay muted loop playsInline preload="metadata" />
+        : preview.sim?.(TILE))}
+      {seen && !preview.url && preview.sim && <span className="mt-fxtile-tag">на твоём ролике</span>}
+      {preview.state === 'loading' && <span className="mt-fxtile-none"><span className="spinner" aria-hidden="true" /></span>}
+      {preview.state === 'error' && <span className="mt-fxtile-none">Примеры не загрузились</span>}
+      {!preview.state && !preview.url && !preview.sim && <span className="mt-fxtile-none">Пример ещё не отрендерен</span>}
+    </span>
+  );
 }
 
 type Sel = { type: 'frame'; i: number } | { type: 'cut'; i: number } | { type: 'hook' } | { type: 'style'; uid: number } | { type: 'sub'; i: number } | null;
@@ -332,7 +397,7 @@ const STYLE_GROUPS: Group[] = [
 ];
 
 /* ── библиотека ── */
-const Library = memo(function Library({ tab, setTab, open, setOpen, used, activeHookKind, subStyle, subPreviews, onPickSub, textCfg, onAdd, onDragStart, frames, frameId, onPickFrame, frameNote, frameBase, frameAll }: {
+const Library = memo(function Library({ tab, setTab, open, setOpen, used, activeHookKind, subStyle, subPreviews, onPickSub, textCfg, onAdd, onDragStart, frames, frameId, onPickFrame, frameNote, frameBase, frameAll, previewOf }: {
   tab: LibKind; setTab: (tab: LibKind) => void; open: Record<string, boolean>; setOpen: (kind: string) => void;
   used: (item: LibItem) => boolean; activeHookKind?: HookKind;
 
@@ -340,7 +405,23 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
   onAdd: (item: LibItem) => void; onDragStart: (item: LibItem, e: ReactPointerEvent) => void;
   /** рамки: каталог, выбранная у ролика, выбор; frameNote — почему ролик рамку не принимает */
   frames: { id: string; label: string; previewUrl: string }[]; frameId?: string | null; onPickFrame: (id: string | null) => void; frameNote?: string; frameBase?: ReactNode; frameAll?: ReactNode;
+  /** пример пункта хуков/переходов/стилей — плитка с автоплеем: по одному названию не выбрать */
+  previewOf: (item: LibItem) => LibPreview;
 }) {
+  const tile = (item: LibItem) => {
+    const on = used(item);
+    return (
+      <div key={`${item.kind}:${item.label}`} className={`mt-fxtile${on ? ' on' : ''}`} tabIndex={0} data-tip={META[item.label] || undefined}
+        onPointerDown={(e) => { if (!(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
+        onKeyDown={(e) => { if (e.key === 'Enter') onAdd(item); }}>
+        <TileMedia preview={previewOf(item)} />
+        <span className="nm"><b>{item.label}</b></span>
+        {on ? <span className="mt-on act"><Glyph name="check" size={14} sw={2} /></span>
+          : <button type="button" data-act className="fxt-mini act" aria-label={`Добавить «${item.label}»`} onClick={() => onAdd(item)}><Glyph name="plus" size={14} sw={1.8} /></button>}
+      </div>
+    );
+  };
+  const items = (list: LibItem[]) => <TileRow>{list.map(tile)}</TileRow>;
   const row = (item: LibItem, lead: ReactNode, meta?: string, disabled = false) => {
     const on = used(item);
     return (
@@ -371,7 +452,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
         </button>
         {open[g.id] && (
           g.items.length
-            ? <div className="fxt-grid">{g.items.map((label) => row({ kind, label }, <Ic label={label} kind={kind} on={used({ kind, label })} />))}</div>
+            ? items(g.items.map((label) => ({ kind, label })))
             : <p className="mt-lib-note mt-empty"><span className="tx">Группа под новые {kind === 'trans' ? 'переходы' : 'стилизации'}: они появятся здесь, как только лягут в каталог эффектов.</span></p>
         )}
       </div>
@@ -412,13 +493,9 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
               {activeHookKind === cat.kind && <span className="was">в этом ролике</span>}
               <span className="chev"><Glyph name="chev" size={16} /></span>
             </button>
-            {open[cat.kind] && (
-              <div className="fxt-grid">
-                {cat.kind === 'warmup'
-                  ? row({ kind: 'hook', label: 'Свой звук или видео', hookKind: 'warmup' }, <Ic kind="hook" label="warmup" />, 'загружается на шаге FX', true)
-                  : cat.options.map((label) => row({ kind: 'hook', label, hookKind: cat.kind }, <Ic label={label} kind="hook" on={used({ kind: 'hook', label })} />))}
-              </div>
-            )}
+            {open[cat.kind] && (cat.kind === 'warmup'
+              ? <div className="fxt-grid">{row({ kind: 'hook', label: 'Свой звук или видео', hookKind: 'warmup' }, <Ic kind="hook" label="warmup" />, 'загружается на шаге FX', true)}</div>
+              : items(cat.options.map((label) => ({ kind: 'hook' as const, label, hookKind: cat.kind }))))}
           </div>
         ))}
         {tab === 'trans' && (
@@ -627,6 +704,37 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const framesOfCombo = useFramesOf(shots);
   const clipsOf = framesOfCombo;
   const clips = framesOfCombo(combo);
+  // Пример пункта библиотеки: настоящий рендер из каталога эффектов (как на шаге FX), а если его
+  // нет — тот же эффект на кадрах этого ролика (переход — на первой склейке, хук — у дропа).
+  const previewOf = (item: LibItem): LibPreview => {
+    const id = item.kind === 'trans' ? previewIdFor('effectGlue', item.label)
+      : item.kind === 'style' ? previewIdFor('effectStyle', item.label)
+        : item.kind === 'hook' && item.hookKind === 'object' ? previewIdFor('object', item.label)
+          : item.kind === 'hook' && item.hookKind === 'motion' ? previewIdFor('motion', item.label)
+            : item.kind === 'hook' && item.hookKind === 'effects' ? previewIdFor('effectHook', item.label) : undefined;
+    if (id && fxPreviews.isPending) return { state: 'loading' };
+    if (id && fxPreviews.isError) return { state: 'error' };
+    const url = id ? fxPreviews.data?.previews.find((p) => p.id === id)?.previewUrl : undefined;
+    if (url) return { url };
+    const none: StageFx = { transitionAt: () => NO_GLUE, styles: [], hookRange: null };
+    // симуляция — только там, где стол сам рисует эффект; иначе честно «примера нет»
+    if (item.kind === 'trans' && TRANSITION_ANIM[item.label]) {
+      const at = cuts[0] ?? Math.min(dur / 2, 1.5);
+      return { sim: ({ w, h }) => <LoopStage frames={clips} bounds={bounds} at={at} dur={dur} w={w} h={h} fx={{ ...none, transitionAt: () => item.label }} /> };
+    }
+    if (item.kind === 'style' && styleFilter([item.label], 0)) {
+      const style: TimelineStyleRange = { uid: -1, style: item.label, lane: 0, a: 0, b: Math.max(1, bounds.length - 1) };
+      return { sim: ({ w, h }) => <LoopStage frames={clips} bounds={bounds} at={Math.min(1, dur / 2)} lead={1} span={Math.min(2.5, dur)} dur={dur} w={w} h={h} fx={{ ...none, styles: [style] }} /> };
+    }
+    const cat = HOOK_CATS.find((c) => c.kind === item.hookKind);
+    const simHook = cat?.kind === 'motion' || cat?.kind === 'thought' || (cat?.kind === 'effects' && item.label === 'Молния');
+    if (item.kind === 'hook' && cat?.key && drop !== null && simHook) {
+      const config = { [cat.key]: item.label } as HookConfig;
+      const range = hookSpan(cat.kind, config, drop, dur, bpm, bounds);
+      return { sim: ({ w, h }) => <LoopStage frames={clips} bounds={bounds} at={drop} lead={0.8} span={2} dur={dur} w={w} h={h} fx={{ ...none, hookKind: cat.kind, hookLabel: item.label, hookRange: range }} /> };
+    }
+    return {};
+  };
   const unpin = (k: number) => { if (!sbVideo) return; const { [k]: _gone, ...pins } = sbVideo.pins; setStoryboardVideo({ ...sbVideo, pins }); };
   const markEdited = () => patchFx([combo.index], (v) => ({ ...v, edited: true }));
 
@@ -651,6 +759,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     return { style, settings: textSettingsFor(subtitles, name), color: subtitles.color, words: timedSubs, lyrics: fragmentLyrics.trim() || lyrics.trim() || undefined, wide };
   };
   // Конфигуратор текста правит стиль этого ролика: вкладка шага «Текст» = стиль ролика
+  // примеры эффектов для библиотеки (тот же каталог отрендеренных образцов, что на шаге FX)
+  const fxPreviews = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews, staleTime: 30 * 60_000 });
   const framesQuery = useQuery({ queryKey: ['wizard-frames'], queryFn: api.frames, staleTime: 30 * 60_000 });
   const frameCatalog = framesQuery.data?.frames ?? [];
   const frameUrlOf = (id?: string | null) => (id ? frameCatalog.find((f) => f.id === id)?.previewUrl ?? null : null);
@@ -1144,6 +1254,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
           <Library tab={tab} setTab={setTab} open={open} setOpen={toggleOpen} used={used} activeHookKind={kind}
             subStyle={vfx.sub} subPreviews={subPreviews} onPickSub={setSub} textCfg={<SubtitleTextCustomization guideTargetRef={cfgRef} />}
             onAdd={addFromLib} onDragStart={onLibDragStart}
+            previewOf={previewOf}
             frames={frameCatalog} frameId={vfx.frame} onPickFrame={pickFrame}
             frameNote={combo.vertical ? undefined : 'Это видео 16:9 — рамка нарисована под вертикальный кадр и на нём не ставится'}
             frameBase={clips[0] ? <FrameView frame={clips[0]} thumb /> : null}

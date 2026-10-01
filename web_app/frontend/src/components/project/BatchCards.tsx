@@ -408,7 +408,8 @@ export function GenerationsCard({
           <Button size="sm" onClick={downloadAll} disabled={!downloadable.length} icon={<FigIcon name="pd-download.svg" h={14} />}>
             {t('projectDetail.downloadAll')}
           </Button>
-          <span className="max-md:ml-auto"><LimitsIndicator offsetY={28} /></span>
+          {/* flex по центру: строчная обёртка садила кружок на базовую линию, ниже кнопок */}
+          <span className="flex items-center max-md:ml-auto"><LimitsIndicator offsetY={28} /></span>
         </span>
       </div>
       <div className="relative min-h-0 flex-1">

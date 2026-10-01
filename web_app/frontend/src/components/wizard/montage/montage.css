@@ -172,3 +172,30 @@ img.mt-fv-cover { object-fit: cover; }
 .mt-frame-all { display: flex; justify-content: flex-start; padding-top: 12px; }
 .fxt-stage .mt-frame { position: absolute; inset: 0; z-index: 9; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 
+/* ── библиотека: хуки, переходы и стили — плитками 9:16 с автоплеем примера ── */
+.mt-fxrow { position: relative; }
+.mt-fxtiles { display: flex; gap: 12px; padding: 4px 0 12px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scroll-padding-inline: 2px; scrollbar-width: none; }
+.mt-fxtiles::-webkit-scrollbar { display: none; }
+/* фейд — только с той стороны, где за краем есть плитки (маска, а не накладка: фон в тон всегда) */
+.mt-fxrow[data-fade-r] .mt-fxtiles { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent); }
+.mt-fxrow[data-fade-l] .mt-fxtiles { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 56px), transparent); }
+.mt-fxrow[data-fade-l][data-fade-r] .mt-fxtiles { -webkit-mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent); }
+.mt-fxrow-btn { position: absolute; top: calc(50% - 22px); z-index: 6; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: rgba(13, 8, 32, .88); box-shadow: inset 0 0 0 1px var(--fxt-line); color: var(--fxt-t100); transition: opacity .15s ease, transform .12s var(--fxt-ease); }
+.mt-fxrow-btn.l { left: 4px; }
+.mt-fxrow-btn.r { right: 4px; }
+.mt-fxrow-btn:active { transform: scale(.94); }
+.mt-fxrow-btn[data-off] { opacity: 0; pointer-events: none; }
+.mt-fxtile { position: relative; flex: 0 0 180px; display: flex; flex-direction: column; gap: 6px; cursor: grab; outline: none; scroll-snap-align: start; }
+.mt-fxtile:active { cursor: grabbing; }
+.mt-fxtile-media { position: relative; display: block; aspect-ratio: 9 / 16; border-radius: 12px; overflow: hidden; background: var(--fxt-well); box-shadow: inset 0 0 0 1px var(--fxt-line); }
+.mt-fxtile-media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.mt-fxtile-media .fxt-stage { position: absolute; inset: 0; width: 100% !important; height: 100% !important; border-radius: 0; }
+.mt-fxtile-media::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--fxt-line); pointer-events: none; transition: box-shadow .15s ease; }
+.mt-fxtile.on .mt-fxtile-media::after { box-shadow: inset 0 0 0 2px var(--accent-light); }
+.mt-fxtile:focus-visible .mt-fxtile-media::after { box-shadow: inset 0 0 0 2px var(--fxt-t40); }
+@media (hover: hover) and (pointer: fine) { .mt-fxtile:hover .mt-fxtile-media::after { box-shadow: inset 0 0 0 1px var(--fxt-t40); } .mt-fxtile.on:hover .mt-fxtile-media::after { box-shadow: inset 0 0 0 2px var(--accent-light); } }
+.mt-fxtile-tag { position: absolute; left: 6px; bottom: 6px; z-index: 4; padding: 2px 6px; border-radius: 6px; background: rgba(5, 1, 15, .7); color: var(--fxt-t60); font-size: 10px; line-height: 14px; pointer-events: none; } /* ui-allow: подпись поверх мини-кадра */
+.mt-fxtile .nm { font-size: 14px; line-height: 20px; color: var(--fxt-t100); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 30px; } /* ui-allow: подпись плитки */
+.mt-fxtile .nm b { font-weight: 400; }
+.mt-fxtile .act { position: absolute; right: 6px; top: 6px; z-index: 5; }
+.mt-fxtile-none { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; color: var(--fxt-t40); font-size: 12px; line-height: 16px; } /* ui-allow: подпись пустой плитки */
