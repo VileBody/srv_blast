@@ -1,0 +1,79 @@
+{
+  "_doc": "Тайтлы Kant для пайпа и живого превью сайта. Шрифты/intro/cyr/cyrSqueeze и константы разбиения — те же, что в kant_titles.jsx (сверяет tests/test_kant_titles_spec.py). text — текстовый слой шаблона (дамп .aep): кегль, масштаб слоя, трекинг, цвет; look — характер входа/эффектов для JS-превью (эффекты AE не воспроизводятся, только похоже).",
+  "split": {
+    "maxWeight": 2,
+    "minFit": 0.8,
+    "minScreen": 0.35,
+    "introShare": 0.45,
+    "minStretch": 30,
+    "maxWidth": 940,
+    "fadeFrames": 3
+  },
+  "phrase": {
+    "gap": 0.45,
+    "maxWords": 6,
+    "tail": 0.6
+  },
+  "titles": {
+    "two-frames": {
+      "mode": "kant_two_frames",
+      "label": "Two Frames",
+      "fonts": ["Staatliches-Regular"],
+      "cyr": {"Staatliches-Regular": "Oswald-Regular"},
+      "intro": 0.1,
+      "text": {"font": "Staatliches-Regular", "size": 195, "scale": [83, 83], "tracking": -57, "fill": "#FFFFFF"},
+      "look": "smear"
+    },
+    "gum": {
+      "mode": "kant_gum",
+      "label": "Gum",
+      "fonts": ["Arial-BoldMT"],
+      "cyr": {},
+      "intro": 1.43,
+      "text": {"font": "Arial-BoldMT", "size": 195, "scale": [83, 83], "tracking": -57, "fill": "#F239E3", "glow": "#F239E3"},
+      "look": "overshoot"
+    },
+    "matrix": {
+      "mode": "kant_matrix",
+      "label": "Matrix",
+      "fonts": ["CoolveticaRg-Regular"],
+      "cyr": {},
+      "intro": 2.0,
+      "text": {"font": "CoolveticaRg-Regular", "size": 195, "scale": [83, 83], "tracking": 0, "fill": "#48E030"},
+      "look": "decode"
+    },
+    "edit": {
+      "mode": "kant_edit",
+      "label": "Edit",
+      "fonts": ["NirmalaText-Semilight", "TagType", "AdobeArabic-BoldItalic"],
+      "cyr": {"NirmalaText-Semilight": "Inter-Regular", "AdobeArabic-BoldItalic": "CormorantGaramond-LightItalic"},
+      "intro": 0.6,
+      "text": {"font": "NirmalaText-Semilight", "size": 195, "scale": [91, 91], "tracking": -82, "fill": "#FFFFFF"},
+      "flashes": [
+        {"from": 0.0, "to": 0.0333, "box": true},
+        {"from": 0.0333, "to": 0.0667, "font": "AdobeArabic-BoldItalic", "scale": [116, 385], "tracking": 0},
+        {"from": 0.0667, "to": 0.1, "font": "TagType", "scale": [274, 116], "tracking": 0}
+      ],
+      "look": "flashes"
+    },
+    "vhs": {
+      "mode": "kant_vhs",
+      "label": "VHS",
+      "fonts": ["SixCaps"],
+      "cyr": {"SixCaps": "Oswald-Regular"},
+      "cyrSqueeze": 0.75,
+      "intro": 2.85,
+      "text": {"font": "SixCaps", "size": 195, "scale": [126.64, 126.64], "tracking": -28, "fill": "#E0C61A", "glow": "#E0C61A"},
+      "look": "typewriter"
+    },
+    "lani-style": {
+      "mode": "kant_lani_style",
+      "label": "Lani",
+      "fonts": ["TagType"],
+      "cyr": {},
+      "intro": 1.0,
+      "text": {"font": "TagType", "size": 195, "scale": [86.77, 85.01], "tracking": -57, "fill": "#FFFFFF", "stroke": "#CA1212", "strokeWidth": 21},
+      "look": "overshoot"
+    }
+  }
+}

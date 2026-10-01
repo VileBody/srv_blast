@@ -39,6 +39,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CATALOG = REPO_ROOT / "config" / "styles" / "subtitle_font_catalog.json"
+KANT_SPEC = REPO_ROOT / "5th_template" / "kant_titles" / "kant_titles.json"
 BUNDLE_MANIFEST = REPO_ROOT / "web_app" / "frontend" / "public" / "fonts" / "subtitles" / "manifest.json"
 FONT_SUFFIXES = {".ttf", ".otf", ".woff", ".woff2"}
 
@@ -56,6 +57,10 @@ def required_fonts() -> List[str]:
     raw = json.loads(CATALOG.read_text(encoding="utf-8"))
     names = {str(row["ps"]) for row in raw.get("fonts") or [] if row.get("roles")}
     names.update(EXTRA_FONTS)
+    # тайтлы Kant: шрифты шаблонов и кириллические замены
+    for row in json.loads(KANT_SPEC.read_text(encoding="utf-8"))["titles"].values():
+        names.update(row["fonts"])
+        names.update(row["cyr"].values())
     return sorted(names)
 
 

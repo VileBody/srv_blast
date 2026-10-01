@@ -235,6 +235,99 @@ def _flip_flag_false(src: str, flag: str) -> str:
     return re.sub(rf"({flag}\s*:\s*)true", r"\1false", src, count=1)
 
 
+_KANT_DIR = _TEMPLATE_DIR / "kant_titles"
+# Спека тайтлов (общая с живым превью сайта): фразы, разбиение на экраны, шрифты.
+KANT_SPEC = json.loads((_KANT_DIR / "kant_titles.json").read_text(encoding="utf-8"))
+KANT_PHRASE_GAP = float(KANT_SPEC["phrase"]["gap"])            # пауза, после которой начинается новая фраза, с
+KANT_PHRASE_MAX_WORDS = int(KANT_SPEC["phrase"]["maxWords"])   # дальше фраза режется принудительно (экраны делит placeLine)
+_KANT_BARE = re.compile(r"[^A-Za-z0-9Ѐ-ӿ]")             # как bare() в kant_titles.jsx
+KANT_PHRASE_TAIL = float(KANT_SPEC["phrase"]["tail"])          # фраза держится после последнего слова не дольше, с
+
+
+def kant_phrases(word_timings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """word-timings → фразы для KantTitles.placeLine: {text, start, end, words:[{start,end}]}.
+
+    Фраза = слова без паузы > KANT_PHRASE_GAP, не длиннее KANT_PHRASE_MAX_WORDS. Конец фразы —
+    начало следующей, но не позже KANT_PHRASE_TAIL после её последнего слова. Режем по длине —
+    предлог/частица (≤ 2 букв) уходит в следующую фразу вместе со своим словом («не | дома» → «не дома»).
+    """
+    words = [w for w in word_timings if _w_text(w)]
+    groups: list[list[Any]] = []
+    for w in words:
+        joined = groups and _w_start(w) - _w_end(groups[-1][-1]) <= KANT_PHRASE_GAP
+        if joined and len(groups[-1]) < KANT_PHRASE_MAX_WORDS:
+            groups[-1].append(w)
+        elif joined and len(groups[-1]) > 1 and len(_KANT_BARE.sub("", _w_text(groups[-1][-1]))) <= 2:
+            groups.append([groups[-1].pop(), w])
+        else:
+            groups.append([w])
+    out: list[dict[str, Any]] = []
+    for i, g in enumerate(groups):
+        start, last_end = _w_start(g[0]), _w_end(g[-1])
+        nxt = _w_start(groups[i + 1][0]) if i + 1 < len(groups) else float("inf")
+        out.append({
+            "text": " ".join(_w_text(w) for w in g),
+            "start": round(start, 3),
+            "end": round(max(last_end, min(nxt, last_end + KANT_PHRASE_TAIL)), 3),
+            "words": [{"start": round(_w_start(w), 3), "end": round(_w_end(w), 3)} for w in g],
+        })
+    return out
+
+
+def build_kant_title_overlay(*, mode: str, word_timings: list[dict[str, Any]], target_comp: str) -> str:
+    """Тайтл Kant (AddText .aep) на каждую фразу трека поверх target_comp.
+
+    .aep выбранного тайтла едет внутри JSX (base64) и раскладывается во временную папку ноды:
+    скрипт вставляется в render JSX текстом, отдельной доставки файлов у субтитров нет.
+    """
+    import base64
+
+    from core.subtitles_mode import KANT_TITLE_BY_MODE
+
+    title = KANT_TITLE_BY_MODE.get(mode)
+    if not title:
+        raise ValueError(f"build_kant_title_overlay: not a Kant title mode: {mode!r}")
+    phrases = kant_phrases(word_timings)
+    if not phrases:
+        raise ValueError("build_kant_title_overlay: no words")
+    aep = (_KANT_DIR / "aep" / f"{title}.aep").read_bytes()
+    lib = (_KANT_DIR / "kant_titles.jsx").read_text(encoding="utf-8-sig")
+    return "\n".join([
+        f"// ── blast inject: Kant title {title}, {len(phrases)} phrases",
+        "(function () {",
+        "  var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';",
+        "  function decode(s) { var m = {}, i, o = [], buf = 0, bits = 0;",
+        "    for (i = 0; i < 64; i++) m[B64.charAt(i)] = i;",
+        "    for (i = 0; i < s.length; i++) { var c = s.charAt(i); if (!m.hasOwnProperty(c)) continue;",
+        "      buf = (buf << 6) | m[c]; bits += 6; if (bits >= 8) { bits -= 8; o.push(String.fromCharCode((buf >> bits) & 255)); } }",
+        "    return o.join(''); }",
+        "  var dir = new Folder(Folder.temp.fsName + '/blast_kant_titles');",
+        "  if (!dir.exists) dir.create();",
+        f"  var f = new File(dir.fsName + '/' + {json.dumps(title + '.aep')});",
+        "  f.encoding = 'BINARY';",
+        "  if (!f.open('w')) throw new Error('kant titles: cannot write ' + f.fsName);",
+        f"  f.write(decode({json.dumps(base64.b64encode(aep).decode('ascii'))}));",
+        "  f.close();",
+        "  $.global.KANT_TITLES_AEP_DIR = dir.fsName;",
+        "})();",
+        lib,
+        "(function () {",
+        # цель — как у trendy/brat: композиция по имени; иначе главная композиция шаблона рендера
+        # (MAIN_COMP в его области видимости — билдер ролика не передаёт имя), иначе активная
+        f"  var name = {json.dumps(str(target_comp), ensure_ascii=False)}, comp = null;",
+        "  for (var i = 1; i <= app.project.numItems; i++) { var it = app.project.item(i); if (it instanceof CompItem && it.name === name) { comp = it; break; } }",
+        "  if (!comp && typeof MAIN_COMP !== 'undefined' && MAIN_COMP instanceof CompItem) comp = MAIN_COMP;",
+        "  if (!comp && app.project.activeItem instanceof CompItem) comp = app.project.activeItem;",
+        "  if (!comp) throw new Error('kant titles: target comp not found: ' + name);",
+        f"  var phrases = {json.dumps(phrases, ensure_ascii=False)};",
+        "  for (var p = 0; p < phrases.length; p++) {",
+        "    var ph = phrases[p];",
+        f"    KantTitles.placeLine(comp, {json.dumps(title)}, ph.text, ph.start, ph.end, {{ words: ph.words, x: comp.width / 2, y: comp.height / 2 }});",
+        "  }",
+        "})();",
+    ])
+
+
 def build_jsx_subtitles_overlay(
     *,
     mode: str,
@@ -255,6 +348,16 @@ def build_jsx_subtitles_overlay(
     the script rejects unknown keys. Raises if mode is not a 5th-template JSX
     mode or the script is missing.
     """
+    from core.subtitles_mode import SUBTITLES_MODE_KANT_TITLES
+
+    if mode in SUBTITLES_MODE_KANT_TITLES:
+        # у тайтлов нет настроек текста/цвета/бленда — переданные значения были бы молча потеряны
+        if style_config or fill_hex or subs_blend:
+            raise ValueError(f"build_jsx_subtitles_overlay: {mode} has no text style / fill / blend settings")
+        if not word_timings:
+            raise ValueError("build_jsx_subtitles_overlay: empty word_timings")
+        return build_kant_title_overlay(mode=mode, word_timings=word_timings, target_comp=target_comp)
+
     script_name = _SCRIPT_BY_MODE.get(mode)
     if not script_name:
         raise ValueError(f"build_jsx_subtitles_overlay: not a 5th JSX mode: {mode!r}")
