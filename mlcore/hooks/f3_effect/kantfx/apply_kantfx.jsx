@@ -5,9 +5,11 @@
  * Параметры приходят через $.global.__BLAST, как у остальных скриптов f3.
  *
  * Где взять пресет:
- *   presetB64 — содержимое .ffx в base64. Так его передаёт overlay.py: скрипт вставляется
- *               текстом в render JSX, а бинарник на ноду отдельно не доставляется.
- *               Раскладывается во временный файл и удаляется после применения.
+ *   presetBin — содержимое .ffx строкой «символ = байт» (overlay.js_binary_literal). Так его
+ *               передаёт overlay.py: скрипт вставляется текстом в render JSX, а бинарник на
+ *               ноду отдельно не доставляется. Пишется во временный файл как есть (без
+ *               декодирования в ExtendScript — оно на больших пресетах не укладывалось в
+ *               таймаут ноды) и удаляется после применения.
  *   preset    — путь к .ffx на диске (run_job.jsx: BASE + "/" + effect.preset).
  *
  * Режимы (mode):
@@ -23,7 +25,7 @@
     var CONFIG = {
         targetCompName: null,
         preset: null,
-        presetB64: null,
+        presetBin: null,
         mode: "window",
         startTime: 0,
         duration: null,
@@ -62,26 +64,12 @@
         return l;
     }
 
-    var B64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    function decodeB64(s) {
-        var map = {}, i, out = [], buf = 0, bits = 0;
-        for (i = 0; i < 64; i++) map[B64.charAt(i)] = i;
-        for (i = 0; i < s.length; i++) {
-            var c = s.charAt(i);
-            if (!map.hasOwnProperty(c)) continue; // '=', переносы
-            buf = (buf << 6) | map[c];
-            bits += 6;
-            if (bits >= 8) { bits -= 8; out.push(String.fromCharCode((buf >> bits) & 255)); }
-        }
-        return out.join("");
-    }
-
     function presetFile() {
-        if (CONFIG.presetB64) {
+        if (CONFIG.presetBin) {
             var f = new File(Folder.temp.fsName + "/blast_kantfx_" + (new Date().getTime()) + "_" + Math.floor(Math.random() * 1e6) + ".ffx");
             f.encoding = "BINARY";
             if (!f.open("w")) throw new Error("apply_kantfx: не открыть временный файл " + f.fsName);
-            f.write(decodeB64(String(CONFIG.presetB64)));
+            f.write(String(CONFIG.presetBin));
             f.close();
             return { file: f, temp: true };
         }

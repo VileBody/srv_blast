@@ -1,7 +1,6 @@
 """Эффекты Kant Tools (.ffx) в f3: манифест ↔ файлы ↔ контракт ↔ overlay."""
 from __future__ import annotations
 
-import base64
 import json
 import re
 import sys
@@ -22,8 +21,17 @@ KANT = [e for e in MANIFEST["effects"] if e.get("preset")]
 REGISTRY = json.loads((ROOT / "web_app/frontend/src/data/effects-registry.json").read_text(encoding="utf-8"))
 
 
-def _b64_values(js: str) -> list[bytes]:
-    return [base64.b64decode(m) for m in re.findall(r'presetB64: "([A-Za-z0-9+/=]+)"', js)]
+def _preset_values(js: str) -> list[bytes]:
+    """presetBin-литералы JSX -> байты (ровно так их пишет File(encoding=BINARY) в AE)."""
+    lits = re.findall(r'presetBin: "((?:[^"\\]|\\.)*)"', js)
+    return [lit.encode("latin-1").decode("unicode_escape").encode("latin-1") for lit in lits]
+
+
+def test_binary_literal_roundtrip_is_ascii_and_exact():
+    data = bytes(range(256)) * 4 + b'"\\</script>\r\n\x00'
+    lit = overlay.js_binary_literal(data)
+    assert lit.isascii() and lit[0] == lit[-1] == '"'
+    assert _preset_values(f"presetBin: {lit}") == [data]
 
 
 def test_kant_entries_point_at_real_presets_and_the_shared_script():
@@ -60,7 +68,7 @@ def test_registry_has_every_kant_effect_with_a_table_group():
 def test_extra_ships_the_preset_inside_the_jsx():
     js = overlay.build_overlay_jsx(extra="cc_tritone_red", drop_time=4.0)
     assert 'mode: "window"' in js
-    assert _b64_values(js) == [(F3_DIR / "kantfx/cc_tritone_red.ffx").read_bytes()]
+    assert _preset_values(js) == [(F3_DIR / "kantfx/cc_tritone_red.ffx").read_bytes()]
 
 
 def test_kant_transition_on_a_table_cut_and_kant_style_on_a_window():
@@ -70,14 +78,14 @@ def test_kant_transition_on_a_table_cut_and_kant_style_on_a_window():
         drop_time=4.0,
     )
     assert 'mode: "cuts"' in js and 'mode: "window"' in js
-    assert sorted(_b64_values(js), key=len) == sorted(
+    assert sorted(_preset_values(js), key=len) == sorted(
         [(F3_DIR / "kantfx/sh_twitch_flicker.ffx").read_bytes(), (F3_DIR / "kantfx/fx_universe_vhs.ffx").read_bytes()], key=len
     )
 
 
 def test_regular_effects_do_not_get_preset_keys():
     js = overlay.build_overlay_jsx(extra="xerox", transition="snap_wipe", drop_time=4.0)
-    assert _b64_values(js) == []
+    assert _preset_values(js) == []
 
 
 def test_preset_outside_the_pipeline_dir_is_refused():
