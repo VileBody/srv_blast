@@ -28,7 +28,6 @@ No f3 selection => caller passes nothing => `_build_f3_overlay_js` returns ""
 
 from __future__ import annotations
 
-import base64
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -204,12 +203,29 @@ def _js(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def js_binary_literal(data: bytes) -> str:
+    r"""Бинарник -> ASCII-литерал JS-строки, где символ i = байт i ("\xNN" для непечатных).
+
+    ExtendScript пишет такую строку в File(encoding="BINARY") байт в байт. Разбирает её
+    нативный парсер JSX, а не цикл на ExtendScript: base64-декодер посимвольно на 800 КБ
+    шёл дольше 5 минут, и нода убивала AE по таймауту «нет прогресса».
+    """
+    out = ['"']
+    for b in data:
+        if 0x20 <= b < 0x7F and b not in (0x22, 0x5C):
+            out.append(chr(b))
+        else:
+            out.append(f"\\x{b:02x}")
+    out.append('"')
+    return "".join(out)
+
+
 def _preset_kv(eff: Dict[str, Any], *, span: Optional[float] = None) -> str:
     """Доп. ключи __BLAST для эффектов Kant (manifest: preset) — "" у остальных.
 
     Скрипт эффекта вставляется в render JSX текстом, а .ffx — бинарник, которого на ноде
-    нет. Поэтому пресет едет внутри JSX в base64 (presetB64), apply_kantfx.jsx
-    раскладывает его во временный файл. Режим (window/cuts) и длина перехода — из манифеста.
+    нет. Поэтому пресет едет внутри JSX бинарной строкой (presetBin, см. js_binary_literal),
+    apply_kantfx.jsx раскладывает его во временный файл. Режим (window/cuts) и длина перехода — из манифеста.
     """
     rel = eff.get("preset")
     if not rel:
@@ -219,7 +235,7 @@ def _preset_kv(eff: Dict[str, Any], *, span: Optional[float] = None) -> str:
         raise RuntimeError(f"f3 preset escapes pipeline dir or is not .ffx: {rel}")
     if not p.exists():
         raise FileNotFoundError(f"f3 preset missing: {p}")
-    kv = f", presetB64: {_js(base64.b64encode(p.read_bytes()).decode('ascii'))}, mode: {_js(eff.get('mode') or 'window')}"
+    kv = f", presetBin: {js_binary_literal(p.read_bytes())}, mode: {_js(eff.get('mode') or 'window')}"
     kv += f", label: {_js(str(eff.get('label') or eff.get('id')))}"
     if span is not None:
         kv += f", span: {_js(float(span))}"
