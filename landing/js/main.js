@@ -102,12 +102,17 @@
         p.hx = x+(rr()-.5)*2.5; p.hy = y+(rr()-.5)*2.5; p.s = rr() < .2 ? 2.4 : 1.6; p.a = .35 + rr()*.65; pts.push(p); } } }
     function draw(){ ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h); for(const p of pts){ ctx.fillStyle = 'rgba(232,226,255,' + p.a + ')'; ctx.fillRect(p.x,p.y,p.s,p.s); } }
     function frame(){ if(!on) return;
-      for(const p of pts){ const dx = p.x-mx, dy = p.y-my, d2 = dx*dx+dy*dy; if(d2 < 6400){ const f = (6400-d2)/6400*2.4, dd = Math.sqrt(d2)||1; p.vx += dx/dd*f; p.vy += dy/dd*f; }
+      for(const p of pts){ const dx = p.x-mx, dy = p.y-my, d2 = dx*dx+dy*dy; if(d2 < RR){ const f = (RR-d2)/RR*2.4, dd = Math.sqrt(d2)||1; p.vx += dx/dd*f; p.vy += dy/dd*f; }
         p.vx += (p.hx-p.x)*.045; p.vy += (p.hy-p.y)*.045; p.vx *= .82; p.vy *= .82; p.x += p.vx; p.y += p.vy; }
       draw(); requestAnimationFrame(frame); }
     const host = cv.parentElement;
-    host.addEventListener('pointermove', e => { const r = cv.getBoundingClientRect(); mx = e.clientX - r.left; my = e.clientY - r.top; });
+    /* мышь — отталкивает при наведении; палец — касание разгоняет частицы, потом они собираются обратно */
+    let RR = 6400, rt0;
+    const at = e => { const r = cv.getBoundingClientRect(); mx = e.clientX - r.left; my = e.clientY - r.top; RR = e.pointerType === 'mouse' ? 6400 : 16900; };
+    host.addEventListener('pointermove', at);
+    host.addEventListener('pointerdown', e => { at(e); clearTimeout(rt0); if(e.pointerType !== 'mouse') rt0 = setTimeout(() => { mx = my = -9999; }, 650); });
     host.addEventListener('pointerleave', () => { mx = my = -9999; });
+    host.addEventListener('pointercancel', () => { mx = my = -9999; });
     Promise.race([document.fonts.load('400 100px Point'), new Promise(r => setTimeout(r, 1500))]).then(() => {
       build(); if(reduce){ pts.forEach(p => { p.x = p.hx; p.y = p.hy; }); draw(); return; }
       new IntersectionObserver(([e]) => { const was = on; on = e.isIntersecting; if(on && !was) requestAnimationFrame(frame); }, {threshold:.15}).observe(cv); });
@@ -121,8 +126,8 @@
   function radii(){ const m = Math.min(orbit.clientWidth, orbit.clientHeight); return { inner: m*.25, outer: m*.44 }; }
   function placeOrbit(){ const R = radii(); rings[0].style.width = rings[0].style.height = R.inner*2 + 'px'; rings[1].style.width = rings[1].style.height = R.outer*2 + 'px';
     const inner = ops.filter(p => p.dataset.ring === 'inner'), outer = ops.filter(p => p.dataset.ring === 'outer');
-    inner.forEach((p,i) => { const a = oa + i*Math.PI; p.style.transform = 'translate(-50%,-50%) translate(' + (Math.cos(a)*R.inner).toFixed(1) + 'px,' + (Math.sin(a)*R.inner).toFixed(1) + 'px)'; });
-    outer.forEach((p,i) => { const a = -oa*.7 + i*Math.PI*2/3 + .5; p.style.transform = 'translate(-50%,-50%) translate(' + (Math.cos(a)*R.outer).toFixed(1) + 'px,' + (Math.sin(a)*R.outer).toFixed(1) + 'px)'; }); }
+    inner.forEach((p,i) => { const a = oa + i*Math.PI; p.style.transform = 'translate3d(calc(-50% + ' + (Math.cos(a)*R.inner).toFixed(2) + 'px), calc(-50% + ' + (Math.sin(a)*R.inner).toFixed(2) + 'px), 0)'; });
+    outer.forEach((p,i) => { const a = -oa*.7 + i*Math.PI*2/3 + .5; p.style.transform = 'translate3d(calc(-50% + ' + (Math.cos(a)*R.outer).toFixed(2) + 'px), calc(-50% + ' + (Math.sin(a)*R.outer).toFixed(2) + 'px), 0)'; }); }
   function oLoop(ts){ if(!oOn) return; oa += ol ? (ts-ol)/1000*.22 : 0; ol = ts; placeOrbit(); requestAnimationFrame(oLoop); }
   placeOrbit(); addEventListener('resize', placeOrbit);
   if(!reduce) new IntersectionObserver(([e]) => { oOn = e.isIntersecting; ol = 0; if(oOn) requestAnimationFrame(oLoop); }).observe(orbit);
