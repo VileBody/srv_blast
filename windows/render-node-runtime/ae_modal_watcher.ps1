@@ -258,6 +258,19 @@ while ($true) {
     $present[$key] = 1
 
     if ([string]::IsNullOrWhiteSpace($w.Title)) {
+      # Enter на окне без заголовка — только для процесса рендера ноды (AfterFX.com):
+      # там такое окно и есть Crash Repair / «one chance to save», клинящие джобу (#308).
+      # У AE, открытого руками (AfterFX.exe), окон без заголовка много и обычных —
+      # заставка, служебные/плавающие окна; AppActivate по PID + Enter бил в работу
+      # человека каждые пару секунд. Окно «Crash Repair Options» с заголовком ниже
+      # по-прежнему закрывается кнопкой в любом процессе.
+      if ($procLower -ne "afterfx.com") {
+        if (-not $seen.ContainsKey($key)) {
+          $seen[$key] = 1
+          Write-Log "untitled_window_ignored pid=$($w.Pid) proc=$($w.ProcessName) handle=$($w.Handle) reason=interactive_ae"
+        }
+        continue
+      }
       if (-not $seen.ContainsKey($key)) {
         $seen[$key] = 1
         Write-Log "untitled_dialog_detected pid=$($w.Pid) proc=$($w.ProcessName) handle=$($w.Handle)"

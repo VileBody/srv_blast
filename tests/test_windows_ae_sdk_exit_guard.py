@@ -193,6 +193,28 @@ def test_watcher_dismisses_untitled_ae_dialogs() -> None:
     assert "if ($len -le 0) {\n      return $true\n    }" not in enum
 
 
+def test_untitled_enter_is_only_for_the_render_process() -> None:
+    """Enter on an untitled window is only safe in the node's render process
+    (AfterFX.com). An After Effects opened by hand (AfterFX.exe) has plenty of
+    ordinary untitled windows; AppActivate by pid + Enter hit whatever the person
+    was doing every couple of seconds. The titled "Crash Repair Options" path is
+    unchanged for every process."""
+    root = Path(__file__).resolve().parents[1]
+    watcher = (root / "windows" / "render-node-runtime" / "ae_modal_watcher.ps1").read_text(
+        encoding="utf-8-sig"
+    ).replace("\r\n", "\n")
+
+    branch = watcher[watcher.index("if ([string]::IsNullOrWhiteSpace($w.Title)) {") :]
+    branch = branch[: branch.index("SendKeys(\"{ENTER}\")")]
+    # the process gate comes before any Enter is sent
+    assert 'if ($procLower -ne "afterfx.com") {' in branch
+    assert "reason=interactive_ae" in branch
+    gate = branch[branch.index('if ($procLower -ne "afterfx.com") {') :]
+    assert gate.index("continue") < gate.index("untitled_dialog_detected")
+    # titled Crash Repair dismissal still applies to any AE process
+    assert '"Crash Repair Options" = @("Continue", "OK", "Repair", "Close")' in watcher
+
+
 def test_idle_watchdog_watches_the_builder_heartbeat() -> None:
     """The status file, project.aep and output.mp4 only appear near the end of a
     job. On a complex build nothing else moved for minutes, so the idle guard
