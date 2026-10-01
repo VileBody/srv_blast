@@ -19,6 +19,8 @@ from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _ENGINE_PATH = _REPO_ROOT / "app" / "subtitle_font_layout.py"
+# Тайтлы Kant: спека, по которой собирает рендер (app/jsx_subtitles_builder.build_kant_title_overlay)
+_KANT_SPEC_PATH = _REPO_ROOT / "5th_template" / "kant_titles" / "kant_titles.json"
 
 # subtitles_mode (WEB_SUBTITLE_MODE_MAP_JSON) → стиль каталога (excluded_styles)
 STYLE_BY_MODE = {
@@ -29,6 +31,34 @@ STYLE_BY_MODE = {
     "trendy_5th": "trendy",
     "brat_5th": "brat",
 }
+KANT_PREFIX = "kant_"
+
+
+@lru_cache(maxsize=1)
+def kant_spec() -> dict[str, Any]:
+    import json
+
+    if not _KANT_SPEC_PATH.exists():
+        raise RuntimeError(f"kant titles spec missing: {_KANT_SPEC_PATH}")
+    return json.loads(_KANT_SPEC_PATH.read_text(encoding="utf-8"))
+
+
+def kant_title_by_style() -> dict[str, str]:
+    """Стиль сайта (= subtitles_mode, напр. kant_gum) → id тайтла (gum)."""
+    return {row["mode"]: tid for tid, row in kant_spec()["titles"].items()}
+
+
+def is_kant_style(style: str | None) -> bool:
+    return bool(style) and str(style) in kant_title_by_style()
+
+
+def kant_fonts() -> list[str]:
+    """Все шрифты тайтлов: оригиналы (латиница) и кириллические замены."""
+    out: set[str] = set()
+    for row in kant_spec()["titles"].values():
+        out.update(row["fonts"])
+        out.update(row["cyr"].values())
+    return sorted(out)
 SIZES = ("large", "medium", "small")
 HEIGHTS = ("compact", "normal", "tall")
 POSITIONS = ("center", "left", "right", "down")
@@ -75,8 +105,10 @@ def font_catalog() -> dict[str, Any]:
     # пары при «стандартном для стиля» шрифте (font = null)
     defaults = dict(eng.STYLE_DEFAULT_FONTS)
     default_accents = {style: eng.accents_for(ps) for style, ps in defaults.items()}
+    # у тайтлов Kant шрифт, цвет и анимация зашиты в шаблон — настроек текста нет
     return {"fonts": fonts, "defaults": defaults, "defaultAccents": default_accents,
-            "accentColors": dict(eng.STYLE_ACCENT_DEFAULTS), "lockedFontStyles": ["brat"]}
+            "accentColors": dict(eng.STYLE_ACCENT_DEFAULTS), "lockedFontStyles": ["brat"],
+            "fixedStyles": sorted(kant_title_by_style())}
 
 
 def _choice(settings: dict[str, Any], key: str, allowed: tuple[str, ...], default: str) -> str:
@@ -105,10 +137,13 @@ def resolve(settings: dict[str, Any] | None, *, subtitles_mode: str, render_pres
     """
     settings = dict(settings or {})
     style = STYLE_BY_MODE.get(subtitles_mode)
+    if is_kant_style(subtitles_mode):
+        # тайтл: цвет акцента рендер тоже отверг бы (jsx_style_config) — ловим на отправке
+        if _has_text_settings(settings, accent=True):
+            raise SubtitleTextError("У тайтла настройки текста зашиты в шаблон — шрифт, размер, цвет и положение не меняются")
+        return None
     if style is None:
-        if any(settings.get(k) for k in ("font", "accentFont", "focusStyle")) or any(
-                settings.get(k) not in (None, d) for k, d in
-                (("size", "large"), ("height", "normal"), ("position", "center"), ("shadow", "soft"))):
+        if _has_text_settings(settings):
             raise SubtitleTextError(f"Настройки текста не поддерживаются для режима {subtitles_mode!r}")
         return None
     out, params = _normalize(settings, style)
@@ -120,6 +155,14 @@ def resolve(settings: dict[str, Any] | None, *, subtitles_mode: str, render_pres
     if out == {"size": "large", "height": "normal", "position": "center", "shadow": "soft"}:
         return None
     return out
+
+
+def _has_text_settings(settings: dict[str, Any], *, accent: bool = False) -> bool:
+    """Выбрано что-то кроме значений по умолчанию (accent — считать и акцентный цвет)."""
+    keys = ("font", "accentFont", "focusStyle", *(("accentColor",) if accent else ()))
+    return any(settings.get(k) for k in keys) or any(
+        settings.get(k) not in (None, d) for k, d in
+        (("size", "large"), ("height", "normal"), ("position", "center"), ("shadow", "soft")))
 
 
 def _normalize(settings: dict[str, Any], style: str) -> tuple[dict[str, Any], Any]:
@@ -216,6 +259,10 @@ def geometry(settings: dict[str, Any] | None, *, style: str, render_preset: str)
     по правилам AE-шаблона стиля этими числами. Невозможные настройки — та же
     ошибка, что на отправке (SubtitleTextError → 422), а не тихая подмена.
     """
+    if is_kant_style(style):
+        if _has_text_settings(settings or {}, accent=True):
+            raise SubtitleTextError("У тайтла настройки текста зашиты в шаблон — шрифт, размер, цвет и положение не меняются")
+        return kant_geometry(style)
     if style not in STYLE_BY_MODE.values():
         raise SubtitleTextError(f"Неизвестный стиль субтитров: {style!r}")
     out, params = _normalize(dict(settings or {}), style)
@@ -296,3 +343,36 @@ def _geometry_body(eng: ModuleType, style: str, out: dict[str, Any], params: Any
                                      "wordsPerLine": 2, "maxLines": 4, "fitMargin": 0.97,
                                      "focusStyle": out.get("focus_style")}}
 
+
+
+def kant_geometry(style: str) -> dict[str, Any]:
+    """Тайтл Kant для JS-превью: шаблон текста, вход, разбиение на экраны — из той же
+    спеки, что читает рендер. Раскладка всегда по центру кадра, поверх всех слоёв."""
+    spec = kant_spec()
+    tid = kant_title_by_style()[style]
+    row = spec["titles"][tid]
+    fonts = sorted({*row["fonts"], *row["cyr"].values()})
+    return {
+        "style": style,
+        "comp": {"w": 1080, "h": 1920},
+        "alignX": "center",
+        "centerY": 0.5,
+        "marginX": 0.0,
+        "marginY": 0.0,
+        "shadow": "none",
+        "accentColor": None,
+        "fonts": {ps: {"capH": 0, "advance": 0, "lcAdvance": None, "bodyTop": None, "bodyBottom": None,
+                       "lowercase": False} for ps in fonts},
+        "kant": {
+            "id": tid,
+            "fonts": list(row["fonts"]),
+            "cyr": dict(row["cyr"]),
+            "cyrSqueeze": row.get("cyrSqueeze"),
+            "intro": float(row["intro"]),
+            "text": dict(row["text"]),
+            "flashes": list(row.get("flashes") or []),
+            "look": row["look"],
+            "split": dict(spec["split"]),
+            "phrase": dict(spec["phrase"]),
+        },
+    }
