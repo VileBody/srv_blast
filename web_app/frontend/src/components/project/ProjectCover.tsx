@@ -13,7 +13,7 @@ export function ProjectCover({ name, src, className }: { name: string; src?: str
   const initial = name.trim().charAt(0).toLocaleUpperCase() || 'Б';
   return (
     <span
-      className={cn('project-cover relative flex overflow-hidden bg-[#120b25]', className)}
+      className={cn('project-cover relative flex overflow-hidden bg-panel', className)}
       style={{ containerType: 'inline-size', backgroundImage: 'radial-gradient(circle at 78% 20%, rgba(139,111,230,.30), transparent 34%), radial-gradient(circle at 18% 88%, rgba(94,63,170,.24), transparent 40%)' }}
       aria-hidden="true"
     >

@@ -31,12 +31,12 @@ function StatCard({ label, value, to, onClick, variant }: { label: string; value
   // цвет фейда = фон карты, чтобы частицы жёстко «уходили» в него слева (эффект глубины).
   // Тянем до 80% ширины — иначе не достаёт до свирла muted-карты (он правее).
   const fade = muted
-    ? 'linear-gradient(90deg, #2a1e49 0%, #2a1e49 55%, rgba(42,30,73,0) 80%)'
+    ? 'linear-gradient(90deg, #211742 0%, #211742 55%, rgba(33,23,66,0) 80%)'
     : 'linear-gradient(90deg, #241a3c 0%, #241a3c 55%, rgba(36,26,60,0) 80%)';
   // «Сделать ещё» ведёт не по ссылке, а в визард: карта умеет быть и ссылкой, и кнопкой
   const className = 'group relative flex h-[200px] w-[360px] shrink-0 flex-col overflow-hidden rounded-r15 text-left max-md:h-[112px] max-md:w-[210px]';
   // телефон: непрозрачный фон (grad-soft-20 полупрозрачен и просвечивал линии подложки)
-  const style = muted ? { background: '#2a1e49' } : { background: phone ? '#241a3c' : 'var(--grad-soft-20)' };
+  const style = muted ? { background: 'var(--field-hover)' } : { background: phone ? 'var(--field)' : 'var(--grad-soft-20)' };
   const body = (
     <>
       {/* мягкое свечение (две размытые эллипс-частицы) + свирл — точные позиции/наклоны из Figma */}
@@ -109,7 +109,7 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
         ⋯
       </button>
       {menuOpen && (
-        <div className="absolute right-[24px] top-[62px] z-[3] w-[196px] overflow-hidden rounded-r10 bg-[#2b2145] py-[6px] shadow-soft">
+        <div className="absolute right-[24px] top-[62px] z-[3] w-[196px] overflow-hidden rounded-r10 bg-field-hover py-[6px] shadow-soft">
           {[
             { label: t('projects.rename'), run: onRename },
             { label: project.archived ? t('projects.unarchive') : t('projects.archive'), run: onArchive },

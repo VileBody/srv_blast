@@ -160,7 +160,7 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
   const failed = video.status === 'FAILED';
   const reason = failed ? failureReason(video.error) : null;
   return (
-    <div className={cn('shrink-0 rounded-[15px] bg-[#1d1534]', posted && 'opacity-70')}>
+    <div className={cn('shrink-0 rounded-[15px] bg-panel', posted && 'opacity-70')}>
     <div className="relative flex h-[60px] items-center pl-[28px] pr-[24px]">
       <span className="flex w-[110px] shrink-0 items-center gap-[8px] truncate text-[16px] leading-none text-text">
         <span className="truncate">{t('projectDetail.videoN', { n: video.index })}</span>
@@ -221,7 +221,7 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
 export function LoadingRow({ video, active = true }: { video?: VideoVersion; active?: boolean }) {
   const { t } = useTranslation();
   return (
-    <div className="batch-loading-row relative flex h-[60px] shrink-0 items-center overflow-hidden rounded-[15px] bg-[#1d1534] px-[28px]" role="status" aria-label={t('processing.rendering')}>
+    <div className="batch-loading-row relative flex h-[60px] shrink-0 items-center overflow-hidden rounded-[15px] bg-panel px-[28px]" role="status" aria-label={t('processing.rendering')}>
       {active && <span className="batch-loading-stripes absolute inset-0" aria-hidden="true" />}
       <span className="relative z-[1] text-[16px] text-text">{video ? t('projectDetail.videoN', { n: video.index }) : t('processing.rendering')}</span>
       <span className="relative z-[1] ml-auto text-[14px] text-text-60">

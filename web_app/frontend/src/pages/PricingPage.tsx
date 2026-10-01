@@ -179,7 +179,7 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
           </span>
         )}
       </span>
-      <span aria-hidden="true" className="pointer-events-none absolute left-0 top-[80px] h-[243px] w-full" style={{ backgroundImage: 'linear-gradient(rgba(39,28,70,0) 0%, rgba(39,28,70,0.9) 82.5%, rgba(39,28,70,0.95) 91.2%, #271c46 100%)' }} />
+      <span aria-hidden="true" className="pointer-events-none absolute left-0 top-[80px] h-[243px] w-full" style={{ backgroundImage: 'linear-gradient(rgba(26,18,54,0) 0%, rgba(26,18,54,0.9) 82.5%, rgba(26,18,54,0.95) 91.2%, #271c46 100%)' }} />
       <span aria-hidden="true" className="pointer-events-none absolute left-0 top-[323px] h-[413px] w-full bg-gradient-to-b from-[#271c46] to-[#271d46]" />
 
       {/* чип «Роликов» 150×60 */}
