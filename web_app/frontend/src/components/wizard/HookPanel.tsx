@@ -298,7 +298,7 @@ export function StageHooks() {
             />
           ) : (
             <button type="button" className="w12-drop-opt w12-drop-custom" aria-pressed={customActive} onClick={() => setCustomDrop(true)}>
-              <span className="w12-l w12-num">{customActive ? hooks.dropTime : t('wizard.fx.customDrop')}</span>
+              <span className="w12-l w12-num">{customActive ? hooks.dropTime : t('wizard.fx.customDropShort')}</span>
             </button>
           )}
         </div>

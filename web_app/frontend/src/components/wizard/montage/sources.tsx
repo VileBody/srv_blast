@@ -11,6 +11,7 @@ import { useWizardStore, type StoryboardVideo } from '../../../stores/wizardStor
 import { seedKeyFor, useRecipeCuts } from '../storyboardData';
 import { shuffleOf, toVideo, withClip } from '../PoolStoryboard';
 import '../PoolStoryboard.css';
+import { useStripFollow } from '../useStripFollow';
 import type { Combo } from './combos';
 
 /** Кадр ролика: клип, фото или цвет — и как он ложится в вертикаль. */
@@ -188,6 +189,7 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
 
   const pinned = Object.keys(video.pins).length;
   const atDrop = drop !== null && Math.abs((bounds[k] ?? -1) - drop) < 0.02;
+  const strip = useStripFollow(edit?.k ?? k, frames.length);
   return (
     <>
       {shots > 1 && !edit && (
@@ -222,7 +224,7 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
             <button type="button" className="psb-btn pri" onClick={() => void startEdit()}><I d={REROLL} /><span className="tx">Заменить кадр</span></button>
           </div>
         )}
-        <div className={`psb-strip${edit ? ' editing' : ''}`}>
+        <div ref={strip.ref} className={`psb-strip${edit ? ' editing' : ''}`} data-fade-l={strip.fadeLeft || undefined} data-fade-r={strip.fadeRight || undefined}>
           {frames.map((f, i) => (
             <button key={`${f.id}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === k ? ' cur mt-cur' : ''}`} style={{ flexGrow: (bounds[i + 1] ?? 0) - (bounds[i] ?? 0) }} aria-label={`Кадр ${i + 1}`} onClick={() => { if (!edit) onSeek(i); }}>
               <FrameView frame={f} thumb />
