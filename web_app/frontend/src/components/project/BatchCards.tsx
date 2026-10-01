@@ -122,6 +122,32 @@ export function TagChip({ label, icon }: { label: string; icon: 'bg' | 'sub' | '
   );
 }
 
+/**
+ * Причина падения ролика — коротко и по делу. Чаще всего это ответ оркестратора вида
+ * `orchestrator /send_audio_s3 failed status=422 body={"detail":[{"loc":[...],"msg":"..."}]}`:
+ * достаём из него сами сообщения, а не показываем простыню JSON.
+ */
+export function failureReason(error: string | null | undefined): string | null {
+  const raw = (error ?? '').trim();
+  if (!raw) return null;
+  const at = raw.indexOf('body=');
+  if (at >= 0) {
+    try {
+      const detail = (JSON.parse(raw.slice(at + 5)) as { detail?: unknown }).detail;
+      if (typeof detail === 'string') return detail;
+      if (Array.isArray(detail)) {
+        const parts = detail.map((item) => {
+          const d = item as { loc?: unknown[]; msg?: string };
+          const field = Array.isArray(d.loc) ? d.loc.filter((x) => x !== 'body').join('.') : '';
+          return field ? `${field}: ${d.msg ?? ''}` : d.msg ?? '';
+        }).filter(Boolean);
+        if (parts.length) return parts.join('; ');
+      }
+    } catch { /* тело не JSON (обрезано) — покажем строку как есть */ }
+  }
+  return raw;
+}
+
 /** Строка генерации (620×60, #1d1534, r15): № + чипы + TikTok + скачивание (Figma W36). */
 export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?: () => void }) {
   const { t } = useTranslation();
@@ -131,8 +157,11 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
   const posted = isVideoPosted(video);
   const chips = useHorizontalScroll();
   const chipsMask = edgeMask(chips.fade.left, chips.fade.right, 20);
+  const failed = video.status === 'FAILED';
+  const reason = failed ? failureReason(video.error) : null;
   return (
-    <div className={cn('relative flex h-[60px] shrink-0 items-center rounded-[15px] bg-[#1d1534] pl-[28px] pr-[24px]', posted && 'opacity-70')}>
+    <div className={cn('shrink-0 rounded-[15px] bg-[#1d1534]', posted && 'opacity-70')}>
+    <div className="relative flex h-[60px] items-center pl-[28px] pr-[24px]">
       <span className="flex w-[110px] shrink-0 items-center gap-[8px] truncate text-[16px] leading-none text-text">
         <span className="truncate">{t('projectDetail.videoN', { n: video.index })}</span>
         {posted && <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-success" aria-hidden="true" />}
@@ -177,6 +206,13 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
       >
         <FigIcon name="pd-download.svg" h={20} />
       </a>
+    </div>
+      {/* причина видна сразу, а не только во всплывающей подсказке (на телефоне её не навести) */}
+      {failed && (
+        <p className="px-[28px] pb-[14px] text-ui-12 text-warning [overflow-wrap:anywhere]" role="note">
+          {reason ?? t('processing.failedNoReason')}
+        </p>
+      )}
     </div>
   );
 }
