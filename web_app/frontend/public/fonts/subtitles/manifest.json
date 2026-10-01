@@ -1,0 +1,260 @@
+{
+  "_doc": "Шрифты для CSS/JS-превью субтитров: только с правом веб-раздачи (OFL или собственный Point). Остальные шрифты каталога рендера (платные/неясная лицензия) сюда не кладём. ps совпадает с PostScript-именем каталога config/styles/subtitle_font_catalog.json.",
+  "fonts": [
+    {
+      "ps": "Point-SemiBold",
+      "family": "Point",
+      "style": "Semi Bold",
+      "fullName": "Point Semi Bold",
+      "url": "/fonts/subtitles/Point-SemiBold.woff2",
+      "license": "Blast brand font (already served by landing/ and the web app)",
+      "source": "catalog",
+      "label": "Point",
+      "category": "sans_system",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Point-Light",
+      "family": "Point",
+      "style": "Light",
+      "fullName": "Point Light",
+      "url": "/fonts/subtitles/Point-Light.woff2",
+      "license": "Blast brand font (already served by landing/ and the web app)",
+      "source": "catalog",
+      "label": "Point Light (стандарт impulse)",
+      "category": "sans_system",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": true,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Montserrat-BoldItalic",
+      "family": "Montserrat",
+      "style": "Bold Italic",
+      "fullName": "Montserrat Bold Italic",
+      "url": "/fonts/subtitles/Montserrat-BoldItalic.woff2",
+      "license": "OFL-1.1",
+      "source": "catalog",
+      "label": "Montserrat Bold Italic (стандарт tape)",
+      "category": "sans_system",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": true,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Montserrat-Bold",
+      "family": "Montserrat",
+      "style": "Bold",
+      "fullName": "Montserrat Bold",
+      "url": "/fonts/subtitles/Montserrat-Bold.woff2",
+      "license": "OFL-1.1",
+      "source": "catalog",
+      "label": "Montserrat Bold (стандарт trendy)",
+      "category": "sans_system",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": true,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Inter-Bold",
+      "family": "Inter",
+      "style": "Bold",
+      "fullName": "Inter Bold",
+      "url": "/fonts/subtitles/Inter-Bold.woff2",
+      "license": "OFL-1.1",
+      "source": "catalog",
+      "label": "Inter",
+      "category": "sans_system",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Montserrat-SemiBold",
+      "family": "Montserrat",
+      "style": "SemiBold",
+      "fullName": "Montserrat SemiBold",
+      "url": "/fonts/subtitles/Montserrat-SemiBold.woff2",
+      "license": "OFL-1.1",
+      "source": "catalog",
+      "label": "Montserrat",
+      "category": "sans_system",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": [
+        "trendy"
+      ]
+    },
+    {
+      "ps": "SourceSansPro-Bold",
+      "family": "Source Sans Pro",
+      "style": "Bold",
+      "fullName": "Source Sans Pro Bold",
+      "url": "/fonts/subtitles/SourceSansPro-Bold.woff2",
+      "license": "OFL-1.1",
+      "source": "catalog",
+      "label": "Source Sans",
+      "category": "sans_system",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": [
+        "trendy"
+      ]
+    },
+    {
+      "ps": "DidactGothic",
+      "family": "Didact Gothic",
+      "style": "Regular",
+      "fullName": "Didact Gothic",
+      "url": "/fonts/subtitles/DidactGothic.woff2",
+      "license": "OFL-1.1",
+      "source": "catalog",
+      "label": "Didact Gothic",
+      "category": "sans_system",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": [
+        "trendy"
+      ]
+    },
+    {
+      "ps": "BebasNeueBold",
+      "family": "Bebas Neue",
+      "style": "Bold",
+      "fullName": "BebasNeueBold",
+      "url": "/fonts/subtitles/BebasNeueBold.woff2",
+      "license": "OFL-1.1",
+      "source": "catalog",
+      "label": "Bebas Neue",
+      "category": "display",
+      "roles": [
+        "base"
+      ],
+      "serif": false,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Anticva-Regular",
+      "family": "Anticva",
+      "style": "Regular",
+      "fullName": "Anticva",
+      "url": "/fonts/subtitles/Anticva-Regular.woff2",
+      "license": "OFL-1.1",
+      "source": "catalog",
+      "label": "Anticva",
+      "category": "editorial",
+      "roles": [
+        "base"
+      ],
+      "serif": true,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "CormorantSC-Medium",
+      "family": "Cormorant SC Medium",
+      "style": "Regular",
+      "fullName": "Cormorant SC Medium",
+      "url": "/fonts/subtitles/CormorantSC-Medium.woff2",
+      "license": "OFL-1.1",
+      "source": "catalog",
+      "label": "Cormorant SC",
+      "category": "editorial",
+      "roles": [
+        "base"
+      ],
+      "serif": true,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "PlayfairDisplaySC-Regular",
+      "family": "Playfair Display SC",
+      "style": "Regular",
+      "fullName": "Playfair Display SC Regular",
+      "url": "/fonts/subtitles/PlayfairDisplaySC-Regular.woff2",
+      "license": "OFL-1.1",
+      "source": "catalog",
+      "label": "Playfair Display SC",
+      "category": "editorial",
+      "roles": [
+        "base"
+      ],
+      "serif": true,
+      "hidden": false,
+      "excludedStyles": []
+    },
+    {
+      "ps": "Staatliches-Regular",
+      "family": "Staatliches",
+      "style": "Regular",
+      "fullName": "Staatliches Regular",
+      "url": "/fonts/subtitles/Staatliches-Regular.woff2",
+      "license": "OFL-1.1",
+      "source": "extra"
+    },
+    {
+      "ps": "SixCaps",
+      "family": "Six Caps",
+      "style": "Regular",
+      "fullName": "Six Caps",
+      "url": "/fonts/subtitles/SixCaps.woff2",
+      "license": "OFL-1.1",
+      "source": "extra"
+    },
+    {
+      "ps": "Oswald-Regular",
+      "family": "Oswald",
+      "style": "Regular",
+      "fullName": "Oswald Regular",
+      "url": "/fonts/subtitles/Oswald-Regular.woff2",
+      "license": "OFL-1.1",
+      "source": "extra"
+    },
+    {
+      "ps": "Inter-Regular",
+      "family": "Inter",
+      "style": "Regular",
+      "fullName": "Inter Regular",
+      "url": "/fonts/subtitles/Inter-Regular.woff2",
+      "license": "OFL-1.1",
+      "source": "extra"
+    },
+    {
+      "ps": "CormorantGaramond-LightItalic",
+      "family": "Cormorant Garamond",
+      "style": "Light Italic",
+      "fullName": "Cormorant Garamond Light Italic",
+      "url": "/fonts/subtitles/CormorantGaramond-LightItalic.woff2",
+      "license": "OFL-1.1",
+      "source": "extra"
+    }
+  ]
+}
