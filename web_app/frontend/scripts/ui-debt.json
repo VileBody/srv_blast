@@ -97,7 +97,6 @@
     "src/components/layout/ProfileSetupGate.tsx": 1,
     "src/components/project/BatchCards.tsx": 12,
     "src/components/project/CreateProjectModal.tsx": 4,
-    "src/components/project/ProjectCover.tsx": 4,
     "src/components/ui/ErrorState.tsx": 1,
     "src/components/ui/LimitsIndicator.tsx": 4,
     "src/components/ui/NotchedInput.tsx": 3,

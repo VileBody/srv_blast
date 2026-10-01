@@ -63,7 +63,7 @@ function ProjectRow({ project }: { project: Project }) {
   const allPosted = generated > 0 && posted === generated;
   return (
     <Link to={`/app/projects/${project.id}`} className="group flex items-center gap-space-5">
-      <ProjectCover name={project.name} src={project.coverUrl} className="h-[80px] w-[80px] shrink-0 rounded-[5px] max-md:h-[56px] max-md:w-[56px]" />
+      <ProjectCover name={project.name} src={project.coverUrl} track={project.coverTrack} className="h-[80px] w-[80px] shrink-0 rounded-[5px] max-md:h-[56px] max-md:w-[56px]" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-[24px] leading-none text-text-80 transition-colors group-hover:text-text">
           {project.name}

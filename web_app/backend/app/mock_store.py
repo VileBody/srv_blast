@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from . import effect_map as em
 from .render_job import _segment, build_render_job, variation_label
 
 BASE_S3 = "https://s3.twcstorage.ru/f7cef916-asset-storage/app/blast808/media/v1"
@@ -714,6 +715,37 @@ def _project_generated(project_id: str) -> int:
     return sum(len(job.get("videos", [])) for job in _owned_jobs() if job.get("projectId") == project_id)
 
 
+def project_cover_track(project_id: str) -> dict[str, Any] | None:
+    """Дорожка для обложки проекта: трек последней джобы, его отрывок и дроп.
+
+    Своей картинки у проекта обычно нет, а трек есть всегда, как только была генерация, —
+    обложка рисует его волну (её считает браузер из самого файла, как на шаге «Трек»).
+    Трек, которого уже нет среди сохранённых (истёк срок хранения), не отдаём: файл по
+    нему не скачать, и обложка честно показывает «трека нет», а не чужую волну.
+    """
+    saved = {str(item.get("id")): item for item in ws().saved_tracks}
+    jobs = sorted(
+        (job for job in _owned_jobs() if job.get("projectId") == project_id),
+        key=lambda job: str(job.get("createdAt") or ""),
+        reverse=True,
+    )
+    for job in jobs:
+        data = job.get("stageData") or {}
+        track = saved.get(str((data.get("track") or {}).get("id") or ""))
+        if not track:
+            continue
+        segment = _segment(data.get("timing"))
+        return {
+            "trackId": track["id"],
+            "filename": track.get("filename"),
+            "durationS": track.get("durationS"),
+            "from": segment["from"] if segment else None,
+            "to": segment["to"] if segment else None,
+            "drop": em.parse_mmssms((data.get("hooks") or {}).get("dropTime")),
+        }
+    return None
+
+
 def _project_posted(project_id: str) -> int:
     """Сколько роликов проекта реально ушло в TikTok.
 
@@ -762,6 +794,7 @@ def _enrich_project(project: dict[str, Any]) -> dict[str, Any]:
     data["total"] = video_limit()
     data["isCurrent"] = project["id"] == current_project_id()
     data["archived"] = bool(project.get("archived"))
+    data["coverTrack"] = project_cover_track(project["id"])
     return data
 
 

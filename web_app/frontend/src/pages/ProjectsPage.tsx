@@ -90,7 +90,7 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
     >
       {/* обложка: отступ 14 слева/сверху, уходит за правый край (bleed 38px) и перекрыта фейдом в #281e47 */}
       <div className="relative ml-[14px] mr-[-38px] mt-[14px] min-h-0 flex-1 max-md:!min-h-0 max-md:!flex-1 max-md:ml-[10px] max-md:mt-[10px]">
-        <ProjectCover name={project.name} src={project.coverUrl} className="h-full w-full rounded-[14px]" />
+        <ProjectCover name={project.name} src={project.coverUrl} track={project.coverTrack} className="h-full w-full rounded-[14px]" />
         <div className="pointer-events-none absolute inset-y-0 right-[38px] w-[100px]" style={{ background: 'linear-gradient(90deg, rgba(40,30,71,0) 0%, #281e47 100%)' }} />
       </div>
 
