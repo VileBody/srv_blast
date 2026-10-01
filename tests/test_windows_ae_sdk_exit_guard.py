@@ -187,30 +187,36 @@ def test_watcher_dismisses_untitled_ae_dialogs() -> None:
     )
 
     assert "untitled_dialog_detected" in watcher
-    assert "SendKeys(\"{ENTER}\")" in watcher
+    assert "action=post_enter" in watcher
     # the enumeration must keep title-less windows instead of returning early
     enum = watcher[watcher.index("GetWindowTextLength") : watcher.index("GetWindowThreadProcessId")]
     assert "if ($len -le 0) {\n      return $true\n    }" not in enum
 
 
 def test_untitled_enter_is_only_for_the_render_process() -> None:
-    """Enter on an untitled window is only safe in the node's render process
-    (AfterFX.com). An After Effects opened by hand (AfterFX.exe) has plenty of
-    ordinary untitled windows; AppActivate by pid + Enter hit whatever the person
-    was doing every couple of seconds. The titled "Crash Repair Options" path is
-    unchanged for every process."""
+    """Enter on an untitled window is only for the node's render process
+    (AfterFX.com), only once the window has stayed for UntitledMinAgeSeconds (the
+    startup splash/utility windows vanish by then, Crash Repair does not), and it
+    is posted straight to that window once: no AppActivate, no SendKeys, so the
+    person at this machine never loses focus. Verified live: Crash Repair after a
+    taskkill closed by the posted Enter; the AppActivate retry kept hitting an
+    ordinary persistent untitled AE window and stole the cursor."""
     root = Path(__file__).resolve().parents[1]
     watcher = (root / "windows" / "render-node-runtime" / "ae_modal_watcher.ps1").read_text(
         encoding="utf-8-sig"
     ).replace("\r\n", "\n")
 
     branch = watcher[watcher.index("if ([string]::IsNullOrWhiteSpace($w.Title)) {") :]
-    branch = branch[: branch.index("SendKeys(\"{ENTER}\")")]
-    # the process gate comes before any Enter is sent
-    assert 'if ($procLower -ne "afterfx.com") {' in branch
+    branch = branch[: branch.index("untitled_dialog_error")]
+    # order: interactive AE skipped -> young windows skipped -> one posted Enter
+    gate = branch.index('if ($procLower -ne "afterfx.com") {')
+    age = branch.index("-lt $UntitledMinAgeSeconds")
+    post = branch.index("PostMessage($w.Handle, 0x0100")
+    assert gate < age < post
     assert "reason=interactive_ae" in branch
-    gate = branch[branch.index('if ($procLower -ne "afterfx.com") {') :]
-    assert gate.index("continue") < gate.index("untitled_dialog_detected")
+    assert "if (-not $untitledPosted.ContainsKey($key)) {" in branch
+    # nothing in the watcher may grab the foreground any more
+    assert "AppActivate(" not in watcher and "SendKeys(" not in watcher
     # titled Crash Repair dismissal still applies to any AE process
     assert '"Crash Repair Options" = @("Continue", "OK", "Repair", "Close")' in watcher
 
