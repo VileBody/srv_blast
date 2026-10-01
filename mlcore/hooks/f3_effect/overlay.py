@@ -28,6 +28,7 @@ No f3 selection => caller passes nothing => `_build_f3_overlay_js` returns ""
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -62,6 +63,23 @@ F3_EXTRAS = (
 # Переходы, которые умеют работать по списку склеек (CONFIG.cuts). layer_shake
 # трясёт слой целиком и склейки не читает — назначить его на одну склейку нельзя.
 F3_CUT_TRANSITIONS = ("snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts")
+
+
+def _kantfx_ids(group: str) -> tuple:
+    """id эффектов Kant Tools (manifest: поле preset) группы extra / transition.
+
+    Все они идут через один скрипт kantfx/apply_kantfx.jsx, который читает CONFIG.cuts,
+    поэтому каждый Kant-переход годится и для склейки монтажного стола.
+    """
+    effects = json.loads(_MANIFEST_PATH.read_text(encoding="utf-8")).get("effects", [])
+    return tuple(e["id"] for e in effects if isinstance(e, dict) and e.get("preset") and e.get("group") == group)
+
+
+_KANTFX_EXTRAS = _kantfx_ids("extra")
+_KANTFX_TRANSITIONS = _kantfx_ids("transition")
+F3_EXTRAS = F3_EXTRAS + _KANTFX_EXTRAS
+F3_TRANSITIONS = F3_TRANSITIONS + _KANTFX_TRANSITIONS
+F3_CUT_TRANSITIONS = F3_CUT_TRANSITIONS + _KANTFX_TRANSITIONS
 # Допуск сопоставления склейки монтажного стола со склейкой, найденной в компе
 # (inPoint слоя футажа): кадр-другой округления, но не соседняя склейка.
 _CUT_MATCH_S = 0.15
@@ -184,6 +202,28 @@ def _read_script(rel_script: str) -> str:
 def _js(value: Any) -> str:
     """Serialize a Python value as a JS literal (json is valid ExtendScript)."""
     return json.dumps(value, ensure_ascii=False)
+
+
+def _preset_kv(eff: Dict[str, Any], *, span: Optional[float] = None) -> str:
+    """Доп. ключи __BLAST для эффектов Kant (manifest: preset) — "" у остальных.
+
+    Скрипт эффекта вставляется в render JSX текстом, а .ffx — бинарник, которого на ноде
+    нет. Поэтому пресет едет внутри JSX в base64 (presetB64), apply_kantfx.jsx
+    раскладывает его во временный файл. Режим (window/cuts) и длина перехода — из манифеста.
+    """
+    rel = eff.get("preset")
+    if not rel:
+        return ""
+    p = (_F3_DIR / str(rel)).resolve()
+    if _F3_DIR not in p.parents or p.suffix.lower() != ".ffx":
+        raise RuntimeError(f"f3 preset escapes pipeline dir or is not .ffx: {rel}")
+    if not p.exists():
+        raise FileNotFoundError(f"f3 preset missing: {p}")
+    kv = f", presetB64: {_js(base64.b64encode(p.read_bytes()).decode('ascii'))}, mode: {_js(eff.get('mode') or 'window')}"
+    kv += f", label: {_js(str(eff.get('label') or eff.get('id')))}"
+    if span is not None:
+        kv += f", span: {_js(float(span))}"
+    return kv
 
 
 # JS prelude: helpers ported from run_job.jsx, prefixed __f3_ to avoid clashes
@@ -403,7 +443,7 @@ def build_overlay_jsx(
     if t_eff:
         t_dur = float(t_eff.get("default_duration") or 0.067)
         parts.append("  /* -- TRANSITION -- */")
-        parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(t_dur)}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv} }};")
+        parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(t_dur)}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv}{_preset_kv(t_eff, span=t_dur)} }};")
         parts.append("  (function(){")
         parts.append(_read_script(t_eff["script"]))
         parts.append("  })(); $.global.__BLAST = null;")
@@ -429,7 +469,7 @@ def build_overlay_jsx(
         parts.append("  /* -- EXTRA -- */")
         parts.append(
             "  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, "
-            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv}{_clips_kv} }};"
+            f"startTime: 0, duration: {_extra_dur_js}, place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv}{_clips_kv}{_preset_kv(e_eff)} }};"
         )
         parts.append("  (function(){")
         parts.append(_read_script(e_eff["script"]))
@@ -452,7 +492,7 @@ def build_overlay_jsx(
             dur = float(eff.get("default_duration") or 0.067)
             var = f"__f3_pc_{tid}"
             parts.append(f"  var {var} = __f3_pick({_js(times)}, __f3_cuts, {_js(_CUT_MATCH_S)});")
-            parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(dur)}, place: __f3_place, cuts: {var}, placeRef: __f3_place_ref{_fx_kv} }};")
+            parts.append(f"  $.global.__BLAST = {{ targetCompName: __f3_name, dropTime: __f3_drop, duration: {_js(dur)}, place: __f3_place, cuts: {var}, placeRef: __f3_place_ref{_fx_kv}{_preset_kv(eff, span=dur)} }};")
             parts.append("  (function(){")
             parts.append(_read_script(eff["script"]))
             parts.append("  })(); $.global.__BLAST = null;")
@@ -474,7 +514,7 @@ def build_overlay_jsx(
             parts.append(
                 "  $.global.__BLAST = { targetCompName: __f3_name, dropTime: __f3_drop, "
                 f"startTime: {_js(rng['start'])}, duration: {_js(round(rng['end'] - rng['start'], 3))}, "
-                f"place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv}{clips_kv} }};"
+                f"place: __f3_place, cuts: __f3_cuts, placeRef: __f3_place_ref{_fx_kv}{clips_kv}{_preset_kv(eff)} }};"
             )
             parts.append("  (function(){")
             parts.append(_read_script(eff["script"]))

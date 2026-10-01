@@ -69,10 +69,27 @@ class PinnedCuts(BaseModel):
 # Монтажный стол веба: переход на конкретной склейке и стиль на конкретном окне.
 # Время абсолютное (секунды трека), как у pinned_cuts / footage_plan — сверяется с
 # ними при приёме, чтобы склейка человека и склейка рендера были одной и той же.
-CutTransitionIdLiteral = Literal["snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts"]
+CutTransitionIdLiteral = Literal[
+    "snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts",
+    # Kant Tools (kantfx/*.ffx) — переходы на склейке
+    "sh_twitch_flicker", "sh_chroma_lens_shake", "sh_dissolve_shake", "sh_tile_shake",
+    "sh_puddle_shake", "sh_puddle_warp_shake", "of_edge_radial", "of_exposure_flicker",
+    "of_invert_flash", "of_linear_wipe", "of_rgb_glitch_burst", "of_fisheye_scan",
+]
 ExtraIdLiteral = Literal[
     "xerox", "analog_glitch", "neon_extract", "old_camera",
     "blackwhite", "crystal_glow", "night_vision", "wave",
+    # Kant Tools (kantfx/*.ffx) — стилизации
+    "cc_tritone_red", "cc_neutral_tritone", "cc_tritone_exposure", "cc_colorista_looks",
+    "cc_lumetri_curves_looks", "cc_lumetri_contrast", "cc_lumetri_mb",
+    "cc_looks_exposure_grain", "fx_paint_bucket", "fx_cartoon_thermal", "fx_invert_curves",
+    "cc_lumetri_looks_grain", "cc_looks_curves_grain", "cc_double_looks_grain",
+    "cc_film_grain_looks_a", "cc_film_grain_looks_b", "cc_mb_suite_grain",
+    "cc_looks_curves_noise", "fx_film_damage", "fx_universe_vhs", "fx_scanlines_displace",
+    "fx_etching_fisheye", "fx_luma_key_noise", "fx_cross_glitch", "fx_jpeg_damage",
+    "fx_jpeg_tritone", "fx_chroma_distort", "fx_bcc_displace", "fx_turbulent_noise",
+    "fx_signal_mesh", "fx_directional_blur", "fx_mojo_glow_grade", "fx_hotspot_flicker",
+    "fx_sapphire_flicker", "fx_lens_blur",
 ]
 _CUT_MATCH_S = 0.02
 
@@ -173,12 +190,28 @@ class SendAudioS3Request(BaseModel):
         Literal[
             "snap_wipe", "minimax", "invert_flash",
             "extract_flash", "flash_on_cuts", "layer_shake",
+            # Kant Tools (kantfx/*.ffx)
+            "sh_twitch_flicker", "sh_chroma_lens_shake", "sh_dissolve_shake", "sh_tile_shake",
+            "sh_puddle_shake", "sh_puddle_warp_shake", "of_edge_radial", "of_exposure_flicker",
+            "of_invert_flash", "of_linear_wipe", "of_rgb_glitch_burst", "of_fisheye_scan",
         ]
     ] = None
     effect_extra: Optional[
         Literal[
             "xerox", "analog_glitch", "neon_extract", "old_camera",
             "blackwhite", "crystal_glow", "night_vision", "wave",
+            # Kant Tools (kantfx/*.ffx)
+            "cc_tritone_red", "cc_neutral_tritone", "cc_tritone_exposure",
+            "cc_colorista_looks", "cc_lumetri_curves_looks", "cc_lumetri_contrast",
+            "cc_lumetri_mb", "cc_looks_exposure_grain", "fx_paint_bucket",
+            "fx_cartoon_thermal", "fx_invert_curves", "cc_lumetri_looks_grain",
+            "cc_looks_curves_grain", "cc_double_looks_grain", "cc_film_grain_looks_a",
+            "cc_film_grain_looks_b", "cc_mb_suite_grain", "cc_looks_curves_noise",
+            "fx_film_damage", "fx_universe_vhs", "fx_scanlines_displace", "fx_etching_fisheye",
+            "fx_luma_key_noise", "fx_cross_glitch", "fx_jpeg_damage", "fx_jpeg_tritone",
+            "fx_chroma_distort", "fx_bcc_displace", "fx_turbulent_noise", "fx_signal_mesh",
+            "fx_directional_blur", "fx_mojo_glow_grade", "fx_hotspot_flicker",
+            "fx_sapphire_flicker", "fx_lens_blur",
         ]
     ] = None
     # Stretch effect_extra (grade) over the whole video instead of pre-drop only.
