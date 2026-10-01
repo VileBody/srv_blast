@@ -3,8 +3,11 @@ name: Publish Web Previews
 # Превью эффектов/субтитров → S3 → каталоги сайта в .env.production → перезапуск сайта.
 # Только этот runner читает .env.production (права 600), поэтому публикация идёт здесь.
 # Перед запуском превью кладутся на тот же сервер: <stage_dir>/manifest.json + previews/*.mp4
-# (scp от deploy; формат — в scripts/publish_web_previews.py). Папка — в /home/deploy: у сервиса
-# runner'а свой /tmp (PrivateTmp), положенное туда по ssh он не видит.
+# (scp от deploy; формат — в scripts/publish_web_previews.py).
+# Runner — docker-контейнер (myoung34/github-runner): из файлов хоста ему смонтирован только
+# /home/deploy/blast_final, а писать туда deploy не может. Поэтому папка с превью лежит в
+# /home/deploy и читается только через `docker run`: контейнеры запускает docker хоста, им
+# видны пути хоста.
 on:
   workflow_dispatch:
     inputs:
@@ -50,8 +53,10 @@ jobs:
           [[ "$STAGE_DIR" =~ ^/home/deploy/blast_previews[A-Za-z0-9_.-]*$ ]] || { echo "stage_dir должен быть /home/deploy/blast_previews<…>: $STAGE_DIR" >&2; exit 1; }
           [[ "$WAVE" =~ ^v[0-9]+$ ]] || { echo "wave должен быть вида v2: $WAVE" >&2; exit 1; }
           test -r "$BLAST_WEB_PRODUCTION_ENV_FILE" || { echo "env не читается этим runner'ом" >&2; exit 1; }
-          test -s "$STAGE_DIR/manifest.json" || { echo "нет $STAGE_DIR/manifest.json на этом сервере" >&2; exit 1; }
-          echo "превью в папке: $(find "$STAGE_DIR/previews" -name '*.mp4' | wc -l)"
+          # папка с превью — путь хоста: проверяем глазами docker хоста, не runner'а
+          docker run --rm -v "$STAGE_DIR:/stage:ro" alpine:3.20 sh -euc '
+            test -s /stage/manifest.json || { echo "нет manifest.json в папке превью на хосте" >&2; exit 1; }
+            echo "превью в папке: $(find /stage/previews -name "*.mp4" | wc -l)"'
 
       - name: Upload previews and update catalogs
         run: |
@@ -60,15 +65,18 @@ jobs:
           [[ "$NEW_STYLES" == "true" ]] && flag="--with-new-subtitle-styles"
           env_dir="$(dirname "$BLAST_WEB_PRODUCTION_ENV_FILE")"
           env_name="$(basename "$BLAST_WEB_PRODUCTION_ENV_FILE")"
-          # boto3 — в контейнере; запуск от uid runner'а, чтобы env остался его файлом с теми же правами
-          docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp \
-            -v "$GITHUB_WORKSPACE/scripts:/repo/scripts:ro" \
-            -v "$STAGE_DIR:/stage:ro" \
-            -v "$env_dir:/envdir" \
-            python:3.12-slim sh -euc "
-              pip install -q --disable-pip-version-check --target /tmp/pylib boto3==1.42.70
-              PYTHONPATH=/tmp/pylib python /repo/scripts/publish_web_previews.py /envdir/$env_name --stage /stage --wave $WAVE $flag
-            "
+          owner="$(stat -c '%u:%g' "$BLAST_WEB_PRODUCTION_ENV_FILE")"
+          # boto3 — в контейнере; запуск от владельца env, чтобы файл остался его, с теми же правами.
+          # Скрипты — через stdin: $GITHUB_WORKSPACE есть только внутри runner'а, у хоста его нет.
+          tar -C scripts -cf - publish_web_previews.py validate_web_preview_catalog_env.py \
+            | docker run -i --rm -u "$owner" -e HOME=/tmp \
+                -v "$STAGE_DIR:/stage:ro" \
+                -v "$env_dir:/envdir" \
+                python:3.12-slim sh -euc "
+                  mkdir -p /tmp/repo && tar -xf - -C /tmp/repo
+                  pip install -q --disable-pip-version-check --target /tmp/pylib boto3==1.42.70
+                  PYTHONPATH=/tmp/pylib python /tmp/repo/publish_web_previews.py /envdir/$env_name --stage /stage --wave $WAVE $flag
+                "
           python3 scripts/validate_web_preview_catalog_env.py "$BLAST_WEB_PRODUCTION_ENV_FILE"
 
       - name: Restart site
