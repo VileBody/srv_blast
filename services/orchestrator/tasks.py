@@ -4260,19 +4260,19 @@ def activate_footage_base(self, limit: int = 0, media_type: str = "video") -> Di
 
             idx = build_photo_index(bucket=bucket, prefix=prefix, out_path=static_index_path, progress_cb=_idx_progress)
         elif is_collection:
-            from mlcore.footage_segments import min_source_sec
             from scripts.build_static_assets_index import build_index
 
-            # Collection sources are long by design, so the index also records
-            # where the edits are; the segmenter snaps window boundaries onto
-            # them instead of cutting across a shot change.
+            # Every collection source records its edits — short clips are often
+            # montages too. The inventory splits each source into one clip per shot
+            # (footage_segments.expand_shot_rows); the 20 s grid is left for long
+            # sources where no edit was found.
             idx = build_index(
                 bucket=bucket,
                 prefix=prefix,
                 out_path=static_index_path,
                 progress_cb=_idx_progress,
                 detect_scene_cuts=True,
-                scene_cut_min_duration_sec=min_source_sec(),
+                scene_cut_min_duration_sec=0.0,
             )
         else:
             from scripts.build_static_assets_index import build_index

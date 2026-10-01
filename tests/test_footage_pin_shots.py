@@ -85,4 +85,33 @@ def test_video_inventory_splits_edited_pins(tmp_path, monkeypatch):
     assert sorted(assets) == ["111111111~seg00.mp4", "111111111~seg01.mp4", "222222222.mp4"]
     assert assets["111111111~seg01.mp4"]["segment_base_sec"] == 4.0
     assert assets["111111111~seg01.mp4"]["file_path"].endswith("/111111111.mp4")
-    assert sorted(build(FOOTAGE_SPLIT_PIN_SHOTS="0")) == ["111111111.mp4", "222222222.mp4"]
+    assert sorted(build(FOOTAGE_SPLIT_SHOTS="0")) == ["111111111.mp4", "222222222.mp4"]
+
+
+def test_collection_splits_every_edited_source_by_shots_and_keeps_grid_for_uncut_films(tmp_path, monkeypatch):
+    from footage_config import build_inventory_and_bundle
+
+    monkeypatch.setenv("MODE", "prod")
+    monkeypatch.setenv("S3_BUCKET_ASSET_STORAGE", "bucket")
+    monkeypatch.setenv("S3_COLLECTION_PREFIX", "collection")
+    monkeypatch.setenv("FOOTAGE_S3_PREFLIGHT_MODE", "off")
+    base = {"src_w": 1920, "src_h": 1080, "genre": "films", "tag": "noir"}
+    index = tmp_path / "index.json"
+    index.write_text(json.dumps({"media_type": "collection", "assets": [
+        {**base, "file_name": "333333333.mp4", "duration_sec": 90.0, "scene_cuts": [3.0, 7.5, 40.0]},  # фильм со стыками
+        {**base, "file_name": "444444444.mp4", "duration_sec": 70.0},                                   # длинный без стыков
+        {**base, "file_name": "555555555.mp4", "duration_sec": 12.0, "scene_cuts": [5.0]},              # короткий смонтированный
+    ]}), encoding="utf-8")
+    out = tmp_path / "inventory.json"
+    build_inventory_and_bundle(repo_root=tmp_path, footage_dir=tmp_path / "footage", static_assets_index_path=index,
+                               inventory_out_path=out, bundle_out_path=tmp_path / "bundle.json", media_type="collection")
+    rows = json.loads(out.read_text(encoding="utf-8"))["assets"]
+
+    def windows(clip_id):
+        return sorted((r["segment_base_sec"], r["segment_base_sec"] + r["duration_sec"])
+                      for r in rows if clip_id in r["file_name"])
+
+    assert windows("333333333") == [(0.0, 3.0), (3.0, 7.5), (7.5, 40.0), (40.0, 90.0)]  # ровно по планам
+    assert windows("555555555") == [(0.0, 5.0), (5.0, 12.0)]
+    grid = windows("444444444")
+    assert len(grid) > 1 and grid[0][0] == 0.0 and grid[-1][1] == 70.0                  # сетка 20 с как раньше

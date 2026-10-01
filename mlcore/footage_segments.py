@@ -177,7 +177,7 @@ def expand_asset_rows(
     return out
 
 
-# Edited pins: every shot becomes its own clip. Shorter shots are flashes and
+# Edited sources (pins, collection clips and films): every shot becomes its own clip. Shorter shots are flashes and
 # inserts — no interval the picker builds can be filled by them, and in the pool
 # they would only be dead rows.
 DEFAULT_MIN_SHOT_SEC = 1.0
@@ -187,8 +187,8 @@ def min_shot_sec() -> float:
     return _env_float("FOOTAGE_MIN_SHOT_SEC", DEFAULT_MIN_SHOT_SEC)
 
 
-def pin_shots_enabled() -> bool:
-    return str(os.environ.get("FOOTAGE_SPLIT_PIN_SHOTS", "1")).strip().lower() not in ("0", "false", "no", "off")
+def shot_split_enabled() -> bool:
+    return str(os.environ.get("FOOTAGE_SPLIT_SHOTS", "1")).strip().lower() not in ("0", "false", "no", "off")
 
 
 def shot_bounds(duration_sec: float, scene_cuts: Sequence[float], *, min_shot: float) -> List[Tuple[float, float]]:
@@ -203,9 +203,10 @@ def expand_shot_rows(
     *,
     min_shot: float | None = None,
 ) -> List[Dict[str, Any]]:
-    """Split edited pins into one virtual clip per shot (same file, `~segNN` rows).
+    """Split edited sources into one virtual clip per shot (same file, `~segNN` rows).
 
-    A pin is often already a montage. As one clip it either drags an internal edit
+    A pin or a collection clip is often already a montage, and a film is nothing but
+    shots. As one clip it either drags an internal edit
     into the video as an off-beat jump cut, or needs the picker to dodge it; as N
     shot-clips every montage cut stays ours and on the beat, the storyboard shows
     each shot as what it is, and no-repeat/cooldown treat shots independently while
