@@ -96,6 +96,8 @@ class _FakeS3:
 
 def test_production_lists_s3_once_and_caches_bytes(fonts, monkeypatch: pytest.MonkeyPatch) -> None:
     module, _ = fonts
+    # свежая машина: monotonic() меньше TTL листинга — пустой кэш не должен считаться свежим
+    monkeypatch.setattr(module.time, "monotonic", lambda: 1.0)
     monkeypatch.setenv("FX_ASSETS_S3_BUCKET", "fx-bucket")
     monkeypatch.setenv("FX_ASSETS_S3_PREFIX", "fx_assets/")
     s3 = _FakeS3({"fx_assets/fonts/subtitles/Montserrat-Bold.woff2": b"montserrat",

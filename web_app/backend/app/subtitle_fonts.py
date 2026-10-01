@@ -30,7 +30,9 @@ FONT_EXT = ".woff2"
 CONTENT_TYPE = "font/woff2"
 _LIST_TTL_S = 300.0
 _lock = threading.Lock()
-_listing: dict[str, Any] = {"at": 0.0, "sizes": {}}
+# at=None — листинга ещё не было (не 0.0: monotonic() — время с загрузки машины, и на свежей
+# машине «0» выглядел бы свежим кэшем)
+_listing: dict[str, Any] = {"at": None, "sizes": {}}
 _bytes: dict[str, tuple[int, bytes]] = {}
 
 
@@ -71,7 +73,7 @@ def available(*, production: bool, s3: Any = None, asset_bucket: str = "") -> di
             return {}
         return {p.stem: p.stat().st_size for p in folder.glob(f"*{FONT_EXT}") if p.is_file()}
     with _lock:
-        if time.monotonic() - _listing["at"] < _LIST_TTL_S:
+        if _listing["at"] is not None and time.monotonic() - _listing["at"] < _LIST_TTL_S:
             return dict(_listing["sizes"])
     bucket, prefix = _s3_target(asset_bucket)
     sizes: dict[str, int] = {}
@@ -119,6 +121,6 @@ def read_font(ps: str, *, production: bool, s3: Any = None, asset_bucket: str = 
 
 def reset_cache() -> None:
     with _lock:
-        _listing.update(at=0.0, sizes={})
+        _listing.update(at=None, sizes={})
         _bytes.clear()
 
