@@ -11,7 +11,11 @@ param(
     "^Adobe After Effects \d"
   ),
   [string]$LogPath = "C:\ae_dev\logs\ae_modal_watcher.log",
-  [string]$HeartbeatPath = "C:\ae_dev\logs\ae_modal_watcher.heartbeat"
+  [string]$HeartbeatPath = "C:\ae_dev\logs\ae_modal_watcher.heartbeat",
+  # Окно без заголовка в рендер-процессе считается блокирующим диалогом, только если
+  # висит дольше этого: заставка и служебные окна старта AE исчезают сами за секунды,
+  # а Crash Repair / «one chance to save» висят, пока их не закроют.
+  [int]$UntitledMinAgeSeconds = 5
 )
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -41,6 +45,12 @@ public static class WinApi {
 
   [DllImport("user32.dll")]
   public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+  [DllImport("user32.dll")]
+  public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+  [DllImport("user32.dll")]
+  public static extern bool IsWindow(IntPtr hWnd);
 }
 "@
 Add-Type -TypeDefinition $native -Language CSharp
@@ -227,8 +237,10 @@ $targetRegexes = $TargetProcesses | ForEach-Object {
   "^$([regex]::Escape($base))(\.exe|\.com)?$"
 }
 $seen = @{}
+$untitledSince = @{}   # key -> когда окно без заголовка впервые замечено
+$untitledPosted = @{}  # key -> Enter уже отправлен (один раз на окно)
 Write-Heartbeat
-Write-Log "watcher_start pid=$PID poll=$PollSeconds heartbeat=$HeartbeatPath target_processes=$($TargetProcesses -join '|') dismiss_titles=$($AutoDismissTitles -join '|') mode=uia_invoke"
+Write-Log "watcher_start pid=$PID poll=$PollSeconds heartbeat=$HeartbeatPath target_processes=$($TargetProcesses -join '|') dismiss_titles=$($AutoDismissTitles -join '|') mode=uia_invoke untitled=afterfx.com_only min_age_s=$UntitledMinAgeSeconds"
 
 while ($true) {
   try {
@@ -258,20 +270,44 @@ while ($true) {
     $present[$key] = 1
 
     if ([string]::IsNullOrWhiteSpace($w.Title)) {
+      # Enter на окне без заголовка — только для процесса рендера ноды (AfterFX.com):
+      # там такое окно и есть Crash Repair / «one chance to save», клинящие джобу (#308).
+      # У AE, открытого руками (AfterFX.exe), окон без заголовка много и обычных —
+      # заставка, служебные/плавающие окна; AppActivate по PID + Enter бил в работу
+      # человека каждые пару секунд. Окно «Crash Repair Options» с заголовком ниже
+      # по-прежнему закрывается кнопкой в любом процессе.
+      if ($procLower -ne "afterfx.com") {
+        if (-not $seen.ContainsKey($key)) {
+          $seen[$key] = 1
+          Write-Log "untitled_window_ignored pid=$($w.Pid) proc=$($w.ProcessName) handle=$($w.Handle) reason=interactive_ae"
+        }
+        continue
+      }
+      $now = Get-Date
+      if (-not $untitledSince.ContainsKey($key)) {
+        $untitledSince[$key] = $now
+      }
+      # Заставка и служебные окна старта AE живут секунды — их не трогаем вовсе.
+      # Блокирующий диалог висит, поэтому действуем только на «залипшем» окне.
+      if (($now - $untitledSince[$key]).TotalSeconds -lt $UntitledMinAgeSeconds) {
+        continue
+      }
       if (-not $seen.ContainsKey($key)) {
         $seen[$key] = 1
-        Write-Log "untitled_dialog_detected pid=$($w.Pid) proc=$($w.ProcessName) handle=$($w.Handle)"
+        Write-Log "untitled_dialog_detected pid=$($w.Pid) proc=$($w.ProcessName) handle=$($w.Handle) age_s=$([int]($now - $untitledSince[$key]).TotalSeconds)"
       }
       try {
-        $shell = New-Object -ComObject WScript.Shell
-        if ($shell.AppActivate([int]$w.Pid)) {
-          Start-Sleep -Milliseconds 200
-          $shell.SendKeys("{ENTER}")
-          Write-Log "untitled_dialog_action pid=$($w.Pid) action=sendkeys_enter"
-          Start-Sleep -Milliseconds 500
-        } else {
-          Write-Log "untitled_dialog_action_failed pid=$($w.Pid) reason=AppActivateFailed"
+        if (-not $untitledPosted.ContainsKey($key)) {
+          # Enter прямо в окно диалога, один раз: без активации, фокус человека не трогаем.
+          [void][WinApi]::PostMessage($w.Handle, 0x0100, [IntPtr]0x0D, [IntPtr]0x001C0001)  # WM_KEYDOWN VK_RETURN
+          [void][WinApi]::PostMessage($w.Handle, 0x0101, [IntPtr]0x0D, [IntPtr]0xC01C0001)  # WM_KEYUP
+          $untitledPosted[$key] = $now
+          Write-Log "untitled_dialog_action pid=$($w.Pid) action=post_enter handle=$($w.Handle)"
         }
+        # AppActivate + SendKeys (#308) здесь больше НЕ используется. Проверено вживую
+        # (Crash Repair после taskkill): диалог закрывается прямым Enter выше, а у AE ноды
+        # есть и обычное постоянное окно без заголовка — повтор с активацией бил в него
+        # каждые несколько секунд и выдёргивал фокус у человека за этой машиной.
       } catch {
         Write-Log "untitled_dialog_error pid=$($w.Pid) err=$($_.Exception.Message)"
       }
@@ -346,6 +382,12 @@ while ($true) {
   foreach ($k in @($seen.Keys)) {
     if (-not $present.ContainsKey($k)) {
       $null = $seen.Remove($k)
+    }
+  }
+  foreach ($k in @($untitledSince.Keys)) {
+    if (-not $present.ContainsKey($k)) {
+      $null = $untitledSince.Remove($k)
+      $null = $untitledPosted.Remove($k)
     }
   }
 
