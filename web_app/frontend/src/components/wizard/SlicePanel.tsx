@@ -1,19 +1,23 @@
-import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { usePhone } from '../../lib/usePhone';
 import { cn } from '../../lib/cn';
 import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { LimitsIndicator } from '../ui/LimitsIndicator';
-import { BackSquareButton } from './WizardFrame';
-import { HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
+import { Svg, W12, WizardActions } from './WizardFrame';
+import { FxVariant, HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
+import { ActionBar, Button, Dialog } from '../ui/kit';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { footageTypePlane } from '../../data/footageTypes';
 import { PoolStoryboard, StoryboardSlot } from './PoolStoryboard';
+import { poolGuideId, poolStoryboardAvailable, poolTourTotal } from './storyboardData';
+import { useGuideLiveDismissed } from '../guidance/guideLiveState';
+import { TimelineEntryGuideVisual } from './timelineGuides';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 import { useFxLab, useLabPoolRows, variantHookLabel } from './FxLab';
-import { selectedStyles } from './HookPanel';
+import { selectedStyles } from './hookCatalog';
 
 /** Мини-визуал первой подсказки пула: счётчик роликов растёт. */
 /**
@@ -92,14 +96,14 @@ function PoolCombosGuideVisual() {
       <span className="flex min-w-0 flex-1 flex-col gap-[5px]">
         {rows.map((row, r) => (
           <span key={row.label} className={cn('guide-mode-reveal flex h-[22px] items-center gap-[5px]', `guide-mode-delay-${r + 1}`)}>
-            <span className="w-[30px] shrink-0 text-[9px] leading-none text-white/45"><span className="inline-block translate-y-px">{row.label}</span></span>
+            <span className="w-[30px] shrink-0 text-[9px] leading-none text-white/45"><span className="inline-block">{row.label}</span></span>
             {row.items.map((item) => (
               <span key={item.text} className="relative flex h-full min-w-0 items-center gap-[4px] overflow-hidden rounded-[6px] bg-white/[0.06] px-[6px] text-[9px] leading-none text-white/70">
                 {item.phase && <i className={cn('absolute inset-0 rounded-[6px]', on, item.phase === 'a' ? 'guide-sb-a' : 'guide-sb-b')} />}
                 {!item.phase && <i className={cn('absolute inset-0 rounded-[6px]', on)} />}
                 {item.dot && <i className="relative h-[5px] w-[5px] shrink-0 rounded-full" style={{ background: item.dot }} />}
-                <span className="relative translate-y-px truncate text-white">{item.text}</span>
-                <b className="relative ml-[2px] font-[400] text-white/55"><span className="inline-block translate-y-px">{item.n}</span></b>
+                <span className="relative truncate text-white">{item.text}</span>
+                <b className="relative ml-[2px] font-[400] text-white/55"><span className="inline-block">{item.n}</span></b>
               </span>
             ))}
           </span>
@@ -141,14 +145,6 @@ export function backgroundUnits(bg: WizardStateData['background']): { key: strin
   ];
 }
 
-/**
- * Id подсказок «Пула». В режиме вариантов FX тур свой (другие тексты и визуал шага 2) — и
- * id свои: у старых «видел» записан у всех, кто проходил прежний тур.
- */
-export function poolGuideId(id: 'total' | 'distribute' | 'storyboard' | 'replace', variants: boolean): string {
-  return `${variants ? 'pool2' : 'pool'}-${id}`;
-}
-
 export function compatibleHookTarget(
   bg: WizardStateData['background'],
   allocation: Record<string, number>
@@ -175,44 +171,43 @@ function distribute(keys: string[], total: number): Record<string, number> {
 function Stepper({ value, onChange, min = 0 }: { value: number; onChange: (next: number) => void; min?: number }) {
   const { t } = useTranslation();
   return (
-    <span className="count-stepper">
-      <button type="button" aria-label={t('wizard.pool.less')} disabled={value <= min} onClick={() => onChange(value - 1)}>−</button>
-      <strong>{value}</strong>
-      <button type="button" aria-label={t('wizard.pool.more')} onClick={() => onChange(value + 1)}>+</button>
+    <span className="w12-step">
+      <button type="button" aria-label={t('wizard.pool.less')} disabled={value <= min} onClick={() => onChange(value - 1)}><Svg>{W12.minus}</Svg></button>
+      <strong className="w12-num"><span className="w12-l">{value}</span></strong>
+      <button type="button" aria-label={t('wizard.pool.more')} onClick={() => onChange(value + 1)}><Svg>{W12.plus}</Svg></button>
     </span>
   );
 }
 
 function SectionCard({ title, note, warn, children }: { title: string; note: string; warn?: boolean; children: ReactNode }) {
   return (
-    <section className={cn('rounded-r15 bg-grad-soft-10 p-space-5', warn && 'shadow-[inset_0_0_0_1.5px_var(--warning)]')}>
-      <div className="mb-space-4 flex items-baseline justify-between gap-space-3">
-        <h3 className="text-[24px] font-[400] text-text max-xl:text-[20px]">{title}</h3>
-        <span className={cn('text-[15px] max-md:text-right', warn ? 'text-[var(--warning)]' : 'text-text-60')}>{note}</span>
+    <section className={cn('w12-cut w12-pool-sec', warn && 'w12-invalid')}>
+      <div className="w12-pool-sec-head">
+        <h3>{title}</h3>
+        <span className={cn('w12-pool-sec-note', warn && 'w12-warn')}>{note}</span>
       </div>
-      <div className="flex flex-col gap-space-3">{children}</div>
+      <div className="w12-pool-rows">{children}</div>
     </section>
   );
 }
 
 function MiniPill({ icon, label, trail }: { icon: ReactNode; label: string; trail?: ReactNode }) {
   return (
-    <span className="mini-pill">
-      <span className="mini-pill-icon" aria-hidden="true">{icon}</span>
-      {label}
+    <span className="w12-mini-pill">
+      <span className="w12-mini-ic" aria-hidden="true">{icon}</span>
+      <span className="w12-l">{label}</span>
       {trail}
     </span>
   );
 }
 
-/* Иконки пилов: белые; масштаб задаётся от высоты пила (25px-бокс → 13px, 44px-бокс → 20px) */
+/* Иконки пилюль — белые, в кружке 22 */
 const WHITE = 'var(--text)';
-const tagIcon = (size = 13) => <SvgMaskIcon src="/assets/figma/icon-tag.svg" style={{ width: size, height: size * 0.81, color: WHITE, transform: 'rotate(-22.23deg)' }} />;
-const photoIcon = (size = 13) => <SvgMaskIcon src="/assets/figma/icon-photo.svg" style={{ width: size, height: size * 0.9, color: WHITE }} />;
-const boltIcon = (size = 13) => <SvgMaskIcon src="/assets/figma/icon-bolt.svg" style={{ width: size * 0.65, height: size, color: WHITE }} />;
-const strobeIcon = (size = 13) => <SvgMaskIcon src="/assets/figma/icon-strobe.svg" style={{ width: size, height: size, color: WHITE }} />;
-/* «T» опущена на 1px — компенсация вертикальной метрики (правка ревью) */
-const tIcon = (size = 13) => <em className="font-bold italic leading-none" style={{ color: WHITE, fontSize: size, marginTop: 1 }}>T</em>;
+const tagIcon = (size = 12) => <SvgMaskIcon src="/assets/figma/icon-tag.svg" style={{ width: size, height: size * 0.81, color: WHITE, transform: 'rotate(-22.23deg)' }} />;
+const photoIcon = (size = 12) => <SvgMaskIcon src="/assets/figma/icon-photo.svg" style={{ width: size, height: size * 0.9, color: WHITE }} />;
+const boltIcon = (size = 12) => <SvgMaskIcon src="/assets/figma/icon-bolt.svg" style={{ width: size * 0.65, height: size, color: WHITE }} />;
+const strobeIcon = (size = 12) => <SvgMaskIcon src="/assets/figma/icon-strobe.svg" style={{ width: size, height: size, color: WHITE }} />;
+const tIcon = (size?: number) => <span className="w12-t-it" style={size ? { fontSize: size } : undefined}>T</span>;
 
 const HOOK_ICON_SRC: Record<HookKind, string> = {
   warmup: '/assets/figma/hook-sound.svg',
@@ -223,7 +218,7 @@ const HOOK_ICON_SRC: Record<HookKind, string> = {
   none: '/assets/figma/icon-bolt.svg'
 };
 
-function hookKindIcon(kind: HookKind, size = 13) {
+function hookKindIcon(kind: HookKind, size = 12) {
   return <SvgMaskIcon src={HOOK_ICON_SRC[kind]} style={{ width: size * 0.92, height: size, color: WHITE }} />;
 }
 
@@ -232,7 +227,24 @@ export function StageSlice() {
   const chip = useChip();
   const state = useWizardStore();
   const alloc = state.allocation;
-  const setAllocation = state.setAllocation;
+
+  // Правки стола и закреплённые кадры живут у конкретного ролика. Распределение, которое
+  // меняет ролику комбинацию (или перекладывает вайбы — раскадровка тогда собирается
+  // заново), их сбросит — поэтому сначала спрашиваем.
+  const [pendingAlloc, setPendingAlloc] = useState<null | { patch: Partial<WizardStateData['allocation']>; hit: number[] }>(null);
+  const setAllocation = (patch: Partial<WizardStateData['allocation']>) => {
+    const before = combosOf(state);
+    const after = combosOf({ ...state, allocation: { ...alloc, ...patch } });
+    const layout = (list: Combo[]) => JSON.stringify(list.filter((c) => c.group).map((c) => [c.slotIndex, c.group]));
+    const relaid = layout(before) !== layout(after);
+    const hit = before.filter((c) => {
+      const edited = state.montage.videos[c.index]?.edited && state.montage.videos[c.index].sig === c.sig;
+      const pinned = Object.keys(state.storyboard.videos[c.slotIndex]?.pins ?? {}).length > 0;
+      return (edited && after[c.index]?.sig !== c.sig) || (pinned && relaid);
+    }).map((c) => c.index + 1);
+    if (hit.length) setPendingAlloc({ patch, hit });
+    else state.setAllocation(patch);
+  };
 
   const units = useMemo(() => backgroundUnits(state.background), [state.background]);
   const colorGroup = state.background.color
@@ -271,16 +283,20 @@ export function StageSlice() {
       const sameSubtitles = subtitleStyles.length === allocatedSubtitles.length
         && subtitleStyles.every((style) => allocatedSubtitles.includes(style));
       const subtitleSum = Object.values(alloc.subtitles).reduce((sum, count) => sum + count, 0);
+      // Субтитры раздаются по ВИДЕО (всего минус цветные), а не по типам фона: при
+      // «Всего видео» больше числа типов сверка с unitKeys.length каждый раз при открытии
+      // «Пула» откатывала раздачу человека и навсегда держала «нераспределено: +N».
+      const subtitleTarget = Math.max(0, alloc.total - fixedCount);
       if (sameHookKinds && hookSum === hookTarget && sameStyles && (!stylesInPool.length || stylesSum === hookTarget)
-        && sameSubtitles && (!subtitleStyles.length || subtitleSum === unitKeys.length)) return;
-      setAllocation({
+        && sameSubtitles && (!subtitleStyles.length || subtitleSum === subtitleTarget)) return;
+      state.setAllocation({
         [fxSlice]: sameHookKinds && hookSum === hookTarget ? fxAlloc : distribute(hookKinds, hookTarget),
         styles: sameStyles && stylesSum === hookTarget ? alloc.styles : distribute(stylesInPool, hookTarget),
-        subtitles: sameSubtitles && subtitleSum === unitKeys.length ? alloc.subtitles : distribute(subtitleStyles, unitKeys.length)
+        subtitles: sameSubtitles && subtitleSum === subtitleTarget ? alloc.subtitles : distribute(subtitleStyles, subtitleTarget)
       });
       return;
     }
-    setAllocation({
+    state.setAllocation({
       seeded: true,
       total: unitKeys.length + fixedCount,
       background: distribute(unitKeys, unitKeys.length),
@@ -333,6 +349,24 @@ export function StageSlice() {
 
   const totalGuideTargetRef = useRef<HTMLDivElement>(null);
   const distributeGuideTargetRef = useRef<HTMLDivElement>(null);
+  // Секции листаются сами: края тают там, где за ними есть ещё
+  const [secFade, setSecFade] = useState({ top: false, bottom: false });
+  const syncSecFade = () => {
+    const el = distributeGuideTargetRef.current;
+    if (!el) return;
+    const next = { top: el.scrollTop > 2, bottom: el.scrollTop + el.clientHeight < el.scrollHeight - 2 };
+    setSecFade((prev) => (prev.top === next.top && prev.bottom === next.bottom ? prev : next));
+  };
+  useEffect(syncSecFade);
+  useEffect(() => {
+    const el = distributeGuideTargetRef.current;
+    if (!el) return undefined;
+    const observer = new ResizeObserver(syncSecFade);
+    observer.observe(el);
+    if (el.firstElementChild) observer.observe(el.firstElementChild);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const hasUnallocated = bgRest !== 0 || subsRest !== 0 || hooksRest !== 0 || stylesRest !== 0;
   // distribute объявлен первым: idle-условие total-гайда («мы ещё не ушли дальше»)
   // на его dismissed-значение ссылается. visible=false у distribute: точный
@@ -343,10 +377,9 @@ export function StageSlice() {
   const showTotalGuide = !totalGuideDismissed;
   const showDistributeGuide = totalGuideDismissed && !distributeGuideDismissed;
   useMarkGuideSeen(poolGuideId('distribute', fxLab), totalGuideDismissed);
-  // Шаги 3–4 — раскадровка справа (PoolStoryboard). Она есть только у футажа из вайбов,
-  // без неё серия остаётся из двух шагов.
-  const storyboardAvailable = footageTypePlane(state.background.footageType) === 'vibes' && units.some((unit) => unit.key.startsWith('footage:'));
-  const poolGuideTotal = storyboardAvailable ? 4 : 2;
+  // Шаги 3–4 — раскадровка справа (PoolStoryboard, только у футажа из вайбов), последний —
+  // вход на таймлайн в футере (SliceWorkZone).
+  const poolGuideTotal = poolTourTotal(state.background);
 
   // Явный скролл к цели до собственного instant-scrollIntoView оверлея: без него
   // цель может остаться частично за пределами внешнего скролл-контейнера страницы,
@@ -356,26 +389,31 @@ export function StageSlice() {
   useScrollGuideIntoView(showDistributeGuide, distributeGuideTargetRef);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      {/* «Всего видео» неподвижен; секции скроллятся под ним */}
-      <div ref={totalGuideTargetRef} className="relative z-[5] shrink-0">
-        <div className="relative flex h-[80px] items-center justify-between rounded-r15 border-2 border-accent-light bg-grad-soft-10 px-space-6 max-md:h-auto max-md:flex-wrap max-md:gap-x-[10px] max-md:gap-y-[8px] max-md:px-space-4 max-md:py-[10px]">
-          <span className="wizard-h !text-[28px] max-xl:!text-[22px] max-md:!text-[18px]">{t('wizard.pool.total')}</span>
-          {/* Figma W19: кружок-индикатор лимита в 20px справа от «+» (W46 — поповер по ховеру).
-              Телефон: заголовок, степпер и кружок — одна строка; «Распределить» появляется
-              отдельной строкой только когда счётчик ушёл от раскладки, после нажатия исчезает. */}
-          <span className="relative flex items-center gap-[20px] max-md:contents">
-            {(bgRest !== 0 || subsRest !== 0 || hooksRest !== 0 || stylesRest !== 0) && (
-              <button type="button" onClick={distributeEvenly} className="flex h-[34px] items-center whitespace-nowrap rounded-r10 border border-accent bg-grad-soft-20 px-[14px] text-[14px] leading-none text-text-80 transition hover:text-text hover:brightness-125 max-md:order-last max-md:h-[30px] max-md:basis-full max-md:justify-center max-md:text-[13px]">
-                {t('wizard.pool.distributeEven')}
-              </button>
-            )}
-            <span className="flex items-center gap-[20px] max-md:ml-auto max-md:gap-[12px]">
-              <Stepper value={alloc.total} min={fixedCount + (units.length ? 1 : 0)} onChange={(total) => setAllocation({ total })} />
-              <LimitsIndicator />
-            </span>
-          </span>
-        </div>
+    <>
+      <Dialog
+        open={Boolean(pendingAlloc)}
+        title={t('wizard.pool.resetEditsTitle')}
+        onClose={() => setPendingAlloc(null)}
+        footer={(
+          <ActionBar>
+            <Button variant="ghost" onClick={() => setPendingAlloc(null)}>{t('wizard.pool.resetEditsCancel')}</Button>
+            <Button variant="primary" onClick={() => { if (pendingAlloc) state.setAllocation(pendingAlloc.patch); setPendingAlloc(null); }}>{t('wizard.pool.resetEditsApply')}</Button>
+          </ActionBar>
+        )}
+      >
+        <p className="text-ui-16 text-text-80">{t('wizard.pool.resetEditsText', { videos: pendingAlloc?.hit.join(', ') ?? '' })}</p>
+      </Dialog>
+      {/* «Всего видео» неподвижен; секции листаются под ним */}
+      <div ref={totalGuideTargetRef} className="w12-pool-total">
+        <h2 className="w12-h2"><span className="w12-l">{t('wizard.pool.total')}</span></h2>
+        {/* Кнопка «Распределить» появляется, только когда счётчики разошлись с раскладкой */}
+        <span className="w12-pool-total-side">
+          {hasUnallocated && (
+            <button type="button" className="w12-small-btn w12-accent" onClick={distributeEvenly}><span className="w12-l">{t('wizard.pool.distributeEven')}</span></button>
+          )}
+          <Stepper value={alloc.total} min={fixedCount + (units.length ? 1 : 0)} onChange={(total) => setAllocation({ total })} />
+          <LimitsIndicator />
+        </span>
       </div>
 
       <ActionGuideOverlay
@@ -391,97 +429,98 @@ export function StageSlice() {
         visual={<PoolTotalGuideVisual />}
       />
 
-      {/* Скролл секций с постоянными фейдами сверху/снизу — как на списке типов хука */}
-      <div ref={distributeGuideTargetRef} className="relative mt-space-5 min-h-0 flex-1">
-        <div className="no-scrollbar flex h-full flex-col gap-space-5 overflow-y-auto py-[12px]" style={{ maskImage: 'linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%)' }}>
-        <SectionCard title={t('wizard.pool.background')} note={restNote(bgRest, t('wizard.pool.bgNote', { count: bgTarget }))} warn={bgRest !== 0}>
-          {units.map((unit) => (
-            <div key={unit.key} className="flex items-center justify-between gap-space-3">
-              <span className="flex min-w-0 items-center gap-space-3">
-                <MiniPill icon={unit.icon === 'tag' ? tagIcon() : photoIcon()} label={t(unit.labelKey, { name: chip(unit.name) })} />
-                {unit.noHook && <span className="shrink-0 whitespace-nowrap rounded-r9 border border-border px-space-2 py-[2px] text-[12px] leading-none text-text-60">{t('wizard.pool.noFx')}</span>}
-              </span>
-              <Stepper value={alloc.background[unit.key] ?? 0} onChange={(value) => setCount('background', unit.key, value)} />
-            </div>
-          ))}
-          {colorGroup && (
-            <div className="rounded-r10 bg-grad-soft-10 p-space-4">
-              <MiniPill icon={strobeIcon()} label={t('wizard.pool.colorVideo', { label: chip(colorGroup.label) })} />
-              <div className="mt-space-3 flex flex-wrap items-center gap-space-3 pl-[25px] max-md:pl-0">
-                <span className="translate-y-px text-[15px] text-text-60">{t('wizard.pool.chooseFont')}</span>
-                <span className="flex flex-wrap gap-space-2">
-                  {subtitleStyles.map((style) => {
-                    const field = colorGroup.strobe ? 'strobeFont' : 'colorFont';
-                    const current = colorGroup.strobe ? alloc.strobeFont : alloc.colorFont;
-                    return (
-                      <button
-                        key={style}
-                        type="button"
-                        className={cn('translate-y-[2px] rounded-r9 px-space-3 py-[3px] text-[13px] transition', current === style ? 'bg-accent-20 text-text shadow-[inset_0_0_0_1px_var(--accent-light)]' : 'text-text-60 hover:text-text')}
-                        onClick={() => setAllocation({ [field]: style })}
-                      >
-                        {style.toLowerCase()}
-                      </button>
-                    );
-                  })}
-                  {subtitleStyles.length === 0 && <span className="text-[13px] text-text-40">{t('wizard.pool.noStyles')}</span>}
+      {/* Секции листаются сами, края тают там, где есть ещё — как список типов FX */}
+      <div ref={distributeGuideTargetRef} className="w12-pool-scroll" data-fade-t={secFade.top || undefined} data-fade-b={secFade.bottom || undefined} onScroll={syncSecFade}>
+        <div className="w12-pool-secs">
+          <SectionCard title={t('wizard.pool.background')} note={restNote(bgRest, t('wizard.pool.bgNote', { count: bgTarget }))} warn={bgRest !== 0}>
+            {units.map((unit) => (
+              <div key={unit.key} className="w12-pool-row">
+                <span className="w12-pool-row-l">
+                  <MiniPill icon={unit.icon === 'tag' ? tagIcon() : photoIcon()} label={t(unit.labelKey, { name: chip(unit.name) })} />
+                  {unit.noHook && <span className="w12-chip w12-chip-sm"><span className="w12-l">{t('wizard.pool.noFx')}</span></span>}
                 </span>
+                <Stepper value={alloc.background[unit.key] ?? 0} onChange={(value) => setCount('background', unit.key, value)} />
               </div>
-            </div>
+            ))}
+            {/* Строб/цвет — такая же строка, как у фонов: всегда одно видео, поэтому вместо
+                счётчика — шрифт, которым пойдут его субтитры */}
+            {colorGroup && (
+              <div className="w12-pool-row w12-pool-color">
+                <span className="w12-pool-row-l">
+                  <MiniPill icon={strobeIcon()} label={chip(colorGroup.label)} />
+                  <span className="w12-chip w12-chip-sm"><span className="w12-l">{t('wizard.pool.oneVideo')}</span></span>
+                </span>
+                {subtitleStyles.length > 0 ? (
+                  <span className="w12-pool-font">
+                    <span className="w12-pool-font-l">{t('wizard.pool.font')}</span>
+                    <span className="w12-types" role="radiogroup" aria-label={t('wizard.pool.font')}>
+                      {subtitleStyles.map((style) => {
+                        const field = colorGroup.strobe ? 'strobeFont' : 'colorFont';
+                        const current = colorGroup.strobe ? alloc.strobeFont : alloc.colorFont;
+                        return (
+                          <button key={style} type="button" role="radio" className="w12-type" aria-checked={current === style} aria-pressed={current === style} onClick={() => setAllocation({ [field]: style })}>
+                            <span className="w12-l">{style}</span>
+                          </button>
+                        );
+                      })}
+                    </span>
+                  </span>
+                ) : <span className="w12-set-note">{t('wizard.pool.noStyles')}</span>}
+              </div>
+            )}
+            {units.length === 0 && !colorGroup && <p className="w12-set-empty">{t('wizard.pool.bgEmpty')}</p>}
+          </SectionCard>
+
+          {subtitleStyles.length > 0 && (
+            <SectionCard title={t('wizard.pool.subtitles')} note={restNote(subsRest, t('wizard.pool.subsNote', { count: bgTarget }))} warn={subsRest !== 0}>
+              {subtitleStyles.map((style) => (
+                <div key={style} className="w12-pool-row">
+                  <MiniPill icon={tIcon()} label={style} />
+                  <Stepper value={alloc.subtitles[style] ?? 0} onChange={(value) => setCount('subtitles', style, value)} />
+                </div>
+              ))}
+            </SectionCard>
           )}
-          {units.length === 0 && !colorGroup && <p className="text-[15px] text-text-60">{t('wizard.pool.bgEmpty')}</p>}
-        </SectionCard>
 
-        {subtitleStyles.length > 0 && (
-          <SectionCard title={t('wizard.pool.subtitles')} note={restNote(subsRest, t('wizard.pool.subsNote', { count: bgTarget }))} warn={subsRest !== 0}>
-            {subtitleStyles.map((style) => (
-              <div key={style} className="flex items-center justify-between gap-space-3">
-                <MiniPill icon={tIcon()} label={style} />
-                <Stepper value={alloc.subtitles[style] ?? 0} onChange={(value) => setCount('subtitles', style, value)} />
-              </div>
-            ))}
-          </SectionCard>
-        )}
+          {fxLab && (
+            <SectionCard
+              title={t('wizard.pool.fx')}
+              note={!labRows.length ? t('wizard.pool.fxNoVariants')
+                : labIncomplete ? t('wizard.pool.fxIncomplete')
+                  : restNote(hooksRest, t('wizard.pool.fxNote', { count: hookTarget }))}
+              warn={!labRows.length || labIncomplete || hooksRest !== 0}
+            >
+              {labRows.map((row) => (
+                <div key={row.id} className="w12-pool-row">
+                  <MiniPill icon={hookKindIcon(row.kind)} label={row.label} trail={<i className="w12-fx-dot" style={{ background: row.color }} aria-hidden="true" />} />
+                  <Stepper value={row.count} onChange={(n) => setAllocation({ variants: { ...alloc.variants, [row.id]: Math.max(0, n) } })} />
+                </div>
+              ))}
+            </SectionCard>
+          )}
 
-        {fxLab && (
-          <SectionCard
-            title={t('wizard.pool.fx')}
-            note={!labRows.length ? t('wizard.pool.fxNoVariants')
-              : labIncomplete ? t('wizard.pool.fxIncomplete')
-                : restNote(hooksRest, t('wizard.pool.fxNote', { count: hookTarget }))}
-            warn={!labRows.length || labIncomplete || hooksRest !== 0}
-          >
-            {labRows.map((row) => (
-              <div key={row.id} className="flex items-center justify-between gap-space-3">
-                <MiniPill icon={hookKindIcon(row.kind)} label={row.label} trail={<i className="ml-[8px] inline-block h-[8px] w-[8px] shrink-0 rounded-full" style={{ background: row.color }} aria-hidden="true" />} />
-                <Stepper value={row.count} onChange={row.set} />
-              </div>
-            ))}
-          </SectionCard>
-        )}
+          {!fxLab && hooksInPool.length > 0 && (
+            <SectionCard title={t('wizard.pool.fx')} note={restNote(hooksRest, t('wizard.pool.fxNote', { count: hookTarget }))} warn={hooksRest !== 0}>
+              {hooksInPool.map((pill) => (
+                <div key={pill.kind} className="w12-pool-row">
+                  {/* Иконка конкретного типа хука вместо молнии — легче ориентироваться (правка ревью) */}
+                  <MiniPill icon={hookKindIcon(pill.kind)} label={chip(pill.label)} />
+                  <Stepper value={alloc.hooks[pill.kind] ?? 0} onChange={(value) => setCount('hooks', pill.kind, value)} />
+                </div>
+              ))}
+            </SectionCard>
+          )}
 
-        {!fxLab && hooksInPool.length > 0 && (
-          <SectionCard title={t('wizard.pool.fx')} note={restNote(hooksRest, t('wizard.pool.fxNote', { count: hookTarget }))} warn={hooksRest !== 0}>
-            {hooksInPool.map((pill) => (
-              <div key={pill.kind} className="flex items-center justify-between gap-space-3">
-                {/* Иконка конкретного типа хука вместо молнии — легче ориентироваться (правка ревью) */}
-                <MiniPill icon={hookKindIcon(pill.kind)} label={chip(pill.label)} />
-                <Stepper value={alloc.hooks[pill.kind] ?? 0} onChange={(value) => setCount('hooks', pill.kind, value)} />
-              </div>
-            ))}
-          </SectionCard>
-        )}
-
-        {!fxLab && stylesInPool.length > 0 && (
-          <SectionCard title={t('wizard.pool.styles')} note={restNote(stylesRest, isPhone ? '' : t('wizard.pool.stylesNote', { count: hookTarget }))} warn={stylesRest !== 0}>
-            {stylesInPool.map((style) => (
-              <div key={style} className="flex items-center justify-between gap-space-3">
-                <MiniPill icon={boltIcon()} label={chip(style)} />
-                <Stepper value={alloc.styles?.[style] ?? 0} onChange={(value) => setCount('styles', style, value)} />
-              </div>
-            ))}
-          </SectionCard>
-        )}
+          {!fxLab && stylesInPool.length > 0 && (
+            <SectionCard title={t('wizard.pool.styles')} note={restNote(stylesRest, isPhone ? '' : t('wizard.pool.stylesNote', { count: hookTarget }))} warn={stylesRest !== 0}>
+              {stylesInPool.map((style) => (
+                <div key={style} className="w12-pool-row">
+                  <MiniPill icon={boltIcon()} label={chip(style)} />
+                  <Stepper value={alloc.styles?.[style] ?? 0} onChange={(value) => setCount('styles', style, value)} />
+                </div>
+              ))}
+            </SectionCard>
+          )}
         </div>
       </div>
 
@@ -490,18 +529,18 @@ export function StageSlice() {
         targetRef={distributeGuideTargetRef}
         title={t(fxLab ? 'wizard.pool.guideDistributeTitleVariants' : 'wizard.pool.guideDistributeTitle')}
         text={t(fxLab ? 'wizard.pool.guideDistributeTextVariants' : 'wizard.pool.guideDistributeText')}
-        dismissLabel={storyboardAvailable ? t('wizard.pool.guideNext') : t('wizard.pool.guideDismiss')}
+        dismissLabel={t('wizard.pool.guideNext')}
         progressLabel={t('wizard.guideProgress', { current: 2, total: poolGuideTotal })}
         onDismiss={() => setDistributeGuideDismissed(true)}
         variant="visual"
         shell="track-top"
         visual={fxLab ? <PoolCombosGuideVisual /> : <PoolDistributeGuideVisual />}
       />
-    </div>
+    </>
   );
 }
 
-function combinationAt(
+export function combinationAt(
   index: number,
   bg: [string, number][],
   subs: [string, number][],
@@ -533,13 +572,69 @@ function combinationAt(
   };
 }
 
-export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: { ready: boolean; canContinue: boolean; loading?: boolean; onBack: () => void; onNext: () => void }) {
+/* ── ролики батча: номер, фон, стиль субтитров, вариант FX — общая раскладка «Пула» и стола ── */
+export interface Combo {
+  index: number;
+  /** номер видео в раскадровке и в рендере (index + 1) */
+  slotIndex: number;
+  /** вайб футажа — у фото, цвета и своих видео его нет */
+  group?: string;
+  /** ключ фона из распределения «Пула»: footage:…, photo:…, upload:…, __color__ */
+  bgKey?: string;
+  bgLabel: string;
+  sub?: string;
+  variant?: FxVariant;
+  /** хук возможен: вертикальное видео (не фото, не цвет, не 16:9) — как hook_allowed рендера */
+  hookAllowed: boolean;
+  /** выход 9:16 (всё, кроме 16:9-футажа и своего видео 16:9) — на нём встаёт рамка */
+  vertical: boolean;
+  /** комбинация целиком — под неё сделаны правки стола */
+  sig: string;
+}
+
+/** Ролики батча по распределению — та же раскладка, что у «Комбинаций» и рендера. */
+export function combosOf(state: Pick<WizardStateData, 'background' | 'allocation' | 'fxVariants' | 'subtitles'>): Combo[] {
+  const { background, allocation: alloc, fxVariants, subtitles } = state;
+  const units = backgroundUnits(background);
+  const live = fxVariants.filter((v) => !v.draft);
+  const hookEntries: [string, number][] = live.map((v) => [v.id, alloc.variants?.[v.id] ?? 0]);
+  const colorStyle = background.color ? (background.strobe ? alloc.strobeFont : alloc.colorFont) ?? subtitles.pool[0] : undefined;
+  const total = Math.max(1, alloc.total);
+  return Array.from({ length: total }, (_, i) => {
+    const c = combinationAt(i, Object.entries(alloc.background), Object.entries(alloc.subtitles), hookEntries, [], units, Boolean(background.color), colorStyle);
+    const unit = units.find((u) => u.key === c.bg);
+    const variant = live.find((v) => v.id === c.hook);
+    return {
+      index: i,
+      slotIndex: i + 1,
+      group: c.bg?.startsWith('footage:') ? c.bg.slice('footage:'.length) : undefined,
+      bgKey: c.bg,
+      bgLabel: c.bg === '__color__' ? (background.strobe ? 'Строб' : 'Цвет') : unit?.name ?? c.bg?.split(':')[1] ?? '—',
+      sub: c.sub,
+      variant,
+      // хук рендер ставит только на вертикальное видео (зеркало hook_allowed в render_job)
+      hookAllowed: Boolean(unit && !unit.noHook),
+      vertical: c.bg === '__color__' || Boolean(c.bg?.startsWith('photo:')) || Boolean(unit && !unit.noHook),
+      sig: [c.bg ?? '', c.sub ?? '', variant?.id ?? ''].join('|')
+    };
+  });
+}
+
+
+/** index/onIndex — видео на экране снаружи (его же открывает таймлайн); onOpenTimeline — кнопка «Таймлайн» в шапке;
+ *  edited — у видео на экране есть ручные правки с таймлайна (пилюля «Изменён» над чипами ролика). */
+export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext, index: indexProp, onIndex, onOpenTimeline, edited }: {
+  ready: boolean; canContinue: boolean; loading?: boolean; onBack: () => void; onNext: () => void;
+  index?: number; onIndex?: (index: number) => void; onOpenTimeline?: (index: number) => void; edited?: boolean;
+}) {
   const { t } = useTranslation();
   const chip = useChip();
   const state = useWizardStore();
   const alloc = state.allocation;
   const units = useMemo(() => backgroundUnits(state.background), [state.background]);
-  const [index, setIndex] = useState(0);
+  const [indexState, setIndexState] = useState(0);
+  const index = indexProp ?? indexState;
+  const setIndex = (next: number) => { setIndexState(next); onIndex?.(next); };
 
   const total = Math.max(1, alloc.total);
   const safeIndex = Math.min(index, total - 1);
@@ -581,6 +676,16 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
    * Раскадровка есть у футажа из вайбов; у фото, строба и своих исходников — пояснение.
    */
   const plane = footageTypePlane(state.background.footageType);
+
+  // Последний шаг тура «Пула» — вход на таймлайн. Ждёт живого закрытия предыдущего шага:
+  // замены кадра (если раскадровка есть) или распределения.
+  const timelineGuideRef = useRef<HTMLButtonElement>(null);
+  const withStoryboard = poolStoryboardAvailable(state.background);
+  const prevGuideDismissed = useGuideLiveDismissed(poolGuideId(withStoryboard ? 'replace' : 'distribute', fxLab));
+  const [timelineGuideDismissed, setTimelineGuideDismissed] = useGuideDismiss(poolGuideId('timeline', fxLab), false);
+  const showTimelineGuide = Boolean(onOpenTimeline) && prevGuideDismissed && !timelineGuideDismissed;
+  useMarkGuideSeen(poolGuideId('timeline', fxLab), showTimelineGuide);
+  const openTimeline = () => { if (!timelineGuideDismissed) setTimelineGuideDismissed(true); onOpenTimeline?.(safeIndex); };
   const slots: StoryboardSlot[] = useMemo(() => Array.from({ length: total }, (_, i) => {
     const bgKey = combinationAt(
       i, Object.entries(alloc.background), Object.entries(alloc.subtitles), hookEntries,
@@ -603,46 +708,46 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext }: {
   ];
 
   return (
-    <aside className="wizard-aside flex min-h-0 shrink-0 flex-col gap-[20px] max-lg:w-full">
-      <div className="card-2 flex min-h-0 flex-1 flex-col px-space-6 py-space-6 max-lg:px-space-5">
-        {/* Одно видео батча: пилюля листает видео, внутри — его реальные клипы и замена кадров. */}
-        <div className="mb-space-5 flex shrink-0 items-center justify-between gap-space-3">
-          <h2 className="wizard-h whitespace-nowrap">{t('wizard.pool.combinations')}</h2>
-          <div className="flex h-[30px] shrink-0 items-center gap-[10px] rounded-[15px] px-[12px]" style={{ background: 'var(--grad-whitey)' }}>
-            <button
-              type="button"
-              aria-label={t('wizard.pool.prevCombo')}
-              onClick={() => setIndex((safeIndex - 1 + total) % total)}
-              disabled={total < 2}
-              className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30"
-            >
-              <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)', transform: 'rotate(180deg)' }} />
-            </button>
-            <span className="text-[16px] font-[350] leading-none text-accent">{safeIndex + 1}/{total}</span>
-            <button
-              type="button"
-              aria-label={t('wizard.pool.nextCombo')}
-              onClick={() => setIndex((safeIndex + 1) % total)}
-              disabled={total < 2}
-              className="flex items-center transition-opacity hover:opacity-60 disabled:opacity-30"
-            >
-              <SvgMaskIcon src="/assets/figma/home-arrow.svg" style={{ width: 7, height: 11, color: 'var(--accent)' }} />
-            </button>
+    <aside className="w12-col-aside">
+      <div className="w12-card w12-pv-card">
+        {/* Одно видео батча: листалка переключает видео, внутри — его реальные клипы и замена кадров */}
+        <div className="w12-aside-head w12-combo-head">
+          <h2>{t('wizard.pool.combinations')}</h2>
+          <div className="w12-pager">
+            <button type="button" aria-label={t('wizard.pool.prevCombo')} disabled={total < 2} onClick={() => setIndex((safeIndex - 1 + total) % total)}><Svg>{W12.left}</Svg></button>
+            <span className="w12-num"><span className="w12-l">{safeIndex + 1} / {total}</span></span>
+            <button type="button" aria-label={t('wizard.pool.nextCombo')} disabled={total < 2} onClick={() => setIndex((safeIndex + 1) % total)}><Svg>{W12.right}</Svg></button>
           </div>
         </div>
 
-        <PoolStoryboard slots={slots} current={safeIndex} chips={chips} />
+        <PoolStoryboard slots={slots} current={safeIndex} chips={chips} edited={edited} />
       </div>
 
-      <div className="card-2 flex h-[140px] shrink-0 items-center gap-[20px] px-space-6 py-space-6 max-lg:px-space-5">
-        <BackSquareButton onClick={onBack} />
-        <button type="button" disabled={!canContinue || loading} onClick={onNext} className={cn('soft-btn h-[60px] flex-1 gap-space-3', ready && 'soft-btn-ready')}>
-          {loading ? <span className="spinner" /> : (<>
-            <span aria-hidden="true">✦</span>
-            {t('wizard.pool.generate')}
-          </>)}
-        </button>
+      <div className="w12-card w12-foot-card">
+        {/* Вход на таймлайн — главное действие футера: там ролик на экране собирается по кадрам.
+            «Сгенерировать» рядом с «Назад» и того же тона — отправить можно и без таймлайна. */}
+        {onOpenTimeline && (
+          <button ref={timelineGuideRef} type="button" className="w12-tl-entry" onClick={openTimeline}>
+            <span className="w12-tl-entry-ic"><svg viewBox="0 0 20 20" className="w12-i" aria-hidden="true"><path d="M2 5h16M2 10h16M2 15h16M6 3v4m5 1v4m4 1v4" /></svg></span>
+            <span className="w12-tl-entry-t"><b className="w12-l">{t('wizard.pool.openTimeline')}</b><small className="w12-l">{t('wizard.pool.timelineHint')}</small></span>
+            <span className="w12-tl-entry-go"><Svg>{W12.right}</Svg></span>
+          </button>
+        )}
+        <WizardActions ready={ready} loading={loading} onBack={onBack} onNext={onNext} nextLabel={t('wizard.pool.generate')} tone={onOpenTimeline ? 'field' : undefined} />
       </div>
+
+      <ActionGuideOverlay
+        open={showTimelineGuide}
+        targetRef={timelineGuideRef}
+        title={t('wizard.pool.guideTimelineTitle')}
+        text={t('wizard.pool.guideTimelineText')}
+        dismissLabel={t('wizard.pool.guideDismiss')}
+        progressLabel={t('wizard.guideProgress', { current: poolTourTotal(state.background), total: poolTourTotal(state.background) })}
+        onDismiss={() => setTimelineGuideDismissed(true)}
+        variant="visual"
+        shell="track-top"
+        visual={<TimelineEntryGuideVisual />}
+      />
     </aside>
   );
 }

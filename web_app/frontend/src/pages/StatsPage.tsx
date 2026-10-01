@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useZoomToFit } from '../lib/useZoomToFit';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { cn } from '../lib/cn';
@@ -81,7 +82,8 @@ function StatCard({ icon, title, value, unit, trend }: {
           равны. items-baseline + leading-none раньше уводили глиф вверх, к заголовку. */}
       <span className="absolute inset-x-[28px] bottom-0 top-[72px] flex items-center gap-[12px] max-md:inset-x-[14px] max-md:top-[40px] max-md:items-baseline max-md:gap-[8px]">
         <span className="text-[96px] font-[350] leading-[0.86] text-transparent max-md:text-[52px] max-md:leading-none" style={gradLight}>{value}</span>
-        {unit && <span className="translate-y-[18px] text-[24px] font-[350] leading-none text-transparent max-md:translate-y-0" style={gradLight}>{unit}</span>}
+        {/* у заглушки «—» единица ни к чему и висит ниже тире (сдвиг рассчитан на базовую линию цифр) */}
+        {unit && value !== '—' && <span className="translate-y-[18px] text-[24px] font-[350] leading-none text-transparent max-md:translate-y-0" style={gradLight}>{unit}</span>}
       </span>
     </div>
   );
@@ -316,6 +318,7 @@ export function StatsPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { push } = useToast();
+  const fit = useZoomToFit();
   const [params] = useSearchParams();
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
   const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: api.projects });
@@ -398,13 +401,15 @@ export function StatsPage() {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col lg:min-h-[var(--app-page-h)] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
-      <div className="flex min-h-0 flex-1 flex-col gap-[20px]">
+    <div className="flex min-h-0 flex-1 flex-col lg:h-[var(--app-page-h)] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+      {/* Макет (379 + 505) выше холста 1600×900: вписываем экран одним масштабом, без скролла */}
+      <div ref={fit.outerRef} className="flex min-h-0 flex-1 flex-col lg:overflow-hidden">
+      <div ref={fit.innerRef} className="flex min-h-full shrink-0 flex-col gap-[20px]">
       {/* «Статистика» 1192×379 */}
       <section className="card-2 h-auto min-h-[379px] shrink-0 p-[24px] sm:p-[32px] lg:h-[379px] lg:p-[40px] max-md:min-h-0 max-md:p-[20px]">
         <div className="flex flex-col items-start justify-between gap-[20px] sm:flex-row sm:gap-space-4 max-md:flex-row max-md:items-start max-md:gap-[10px]">
           <div>
-            <h1 className="text-[32px] font-[400] leading-none text-text">{t('stats.title')}</h1>
+            <h1 className="text-ui-32 font-[400] text-text">{t('stats.title')}</h1>
             {/*
               Строка «@ник» — это ПОДПИСЬ ПОДКЛЮЧЁННОГО TikTok-аккаунта, поэтому без него её нет.
               Раньше здесь стоял фолбэк на artistNick/name, и на экране статистики висел «@»
@@ -479,7 +484,7 @@ export function StatsPage() {
 
       {/* «Эволюция контента» 1192×505 */}
       <section className="card-2 min-h-[505px] flex-none p-[24px] sm:p-[32px] lg:flex-1 lg:p-[40px]">
-        <h2 className="text-[32px] font-[400] leading-none text-text">{t('stats.evolution')}</h2>
+        <h2 className="text-ui-24 font-[400] text-text">{t('stats.evolution')}</h2>
 
         {/* Небольшой нахлёст соединяет пилы визуально, но заканчивается внутри скругления:
             кнопка больше не перекрывает номер итерации. */}
@@ -497,7 +502,7 @@ export function StatsPage() {
             onClick={() => createIteration.mutate({ count: 5, dimension: nextToTest(analysis)?.dimension ?? 'subtitles' })}
             className="relative z-0 -ml-[33px] flex h-[60px] w-[78px] shrink-0 items-center justify-center rounded-r15 border-2 border-accent bg-grad-soft-20 pl-[33px] text-[24px] leading-none text-text-80 transition hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span className="translate-y-[1px]" aria-hidden="true">+</span>
+            <span aria-hidden="true">+</span>
           </button>
           {enough && analysis && <VerdictChips analysis={analysis} />}
         </div>
@@ -520,6 +525,7 @@ export function StatsPage() {
           )}
         </div>
       </section>
+      </div>
       </div>
     </div>
   );

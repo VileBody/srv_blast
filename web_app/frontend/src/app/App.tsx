@@ -15,6 +15,7 @@ import { ProjectsPage } from '../pages/ProjectsPage';
 import { SimplePage } from '../pages/SimplePage';
 import { StatsPage } from '../pages/StatsPage';
 import { WizardPage } from '../pages/WizardPage';
+import { KitPage } from '../pages/KitPage';
 
 export function App() {
   return (
@@ -28,6 +29,8 @@ export function App() {
       <Route path="/error" element={<SimplePage kind="error" />} />
       <Route path="/legal/policy" element={<LegalPage kind="policy" />} />
       <Route path="/legal/offer" element={<LegalPage kind="offer" />} />
+      {/* витрина компонентов единой шкалы UI — только dev-сборка, в прод не попадает */}
+      {import.meta.env.DEV && <Route path="/dev/kit" element={<KitPage />} />}
       <Route path="/app" element={<AppShell />}>
         <Route index element={<DashboardPage />} />
         <Route path="generate" element={<WizardPage />} />

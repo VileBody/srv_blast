@@ -13,7 +13,8 @@ import { useWizardStore } from '../../stores/wizardStore';
  */
 export function usePlaybackUrl(track: SavedTrack | null | undefined): string | null {
   const stored = track?.localUrl ?? null;
-  const needsFresh = Boolean(track?.id) && !(stored ?? '').startsWith('/static/');
+  // /static/ (mock) и blob: (файл из этой вкладки) играют как есть — свежая ссылка нужна только S3
+  const needsFresh = Boolean(track?.id) && !/^(\/static\/|blob:)/.test(stored ?? '');
   const fresh = useQuery({
     queryKey: ['track-playback', track?.id],
     queryFn: () => api.trackPlayback(String(track?.id)),

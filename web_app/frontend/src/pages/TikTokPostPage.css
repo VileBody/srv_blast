@@ -4,15 +4,6 @@
  * Под lg — одна колонка: ролик, форма, прилипающая строка действия.
  */
 
-/*
- * Point с USE_TYPO_METRICS центрирует строку по полю 1475/451 — заглавные сидят ~1.4px выше
- * центра контролов. Override двигает центр строки к середине заглавных, общая высота та же (94%).
- * Отдельное семейство, а не правка глобального Point: по приложению разложены ручные
- * translate-y-[1px] под ту же проблему, глобальный фикс сдвинул бы их текст дважды.
- */
-@font-face { font-family: 'Point Centered'; font-weight: 350; src: url('/fonts/Point-Book.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
-@font-face { font-family: 'Point Centered'; font-weight: 400; src: url('/fonts/Point-Regular.ttf') format('truetype'); font-display: swap; ascent-override: 78.7%; descent-override: 15.3%; line-gap-override: 0%; }
-
 .ttp {
   --ttp-panel: #0d0820;
   --ttp-panel-2: #140d2b;
@@ -34,14 +25,14 @@
 
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 420px;
+  grid-template-columns: minmax(0, 1fr) var(--ttp-media-w, 420px);
   grid-template-rows: auto minmax(0, 1fr) auto;
   background: var(--ttp-panel);
   border: 1px solid var(--ttp-line);
   border-radius: 22px;
   overflow: clip;
   color: var(--text);
-  font-family: 'Point Centered', var(--font);
+  font-family: var(--font);
   font-weight: 350;
   font-size: 15px;
   line-height: 1.4;
@@ -51,6 +42,12 @@
 .ttp .num { font-variant-numeric: tabular-nums; }
 .ttp svg.i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
+/* Страница выкладки на всю рабочую область. Высота карточки = высота страницы минус поля,
+   ролик справа — ровно 9:16 от неё: плеер по высоте экрана, форма забирает остальное. */
+.ttp-page { --ttp-media-w: calc((var(--app-page-h, 836px) - 2 * (var(--rail-pad-y) - var(--space-6))) * 9 / 16); }
+.ttp-split { display: grid; grid-template-columns: minmax(0, 1fr) var(--ttp-media-w); gap: 20px; height: 100%; min-height: 0; }
+.ttp-split > * { min-height: 0; }
+
 /* шапка */
 .ttp-top { grid-column: 1; grid-row: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 20px; border-bottom: 1px solid var(--ttp-line); min-width: 0; }
 .ttp-batch { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -58,6 +55,11 @@
 .ttp-nav:hover:not(:disabled) { color: var(--text); background: var(--ttp-panel-2); }
 .ttp-nav:active:not(:disabled) { transform: scale(0.94); }
 .ttp-nav:disabled { opacity: .3; cursor: default; }
+.ttp-back { display: inline-flex; align-items: center; gap: 4px; height: var(--ctl-sm); padding: 0 10px 0 4px; border-radius: var(--r10); color: var(--text-60); font-size: 14px; white-space: nowrap; transition: background-color .15s ease, color .15s ease, transform .12s cubic-bezier(0.23, 1, 0.32, 1); }
+.ttp-back:active { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) { .ttp-back:hover { color: var(--text); background: var(--panel); } }
+.ttp-back svg { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.ttp-sep { width: 1px; height: 18px; margin: 0 6px; background: var(--line-strong); flex: none; }
 .ttp-title { font-size: 16px; font-weight: 400; white-space: nowrap; padding: 0 2px; }
 .ttp-dots { display: flex; gap: 5px; margin-left: 10px; }
 .ttp-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ttp-line-2); transition: background-color .2s ease, width .22s var(--ttp-ease); }
@@ -213,6 +215,7 @@
 .ttp-sel img { width: 100%; height: 100%; object-fit: cover; border-radius: 8px; }
 
 @media (max-width: 1023px) {
+  .ttp-split { grid-template-columns: minmax(0, 1fr); height: auto; gap: 12px; }
   .ttp { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto auto; border-radius: 18px; }
   .ttp-top { grid-row: 1; padding: 10px 12px; }
   .ttp-media { grid-column: 1; grid-row: 2; border-left: 0; height: min(68vh, 560px); }

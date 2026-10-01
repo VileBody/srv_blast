@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -541,6 +542,14 @@ class ProductionBackend:
             for item in source
         ]
 
+    def frame_preview_url(self, file: str) -> str:
+        """Подписанная ссылка на PNG рамки. Рамки рендер берёт из бакета ассетов эффектов —
+        деплой ставит его равным S3_BUCKET_ASSET_STORAGE с префиксом fx_assets/."""
+        prefix = (os.environ.get("FX_ASSETS_S3_PREFIX") or "fx_assets/").strip().strip("/")
+        bucket = (os.environ.get("FX_ASSETS_S3_BUCKET") or "").strip() or self.config.asset_bucket
+        key = f"{prefix}/frames/{file}" if prefix else f"frames/{file}"
+        return self._presign(bucket, key, filename=file, attachment=False, content_type="image/png")
+
     def upload_track(
         self,
         *,
@@ -796,28 +805,7 @@ class ProductionBackend:
             video["format"] = {
                 "vertical": "9:16", "wide": "16:9", "square": "1:1",
             }[str(payload.get("render_preset") or "vertical")]
-            if payload.get("custom_footage_sources") and not self._custom_sources_contract_verified:
-                # Pydantic ignores unknown request fields by default. An older
-                # orchestrator therefore accepted this payload, dropped the
-                # user's sources, and rendered random library footage. Verify
-                # the live contract before creating any job so that mismatch is
-                # explicit and cannot spend a generation credit.
-                contract = self._http.get(f"{self.config.orchestrator_url}/openapi.json")
-                if contract.status_code >= 300:
-                    raise ProductionBackendError(
-                        f"orchestrator contract check failed status={contract.status_code}"
-                    )
-                schemas = ((contract.json().get("components") or {}).get("schemas") or {})
-                supports_custom_sources = any(
-                    "custom_footage_sources" in ((schema or {}).get("properties") or {})
-                    for schema in schemas.values()
-                    if isinstance(schema, dict)
-                )
-                if not supports_custom_sources:
-                    raise ProductionBackendError(
-                        "orchestrator does not support personal footage; deploy the matching render service"
-                    )
-                self._custom_sources_contract_verified = True
+            self._ensure_orchestrator_fields(payload)
             response = self._http.post(
                 f"{self.config.orchestrator_url}/send_audio_s3",
                 json=payload,
@@ -840,6 +828,38 @@ class ProductionBackend:
             job["orchestratorJobIds"] = list(orchestrator_ids)
             job["orchestratorJobId"] = master_id
             return
+
+    # Поля, которые старый оркестратор молча проигнорировал бы (Pydantic отбрасывает
+    # неизвестные ключи): своё видео ушло бы библиотечным футажом, правки стола —
+    # общими переходом и грейдом. Живой контракт сверяем ДО постановки джобы.
+    _CONTRACT_FIELDS = {
+        "custom_footage_sources": "orchestrator does not support personal footage; deploy the matching render service",
+        "effect_cut_transitions": "orchestrator does not support montage table edits (effect_cut_transitions); deploy the matching render service",
+        "effect_extra_ranges": "orchestrator does not support montage table edits (effect_extra_ranges); deploy the matching render service",
+    }
+
+    def _ensure_orchestrator_fields(self, payload: dict[str, Any]) -> None:
+        verified: set[str] = getattr(self, "_verified_contract_fields", set())
+        if getattr(self, "_custom_sources_contract_verified", False):
+            verified.add("custom_footage_sources")
+        needed = {field for field in self._CONTRACT_FIELDS if field in payload and field not in verified}
+        if not needed:
+            return
+        contract = self._http.get(f"{self.config.orchestrator_url}/openapi.json")
+        if contract.status_code >= 300:
+            raise ProductionBackendError(f"orchestrator contract check failed status={contract.status_code}")
+        schemas = ((contract.json().get("components") or {}).get("schemas") or {})
+        known: set[str] = set()
+        for schema in schemas.values():
+            if isinstance(schema, dict):
+                known.update(((schema.get("properties") or {}).keys()))
+        missing = sorted(needed - known)
+        if missing:
+            raise ProductionBackendError(self._CONTRACT_FIELDS[missing[0]])
+        verified.update(needed)
+        self._verified_contract_fields = verified
+        if "custom_footage_sources" in verified:
+            self._custom_sources_contract_verified = True
 
     def sync_job(self, job: dict[str, Any]) -> dict[str, Any]:
         stage_progress = {
@@ -1133,8 +1153,7 @@ class ProductionBackend:
             color = str(background.get("color") or "").lower()
             # The web palette uses the product's near-white/near-black design
             # tokens, while the renderer names the corresponding solid planes.
-            # Keep this mapping explicit: arbitrary slider colors are rejected
-            # until the orchestrator contract supports an exact hex plane.
+            # Any other color from the slider goes as an exact "#RRGGBB" plane.
             color_map = {
                 "#ffffff": "white", "#fff": "white", "#f6f5fd": "white",
                 "#000000": "black", "#000": "black", "#05010f": "black",
@@ -1142,9 +1161,9 @@ class ProductionBackend:
             }
             bg_solid_color = color_map.get(color, "")
             if not bg_solid_color:
-                raise ProductionBackendError(
-                    f"orchestrator supports only white/green solid backgrounds, got {color!r}"
-                )
+                if not re.fullmatch(r"#[0-9a-f]{6}", color):
+                    raise ProductionBackendError(f"Цвет фона не распознан: {color!r} — выбери его заново")
+                bg_solid_color = color
 
         hook = variation.get("hook") or {}
         family = hook.get("family")
@@ -1300,7 +1319,34 @@ class ProductionBackend:
             if custom_sources or bg_mode != "footage" or not selector.get("rotationTheme"):
                 raise ProductionBackendError("раскадровка применима только к футажу из вайба")
             payload["footage_plan"] = footage_plan
+        # Монтажный стол: переход на каждой склейке и стили с окнами (montage.py). Оба
+        # списка идут вместо общего перехода/грейда, а склейки обязаны быть закреплены:
+        # оркестратор сверит каждую склейку с переходом с планом или pinned_cuts.
+        cut_transitions = hook.get("cutTransitions")
+        extra_ranges = hook.get("extraRanges")
+        if cut_transitions is not None:
+            payload["effect_cut_transitions"] = [
+                {"t_abs": float(item["tAbs"]), "transition": str(item["transition"])} for item in cut_transitions
+            ]
+            payload.pop("effect_transition", None)
+        if extra_ranges is not None:
+            payload["effect_extra_ranges"] = [
+                {"extra": str(item["extra"]), "start_abs": float(item["startAbs"]), "end_abs": float(item["endAbs"])}
+                for item in extra_ranges
+            ]
+            payload.pop("effect_extra", None)
+            payload["effect_extra_full"] = False
+        # Рамка со стола: id уходит как есть, рендер сам резолвит PNG (как у бота).
+        if variation.get("frame"):
+            payload["frame_id"] = str(variation["frame"])
         recipe = render_job.get("recipe")
+        montage_cuts = hook.get("cutsAbs") if cut_transitions else None
+        if montage_cuts and not recipe and not footage_plan:
+            # «Авто»-темп рецепт не шлёт (рендер считает те же склейки сам), но переход,
+            # стоящий на конкретной склейке, требует закрепить именно её.
+            if start is None or end is None:
+                raise ProductionBackendError("Для переходов по склейкам нужен точный отрывок")
+            recipe = {"clipStartAbs": float(start), "clipEndAbs": float(end), "switchPointsAbs": list(montage_cuts)}
         if recipe and not footage_plan and not custom_sources:
             # Склейки таймлайна для видео, клипы которого рендер подбирает сам. У плана
             # раскадровки склейки свои, а своё видео идёт клипами встык — им не шлём.

@@ -1,0 +1,201 @@
+/* ui-allow-file: пропорции таймлайна FX (FxTimeline.css) — стол живёт в его системе координат */
+/* Монтажный стол поверх FxTimeline.css: только то, чего у таймлайна FX не было —
+   ролики батча, кадры с исходниками, «Все ролики», второй стиль по запросу. Токены — его же. */
+
+/* ── шапка: ролик батча ── */
+.mt-vid { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.mt .fxt-vsw-main { gap: 10px; padding-left: 8px; }
+.mt .fxt-vsw-main .lb { max-width: 300px; }
+.mt-vn { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; height: 26px; padding: 0 8px; border-radius: 8px; background: var(--accent-20); color: var(--text); font-size: 13px; line-height: 1; }
+
+.mt-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent-light); flex: none; box-shadow: 0 0 0 3px rgba(139, 111, 230, .2); }
+.mt .mt-vmenu { width: 460px; }
+.mt .mt-vmenu .fxt-vsw-item { height: 52px; padding: 0 12px 0 8px; }
+.mt-vthumb { width: 22px; height: 39px; border-radius: 6px; overflow: hidden; background: var(--fxt-well); flex: none; }
+.mt-vthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mt-edited { flex: none; font-size: 11px; line-height: 1; padding: 5px 7px 3px; border-radius: 6px; background: var(--accent-20); color: var(--accent-light); }
+/* ── библиотека: исходники и текст ── */
+.mt .fxt-tabs button { padding: 0 10px; }
+/* ── дорожка исходников: в кадре — плёнка его клипа ── */
+.mt { --fxt-head: 184px; }
+.mt .fxt-lh.h-frames, .mt .fxt-lane.l-frames { height: 60px; }
+.mt .fxt-clip.fr.mt-fr { height: 46px; padding: 0 14px 0 12px; background: var(--fxt-frame); }
+.mt-fr .mt-film { position: absolute; inset: 0; z-index: 0; background-size: 38px auto; background-repeat: repeat-x; background-position: left 78%; opacity: .95; transition: opacity .15s ease; }
+.mt-fr .mt-film::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 37px, rgba(5, 1, 15, .55) 37px 38px); }
+.mt-fr::after { content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; background: linear-gradient(90deg, rgba(17, 10, 36, .88) 0, rgba(17, 10, 36, .45) 64px, rgba(17, 10, 36, .2) 100%); }
+.mt .fxt-clip.fr.mt-fr:hover .mt-film { opacity: 1; }
+.mt .fxt-clip.fr.mt-fr.cur { background: var(--fxt-frame); box-shadow: inset 0 -3px 0 var(--accent-light); }
+.mt .fxt-clip.fr.mt-fr.sel { box-shadow: inset 0 0 0 2px #fff; }
+.mt-fr > .n, .mt-fr > .d, .mt-fr > .mt-pin, .mt-fr > .fxt-edge { z-index: 1; }
+.mt-fr > .n, .mt-fr > .d { position: relative; }
+.mt-fr .d { text-shadow: 0 1px 6px rgba(5, 1, 15, .8); }
+.mt-pin { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 6px; background: rgba(5, 1, 15, .6); color: var(--text); }
+.mt-lcount { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 6px; border-radius: 6px; background: var(--fxt-t06); color: var(--fxt-t60); font-size: 11px; }
+.mt .fxt-place.src { border-color: var(--accent-light); background: var(--accent-20); }
+/* ── панель выделенного: куда ложится правка ── */
+.mt .fxt-pace { margin-inline: 2px; }
+/* ── превью ── */
+.mt-sub { position: absolute; inset: 0; z-index: 3; pointer-events: none; background: none; }
+.mt-cover { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; background: rgba(5, 1, 15, .62); pointer-events: none; }
+.mt-cover span { font-size: 4.2cqi; letter-spacing: .14em; text-transform: uppercase; color: var(--fxt-t60); transform: translateY(-160%); }
+.mt-next { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 6; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 9px; border-radius: 11px; background: rgba(8, 5, 20, .6); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-size: 12px; color: var(--fxt-t80); pointer-events: none; }
+.mt-next i { display: block; height: 2px; border-radius: 1px; background: var(--accent-light); transform-origin: left center; }
+.mt-loop { border-radius: 10px; }
+/* ── «Все ролики»: батч целиком, синхронно ── */
+.mt .mt-gridmain { display: flex; flex-direction: column; gap: 12px; }
+.mt-grid { flex: 1; min-height: 0; display: grid; gap: 16px; justify-content: center; align-content: center; }
+.mt-cell { display: flex; flex-direction: column; gap: 10px; align-items: stretch; text-align: left; border-radius: 18px; transition: transform .2s var(--fxt-ease); }
+.mt-cell .fxt-stage { border-radius: 16px; box-shadow: 0 0 0 1px var(--fxt-line); transition: box-shadow .15s ease; }
+.mt-cell.cur .fxt-stage { box-shadow: 0 0 0 2px var(--accent-light); }
+@media (hover: hover) and (pointer: fine) {
+  .mt-cell:hover .fxt-stage { box-shadow: 0 0 0 1px var(--fxt-t40); }
+  .mt-cell.cur:hover .fxt-stage { box-shadow: 0 0 0 2px var(--accent-light); }
+}
+.mt-cell:active { transform: scale(.985); }
+.mt-cap { display: flex; align-items: center; gap: 8px; min-width: 0; height: 24px; font-size: 13px; color: var(--fxt-t80); }
+.mt-cap b { font-weight: 400; color: var(--fxt-t40); }
+.mt-cap > .tx:not(b) { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.mt-gridbar { flex: none; align-self: center; display: flex; align-items: center; gap: 12px; width: min(560px, 100%); height: 48px; padding: 0 16px 0 6px; border-radius: 14px; background: var(--fxt-panel); }
+.mt-gprog { flex: 1; height: 3px; border-radius: 2px; background: var(--fxt-t06); overflow: hidden; }
+.mt-gprog i { display: block; height: 100%; background: var(--accent-light); }
+.mt-gtime { font-size: 12px; color: var(--fxt-t60); }
+.mt-gridnote { position: fixed; left: 50%; top: 72px; z-index: 20; transform: translateX(-50%); padding: 7px 12px 5px; border-radius: 10px; background: var(--fxt-pop); border: 1px solid var(--fxt-line2); font-size: 12px; color: var(--fxt-t60); white-space: nowrap; }
+
+.mt-keyrow { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; color: var(--fxt-t80); font-size: 13px; }
+.mt-keyrow kbd { font: inherit; font-size: 11.5px; color: var(--fxt-t60); padding: 2px 7px; border-radius: 6px; background: var(--fxt-t06); }
+.mt ::selection { background: rgba(139, 111, 230, .45); }
+/* ── библиотека: группы, вайбы, субтитры ── */
+.mt-soon { font-size: 11px; line-height: 1; padding: 5px 7px 3px; border-radius: 6px; background: var(--fxt-t06); color: var(--fxt-t40); }
+.mt .fxt-lib-b > .mt-none { padding: 12px 0 4px; }
+.mt-plates { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; padding-top: 12px; }
+.mt-plate { position: relative; aspect-ratio: 4 / 3; border-radius: 12px; overflow: hidden; background: var(--fxt-well); box-shadow: inset 0 0 0 1px var(--fxt-line); transition: box-shadow .15s ease, transform .12s var(--fxt-ease); }
+.mt-plate img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.mt-plate::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--fxt-line); pointer-events: none; transition: box-shadow .15s ease; }
+@media (hover: hover) and (pointer: fine) { .mt-plate:hover::after { box-shadow: inset 0 0 0 1px var(--fxt-t40); } }
+.mt-plate:active { transform: scale(.98); }
+.mt-plate[aria-checked="true"]::after { box-shadow: inset 0 0 0 2px var(--accent-light); }
+.mt-plate .ck { position: absolute; right: 8px; top: 8px; z-index: 1; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: #fff; }
+.mt-textcfg { padding: 14px 0 4px; background: none; font-size: 14px; }
+.mt-textcfg .w12-types { display: none; }
+.mt-textcfg .w12-sec-note { display: none; }
+.mt-sbwrap { display: flex; max-width: 100%; }
+.mt-sbwrap .psb { height: 100%; }
+.mt .fxt-clip.sb.mt-word { cursor: grab; padding: 0 6px; }
+.mt .fxt-clip.sb.mt-word:active { cursor: grabbing; }
+.mt .fxt-clip.sb.mt-word .fxt-edge { width: 6px; }
+.mt .fxt-clip.sb.mt-word .fxt-edge::after { width: 2px; height: 10px; }
+.mt .fxt-clip.sb.mt-word .fxt-edge.l::after { left: 1px; }
+.mt .fxt-clip.sb.mt-word .fxt-edge.r::after { right: 1px; }
+.mt .fxt-pill.mt-all { background: var(--accent-20); color: var(--text); }
+.mt .fxt-pill.mt-all:hover { background: rgba(139, 111, 230, .36); }
+/* ── шапка: проект слева, ролик по центру, вид и рендер справа ── */
+.mt .mt-top { display: flex; align-items: center; gap: 24px; padding-inline: 16px 20px; }
+.mt-top-l { flex: 1 1 0; display: flex; align-items: center; gap: 12px; min-width: 0; }
+.mt-top-r { flex: 1 1 0; min-width: max-content; display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+.mt .mt-top .fxt-seg button, .mt .mt-top .fxt-primary, .mt .mt-top .fxt-vsw-main, .mt .mt-top .fxt-back { white-space: nowrap; flex: none; }
+.mt .mt-top .fxt-seg { flex: none; }
+.mt .mt-top .fxt-seg button { padding: 0 14px; }
+.mt .mt-top .fxt-primary { padding: 0 22px; }
+.mt .mt-top .fxt-proj { min-width: 0; }
+.mt .mt-top .fxt-proj b { max-width: 260px; }
+.mt-vid { gap: 8px; }
+.mt-arrows { display: flex; gap: 2px; flex: none; }
+.mt .mt-arrow { display: grid; place-items: center; width: 34px; height: 40px; background: var(--fxt-raise); color: var(--fxt-t60); transition: background-color .15s ease, color .15s ease, transform .12s var(--fxt-ease); }
+.mt .mt-arrow:first-child { border-radius: 12px 4px 4px 12px; }
+.mt .mt-arrow:last-child { border-radius: 4px 12px 12px 4px; }
+@media (hover: hover) and (pointer: fine) { .mt .mt-arrow:hover { background: #251b40; color: var(--text); } }
+.mt .mt-arrow:active { background: #2e2350; color: var(--text); transform: scale(.96); }
+.mt-vn .of { color: var(--fxt-t40); }
+/* ── кадр любого исходника: на весь кадр, по центру на размытом фоне, цвет ── */
+.mt-fv { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+img.mt-fv-cover { object-fit: cover; }
+.mt-fv-amb { overflow: hidden; background: #05010f; }
+.mt-fv-amb .bg { position: absolute; inset: -8%; width: 116%; height: 116%; object-fit: cover; filter: blur(16px) brightness(.5) saturate(1.2); }
+.mt-fv-amb .fg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.mt-vthumb { position: relative; }
+.mt-fr .mt-film.wide { background-size: 72px auto; background-position: left center; }
+.mt-fr .mt-film.wide::after { background: repeating-linear-gradient(90deg, transparent 0 71px, rgba(5, 1, 15, .55) 71px 72px); }
+.mt-fr .mt-film.mt-filmc::after { display: none; }
+.mt-fr .mt-film.mt-filmc.strobe { -webkit-mask-image: repeating-linear-gradient(90deg, #000 0 10px, rgba(0, 0, 0, .25) 10px 20px); mask-image: repeating-linear-gradient(90deg, #000 0 10px, rgba(0, 0, 0, .25) 10px 20px); }
+/* ── библиотека: исходники по типам шага «Фон» ── */
+
+/* ── правое окно исходников ── */
+
+/* ── переходы: «Без склейки» строкой списка ── */
+.mt-plain .fxt-acc-h .c { font-size: 12px; }
+.mt-plainact { margin-left: auto; font-size: 11.5px; line-height: 1; padding: 5px 8px 3px; border-radius: 6px; background: var(--fxt-t06); color: var(--fxt-t60); }
+/* ── лента наборов — карточки шага «Фон» ── */
+
+/* ── «Исходники»: корзина клипов ролика на всю высоту библиотеки ── */
+
+/* ── отбор исходников: первый шаг стола ── */
+
+/* ── выбор кадров в превью: док раскадровки поверх ролика ── */
+.mt .fxt-stage .psb-arrow { z-index: 7; }
+.mt .fxt-stage .mt-dock { z-index: 8; }
+.mt .fxt-stage .fxt-play { top: 42%; }
+.mt .mt-dock .psb-seg.mt-cur { box-shadow: 0 0 0 2px var(--accent-light); }
+.mt .mt-dock .psb-seg .mt-fv { opacity: .85; }
+.mt .mt-dock .psb-seg.cur .mt-fv, .mt .mt-dock .psb-seg:hover .mt-fv { opacity: 1; }
+/* «+» у «Стиля 1» — вторая дорожка стиля по запросу */
+.mt-laneadd { display: grid; place-items: center; width: 24px; height: 24px; margin-right: 2px; border-radius: 50%; background: var(--fxt-style-soft); color: var(--fxt-style); flex: none; transition: background-color .15s ease, color .15s ease, transform .12s var(--fxt-ease); }
+@media (hover: hover) and (pointer: fine) { .mt-laneadd:hover { background: var(--fxt-style); color: var(--fxt-style-ink); } }
+.mt-laneadd:active { transform: scale(.92); }
+.mt-fv-cov > .fg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.mt-srcnote { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 6; padding: 9px 12px 8px; border-radius: 11px; background: rgba(8, 5, 20, .6); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-size: 12.5px; color: var(--fxt-t80); text-align: center; pointer-events: none; }
+
+/* галочка у использованного, заметки библиотеки, миниатюра кадра */
+.mt-thumb { position: relative; display: block; flex: none; overflow: hidden; border-radius: 8px; background: var(--fxt-well); box-shadow: inset 0 0 0 1px var(--fxt-line); }
+.mt-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.mt-thumb.on { box-shadow: inset 0 0 0 1.5px var(--accent-light); }
+.mt-on { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--accent-light); }
+.mt-lib-note { margin: 12px 4px 4px; font-size: 12.5px; line-height: 1.4; color: var(--fxt-t40); max-width: 64ch; }
+.mt .fxt-sel .mt-thumb { border-radius: 6px; }
+.mt-empty { margin: 0 4px 14px; }
+.mt-plainact { margin-left: auto; font-size: 11.5px; line-height: 1; padding: 5px 8px 3px; border-radius: 6px; background: var(--fxt-t06); color: var(--fxt-t60); }
+.mt-selthumb { width: 17px; height: 30px; }
+
+/* окно перехода на склейке: те же группы, что во вкладке «Переходы» библиотеки */
+.fxt-cutpop .opts { max-height: 164px; }
+.fxt-opt-group { display: flex; align-items: center; gap: 6px; padding: 8px 8px 2px; color: var(--fxt-t40, rgba(246, 245, 253, .45)); font-size: 12px; line-height: 16px; letter-spacing: .01em; }
+.fxt-opt-group svg { opacity: .8; }
+.fxt-cutpop .mtop .grp { font-style: normal; color: var(--fxt-t60, rgba(246, 245, 253, .6)); }
+
+/* рамки: плашки 9:16 (кадр ролика + PNG-маска поверх) и наложение рамки на превью */
+.mt-frames { grid-template-columns: repeat(4, minmax(0, 132px)); justify-content: start; gap: 12px; }
+.mt-frame-plate { aspect-ratio: 9 / 16; }
+.mt-frame-plate:disabled { opacity: .4; cursor: not-allowed; }
+.mt-frame-plate .mt-frame-base { position: absolute; inset: 0; }
+.mt-frame-plate .mt-frame-base > * { position: absolute; inset: 0; width: 100%; height: 100%; }
+.mt-frame-plate img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; }
+.mt-frame-plate .nm { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 1; padding: 3px 8px; border-radius: 8px; background: rgba(5, 1, 15, .62); font-size: 12px; line-height: 16px; color: var(--fxt-t80); text-align: center; }
+.mt-frame-all { display: flex; justify-content: flex-start; padding-top: 12px; }
+.fxt-stage .mt-frame { position: absolute; inset: 0; z-index: 9; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+
+/* ── библиотека: хуки, переходы и стили — плитками 9:16 с автоплеем примера ── */
+.mt-fxrow { position: relative; }
+.mt-fxtiles { display: flex; gap: 12px; padding: 4px 0 12px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; scroll-padding-inline: 2px; scrollbar-width: none; }
+.mt-fxtiles::-webkit-scrollbar { display: none; }
+/* фейд — только с той стороны, где за краем есть плитки (маска, а не накладка: фон в тон всегда) */
+.mt-fxrow[data-fade-r] .mt-fxtiles { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 56px), transparent); }
+.mt-fxrow[data-fade-l] .mt-fxtiles { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 56px), transparent); }
+.mt-fxrow[data-fade-l][data-fade-r] .mt-fxtiles { -webkit-mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent); }
+.mt-fxrow-btn { position: absolute; top: calc(50% - 22px); z-index: 6; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; background: rgba(13, 8, 32, .88); box-shadow: inset 0 0 0 1px var(--fxt-line); color: var(--fxt-t100); transition: opacity .15s ease, transform .12s var(--fxt-ease); }
+.mt-fxrow-btn.l { left: 4px; }
+.mt-fxrow-btn.r { right: 4px; }
+.mt-fxrow-btn:active { transform: scale(.94); }
+.mt-fxrow-btn[data-off] { opacity: 0; pointer-events: none; }
+.mt-fxtile { position: relative; flex: 0 0 180px; display: flex; flex-direction: column; gap: 6px; cursor: grab; outline: none; scroll-snap-align: start; }
+.mt-fxtile:active { cursor: grabbing; }
+.mt-fxtile-media { position: relative; display: block; aspect-ratio: 9 / 16; border-radius: 12px; overflow: hidden; background: var(--fxt-well); box-shadow: inset 0 0 0 1px var(--fxt-line); }
+.mt-fxtile-media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.mt-fxtile-media .fxt-stage { position: absolute; inset: 0; width: 100% !important; height: 100% !important; border-radius: 0; }
+.mt-fxtile-media::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--fxt-line); pointer-events: none; transition: box-shadow .15s ease; }
+.mt-fxtile.on .mt-fxtile-media::after { box-shadow: inset 0 0 0 2px var(--accent-light); }
+.mt-fxtile:focus-visible .mt-fxtile-media::after { box-shadow: inset 0 0 0 2px var(--fxt-t40); }
+@media (hover: hover) and (pointer: fine) { .mt-fxtile:hover .mt-fxtile-media::after { box-shadow: inset 0 0 0 1px var(--fxt-t40); } .mt-fxtile.on:hover .mt-fxtile-media::after { box-shadow: inset 0 0 0 2px var(--accent-light); } }
+.mt-fxtile-tag { position: absolute; left: 6px; bottom: 6px; z-index: 4; padding: 2px 6px; border-radius: 6px; background: rgba(5, 1, 15, .7); color: var(--fxt-t60); font-size: 10px; line-height: 14px; pointer-events: none; } /* ui-allow: подпись поверх мини-кадра */
+.mt-fxtile .nm { font-size: 14px; line-height: 20px; color: var(--fxt-t100); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 30px; } /* ui-allow: подпись плитки */
+.mt-fxtile .nm b { font-weight: 400; }
+.mt-fxtile .act { position: absolute; right: 6px; top: 6px; z-index: 5; }
+.mt-fxtile-none { position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center; color: var(--fxt-t40); font-size: 12px; line-height: 16px; } /* ui-allow: подпись пустой плитки */

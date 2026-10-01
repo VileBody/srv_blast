@@ -13,6 +13,7 @@ import { TrackUsageCard } from '../components/billing/TrackUsageCard';
 import { useToast } from '../contexts/ToastContext';
 import { SvgMaskIcon } from '../components/layout/SvgMaskIcon';
 import { Modal } from '../components/ui/Modal';
+import { Button, buttonClass } from '../components/ui/kit';
 
 /*
  * Личный кабинет: Figma W43 (фришник) и W44 (подписчик Blast) — одна страница, два состояния.
@@ -53,7 +54,7 @@ function LimitRow({ label, used, total }: { label: string; used: number; total: 
           style={{ width: unlimited ? '100%' : `${pct * 100}%` }}
         />
       </span>
-      <span className="flex w-[231px] shrink-0 items-center justify-end text-right text-[16px] font-[400] leading-[19px] text-transparent max-md:w-auto max-md:pl-[12px]" style={gradSoft}>
+      <span className="flex w-[231px] shrink-0 items-center justify-end text-right text-[16px] font-[400] leading-[19px] tabular-nums text-transparent max-md:w-auto max-md:pl-[12px]" style={gradSoft}>
         {total === null ? (
           <><img src="/assets/figma/pf-infinity.svg" width="23" height="12" alt="" aria-hidden className="mr-[8px] max-w-none shrink-0" /><span>{t('limits.unlimited').replace(/^∞\s*/, '')}</span></>
         ) : t('limits.used', { used, total })}
@@ -103,13 +104,14 @@ function FreeTariff() {
         <Bullet icon="pf-scissors.svg" muted>{t('profile.promoVideos')}</Bullet>
         <Bullet icon="pf-check.svg" muted>{t('profile.promoTemplates')}</Bullet>
       </div>
-      <Link
-        to="/app/pricing"
-        className="group absolute bottom-[28px] right-[28px] flex h-[60px] w-[320px] items-center justify-center gap-[16px] rounded-r15 border border-accent bg-grad-soft-20 text-[24px] font-[400] leading-none text-transparent backdrop-blur-[80px] transition hover:brightness-125 max-md:relative max-md:bottom-auto max-md:right-auto max-md:z-[1] max-md:mt-[16px] max-md:w-full"
-      >
-        <span className="translate-y-[2px]" style={gradSoft}>{t('profile.expandAccess')}</span>
-        <FigIcon name="home-arrow.svg" h={15.464} className="transition-transform duration-150 group-hover:translate-x-[2px]" />
-      </Link>
+      {/* Главное действие промо — заливка accent-strong (UI_RULES → «Кнопки»), без рамки */}
+      {/* Позиция — на обёртке: у кнопок kit свой `relative`, а cn классы не сливает */}
+      <span className="absolute bottom-[28px] right-[28px] w-[320px] max-md:relative max-md:bottom-auto max-md:right-auto max-md:z-[1] max-md:mt-[16px] max-md:block max-md:w-full">
+        <Link to="/app/pricing" className={cn(buttonClass({ variant: 'primary', size: 'lg' }), 'group w-full')}>
+          <span>{t('profile.expandAccess')}</span>
+          <FigIcon name="home-arrow.svg" h={13} className="transition-transform duration-150 group-hover:translate-x-[2px]" />
+        </Link>
+      </span>
     </div>
   );
 }
@@ -174,7 +176,7 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
           <span key={index} className={cn(index > 0 && 'ml-[41px] max-md:ml-[14px]')}>
             <span className="inline-flex h-[35px] w-[80px] items-center justify-center rounded-r15 border border-accent bg-grad-soft-20 backdrop-blur-[15px] max-md:h-[28px] max-md:w-[64px] max-md:rounded-r10">
               {/* метрики Point сажают строчные буквы выше геометрического центра пила */}
-              <span className="translate-y-[1px] text-[24px] font-[400] leading-none text-transparent max-md:translate-y-0 max-md:!text-[14px]" style={gradSoft}>{m}</span>
+              <span className="text-[24px] font-[400] leading-none text-transparent max-md:!text-[14px]" style={gradSoft}>{m}</span>
             </span>
           </span>
         ))}
@@ -616,13 +618,13 @@ export function ProfilePage() {
       {/* «Лимиты» 1192×296 */}
       <section className="card-2 h-[296px] shrink-0 p-[40px] max-md:h-auto">
         <div className="flex items-center justify-between gap-space-4">
-          <h2 className="flex items-center gap-[16px] text-[32px] font-[400] leading-[38px] text-text">
-            <FigIcon name="pf-limit-note.svg" h={19} />
+          <h2 className="flex items-center gap-[12px] text-ui-24 font-[400] text-text">
+            <FigIcon name="pf-limit-note.svg" h={16} />
             {t('limits.title')}
           </h2>
-          <Link to="/app/pricing" className="group flex items-center gap-[12px] text-[24px] font-[400] leading-[29px] text-transparent transition hover:brightness-125" style={{ backgroundImage: 'var(--grad-main)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}>
+          <Link to="/app/pricing" className="group flex items-center gap-[8px] text-ui-16 font-[400] text-transparent transition hover:brightness-125" style={{ backgroundImage: 'var(--grad-main)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}>
             {t('profile.update')}
-            <SvgMaskIcon src="/assets/figma/home-arrow.svg" className="transition-transform duration-150 group-hover:translate-x-[2px]" style={{ width: 8.782, height: 15.464, background: 'var(--grad-main)' }} />
+            <SvgMaskIcon src="/assets/figma/home-arrow.svg" className="transition-transform duration-150 group-hover:translate-x-[2px]" style={{ width: 6.4, height: 11.2, background: 'var(--grad-main)' }} />
           </Link>
         </div>
 
@@ -639,8 +641,8 @@ export function ProfilePage() {
       {/* «Тариф» — здесь расходятся W43 и W44. Высота по контенту: у Glow нет подписочной
           шкалы, и фиксированные 366px оставляли под составом пакета пустую полосу. */}
       <section className="card-2 shrink-0 overflow-hidden p-[40px]">
-        <h2 className="flex items-center gap-[14px] text-[32px] font-[400] leading-[38px]">
-          <FigIcon name="pf-tariff-arrow.svg" h={20} />
+        <h2 className="flex items-center gap-[12px] text-ui-24 font-[400]">
+          <FigIcon name="pf-tariff-arrow.svg" h={17} />
           <span className="text-text">{t('profile.tariff')}</span>
           <span className="text-text-80">{t(`profile.tier.${paid ? paidTier : 'TRIAL'}`)}</span>
         </h2>
@@ -665,12 +667,13 @@ export function ProfilePage() {
 
       <section className="card-2 flex shrink-0 items-center justify-between gap-[24px] p-[40px] max-md:flex-col max-md:items-start max-md:gap-[14px]">
         <div>
-          <h2 className="text-[24px] font-[400] text-text">{t('profile.deleteTitle')}</h2>
-          <p className="mt-[8px] max-w-[720px] text-[16px] leading-[22px] text-text-60">{t('profile.deleteText')}</p>
+          <h2 className="text-ui-24 font-[400] text-text">{t('profile.deleteTitle')}</h2>
+          <p className="mt-[8px] max-w-[720px] text-ui-16 text-text-60">{t('profile.deleteText')}</p>
         </div>
-        <button type="button" className="soft-btn h-[52px] shrink-0 px-[22px] text-[16px] text-[var(--warning)]" onClick={() => setDeleteOpen(true)}>
+        {/* Вторичная кнопка kit, цвет предупреждения — по смыслу (UI_RULES → «Статусы») */}
+        <Button className="!text-[var(--warning)]" onClick={() => setDeleteOpen(true)}>
           {t('profile.deleteAction')}
-        </button>
+        </Button>
       </section>
 
       <Modal open={disconnectOpen} title={t('profile.disconnectTiktokTitle')} onClose={() => setDisconnectOpen(false)}>

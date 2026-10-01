@@ -73,3 +73,4 @@ infra/timeweb/**/terraform.tfstate.*
 
 # Downloaded and checksum-verified during the runtime image build.
 data/models/
+web_app/backend/.fonts/

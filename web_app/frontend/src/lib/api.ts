@@ -21,6 +21,7 @@ import type {
   WizardSession,
   SubtitleFontCatalog
 } from './types';
+import type { SubtitleGeometry } from './subtitleGeometry';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -296,7 +297,12 @@ export const api = {
       method: 'POST', body: JSON.stringify({ lyrics, mediaType })
     }),
   subtitleStyles: () => request<{ status: string; styles: { id: string; name: string; previewUrl: string }[] }>('/api/wizard/subtitle-styles'),
+  // рамки монтажного стола: тот же каталог, что у бота; превью — сам PNG рамки (в моке — демо-SVG)
+  frames: () => request<{ status: string; frames: { id: string; label: string; labelEn: string; previewUrl: string }[] }>('/api/wizard/frames'),
   subtitleFonts: () => request<SubtitleFontCatalog>('/api/wizard/subtitle-fonts'),
+  // числа раскладки стиля для превью субтитров — тот же движок, что считает сборку
+  subtitleGeometry: (payload: { style: string; settings: Record<string, unknown>; renderPreset: 'vertical' | 'wide' }) =>
+    request<SubtitleGeometry>('/api/wizard/subtitle-geometry', { method: 'POST', body: JSON.stringify(payload) }),
   wizardSession: () => request<{ session: WizardSession | null }>('/api/wizard/session'),
   saveWizardSession: (payload: { projectId?: string | null; stage: number; data: Record<string, unknown> }) =>
     request<{ session: WizardSession }>('/api/wizard/session', { method: 'POST', body: JSON.stringify(payload) }),

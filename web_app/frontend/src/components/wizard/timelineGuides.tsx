@@ -1,257 +1,16 @@
-import { ReactNode, useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { create } from 'zustand';
 import { cn } from '../../lib/cn';
 
 /*
- * Мини-визуалы подсказок таймлайна FX и раскадровки «Пула». Тот же язык, что у
+ * Мини-визуалы подсказок раскадровки «Пула» и монтажного стола. Тот же язык, что у
  * остальных гайдов: мягкое появление по очереди (guide-mode-reveal + задержки), одна
- * бегущая анимация на элемент, только transform/opacity. Цвета — палитра таймлайна
- * (кадры #553ba8, хук #c6b6ff, стиль #d3a068): гайд рисуется порталом в body, CSS-
- * переменные .fxt туда не доходят.
+ * бегущая анимация на элемент, только transform/opacity. Цвет кадров — палитра стола
+ * (#553ba8): гайд рисуется порталом в body, CSS-переменные .fxt туда не доходят.
  */
 
 const FRAME = '#553ba8';
-const HOOK = '#c6b6ff';
-const STYLE = '#d3a068';
 const delay = (i: number) => `guide-mode-delay-${Math.min(7, i + 1)}`;
-
-/** Пробегающий playhead: обёртка во всю ширину едет на свою ширину. */
-function Playhead() {
-  return (
-    <span className="pointer-events-none absolute inset-y-[-3px] left-0 w-full guide-tl-sweep">
-      <i className="absolute inset-y-0 left-0 w-[2px] rounded-full bg-white shadow-[0_0_0_1px_rgba(5,1,15,.35)]" />
-    </span>
-  );
-}
-
-function Frames({ widths, height = 22, cur }: { widths: number[]; height?: number; cur?: number }) {
-  return (
-    <span className="flex w-full gap-[3px]" style={{ height }}>
-      {widths.map((w, i) => (
-        <span key={i} className={cn('guide-mode-reveal rounded-[5px]', delay(i))} style={{ flexGrow: w, flexBasis: 0, background: i === cur ? '#6f55d6' : FRAME }} />
-      ))}
-    </span>
-  );
-}
-
-/** Шаг FX 4/4: кнопка «Таймлайн» — кадры по темпу, хук на дропе, стиль на кадрах. */
-export function TimelineButtonGuideVisual() {
-  return (
-    <div className="relative flex w-full flex-col gap-[5px]" aria-hidden="true">
-      <Frames widths={[2, 1.3, 1.3, 1, 1, 1.6]} />
-      <span className="relative h-[12px] w-full">
-        <i className="guide-mode-reveal guide-mode-delay-5 absolute inset-y-0 rounded-[4px]" style={{ left: '30%', width: '26%', background: HOOK }} />
-        <i className="guide-mode-reveal guide-mode-delay-6 absolute inset-y-0 rounded-[4px]" style={{ left: '58%', width: '42%', background: STYLE }} />
-      </span>
-      <Playhead />
-    </div>
-  );
-}
-
-/* ── тур таймлайна v3: путь человека — посмотреть → выбрать эффект → листать и
-      поставить → переход на склейке → темп → готово. В каждом визуале курсор делает
-      ровно то действие, о котором текст, и нажимает ровно туда, что потом загорается. ── */
-
-/** Курсор-стрелка: белый с тёмной обводкой, видно на любой подложке. Кончик — в (2, 2). */
-function Cursor({ className }: { className: string }) {
-  return (
-    <svg className={cn('gt-cur', className)} viewBox="0 0 14 16" aria-hidden="true">
-      <path d="M1.5 1.5v11.2l3.1-2.7 2 4.4 2-.9-2-4.3 4.2-.2z" fill="#fff" stroke="#140e24" strokeWidth="1.1" strokeLinejoin="round" />
-    </svg>
-  );
-}
-/** Сцена визуала: 284 px — ровно внутренняя ширина карточки тура. */
-const Box = ({ h = 76, children }: { h?: number; children: ReactNode }) => (
-  <div className="relative mx-auto w-[284px] max-w-full overflow-hidden" style={{ height: h }} aria-hidden="true">{children}</div>
-);
-/* Значки — векторами: текстовые «+» и «›» в шрифте Point сидят выше центра круга. */
-const PlusSvg = ({ s = 10 }: { s?: number }) => (
-  <svg viewBox="0 0 12 12" width={s} height={s} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 2v8M2 6h8" /></svg>
-);
-const Chev = ({ dir, s = 9 }: { dir: 'l' | 'r'; s?: number }) => (
-  <svg viewBox="0 0 12 12" width={s} height={s} fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={dir === 'l' ? 'M7.5 2.5 4 6l3.5 3.5' : 'M4.5 2.5 8 6l-3.5 3.5'} /></svg>
-);
-const PlayTri = ({ s = 9 }: { s?: number }) => (
-  <svg viewBox="0 0 12 12" width={s} height={s} aria-hidden="true"><path d="M4 2.5v7l5.5-3.5z" fill="currentColor" /></svg>
-);
-const VIDEO = 'linear-gradient(200deg, #2f5a6e, #0b1a24 70%)';
-const DropFlag = ({ x, top }: { x: number; top: number }) => (
-  <span className="absolute -translate-x-1/2 rounded-[4px] bg-[#c6b6ff] px-[4px] py-[2px] text-[8px] leading-none text-[#170c38]" style={{ left: x, top }}>дроп</span>
-);
-
-/** 0 (прототип). Варианты: открыть список, выбрать другой; «+» — новый вариант. */
-export function TimelineVariantsGuideVisual() {
-  return (
-    <Box>
-      <span className="absolute left-[150px] top-[4px] flex h-[22px] w-[40px] items-center justify-end rounded-r-[8px] bg-accent-20 pr-[9px] text-white"><span className="gt0-plus flex"><PlusSvg s={10} /></span></span>
-      <span className="absolute left-[4px] top-[4px] flex h-[22px] w-[160px] items-center gap-[6px] rounded-[8px] bg-[#1d1533] px-[8px] shadow-[inset_0_0_0_1px_rgba(246,245,253,.13)]">
-        <span className="relative h-full flex-1">
-          <span className="gt0-a absolute inset-0 flex items-center gap-[6px] text-[10px] leading-none text-white"><i className="h-[7px] w-[7px] rounded-full bg-[#8b6fe6]" /><span className="translate-y-px">Молния · Неон</span></span>
-          <span className="gt0-b absolute inset-0 flex items-center gap-[6px] text-[10px] leading-none text-white"><i className="h-[7px] w-[7px] rounded-full bg-[#e38fb5]" /><span className="translate-y-px">Звезда · Ч/Б</span></span>
-        </span>
-        <span className="flex rotate-90 text-white/60"><Chev dir="r" s={8} /></span>
-      </span>
-      <span className="gt0-menu absolute left-[4px] top-[30px] flex w-[170px] flex-col gap-[2px] rounded-[8px] bg-[#1b1430] p-[3px] shadow-[0_8px_18px_rgba(0,0,0,.45)] ring-1 ring-white/10">
-        <span className="flex h-[17px] items-center gap-[6px] rounded-[5px] bg-[#1d1533] px-[6px] text-[10px] leading-none text-white"><i className="h-[6px] w-[6px] rounded-full bg-[#8b6fe6]" /><span className="flex-1 translate-y-px">Молния · Неон</span></span>
-        <span className="flex h-[17px] items-center gap-[6px] rounded-[5px] bg-white/[0.06] px-[6px] text-[10px] leading-none text-white/85"><i className="h-[6px] w-[6px] rounded-full bg-[#e38fb5]" /><span className="translate-y-px">Звезда · Ч/Б</span></span>
-      </span>
-      <Cursor className="gt0-cur" />
-    </Box>
-  );
-}
-
-/** 1. Посмотреть: ▶ в превью — playhead бежит по таймлайну, кадры меняются, на дропе вспышка.
- *  Раскладка как на экране таймлайна: дорожки слева, превью справа. */
-export function TimelineWatchGuideVisual() {
-  const shots = ['linear-gradient(160deg, #3b2f6e, #120b24 70%)', 'linear-gradient(200deg, #6a3f58, #1a0d1c 70%)', 'linear-gradient(170deg, #2f5a6e, #0b1a24 70%)', 'linear-gradient(190deg, #6e5a2f, #241a0b 70%)'];
-  return (
-    <Box h={84}>
-      <DropFlag x={109} top={0} />
-      <span className="absolute left-[2px] top-[20px] flex h-[16px] w-[204px] gap-[2px]">
-        {[60, 44, 52, 42].map((w, i) => <i key={i} className="shrink-0 rounded-[4px]" style={{ width: w, background: FRAME }} />)}
-      </span>
-      <i className="absolute left-[108px] top-[13px] h-[64px] w-[2px] rounded-full bg-[#c6b6ff]/70" />
-      <i className="absolute left-[110px] top-[42px] h-[12px] w-[30px] rounded-[4px]" style={{ background: HOOK }} />
-      <i className="absolute left-[110px] top-[60px] h-[12px] w-[96px] rounded-[4px]" style={{ background: STYLE }} />
-      <i className="gw-ph absolute left-[1px] top-[13px] h-[64px] w-[2px] rounded-full bg-white shadow-[0_0_0_1px_rgba(5,1,15,.35)]" />
-      <span className="absolute left-[225px] top-0 h-[84px] w-[47px] overflow-hidden rounded-[8px] bg-black ring-1 ring-white/10">
-        {shots.map((bg, i) => <i key={i} className={`gw-s${i + 1} absolute inset-0`} style={{ background: bg }} />)}
-        <i className="gw-flash absolute inset-0 bg-white" />
-        <span className="absolute inset-0 flex items-center justify-center">
-          <span className="gw-play flex h-[22px] w-[22px] items-center justify-center rounded-full bg-[rgba(5,1,15,.6)] pl-px text-white ring-1 ring-white/20"><PlayTri /></span>
-        </span>
-      </span>
-      <Cursor className="gw-cur" />
-    </Box>
-  );
-}
-
-/** 2. Библиотека: нажать на строку — этот эффект заиграет в плеере справа. */
-export function TimelineLibraryGuideVisual() {
-  return (
-    <Box h={84}>
-      {['Молния', 'Затвор', 'Слоу-шаттер'].map((label, i) => (
-        <span key={label} className="absolute left-0 flex h-[22px] w-[170px] items-center gap-[7px] rounded-[7px] bg-white/[0.06] pl-[6px] pr-[5px]" style={{ top: 5 + i * 26 }}>
-          {i === 1 && <i className="gl-sel absolute inset-0 rounded-[7px]" style={{ background: 'rgba(139,111,230,.28)', boxShadow: 'inset 0 0 0 1px #c6b6ff' }} />}
-          <i className="relative h-[14px] w-[14px] shrink-0 rounded-full" style={{ background: 'rgba(198,182,255,.22)' }} />
-          <span className="relative flex-1 translate-y-px text-[10px] leading-none text-white">{label}</span>
-          <span className="relative flex h-[14px] w-[14px] items-center justify-center rounded-full bg-white/10 pl-px text-white"><PlayTri s={7} /></span>
-        </span>
-      ))}
-      <span className="absolute left-[214px] top-0 h-[84px] w-[47px] overflow-hidden rounded-[8px] bg-black ring-1 ring-white/10">
-        <i className="absolute inset-0" style={{ background: VIDEO }} />
-        <span className="gl-demo absolute inset-0" style={{ background: 'linear-gradient(170deg, #c6b6ff, #5f42b9 60%, #140e24)' }}>
-          <i className="gl-shut-t absolute inset-x-0 top-0 h-1/2 bg-black" />
-          <i className="gl-shut-b absolute inset-x-0 bottom-0 h-1/2 bg-black" />
-        </span>
-      </span>
-      <Cursor className="gl-cur" />
-    </Box>
-  );
-}
-
-/** 3. Плеер: › — следующий пример, «На дроп» — эффект встал на дорожку, плеер вернулся к ролику. */
-export function TimelinePlayerGuideVisual() {
-  return (
-    <Box h={84}>
-      <span className="absolute left-0 top-0 h-[84px] w-[156px] overflow-hidden rounded-[10px] bg-[#0b0718] ring-1 ring-white/10">
-        <i className="absolute inset-0" style={{ background: VIDEO }} />
-        <span className="gp-demo absolute inset-0">
-          <i className="gp-a absolute inset-0" style={{ background: 'linear-gradient(170deg, #8b6fe6, #2a1b5e 70%)' }} />
-          <i className="gp-b absolute inset-0" style={{ background: 'linear-gradient(190deg, #d9d2ff, #5f42b9 55%, #140e24)' }} />
-          <span className="absolute left-[6px] top-[6px] h-[16px] w-[86px] rounded-[5px] bg-[rgba(5,1,15,.6)] text-[9px] leading-none text-white">
-            <span className="gp-a absolute inset-0 flex items-center px-[6px]"><span className="translate-y-px">Молния · 1/19</span></span>
-            <span className="gp-b absolute inset-0 flex items-center px-[6px]"><span className="translate-y-px">Затвор · 2/19</span></span>
-          </span>
-          <span className="absolute left-[5px] top-[33px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[rgba(5,1,15,.6)] text-white/75"><Chev dir="l" /></span>
-          <span className="gp-rarr absolute right-[5px] top-[33px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[rgba(5,1,15,.6)] text-white"><Chev dir="r" /></span>
-          <span className="absolute inset-x-0 bottom-[6px] flex justify-center">
-            <span className="gp-put flex h-[18px] items-center gap-[4px] rounded-[6px] bg-[#7458c7] px-[8px] text-[9px] leading-none text-white"><PlusSvg s={8} /><span className="translate-y-px">На дроп</span></span>
-          </span>
-        </span>
-      </span>
-      <DropFlag x={226} top={4} />
-      <span className="absolute left-[170px] top-[34px] h-[22px] w-[114px] rounded-[6px] bg-[#0b0718] ring-1 ring-white/10" />
-      <span className="absolute left-[177px] top-[45px] -translate-y-1/2 text-[9px] leading-none text-white/40"><span className="inline-block translate-y-px">Хук</span></span>
-      <i className="absolute left-[225px] top-[17px] h-[56px] w-[2px] rounded-full bg-[#c6b6ff]/70" />
-      <span className="gp-land absolute left-[227px] top-[37px] flex h-[16px] w-[52px] items-center justify-center rounded-[4px] text-[8px] leading-none" style={{ background: HOOK, color: '#170c38' }}><span className="translate-y-px">Затвор</span></span>
-      <Cursor className="gp-cur" />
-    </Box>
-  );
-}
-
-/** 4. Склейки: кружок между кадрами → список переходов → выбранный встаёт в кружок. */
-export function TimelineCutsGuideVisual() {
-  return (
-    <Box h={84}>
-      <span className="gc-pop absolute left-[20px] top-[6px] flex gap-[3px] rounded-[8px] bg-[#1b1430] p-[3px] shadow-[0_8px_18px_rgba(0,0,0,.45)] ring-1 ring-white/10">
-        {['Щелчок', 'Минимакс', 'Вспышка'].map((label, i) => (
-          <span key={label} className="relative flex h-[22px] w-[58px] items-center justify-center rounded-[5px] bg-white/[0.06] text-[9px] leading-none text-white/85">
-            {i === 1 && <i className="gc-pick absolute inset-0 rounded-[5px]" style={{ background: 'rgba(139,111,230,.45)', boxShadow: 'inset 0 0 0 1px #c6b6ff' }} />}
-            <span className="relative translate-y-px">{label}</span>
-          </span>
-        ))}
-        <i className="absolute bottom-[-4px] left-[70px] h-[8px] w-[8px] rotate-45 bg-[#1b1430]" />
-      </span>
-      {[0, 96, 192].map((x) => <span key={x} className="absolute top-[52px] h-[24px] w-[92px] rounded-[5px]" style={{ left: x, background: FRAME }} />)}
-      {[94, 190].map((x, i) => (
-        <span key={x} className={cn('absolute top-[55px] flex h-[18px] w-[18px] items-center justify-center rounded-full bg-[#1d1533] text-white/85 ring-1 ring-white/25', i === 0 && 'gc-press')} style={{ left: x - 9 }}>
-          <PlusSvg s={9} />
-          {i === 0 && (
-            <span className="gc-icon absolute inset-0 flex items-center justify-center rounded-full bg-[#8b6fe6] text-white">
-              <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.3" aria-hidden="true"><rect x="1.5" y="1.5" width="9" height="9" rx="1.5" /><rect x="4" y="4" width="4" height="4" rx=".8" /></svg>
-            </span>
-          )}
-        </span>
-      ))}
-      <Cursor className="gc-cur" />
-    </Box>
-  );
-}
-
-/** 5. Темп: реже · авто · чаще — одна сетка битов, разное число склеек. */
-export function TimelinePaceGuideVisual() {
-  const phases: [string, number][] = [['Реже', 3], ['Авто', 5], ['Чаще', 9]];
-  const cls = ['guide-hook-icon-a', 'guide-hook-icon-b', 'guide-hook-icon-c'];
-  return (
-    <Box h={58}>
-      <span className="absolute left-1/2 top-[2px] flex -translate-x-1/2 gap-[2px] rounded-[8px] bg-[#0b0718] p-[2px] ring-1 ring-white/10">
-        {phases.map(([l], i) => (
-          <span key={l} className="relative flex h-[20px] w-[58px] items-center justify-center rounded-[6px] text-[10px] leading-none text-white/60">
-            <i className={cn(cls[i], 'absolute inset-0 rounded-[6px] bg-accent')} />
-            <span className="relative translate-y-px text-white">{l}</span>
-          </span>
-        ))}
-      </span>
-      {phases.map(([l, n], i) => (
-        <span key={l} className={cn(cls[i], 'absolute inset-x-0 top-[34px] flex h-[18px] gap-[3px]')}>
-          {Array.from({ length: n }, (_, k) => <i key={k} className="flex-1 rounded-[4px]" style={{ background: FRAME }} />)}
-        </span>
-      ))}
-    </Box>
-  );
-}
-
-/** 6. Готово: нажать «Готово» — рецепт уже сохранён, возвращаемся к FX. */
-export function TimelineDoneGuideVisual() {
-  return (
-    <Box h={84}>
-      <span className="absolute inset-x-0 top-[22px] h-[36px] rounded-[10px] bg-white/[0.05] ring-1 ring-white/10" />
-      <span className="absolute left-[6px] top-[28px] flex h-[24px] items-center gap-[3px] rounded-[7px] bg-white/[0.07] pl-[6px] pr-[9px] text-[10px] leading-none text-white/80"><Chev dir="l" /><span className="translate-y-px">FX</span></span>
-      <span className="absolute left-[62px] top-[40px] -translate-y-1/2 text-[9px] leading-none text-white/45"><span className="inline-block translate-y-px">Трек · 00:12 – 00:27</span></span>
-      <span className="absolute left-[206px] top-[28px] flex">
-        <span className="gd-btn flex h-[24px] w-[72px] items-center justify-center rounded-[7px] bg-[#7458c7] text-[11px] leading-none text-white"><span className="translate-y-px">Готово</span></span>
-      </span>
-      <span className="absolute inset-x-0 top-[64px] flex justify-center">
-        <span className="gd-toast flex h-[18px] items-center gap-[5px] rounded-[6px] bg-white/[0.08] px-[8px] text-[9px] leading-none text-white/85">
-          <svg viewBox="0 0 12 12" width="9" height="9" fill="none" stroke="#c6b6ff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M2.5 6.3 5 8.8l4.5-5" /></svg>
-          <span className="translate-y-px">Рецепт сохранён</span>
-        </span>
-      </span>
-      <Cursor className="gd-cur" />
-    </Box>
-  );
-}
 
 /** Пул 3/4: кадр видео сменяется, стрелки по бокам «нажимаются». */
 export function StoryboardGuideVisual() {
@@ -285,14 +44,14 @@ export function StoryboardReplaceGuideVisual() {
         <span className="flex h-[22px] items-center gap-[6px] rounded-[7px] bg-white/[0.08] px-[7px] text-[11px] leading-none text-white">
           <span className="text-white/60">‹</span>
           <span className="relative h-[12px] w-[30px] overflow-hidden">
-            <span className="guide-sb-a absolute inset-0 flex items-center justify-center"><span className="translate-y-px">2 / 8</span></span>
-            <span className="guide-sb-b absolute inset-0 flex items-center justify-center"><span className="translate-y-px">3 / 8</span></span>
+            <span className="guide-sb-a absolute inset-0 flex items-center justify-center"><span>2 / 8</span></span>
+            <span className="guide-sb-b absolute inset-0 flex items-center justify-center"><span>3 / 8</span></span>
           </span>
           <span className="guide-sb-press text-white">›</span>
         </span>
         <span className="flex h-[22px] items-center gap-[5px] rounded-[7px] bg-[#5f42b9] px-[8px] text-[11px] leading-none text-white">
           <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6z" /></svg>
-          <span className="translate-y-px">Готово</span>
+          <span>Готово</span>
         </span>
       </span>
       <span className="flex h-[26px] gap-[3px]">
@@ -310,26 +69,26 @@ export function StoryboardReplaceGuideVisual() {
   );
 }
 
-/**
- * Кнопка «Таймлайн» есть только от md и шире (на телефоне широкого режима нет), поэтому
- * и шаг подсказки про неё — только там: иначе «Шаг 4 из 4» указывал бы в пустоту.
- */
-export function useTimelineGuideAvailable(): boolean {
-  const query = '(min-width: 768px)';
-  const [ok, setOk] = useState(() => typeof window !== 'undefined' && window.matchMedia(query).matches);
-  useEffect(() => {
-    const mq = window.matchMedia(query);
-    const on = () => setOk(mq.matches);
-    mq.addEventListener('change', on);
-    return () => mq.removeEventListener('change', on);
-  }, []);
-  return ok;
+/** Пул 5/5 и стол 2/2: дорожки ролика — кадры, хук на дропе, стиль, слова; бежит плейхед. */
+export function TimelineEntryGuideVisual() {
+  const lane = (children: ReactNode, i: number) => <span className={cn('guide-mode-reveal relative flex h-[14px] w-full', delay(i))}>{children}</span>;
+  return (
+    <div className="relative flex w-full flex-col gap-[5px]" aria-hidden="true">
+      {lane(<span className="flex w-full gap-[3px]">{[1.2, 1, 1.4, 1, 1.1].map((w, i) => <i key={i} className="rounded-[4px]" style={{ flexGrow: w, flexBasis: 0, background: FRAME }} />)}</span>, 0)}
+      {lane(<i className="absolute inset-y-0 left-[44%] w-[16%] rounded-[4px] bg-[#c6b6ff]" />, 1)}
+      {lane(<i className="absolute inset-y-0 left-0 w-[44%] rounded-[4px] bg-[#d3a068]" />, 2)}
+      {lane(<span className="flex w-full gap-[3px]">{[0.8, 1, 0.6, 1.2, 0.7, 1].map((w, i) => <i key={i} className="rounded-[4px] bg-white/20" style={{ flexGrow: w, flexBasis: 0 }} />)}</span>, 3)}
+      <span className="pointer-events-none absolute inset-y-[-3px] left-0 w-full guide-tl-sweep">
+        <i className="absolute inset-y-0 left-0 w-[2px] rounded-full bg-white shadow-[0_0_0_1px_rgba(5,1,15,.35)]" />
+      </span>
+    </div>
+  );
 }
 
 /**
- * Открыт ли полноэкранный таймлайн. Общий, а не локальный стейт рабочей зоны: пока он
- * открыт, подсказки шага FX (и левой панели, и рабочей зоны) прячутся — иначе они
- * висят под таймлайном одновременно с его собственными.
+ * Открыт ли полноэкранный монтажный стол. Общий флаг, а не стейт «Пула»: пока стол
+ * открыт, подсказки визарда под ним молчат (ActionGuideOverlay смотрит на него) — живут
+ * только те, что указывают внутрь стола.
  */
 export const useFxTimelineOpen = create<{ open: boolean; setOpen: (open: boolean) => void }>((set) => ({
   open: false,

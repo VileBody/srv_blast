@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { isVideoPosted, type VideoFrame, type VideoVersion } from '../lib/types';
 import { cn } from '../lib/cn';
-import { FullscreenZone } from '../components/ui/FullscreenZone';
+import { Button } from '../components/ui/kit';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { useWizardStore } from '../stores/wizardStore';
 import './TikTokPostPage.css';
@@ -37,14 +37,37 @@ const PRIVACY_API_VALUE: Record<Privacy, string> = {
 };
 const COVER_FRAME_COUNT = 8;
 const CAPTION_MAX = 2200;
-/** Габарит карточки на 1440: высота фуллскрин-зоны, ролик 9:16 на всю высоту справа */
-const CARD_SIZE = { width: 960, height: 745 };
 const MUSIC_USAGE_URL = 'https://www.tiktok.com/legal/page/global/music-usage-confirmation/en';
 const BRANDED_POLICY_URL = 'https://www.tiktok.com/legal/page/global/bc-policy/en';
 
 function Icon({ children, className = 'i' }: { children: ReactNode; className?: string }) {
   return <svg viewBox="0 0 24 24" className={className} aria-hidden="true">{children}</svg>;
 }
+/**
+ * Экран выкладки — обычная страница на всю рабочую область (как тарифы и статистика), а не
+ * врез в рамку поверх приложения. Карточка тянется на всю высоту, ролик справа ровно 9:16
+ * от этой высоты (--ttp-media-w в CSS), форма — всё остальное. Состояния без формы
+ * (подключи TikTok, пусто, ошибка) раскладываются так же: слева карточка, справа превью.
+ */
+function PostShell({ card, left, right }: { card?: ReactNode; left?: ReactNode; right?: ReactNode }) {
+  return (
+    <div className="ttp-page flex min-h-0 flex-1 flex-col lg:h-[var(--app-page-h)] lg:flex-none lg:py-[calc(var(--rail-pad-y)_-_var(--space-6))]">
+      {card ?? <div className="ttp-split">{left}{right}</div>}
+    </div>
+  );
+}
+
+/** «‹ К проекту» — выход с экрана выкладки (раньше им была иконка «Свернуть» у рамки) */
+function BackToProject({ onClick, className }: { onClick: () => void; className?: string }) {
+  const { t } = useTranslation();
+  return (
+    <button type="button" onClick={onClick} className={cn('ttp-back', className)}>
+      <Icon>{ICONS.left}</Icon>
+      <span>{t('tiktok.backToProject')}</span>
+    </button>
+  );
+}
+
 const ICONS = {
   left: <path d="M14.5 6 8.5 12l6 6" />,
   right: <path d="M9.5 6l6 6-6 6" />,
@@ -387,41 +410,43 @@ export function TikTokPostPage() {
      человек думал, что ролики пропали, вместо «сеть отвалилась». */
   if (queryDown(projectQuery) && !qaPost) {
     const failed = <QueryError query={projectQuery} className="h-full" />;
-    return <FullscreenZone responsiveScale onCollapse={() => navigate(`/app/projects/${id}`)} left={failed} right={<div className="card-2 h-full" />} />;
+    return <PostShell left={<div className="relative h-full"><BackToProject onClick={() => navigate(`/app/projects/${id}`)} className="absolute left-[20px] top-[20px] z-[1]" />{failed}</div>} right={<div className="card-2 h-full" />} />;
   }
 
   if (!projectQuery.isLoading && videos.length === 0) {
     const empty = (
-      <div className="card-2 flex h-full flex-col items-center justify-center px-[28px] text-center">
-        <h1 className="text-[32px] font-[400] leading-[38px] text-text">{t('tiktok.noVideosTitle')}</h1>
-        <p className="mt-[20px] text-[16px] leading-[19px] text-text-60">{t('tiktok.noVideosText')}</p>
-        <button type="button" onClick={startBatch} className="mt-[28px] flex h-[60px] items-center justify-center rounded-r15 border border-accent-light bg-grad-soft-20 px-[28px] text-[20px] font-[350] leading-none text-text-80 transition hover:text-text">
+      <div className="card-2 relative flex h-full flex-col items-center justify-center px-[28px] text-center max-lg:min-h-[420px]">
+        <BackToProject onClick={() => navigate(`/app/projects/${id}`)} className="absolute left-[20px] top-[20px]" />
+        <h1 className="text-ui-32 font-[400] text-text">{t('tiktok.noVideosTitle')}</h1>
+        <p className="mt-[12px] max-w-[420px] text-ui-16 text-text-60">{t('tiktok.noVideosText')}</p>
+        <Button variant="primary" size="lg" onClick={startBatch} className="mt-[28px]">
           {t('projectDetail.createBatch')}
-        </button>
+        </Button>
       </div>
     );
     const preview = (
       <div className="card-2 flex h-full flex-col p-[28px]">
-        <h2 className="text-[24px] font-[350] leading-[29px] text-text-80">{t('projectDetail.previewVideo')}</h2>
+        <h2 className="text-ui-24 font-[400] text-text-80">{t('projectDetail.previewVideo')}</h2>
         <div className="dash-panel-white mt-[28px] min-h-0 flex-1" />
       </div>
     );
-    return <FullscreenZone responsiveScale onCollapse={() => navigate(`/app/projects/${id}`)} left={empty} right={preview} />;
+    return <PostShell left={empty} right={preview} />;
   }
 
   if (!meQuery.isLoading && !meQuery.data?.tiktok && !qaPost) {
     const connect = (
-      <div className="card-2 flex h-full flex-col items-center justify-center px-[28px] text-center">
-        <h1 className="text-[32px] font-[400] leading-[38px] text-text">{t('tiktok.connectRequiredTitle')}</h1>
-        <p className="mt-[20px] max-w-[300px] text-[16px] leading-[19px] text-text-60">{t('tiktok.connectRequiredText')}</p>
-        <button type="button" onClick={() => window.location.assign(api.tiktokAuthUrl())} className="mt-[28px] flex h-[60px] items-center justify-center rounded-r15 border border-accent-light bg-grad-soft-20 px-[28px] text-[20px] font-[350] leading-none text-text-80 transition hover:text-text">
+      <div className="card-2 relative flex h-full flex-col items-center justify-center px-[28px] text-center max-lg:min-h-[420px]">
+        <BackToProject onClick={() => navigate(`/app/projects/${id}`)} className="absolute left-[20px] top-[20px]" />
+        <h1 className="text-ui-32 font-[400] text-text">{t('tiktok.connectRequiredTitle')}</h1>
+        <p className="mt-[12px] max-w-[420px] text-ui-16 text-text-60">{t('tiktok.connectRequiredText')}</p>
+        <Button variant="primary" size="lg" onClick={() => window.location.assign(api.tiktokAuthUrl())} className="mt-[28px]">
           {t('tiktok.connect')}
-        </button>
+        </Button>
       </div>
     );
     const preview = (
       <div className="card-2 flex h-full flex-col p-[28px]">
-        <h2 className="text-[24px] font-[350] leading-[29px] text-text-80">{t('projectDetail.previewVideo')}</h2>
+        <h2 className="text-ui-24 font-[400] text-text-80">{t('projectDetail.previewVideo')}</h2>
         <div className="dash-panel-white mt-[28px] min-h-0 flex-1 overflow-hidden">
           {(video?.downloadUrl || video?.thumbnailUrl) && (
             <video src={video.downloadUrl ?? undefined} poster={video.thumbnailUrl ?? undefined} muted playsInline preload="metadata" className="h-full w-full object-cover" />
@@ -429,7 +454,7 @@ export function TikTokPostPage() {
         </div>
       </div>
     );
-    return <FullscreenZone responsiveScale onCollapse={() => navigate(`/app/projects/${id}`)} left={connect} right={preview} />;
+    return <PostShell left={connect} right={preview} />;
   }
 
   /** Ошибка TikTok человеческими словами: код из fail_reason или из ответа нашего API. */
@@ -630,6 +655,8 @@ export function TikTokPostPage() {
     <main className={cn('ttp', !draft && 'locked')} aria-label={t('tiktok.screenTitle')}>
       <header className="ttp-top">
         <div className="ttp-batch">
+          <BackToProject onClick={() => navigate(`/app/projects/${id}`)} />
+          <span className="ttp-sep" aria-hidden="true" />
           {videos.length > 1 && (
             <button type="button" className="ttp-nav" onClick={() => goTo(index - 1)} disabled={index === 0 || shownStage === 'uploading'} aria-label={t('tiktok.prevVideo')}>
               <Icon>{ICONS.left}</Icon>
@@ -959,5 +986,5 @@ export function TikTokPostPage() {
     </main>
   );
 
-  return <FullscreenZone responsiveScale onCollapse={() => navigate(`/app/projects/${id}`)} card={{ ...CARD_SIZE, node: card }} />;
+  return <PostShell card={card} />;
 }

@@ -4,9 +4,11 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
-import { SvgMaskIcon } from '../layout/SvgMaskIcon';
+import { cssZoom } from '../../lib/zoom';
+import { PAUSE, PLAY, Svg, W12 } from './WizardFrame';
 import { AsrWord, useWizardStore } from '../../stores/wizardStore';
 import { usePlaybackUrl } from './useFragmentAudio';
+import { useSubtitleClock } from '../../lib/subtitleClock';
 
 /*
  * Примерка субтитров (этап «Текст»): плеер отрывка + таймлайн слов из ASR.
@@ -33,23 +35,23 @@ const MIN_PX_PER_SEC = 60;
    держим плотность выше и даём дорожке скроллиться пальцем */
 const MIN_PX_PER_SEC_NARROW = 120;
 const NARROW_LANE_PX = 480;
-/* Геометрия по Figma: контейнер 540×180; сверху 20 → слова 60 → 20 → ползунок 20 → 20 → тайминги.
-   Пунктир секунд и плейхед идут от верха контейнера до ползунка. */
-const BOX_H = 180;
-const WORD_TOP = 20;
-const WORD_H = 60;
-const BAR_TOP = 100;
-const BAR_H = 20;
-const LABEL_TOP = 144; // 16px текста → низ на 160, до края контейнера ровно 20
-/** пунктир секунд и полосы-подложки — от верха до НИЗА ползунка */
+/* Геометрия дорожки в шкале макета wizard12 (как «Отрывок» на шаге «Трек»): сверху 14 → слова 40 →
+   16 → ползунок 8 → 12 → подписи 11px. Пунктир сетки и плейхед идут от верха до ползунка. */
+const BOX_H = 116;
+const WORD_TOP = 14;
+const WORD_H = 40;
+const BAR_TOP = 70;
+const BAR_H = 8;
+const LABEL_TOP = 90;
+/** пунктир сетки и полосы-подложки — от верха до НИЗА ползунка */
 const GRID_H = BAR_TOP + BAR_H;
 /** пунктир не упирается в края: чуть короче сверху и снизу */
-const DASH_INSET = 8; // только снизу: сверху пунктир идёт от самого края
+const DASH_INSET = 4; // только снизу: сверху пунктир идёт от самого края
 /** магнит к биту при переносе слова: в пределах этого окна старт прилипает к сетке */
 const SNAP_S = 0.07;
 const TOOLTIP_DELAY_MS = 350;
-/** боковые поля контейнера (Figma: минимум 20 слева и справа) — и у дорожки, и у ползунка */
-const X0 = 20;
+/** боковые поля дорожки — и у слов, и у ползунка */
+const X0 = 14;
 const PLAYHEAD_TICK_MS = 50;
 
 function fmt(sec: number): string {
@@ -81,17 +83,9 @@ type Drag = {
 
 function TimelineNote({ eyebrow, text }: { eyebrow: string; text: string }) {
   return (
-    <div className="rounded-r15 bg-grad-soft-10 p-[6px] ring-1 ring-[rgba(246,245,253,0.08)]">
-      {/* ядро без фиолетовой заливки: нейтральный тон + inset-блик; ярлык — тот же кегль, жирнее */}
-      <div className="flex items-start gap-[12px] rounded-[9px] bg-[rgba(246,245,253,0.04)] px-[16px] py-[12px] shadow-[inset_0_1px_1px_rgba(255,255,255,0.08)]">
-        <span aria-hidden className="mt-[1px] flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-full bg-[rgba(246,245,253,0.08)]">
-          <span className="h-[6px] w-[6px] rounded-full bg-accent-light" />
-        </span>
-        <span className="min-w-0">
-          <span className="block text-[15px] font-semibold leading-[1.35] text-text">{eyebrow}</span>
-          <span className="mt-[4px] block text-[15px] leading-[1.35] text-text-80">{text}</span>
-        </span>
-      </div>
+    <div className="w12-stl-note">
+      <span className="w12-stl-note-dot" aria-hidden />
+      <span><b>{eyebrow}</b>{text}</span>
     </div>
   );
 }
@@ -280,8 +274,11 @@ export function SubtitleTimeline() {
     const el = audioRef.current;
     if (!el) return;
     if (playing) { el.pause(); setPlaying(false); return; }
-    const restart = el.readyState < 1 || el.currentTime < clipStart || el.currentTime >= clipEnd - 0.05;
-    if (restart) seekEl(el, Math.max(clipStart, time), () => { void el.play(); });
+    // доиграли до конца отрывка — плей начинает заново с его начала, а не с той же точки конца
+    const atEnd = time >= clipEnd - 0.05 || el.currentTime >= clipEnd - 0.05 || el.ended;
+    const from = atEnd ? clipStart : Math.max(clipStart, time);
+    const restart = atEnd || el.readyState < 1 || el.currentTime < clipStart;
+    if (restart) { setTime(from); seekEl(el, from, () => { void el.play(); }); }
     else void el.play();
     setPlaying(true);
   };
@@ -303,6 +300,21 @@ export function SubtitleTimeline() {
     return () => window.clearInterval(id);
   }, [playing, clipEnd, clipStart, pxPerSec]);
 
+  // Время плеера — в общие часы: превью субтитров справа рисует кадр по нему, а его кнопка
+  // плея управляет этим же плеером (звук один). Пока плеер не трогали — null: превью
+  // показывает первую фразу целиком, а не пустой кадр до первого слова.
+  const publishClock = useSubtitleClock((state) => state.publish);
+  const toggleRef = useRef(toggle);
+  toggleRef.current = toggle;
+  const touched = useRef(false);
+  if (playing || time !== clipStart) touched.current = true;
+  useEffect(() => { publishClock({ time: touched.current ? time : null, playing }); }, [publishClock, time, playing]);
+  useEffect(() => {
+    touched.current = false;
+    publishClock({ toggle: () => toggleRef.current(), time: null, playing: false });
+    return () => publishClock({ toggle: null, time: null, playing: false });
+  }, [publishClock, url, clipStart]);
+
   // --- перетаскивание ---
   const onPillDown = (index: number, mode: Drag['mode']) => (e: ReactPointerEvent<HTMLElement>) => {
     e.stopPropagation();
@@ -318,7 +330,8 @@ export function SubtitleTimeline() {
   };
   const onPillMove = (e: ReactPointerEvent<HTMLElement>) => {
     if (!drag) return;
-    const dx = (e.clientX - drag.originX) / pxPerSec;
+    // сдвиг мыши — визуальные пиксели, pxPerSec — пиксели дорожки (визард под zoom)
+    const dx = (e.clientX - drag.originX) / cssZoom(scrollRef.current) / pxPerSec;
     if (!drag.moved && Math.abs(e.clientX - drag.originX) < 3) return;
     const { min, max } = bounds(asr.words, drag.index, clipStart, clipEnd);
     const len = drag.tEnd - drag.tStart;
@@ -417,7 +430,7 @@ export function SubtitleTimeline() {
     const box = scrollRef.current;
     if (!box) return;
     const rect = box.getBoundingClientRect();
-    seek(clipStart + (clientX - rect.left + box.scrollLeft - X0) / pxPerSec);
+    seek(clipStart + ((clientX - rect.left) / cssZoom(box) + box.scrollLeft - X0) / pxPerSec);
   };
   const onHeadDown = (e: ReactPointerEvent<HTMLElement>) => { e.stopPropagation(); capture(e); seekFromLane(e.clientX); };
   const onHeadMove = (e: ReactPointerEvent<HTMLElement>) => { if (e.buttons) seekFromLane(e.clientX); };
@@ -437,240 +450,186 @@ export function SubtitleTimeline() {
   const progress = Math.min(1, Math.max(0, (time - clipStart) / duration));
 
   return (
-    <section className="mt-[24px] rounded-r15 bg-grad-soft-10 px-[28px] py-[24px] max-md:px-[16px] max-md:py-[16px]" aria-label={t('wizard.subs.timeline.title')}>
-      <div className="flex items-center justify-between gap-space-3">
-        <div className="flex items-center gap-space-3">
-          <span className="wizard-body">{t('wizard.subs.timeline.title')}</span>
-          {asr.status === 'FAILED' && <span className="text-[14px] text-[var(--error)]">{t('wizard.subs.timeline.failed')}</span>}
-        </div>
-        {/* Две круглые кнопки в правом верхнем углу: «?» — как работать (по ховеру), «✕» — сбросить правки */}
-        <div className="flex items-center gap-space-2">
-          <span className="group relative">
-            <button
-              type="button"
-              aria-label={t('wizard.subs.timeline.help')}
-              className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 pt-[2px] text-[18px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] max-md:h-[30px] max-md:w-[30px] max-md:text-[15px]"
-            >
-              ?
-            </button>
-            <span
-              role="tooltip"
-              className="pointer-events-none absolute right-0 top-[calc(100%+8px)] z-[5] w-[320px] rounded-r12 bg-[#2b2145] px-space-4 py-space-3 text-[14px] leading-[1.35] text-text opacity-0 shadow-[0_8px_28px_rgba(0,0,0,.45)] ring-1 ring-[var(--accent-light)] transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100 max-md:fixed max-md:inset-x-[12px] max-md:top-auto max-md:bottom-[12px] max-md:z-[60] max-md:w-auto max-md:text-[13px]"
-            >
-              {t('wizard.subs.timeline.hint')}
-            </span>
+    <section className="w12-sec" aria-label={t('wizard.subs.timeline.title')}>
+      <div className="w12-sec-head">
+        <h2>
+          <span className="w12-l">{t('wizard.subs.timeline.title')}</span>
+          {/* «?» — как работать с дорожкой (по ховеру и фокусу), сразу у заголовка */}
+          <span className="w12-stl-help">
+            <button type="button" className="w12-help-dot" aria-label={t('wizard.subs.timeline.help')}><span className="w12-l">?</span></button>
+            <span role="tooltip" className="w12-stl-tip-box">{t('wizard.subs.timeline.hint')}</span>
           </span>
-          <button
-            type="button"
-            onClick={resetAsrEdits}
-            disabled={!asr.edited}
-            aria-label={t('wizard.subs.timeline.reset')}
-            title={t('wizard.subs.timeline.reset')}
-            className="flex h-[36px] w-[36px] items-center justify-center rounded-full bg-grad-soft-20 pt-[2px] text-[16px] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-35"
-          >
-            ✕
+        </h2>
+        <div className="w12-side">
+          {asr.status === 'FAILED' && <span className="w12-stl-failed">{t('wizard.subs.timeline.failed')}</span>}
+          <button type="button" className="w12-ghost" onClick={resetAsrEdits} disabled={!asr.edited}>
+            <Svg>{W12.reset}</Svg><span className="w12-l">{t('wizard.subs.timeline.reset')}</span>
           </button>
         </div>
       </div>
 
-      {/* Диагностика примерки — то, что раньше всплывало только ошибкой рендера.
-          Каждое предупреждение — свой мини-контейнер (taste: double-bezel — внешняя оболочка
-          с тонким ring + внутреннее ядро с inset-бликом, концентричные радиусы; eyebrow-ярлык
-          для иерархии; индикатор в круглой подложке; без анимаций — как остальной визард). */}
-      {ready && (weakWords.length > 0 || asr.notes.includes('window_clamped')) && (
-        <div className="mt-[16px] flex flex-col gap-[10px]">
-          {asr.notes.includes('window_clamped') && asr.workingEnd !== null && (
-            <TimelineNote eyebrow={t('wizard.subs.timeline.noteWindow')} text={t('wizard.subs.timeline.windowClamped', { at: fmt(asr.workingEnd - clipStart) })} />
-          )}
-          {weakWords.length > 0 && (
-            <TimelineNote eyebrow={t('wizard.subs.timeline.noteWords')} text={t('wizard.subs.timeline.weakWords', { words: weakWords.map((w) => `«${w}»`).join(', ') })} />
-          )}
-        </div>
-      )}
-
-      {/* Плеер (макет): квадратный play, табло времени, «Фокус» — одна высота 80 */}
-      <div className="mt-[20px] flex flex-wrap items-center gap-space-4 max-md:mt-[12px] max-md:gap-[8px]">
-        <button
-          type="button"
-          onClick={toggle}
-          disabled={!url || !ready}
-          aria-label={playing ? t('wizard.subs.timeline.pause') : t('wizard.subs.timeline.play')}
-          className="flex h-[64px] w-[64px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[40px] max-md:w-[40px]"
-        >
-          {playing ? (
-            <span className="flex gap-[6px] max-md:gap-[4px]" aria-hidden><span className="h-[20px] w-[6px] rounded-[2px] bg-text max-md:h-[13px] max-md:w-[4px]" /><span className="h-[20px] w-[6px] rounded-[2px] bg-text max-md:h-[13px] max-md:w-[4px]" /></span>
-          ) : (
-            <span aria-hidden className="ml-[5px] h-0 w-0 border-y-[11px] border-l-[18px] border-y-transparent border-l-[var(--text)] max-md:ml-[3px] max-md:border-y-[7px] max-md:border-l-[11px]" />
-          )}
-        </button>
-        <span className="flex h-[64px] items-center rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] tabular-nums leading-none text-text-80 max-md:h-[40px] max-md:px-[10px] max-md:text-[14px]">
-          {fmt(time - clipStart)}
-        </span>
-        <button
-          type="button"
-          disabled={selected === null}
-          onClick={() => { if (selected !== null) toggleAsrFocus(selected); }}
-          aria-pressed={focusOn}
-          className="group flex h-[64px] items-center gap-[12px] rounded-r15 bg-grad-soft-20 pl-[12px] pr-[20px] text-[24px] font-[350] leading-none text-text-80 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] hover:text-text hover:shadow-[inset_0_0_0_1px_var(--border-hover)] active:scale-[0.98] disabled:opacity-40 max-md:h-[40px] max-md:shrink-0 max-md:gap-[6px] max-md:whitespace-nowrap max-md:pl-[6px] max-md:pr-[10px] max-md:text-[14px]"
-        >
-          {focusOn ? (
-            <span aria-hidden className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-full bg-text transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105 max-md:h-[22px] max-md:w-[22px]">
-              <SvgMaskIcon src="/assets/figma/pd-star.svg" style={{ width: 19, height: 18, color: 'var(--accent)' }} className="max-md:!h-[11px] max-md:!w-[12px]" />
-            </span>
-          ) : (
-            <img src="/assets/figma/obj-zvezda5.svg" width="40" height="40" alt="" aria-hidden="true" className="h-[40px] w-[40px] shrink-0 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-105 max-md:h-[22px] max-md:w-[22px]" />
-          )}
-          {focusOn ? t('wizard.subs.timeline.unfocus') : t('wizard.subs.timeline.focus')}
-        </button>
-        {/* зум дорожки: та же пилюля-контейнер, внутри бегунок; крайние значения — обзор / точная правка */}
-        <label className="flex h-[64px] min-w-[180px] flex-1 items-center gap-[12px] rounded-r15 bg-grad-soft-20 px-[18px] text-[24px] font-[350] leading-none text-text-80 max-lg:min-w-0 max-md:h-[40px] max-md:basis-full max-md:text-[14px]">
-          <span aria-hidden className="select-none pt-[3px]">−</span>
-          <input
-            type="range"
-            min={0.5}
-            max={5}
-            step={0.05}
-            value={zoom}
-            onChange={(e) => setZoom(Number(e.target.value))}
-            aria-label={t('wizard.subs.timeline.zoom')}
-            className="zoom-range min-w-0 flex-1"
-            disabled={!ready}
-          />
-          <span aria-hidden className="select-none pt-[3px]">+</span>
-        </label>
-      </div>
-
-      {/* Таймлайн (Figma 540×180): один контейнер дефолтного цвета, внутри — дорожка слов,
-          ползунок на всю ширину и подписи секунд. Секунды-пунктир и плейхед — от верха до ползунка. */}
-      <div className="relative mt-[20px] overflow-hidden rounded-r15 bg-grad-soft-20 ring-1 ring-[rgba(246,245,253,0.06)]" style={{ height: BOX_H }}>
-        <div
-          ref={scrollRef}
-          id="subtitle-timeline-lane"
-          tabIndex={0}
-          onKeyDown={onKey}
-          className="no-scrollbar relative h-full overflow-x-auto overflow-y-hidden outline-none focus-visible:ring-1 focus-visible:ring-accent-light"
-          onScroll={onLaneScroll}
-          onWheel={onWheel}
-          onPointerDown={(e) => {
-            // клик по пустому месту дорожки — перемотка
-            seekFromLane(e.clientX);
-            setSelected(null);
-          }}
-        >
-          {!ready ? (
-            <div className="flex h-full items-center justify-center px-space-5 text-center text-[15px] text-text-60">
-              {asr.status === 'FAILED' ? (asr.error || t('wizard.subs.timeline.failed'))
-                : asr.status === 'IDLE' ? t('wizard.subs.timeline.idleHint')
-                  : <span className="flex items-center gap-space-3"><span className="spinner !h-[22px] !w-[22px] !border-2 !border-accent-20 !border-t-accent-light" />{t('wizard.subs.timeline.runningHint')}</span>}
-            </div>
-          ) : (
-            <div className="relative h-full" style={{ width }}>
-              {/* подложка: каждая ВТОРАЯ секунда (между пунктиром 1–2, 3–4, …) чуть светлее фона —
-                  так таймлайн читается и через одно окно */}
-              {ticks.filter((_, i) => i % 2 === 0).map((s) => (
-                <span key={`b${s}`} aria-hidden className="pointer-events-none absolute top-0 bg-[rgba(246,245,253,0.05)]" style={{ left: X0 + (s - clipStart) * pxPerSec, width: Math.min(gridUnit * pxPerSec, (clipEnd - s) * pxPerSec), height: GRID_H }} />
-              ))}
-              {/* пунктир секунд: от верха до низа ползунка */}
-              {ticks.map((s) => (
-                <span key={s} aria-hidden className="pointer-events-none absolute top-0 border-l-[3px] border-dashed border-[rgba(246,245,253,0.28)]" style={{ left: X0 + (s - clipStart) * pxPerSec - 1.5, height: GRID_H - DASH_INSET }} />
-              ))}
-              {/* волна отрывка — фоном под словами */}
-              <canvas ref={waveRef} aria-hidden className="pointer-events-none absolute top-0" style={{ left: X0, width: Math.ceil(duration * pxPerSec), height: BAR_TOP }} />
-              {/* слова: не выделено / выделено (обводка) / фокусное (белое) */}
-              {asr.words.map((word, index) => {
-                const cur = live && live.index === index ? live : word;
-                const left = X0 + (cur.tStart - clipStart) * pxPerSec;
-                const w = Math.max(14, (cur.tEnd - cur.tStart) * pxPerSec);
-                const isSel = selected === index;
-                const isActive = activeIndex === index;
-                return (
-                  <div
-                    key={index}
-                    role="button"
-                    tabIndex={-1}
-                    onPointerEnter={() => hoverIn(index)}
-                    onPointerLeave={hoverOut}
-                    onPointerDown={onPillDown(index, 'move')}
-                    onPointerMove={onPillMove}
-                    onPointerUp={onPillUp}
-                    onPointerCancel={onPillUp}
-                    onDoubleClick={(e) => { e.stopPropagation(); toggleAsrFocus(index); }}
-                    className={cn(
-                      'absolute flex cursor-grab touch-none select-none items-center justify-center rounded-r12 px-[16px] text-[24px] font-[350] leading-none transition-[box-shadow,background-color,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] active:cursor-grabbing max-md:px-[10px] max-md:text-[18px]',
-                      // три состояния (макет): обычное / выделенное / фокусное — все НЕПРОЗРАЧНЫЕ
-                      word.focus
-                        ? 'bg-text text-accent'
-                        : isActive
-                          ? 'bg-accent text-text'
-                          : 'bg-[var(--tl-pill)] text-text-80 shadow-[inset_0_1px_1px_rgba(255,255,255,0.10)]',
-                      // «слабо легло»: выравниватель не уверен в слове — предупреждающая обводка
-                      word.weak && !isSel && !word.focus && 'shadow-[inset_0_0_0_2px_rgba(246,245,253,0.45)]',
-                      isSel && !word.focus && '!text-text shadow-[inset_0_0_0_2px_var(--accent-light)]',
-                      isSel && word.focus && 'shadow-[0_0_0_2px_var(--accent-light)]',
-                      isSel && 'z-[2]',
-                      hovered === index && 'z-[7]'
-                    )}
-                    style={{ left, width: w, top: WORD_TOP, height: WORD_H }}
-                  >
-                    {w >= 44 && <span className="truncate">{word.text}</span>}
-                    {hovered === index && !drag && (
-                      <span role="tooltip" className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-[6] -translate-x-1/2 whitespace-nowrap rounded-r9 bg-[#2b2145] px-[10px] py-[6px] text-[13px] font-[350] leading-none tabular-nums text-text shadow-[0_8px_28px_rgba(0,0,0,.45)] ring-1 ring-[var(--accent-light)]">
-                        {fmt(cur.tStart - clipStart)} – {fmt(cur.tEnd - clipStart)}
-                      </span>
-                    )}
-                    {/* ручки длительности — тянут только край */}
-                    <span onPointerDown={onPillDown(index, 'start')} className="absolute inset-y-0 left-0 w-[8px] cursor-ew-resize touch-none hover:bg-[rgba(246,245,253,0.18)] max-md:w-[14px]" />
-                    <span onPointerDown={onPillDown(index, 'end')} className="absolute inset-y-0 right-0 w-[8px] cursor-ew-resize touch-none hover:bg-[rgba(246,245,253,0.18)] max-md:w-[14px]" />
-                  </div>
-                );
-              })}
-              {/* подписи секунд */}
-              {ticks.map((s) => (
-                <span key={`l${s}`} aria-hidden className={cn('pointer-events-none absolute text-[16px] leading-none tabular-nums text-text-60', X0 + (s - clipStart) * pxPerSec >= 40 && '-translate-x-1/2')} style={{ left: X0 + (s - clipStart) * pxPerSec, top: LABEL_TOP }}>
-                  {gridStep < 1 || beats.length ? fmt(s - clipStart) : fmt(s - clipStart).slice(0, 5)}
-                </span>
-              ))}
-              {/* плейхед: линия с ромбиками, от верха до ползунка; тянется */}
-              <span
-                role="presentation"
-                onPointerDown={onHeadDown}
-                onPointerMove={onHeadMove}
-                className="absolute left-0 top-0 z-[3] w-[14px] cursor-ew-resize will-change-transform"
-                style={{ transform: `translateX(${X0 + progress * duration * pxPerSec - 5}px)`, height: BAR_TOP + BAR_H / 2 }}
-              >
-                <span aria-hidden className="absolute inset-y-0 left-1/2 w-[2px] -translate-x-1/2 bg-text" />
-                <span aria-hidden className="absolute left-1/2 top-0 h-[12px] w-[12px] -translate-x-1/2 -translate-y-1/2 rotate-45 rounded-[2px] bg-text" />
-              </span>
-            </div>
-          )}
-        </div>
-        {/* ползунок: крутилка дорожки влево-вправо (кастомный скроллбар), непрозрачный */}
-        {ready && (
-        <div
-          ref={barRef}
-          role="scrollbar"
-          aria-controls="subtitle-timeline-lane"
-          aria-orientation="horizontal"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round((scroll.left / Math.max(1, scroll.total - scroll.visible)) * 100) || 0}
-          onPointerDown={ready ? onBarDown : undefined}
-          onPointerMove={ready ? onBarMove : undefined}
-          onPointerUp={onBarUp}
-          onPointerCancel={onBarUp}
-          className={cn('absolute z-[4] select-none rounded-full bg-[#4b3892]', ready ? 'cursor-pointer' : 'opacity-40')}
-          style={{ top: BAR_TOP, height: BAR_H, left: X0, right: X0 }}
-        >
-          <span
-            aria-hidden
-            className="absolute top-0 h-full rounded-full bg-text"
-            style={{
-              width: `max(60px, ${thumbFrac * 100}%)`,
-              left: `calc(${scroll.left / Math.max(1, scroll.total - scroll.visible)} * (100% - max(60px, ${thumbFrac * 100}%)))`
-            }}
-          />
-        </div>
+      <div className="w12-cut">
+        {/* Диагностика примерки — то, что раньше всплывало только ошибкой рендера */}
+        {ready && (weakWords.length > 0 || asr.notes.includes('window_clamped')) && (
+          <div className="w12-stl-notes">
+            {asr.notes.includes('window_clamped') && asr.workingEnd !== null && (
+              <TimelineNote eyebrow={t('wizard.subs.timeline.noteWindow')} text={t('wizard.subs.timeline.windowClamped', { at: fmt(asr.workingEnd - clipStart) })} />
+            )}
+            {weakWords.length > 0 && (
+              <TimelineNote eyebrow={t('wizard.subs.timeline.noteWords')} text={t('wizard.subs.timeline.weakWords', { words: weakWords.map((w) => `«${w}»`).join(', ') })} />
+            )}
+          </div>
         )}
+
+        {/* Таймлайн: дорожка слов, ползунок на всю ширину и подписи сетки */}
+        <div className="w12-stl-box" style={{ height: BOX_H }}>
+          <div
+            ref={scrollRef}
+            id="subtitle-timeline-lane"
+            tabIndex={0}
+            onKeyDown={onKey}
+            className="w12-stl-lane"
+            onScroll={onLaneScroll}
+            onWheel={onWheel}
+            onPointerDown={(e) => {
+              // клик по пустому месту дорожки — перемотка
+              seekFromLane(e.clientX);
+              setSelected(null);
+            }}
+          >
+            {!ready ? (
+              <div className="w12-stl-empty">
+                {asr.status === 'FAILED' ? (asr.error || t('wizard.subs.timeline.failed'))
+                  : asr.status === 'IDLE' ? t('wizard.subs.timeline.idleHint')
+                    : <><span className="spinner" aria-hidden="true" />{t('wizard.subs.timeline.runningHint')}</>}
+              </div>
+            ) : (
+              <div className="w12-stl-canvas" style={{ width }}>
+                {/* подложка: каждая ВТОРАЯ зона сетки чуть светлее — дорожка читается и через одно окно */}
+                {ticks.filter((_, i) => i % 2 === 0).map((s) => (
+                  <span key={`b${s}`} aria-hidden className="w12-stl-zone" style={{ left: X0 + (s - clipStart) * pxPerSec, width: Math.min(gridUnit * pxPerSec, (clipEnd - s) * pxPerSec), height: GRID_H }} />
+                ))}
+                {/* пунктир сетки: от верха до низа ползунка */}
+                {ticks.map((s) => (
+                  <span key={s} aria-hidden className="w12-stl-tick" style={{ left: X0 + (s - clipStart) * pxPerSec, height: GRID_H - DASH_INSET }} />
+                ))}
+                {/* волна отрывка — фоном под словами */}
+                <canvas ref={waveRef} aria-hidden className="w12-stl-wave" style={{ left: X0, width: Math.ceil(duration * pxPerSec), height: BAR_TOP }} />
+                {/* слова: обычное / играет сейчас / выделенное (обводка) / фокусное (белое) / слабо легло */}
+                {asr.words.map((word, index) => {
+                  const cur = live && live.index === index ? live : word;
+                  const left = X0 + (cur.tStart - clipStart) * pxPerSec;
+                  const w = Math.max(14, (cur.tEnd - cur.tStart) * pxPerSec);
+                  return (
+                    <div
+                      key={index}
+                      role="button"
+                      tabIndex={-1}
+                      onPointerEnter={() => hoverIn(index)}
+                      onPointerLeave={hoverOut}
+                      onPointerDown={onPillDown(index, 'move')}
+                      onPointerMove={onPillMove}
+                      onPointerUp={onPillUp}
+                      onPointerCancel={onPillUp}
+                      onDoubleClick={(e) => { e.stopPropagation(); toggleAsrFocus(index); }}
+                      className={cn(
+                        'w12-stl-word',
+                        word.focus && 'w12-focus',
+                        !word.focus && activeIndex === index && 'w12-on',
+                        word.weak && !word.focus && 'w12-weak',
+                        selected === index && 'w12-sel',
+                        hovered === index && 'w12-hover'
+                      )}
+                      style={{ left, width: w, top: WORD_TOP, height: WORD_H }}
+                    >
+                      {w >= 32 && <span className="w12-l">{word.text}</span>}
+                      {hovered === index && !drag && (
+                        <span role="tooltip" className="w12-stl-tip w12-num">{fmt(cur.tStart - clipStart)} – {fmt(cur.tEnd - clipStart)}</span>
+                      )}
+                      {/* ручки длительности — тянут только край */}
+                      <span onPointerDown={onPillDown(index, 'start')} className="w12-stl-edge w12-l-edge" />
+                      <span onPointerDown={onPillDown(index, 'end')} className="w12-stl-edge w12-r-edge" />
+                    </div>
+                  );
+                })}
+                {/* подписи сетки */}
+                {ticks.map((s) => (
+                  <span key={`l${s}`} aria-hidden className={cn('w12-stl-lbl w12-num', X0 + (s - clipStart) * pxPerSec >= 30 && 'w12-mid')} style={{ left: X0 + (s - clipStart) * pxPerSec, top: LABEL_TOP }}>
+                    {gridStep < 1 || beats.length ? fmt(s - clipStart) : fmt(s - clipStart).slice(0, 5)}
+                  </span>
+                ))}
+                {/* плейхед: линия с ромбиком, от верха до ползунка; тянется */}
+                <span
+                  role="presentation"
+                  onPointerDown={onHeadDown}
+                  onPointerMove={onHeadMove}
+                  className="w12-stl-head"
+                  style={{ transform: `translateX(${X0 + progress * duration * pxPerSec - 7}px)`, height: BAR_TOP + BAR_H / 2 }}
+                />
+              </div>
+            )}
+          </div>
+          {/* ползунок: прокрутка дорожки влево-вправо (свой скроллбар) */}
+          {ready && (
+            <div
+              ref={barRef}
+              role="scrollbar"
+              aria-controls="subtitle-timeline-lane"
+              aria-orientation="horizontal"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round((scroll.left / Math.max(1, scroll.total - scroll.visible)) * 100) || 0}
+              onPointerDown={onBarDown}
+              onPointerMove={onBarMove}
+              onPointerUp={onBarUp}
+              onPointerCancel={onBarUp}
+              className="w12-stl-sb"
+              style={{ top: BAR_TOP, height: BAR_H, left: X0, right: X0 }}
+            >
+              <span
+                aria-hidden
+                style={{
+                  width: `max(60px, ${thumbFrac * 100}%)`,
+                  left: `calc(${scroll.left / Math.max(1, scroll.total - scroll.visible)} * (100% - max(60px, ${thumbFrac * 100}%)))`
+                }}
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Плеер отрывка, время, «Фокус» для выбранного слова и масштаб дорожки — одной строкой, как у «Отрывка» */}
+        <div className="w12-cut-row">
+          <button type="button" className="w12-play-cut" onClick={toggle} disabled={!url || !ready} style={url && ready ? undefined : { opacity: 0.5 }}>
+            <span className="w12-dot">{playing ? PAUSE : PLAY}</span>
+            <span className="w12-l">{playing ? t('wizard.subs.timeline.pause') : t('wizard.subs.timeline.play')}</span>
+          </button>
+          <span className="w12-stl-time w12-num"><span className="w12-l">{fmt(time - clipStart)}</span></span>
+          <button
+            type="button"
+            className="w12-stl-focus"
+            disabled={selected === null}
+            onClick={() => { if (selected !== null) toggleAsrFocus(selected); }}
+            aria-pressed={focusOn}
+          >
+            <span className="w12-mi w12-cap" aria-hidden="true" style={{ '--m': 'url(/assets/figma/pd-star.svg)', '--r': 1.05 } as React.CSSProperties} />
+            <span className="w12-l">{focusOn ? t('wizard.subs.timeline.unfocus') : t('wizard.subs.timeline.focus')}</span>
+          </button>
+          {/* масштаб дорожки: обзор всех слов ↔ точная правка */}
+          <label className="w12-stl-zoom">
+            <span aria-hidden className="w12-l">−</span>
+            <input
+              type="range"
+              min={0.5}
+              max={5}
+              step={0.05}
+              value={zoom}
+              onChange={(e) => setZoom(Number(e.target.value))}
+              aria-label={t('wizard.subs.timeline.zoom')}
+              disabled={!ready}
+            />
+            <span aria-hidden className="w12-l">+</span>
+          </label>
+        </div>
       </div>
     </section>
   );

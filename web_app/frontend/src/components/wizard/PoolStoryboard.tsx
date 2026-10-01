@@ -1,14 +1,14 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
+import { cssZoom } from '../../lib/zoom';
 import type { StoryboardCandidate, StoryboardPickedVideo } from '../../lib/types';
 import { emptyStoryboard, recipeKeyOf, StoryboardVideo, useWizardStore } from '../../stores/wizardStore';
-import { seedKeyFor, useRecipeCuts, useStoryboardBusy } from './storyboardData';
+import { poolGuideId, poolTourTotal, seedKeyFor, useRecipeCuts, useStoryboardBusy } from './storyboardData';
 import { usePlaybackUrl } from './useFragmentAudio';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useFxLab } from './FxLab';
-import { poolGuideId } from './SlicePanel';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { StoryboardGuideVisual, StoryboardReplaceGuideVisual } from './timelineGuides';
 import './PoolStoryboard.css';
@@ -43,14 +43,15 @@ const TD = 0.32;
 const eIO = (p: number) => p < 0.5 ? 8 * p ** 4 : 1 - Math.pow(-2 * p + 2, 4) / 2;
 const secs = (t: number) => `${t.toFixed(1).replace('.', ',')} с`;
 const kadr = (n: number) => n % 10 === 1 && n % 100 !== 11 ? 'кадр' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'кадра' : 'кадров';
-const shuffleOf = (seedKey: string) => Number(/:s(\d+)$/.exec(seedKey)?.[1] ?? 0);
+const isSvg = (url: string) => /\.svg(\?|$)/.test(url);
+export const shuffleOf = (seedKey: string) => Number(/:s(\d+)$/.exec(seedKey)?.[1] ?? 0);
 
-function toVideo(picked: StoryboardPickedVideo, seedKey: string, pins: Record<number, string>): StoryboardVideo {
+export function toVideo(picked: StoryboardPickedVideo, seedKey: string, pins: Record<number, string>): StoryboardVideo {
   return { index: picked.index, group: picked.group, seedKey, clips: picked.clips, repeats: picked.repeats, pins, plan: picked.plan };
 }
 
 /** Клип-кандидат на место кадра k: и превью, и закреплённый план. */
-function withClip(video: StoryboardVideo, k: number, c: StoryboardCandidate): StoryboardVideo {
+export function withClip(video: StoryboardVideo, k: number, c: StoryboardCandidate): StoryboardVideo {
   const clips = video.clips.map((clip, i) => (i === k ? { ...clip, fileName: c.fileName, previewUrl: c.previewUrl, previewOffset: c.previewOffset, tags: c.tags } : clip));
   const planClips = ((video.plan.clips as Record<string, unknown>[]) ?? []).map((clip, i) => (
     i === k ? { ...clip, file_name: c.fileName, source_offset_sec: 0, start_time: clip.in_point } : clip
@@ -68,12 +69,14 @@ const REROLL = 'M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20
 const DICE = 'M7.5 4h9A3.5 3.5 0 0 1 20 7.5v9a3.5 3.5 0 0 1-3.5 3.5h-9A3.5 3.5 0 0 1 4 16.5v-9A3.5 3.5 0 0 1 7.5 4zM9 9h.01M15 15h.01M15 9h.01M9 15h.01';
 const LOCK = 'M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6z';
 
-export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlot[]; current: number; chips: StoryboardChip[] }) {
+/** edited — у видео есть ручные правки с таймлайна: пилюля «Изменён» закреплена слева над чипами. */
+export function PoolStoryboard({ slots, current, chips, edited }: { slots: StoryboardSlot[]; current: number; chips: StoryboardChip[]; edited?: boolean }) {
   const track = useWizardStore((s) => s.track);
   const timingFrom = useWizardStore((s) => s.timingFrom);
   const timingTo = useWizardStore((s) => s.timingTo);
   const batchKey = useWizardStore((s) => s.final.idempotencyKey);
   const storyboard = useWizardStore((s) => s.storyboard);
+  const background = useWizardStore((s) => s.background);
   const setStoryboard = useWizardStore((s) => s.setStoryboard);
   const setStoryboardVideo = useWizardStore((s) => s.setStoryboardVideo);
   const recipe = useRecipeCuts();
@@ -199,18 +202,34 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
   const step = (d: number) => { if (!shots || edit) return; seekShot((s + d + shots) % shots); };
   const allFiles = () => Object.values(storyboard.videos).flatMap((v) => v.clips.map((c) => c.fileName));
 
+  // Номер запроса замены: ответ после перелистывания видео (или нового запроса) отбрасываем,
+  // иначе подобранный клип лёг бы в кадр уже другого видео.
+  const editReq = useRef(0);
+  useEffect(() => { editReq.current += 1; }, [current]);
+  // Сбой подбора ОДНОГО кадра — временная строка в доке, а не заглушка на всю раскадровку:
+  // раскадровка цела, человек просто пробует ещё раз.
+  const [editNote, setEditNote] = useState<string | null>(null);
+  useEffect(() => {
+    if (!editNote) return undefined;
+    const timer = window.setTimeout(() => setEditNote(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [editNote]);
   const startEdit = async () => {
     if (!video || !cuts) return;
     const k = s;
+    const id = ++editReq.current;
     setEdit({ k, orig: video, candidates: [], pos: -1, loading: true });
     seekTo(bounds[k] + 0.001); setPlaying(true);
     try {
       const res = await api.storyboardAlternatives({ clipFrom: timingFrom, clipTo: timingTo, cuts, group: video.group, shot: k, seedKey: video.seedKey, exclude: allFiles(), limit: 20 });
-      if (!res.candidates.length) { setEdit(null); return; }
+      if (id !== editReq.current) return;
+      if (!res.candidates.length) { setEdit(null); setEditNote('У вайба не нашлось других клипов для этого кадра'); return; }
       setEdit({ k, orig: video, candidates: res.candidates, pos: 0, loading: false });
       setStoryboardVideo(withClip(video, k, res.candidates[0]));
-    } catch {
+    } catch (err) {
+      if (id !== editReq.current) return;
       setEdit(null);
+      setEditNote((err as Error).message ? `Не удалось подобрать клипы: ${(err as Error).message}` : 'Не удалось подобрать клипы — попробуй ещё раз');
     }
   };
   const variant = (dir: number) => {
@@ -276,6 +295,18 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
   /* ── лента чипов: листается перетаскиванием ── */
   const railRef = useRef<HTMLDivElement>(null);
   const railDrag = useRef<{ x: number; left: number; moved: boolean } | null>(null);
+  const markRef = useRef<HTMLSpanElement>(null);
+  const [markW, setMarkW] = useState(0);
+  // ширина пилюли — по факту (шрифт догружается, язык меняет текст): от неё отступ и фейд ленты
+  useLayoutEffect(() => {
+    const el = markRef.current;
+    if (!edited || !el) { setMarkW(0); return undefined; }
+    const sync = () => setMarkW(el.offsetWidth);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [edited]);
 
   const clip = video?.clips[s];
   const pinned = video ? Object.keys(video.pins).length : 0;
@@ -310,16 +341,20 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
           {video && video.clips.map((c, i) => {
             const visible = i === s || (inTr && i === s - 1);
             const style: React.CSSProperties = inTr && i === s ? { clipPath: `inset(0 ${(100 - 100 * eIO(since / TD)).toFixed(1)}% 0 0)`, zIndex: 2 } : { zIndex: i === s ? 2 : 1 };
-            return c.previewUrl
-              ? <video key={`${c.fileName}:${i}`} ref={(el) => { videoRefs.current[i] = el; }} className={`shot${visible ? ' on' : ''}`} src={c.previewUrl} muted playsInline preload="auto" style={style} />
-              : null;
+            if (!c.previewUrl) return null;
+            // демо-превью мока — анимированный SVG: <video> его не откроет
+            return isSvg(c.previewUrl)
+              ? <img key={`${c.fileName}:${i}`} className={`shot${visible ? ' on' : ''}`} src={c.previewUrl} alt="" draggable={false} style={style} />
+              : <video key={`${c.fileName}:${i}`} ref={(el) => { videoRefs.current[i] = el; }} className={`shot${visible ? ' on' : ''}`} src={c.previewUrl} muted playsInline preload="auto" style={style} />;
           })}
           {placeholder && <div className="psb-ph"><span className="tx">{placeholder}</span></div>}
           <div className="psb-shade" />
-          <div className="psb-chips">
+          <div className="psb-chips" data-mark={edited || undefined} style={markW ? ({ '--mark-w': `${markW}px` } as React.CSSProperties) : undefined}>
+            {/* «Изменён» стоит на месте, чипы уезжают под него и тают у его края */}
+            {edited && <span ref={markRef} className="psb-chip psb-mark" title={tr('wizard.pool.editedOnTimeline')}><span className="tx">{tr('wizard.pool.edited')}</span></span>}
             <div ref={railRef} className="rail"
               onPointerDown={(e) => { if (e.pointerType !== 'touch' && railRef.current) railDrag.current = { x: e.clientX, left: railRef.current.scrollLeft, moved: false }; }}
-              onPointerMove={(e) => { const d = railDrag.current; if (!d || !railRef.current) return; const dx = e.clientX - d.x; if (Math.abs(dx) > 5) { d.moved = true; railRef.current.scrollLeft = d.left - dx; } }}
+              onPointerMove={(e) => { const d = railDrag.current; if (!d || !railRef.current) return; const dx = e.clientX - d.x; if (Math.abs(dx) > 5) { d.moved = true; railRef.current.scrollLeft = d.left - dx / cssZoom(railRef.current); } }}
               onPointerUp={() => { railDrag.current = null; }} onPointerLeave={() => { railDrag.current = null; }}>
               {chips.map((chip, i) => <span key={i} className={`psb-chip psb-glass${chip.off ? ' off' : ''}`}>{chip.icon}<span className="tx">{chip.text}</span></span>)}
             </div>
@@ -357,16 +392,16 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
                       {video.pins[s] && <button type="button" className="psb-badge pin" onClick={unpin} title="Заменён вручную и закреплён. Нажми, чтобы открепить">закреплён ×</button>}
                       {video.repeats.includes(s) && <span className="psb-badge warn" title="Вайбу не хватило свежих клипов на весь батч — этот клип есть и в другом видео">повтор</span>}
                     </b>
-                    <small className="tx">{clip.tags.length ? clip.tags.join(' · ') : `${shots} ${kadr(shots)} · закреплено ${pinned}`}</small>
+                    <small className={editNote ? 'tx psb-note' : 'tx'} role={editNote ? 'status' : undefined}>{editNote ?? (clip.tags.length ? clip.tags.join(' · ') : `${shots} ${kadr(shots)} · закреплено ${pinned}`)}</small>
                   </div>
                   <button type="button" className="psb-btn" onClick={() => void shuffle()} disabled={status.loading} aria-label="Перемешать видео" title="Перемешать незакреплённые кадры этого видео"><Svg d={DICE} /></button>
-                  <button type="button" className="psb-btn pri" onClick={() => { setReplaceGuideDismissed(true); void startEdit(); }} title="Подобрать другой клип для кадра на экране"><Svg d={REROLL} /><span className="tx">Заменить кадр</span></button>
+                  <button type="button" className="psb-btn pri" onClick={() => { setReplaceGuideDismissed(true); void startEdit(); }} aria-label="Заменить кадр" title="Подобрать другой клип для кадра на экране"><Svg d={REROLL} /><span className="tx">Заменить кадр</span></button>
                 </div>
               )}
               <div className={`psb-strip${edit ? ' editing' : ''}`}>
                 {video.clips.map((c, i) => (
                   <button key={`${c.fileName}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === s ? ' cur' : ''}`} style={{ flexGrow: bounds[i + 1] - bounds[i] }} aria-label={`Кадр ${i + 1}`} onClick={() => { if (!edit) seekShot(i); }}>
-                    {c.previewUrl && <video src={`${c.previewUrl}#t=${c.previewOffset + 0.1}`} muted playsInline preload="metadata" />}
+                    {c.previewUrl && (isSvg(c.previewUrl) ? <img src={c.previewUrl} alt="" draggable={false} /> : <video src={`${c.previewUrl}#t=${c.previewOffset + 0.1}`} muted playsInline preload="metadata" />)}
                     {dropRel !== null && Math.abs(bounds[i] - dropRel) < 0.01 && <i className="dm" />}
                     {video.pins[i] && <span className="lk"><Svg d={LOCK} size={9} /></span>}
                     {video.repeats.includes(i) && <i className="rp" />}
@@ -385,7 +420,7 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
         title={tr('wizard.pool.guideStoryboardTitle')}
         text={tr('wizard.pool.guideStoryboardText')}
         dismissLabel={tr('wizard.pool.guideNext')}
-        progressLabel={tr('wizard.guideProgress', { current: 3, total: 4 })}
+        progressLabel={tr('wizard.guideProgress', { current: 3, total: poolTourTotal(background) })}
         onDismiss={() => setFrameGuideDismissed(true)}
         variant="visual"
         shell="track-top"
@@ -396,8 +431,8 @@ export function PoolStoryboard({ slots, current, chips }: { slots: StoryboardSlo
         targetRef={dockGuideRef}
         title={tr('wizard.pool.guideReplaceTitle')}
         text={tr('wizard.pool.guideReplaceText')}
-        dismissLabel={tr('wizard.pool.guideDismiss')}
-        progressLabel={tr('wizard.guideProgress', { current: 4, total: 4 })}
+        dismissLabel={tr('wizard.pool.guideNext')}
+        progressLabel={tr('wizard.guideProgress', { current: 4, total: poolTourTotal(background) })}
         onDismiss={() => setReplaceGuideDismissed(true)}
         variant="visual"
         shell="track-top"

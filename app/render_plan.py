@@ -344,6 +344,9 @@ class RenderPlanV1(BaseModel):
                     # ключ появляется только когда seed реально есть — иначе
                     # round-trip конфига перестал бы совпадать сам с собой
                     **({"seed": params["seed"]} if params.get("seed") else {}),
+                    # монтажный стол: ключи только когда они были в исходном блоке
+                    **({"cut_transitions": list(params["cut_transitions"])} if params.get("cut_transitions") is not None else {}),
+                    **({"extra_ranges": list(params["extra_ranges"])} if params.get("extra_ranges") is not None else {}),
                 }
             elif operation.type == "hook.f4.motion.v1":
                 config["f4"] = {
@@ -777,9 +780,15 @@ def _f3_operation(cfg: Dict[str, Any], f3_media: List[Dict[str, str]]) -> Option
     hook = _clean(f3.get("hook"))
     transition = _clean(f3.get("transition"))
     extra = _clean(f3.get("extra"))
-    if not (hook or transition or extra):
+    cut_transitions = f3.get("cut_transitions") if isinstance(f3.get("cut_transitions"), list) else None
+    extra_ranges = f3.get("extra_ranges") if isinstance(f3.get("extra_ranges"), list) else None
+    if not (hook or transition or extra or cut_transitions or extra_ranges):
         return None
     ids = [value for value in (hook, transition, extra) if value]
+    for item in (cut_transitions or []) + (extra_ranges or []):
+        eid = _clean(item.get("id")) if isinstance(item, dict) else None
+        if eid and eid not in ids:
+            ids.append(eid)
     params: Dict[str, Any] = {
         "detected_effect_ids": ids,
         "hook": hook,
@@ -790,6 +799,12 @@ def _f3_operation(cfg: Dict[str, Any], f3_media: List[Dict[str, str]]) -> Option
     }
     if f3.get("drop_time") is not None:
         params["drop_time"] = float(f3["drop_time"])
+    # Монтажный стол: списки переносим как есть — без них конфиг, пересобранный из
+    # visual ops, потерял бы правки по склейкам и окна стилей.
+    if cut_transitions is not None:
+        params["cut_transitions"] = [dict(item) for item in cut_transitions]
+    if extra_ranges is not None:
+        params["extra_ranges"] = [dict(item) for item in extra_ranges]
     if _clean(f3.get("hook_extend")):
         params["hook_extend"] = _clean(f3.get("hook_extend"))
     # seed фиксирует порядок мульти-клип слотов (глитчи blackwhite). Без него

@@ -1,0 +1,772 @@
+/*
+ * Визард по утверждённому макету «Трек / Фон» (артефакт wizard12 v3) — стили перенесены
+ * из макета как есть, со своими кеглями и отступами: он и есть эталон пропорций. Классы
+ * и переменные с префиксом w12-, чтобы не пересекаться с глобальными (.card, .pill…).
+ * Масштаб — общий у приложения (zoom виртуального холста), поэтому визард помещается
+ * в экран так же, как раньше.
+ */
+/* ui-allow-file: пропорции макета wizard12 */
+.w12 { font-family: var(--w12-font); font-weight: 350; font-size: 15px; line-height: 1.4; color: var(--w12-text); -webkit-font-smoothing: antialiased; }
+.w12 *, .w12 *::before, .w12 *::after { box-sizing: border-box; }
+/* сброс кнопок как в макете — через :where, чтобы не перебивать утилиты других шагов */
+:where(.w12) :where(button) { font: inherit; color: inherit; cursor: pointer; background: none; border: 0; padding: 0; }
+:where(.w12) :where(button:disabled) { cursor: default; }
+:where(.w12) :where(input, textarea) { font: inherit; color: inherit; }
+:where(.w12) :where(:focus-visible) { outline: 2px solid var(--w12-accent); outline-offset: 2px; border-radius: 8px; }
+/* Layout: каркас визарда как в продукте — слева шапка с табами и карточка этапа, справа колонка «Текст» / «Превью». Одна тёмная тема продукта. */
+.w12 {
+  color-scheme: dark;
+  --w12-bg: #05010f;
+  --w12-panel: #0d0820;
+  --w12-panel-2: #140d2b;
+  --w12-field: #1a1236;
+  --w12-field-2: #211742;
+  --w12-line: rgba(246, 245, 253, 0.09);
+  --w12-line-2: rgba(246, 245, 253, 0.16);
+  --w12-text: #f6f5fd;
+  --w12-text-2: rgba(246, 245, 253, 0.68);
+  --w12-text-3: rgba(246, 245, 253, 0.44);
+  --w12-accent: #8b6fe6;
+  --w12-accent-strong: #6a4fcf;
+  --w12-accent-soft: rgba(139, 111, 230, 0.16);
+  --w12-accent-line: rgba(139, 111, 230, 0.55);
+  --w12-ok: #72d3a0;
+  --w12-warn: #f0b75a;
+  --w12-warn-soft: rgba(240, 183, 90, 0.12);
+  --w12-warn-line: rgba(240, 183, 90, 0.6);
+  --w12-font: 'Point', 'Manrope', 'Segoe UI', system-ui, sans-serif;
+  --w12-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --w12-app-h: clamp(700px, calc(100vh - 96px), 860px);
+}
+.w12 .w12-num { font-variant-numeric: tabular-nums; }
+.w12 svg.w12-i { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.w12 .w12-mi { display: inline-block; flex: none; background: currentColor; -webkit-mask: var(--m) center / contain no-repeat; mask: var(--m) center / contain no-repeat; }
+/* Иконки при тексте: высота глифа = высоте заглавной буквы соседнего текста (0.7em у Point),
+   тяжёлые (заливка или обводка толще 12% высоты) на ступень меньше, 0.62em, чтобы сравнять
+   визуальный вес. Размер в em: иконка сама подстраивается под кегль заголовка, таба или кнопки. */
+.w12 .w12-mi.w12-cap { height: .7em; width: calc(.7em * var(--r, 1)); }
+.w12 .w12-mi.w12-cap.w12-heavy { height: .62em; width: calc(.62em * var(--r, 1)); }
+.w12 .w12-ttl-ic { color: var(--w12-text-3); }
+.w12 .w12-sq { position: relative; display: inline-block; width: .64em; height: .64em; flex: none; }
+.w12 .w12-sq::before { content: ''; position: absolute; left: 0; bottom: 0; width: 58%; height: 58%; border: 1px dashed currentColor; }
+.w12 .w12-sq::after { content: ''; position: absolute; right: 0; top: 0; width: 72%; height: 72%; background: currentColor; }
+.w12 .w12-inf { display: inline-block; font-size: 1.55em; line-height: 0; position: relative; top: .07em; margin: 0 1px; }
+.w12 .w12-t-it { font-style: italic; font-weight: 700; font-size: 1em; line-height: 1; }
+.w12 .w12-gicon { width: 28px; height: 28px; border-radius: 50%; flex: none; display: grid; place-items: center; overflow: hidden; }
+.w12 .w12-gicon img { width: 28px; height: 28px; max-width: none; display: block; }
+.w12 .w12-gicon.w12-inner { background: var(--w12-accent-strong); }
+.w12 .w12-gicon.w12-inner img { width: 14px; height: 15px; object-fit: contain; }
+/* ── каркас ── */
+.w12.w12-app { max-width: 1240px; margin: 0 auto; height: var(--w12-app-h); display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 16px; }
+.w12 .w12-col-main, .w12 .w12-col-aside { display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+.w12 .w12-card { background: var(--w12-panel); border: 1px solid var(--w12-line); border-radius: 22px; }
+.w12 .w12-head { padding: 18px 22px 16px; display: flex; flex-direction: column; gap: 14px; }
+.w12 .w12-head-row { display: flex; align-items: center; gap: 8px; }
+.w12 .w12-head h1 { margin: 0; font-size: 24px; font-weight: 400; line-height: 32px; }
+.w12 .w12-head .w12-artist { margin: 0; margin-top: -10px; color: var(--w12-text-3); font-size: 14px; }
+.w12 .w12-icon-btn { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: var(--w12-text-3); transition: background-color .15s ease, color .15s ease; }
+.w12 .w12-icon-btn:hover { background: var(--w12-panel-2); color: var(--w12-text); }
+.w12 .w12-tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: var(--w12-panel-2); }
+.w12 .w12-tab { height: 40px; line-height: 20px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; gap: .4em; font-size: 15px; color: var(--w12-text-3); transition: background-color .18s ease, color .18s ease; white-space: nowrap; }
+.w12 .w12-tab .w12-done { width: 14px; height: 14px; border-radius: 50%; background: rgba(114, 211, 160, 0.16); color: var(--w12-ok); display: grid; place-items: center; }
+.w12 .w12-tab .w12-done svg { width: 10px; height: 10px; stroke-width: 2.6; }
+.w12 .w12-tab[aria-selected="true"] { background: var(--w12-accent-strong); color: var(--w12-text); }
+.w12 .w12-tab:not([aria-selected="true"]):not(:disabled):hover { color: var(--w12-text); background: var(--w12-field); }
+.w12 .w12-tab:disabled { opacity: .55; }
+.w12 .w12-stage { flex: 1; min-height: 0; overflow-y: auto; padding: 22px; display: flex; flex-direction: column; gap: 22px; scrollbar-width: thin; scrollbar-color: var(--w12-line-2) transparent; }
+.w12 .w12-sec { display: flex; flex-direction: column; gap: 10px; }
+.w12 .w12-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 28px; flex-wrap: wrap; }
+.w12 .w12-sec-head h2 { margin: 0; font-size: 18px; font-weight: 400; line-height: 24px; display: flex; align-items: center; gap: .45em; }
+.w12 .w12-sec-head .w12-side { display: flex; align-items: center; gap: 12px; color: var(--w12-text-3); font-size: 13px; }
+.w12 .w12-chip { display: inline-flex; align-items: center; gap: 6px; height: 26px; line-height: 16px; padding: 0 10px; border-radius: 999px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); color: var(--w12-text-2); font-size: 13px; white-space: nowrap; }
+.w12 .w12-chip.w12-warn { color: var(--w12-warn); border-color: var(--w12-warn-line); background: var(--w12-warn-soft); }
+.w12 .w12-link { color: var(--w12-text-2); text-decoration: underline; text-decoration-color: var(--w12-line-2); text-underline-offset: 3px; font-size: 13px; transition: color .15s ease, text-decoration-color .15s ease; }
+.w12 .w12-link:hover { color: var(--w12-text); text-decoration-color: var(--w12-text-2); }
+.w12 .w12-ghost { display: inline-flex; align-items: center; gap: 7px; height: 32px; line-height: 20px; padding: 0 12px; border-radius: 10px; color: var(--w12-text-2); font-size: 14px; transition: background-color .15s ease, color .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-ghost:hover { background: var(--w12-panel-2); color: var(--w12-text); }
+.w12 .w12-ghost:active { transform: scale(.97); }
+.w12 .w12-ghost svg.w12-i { width: 16px; height: 16px; }
+/* ── трек ── */
+.w12 .w12-drop { display: flex; align-items: center; gap: 16px; padding: 18px 20px; border-radius: 16px; border: 1.5px dashed var(--w12-accent-line); background: var(--w12-accent-soft); transition: background-color .15s ease, border-color .15s ease; text-align: left; }
+.w12 .w12-drop:hover { background: rgba(139, 111, 230, 0.22); }
+.w12 .w12-drop .w12-plus { width: 40px; height: 40px; border-radius: 12px; background: var(--w12-text); color: var(--w12-accent-strong); display: grid; place-items: center; flex: none; }
+.w12 .w12-drop .w12-plus svg { width: 20px; height: 20px; stroke-width: 2.2; }
+.w12 .w12-drop b { display: block; font-weight: 400; font-size: 16px; }
+.w12 .w12-drop span { color: var(--w12-text-3); font-size: 13px; }
+.w12 .w12-drop.w12-invalid { border-color: var(--w12-warn-line); background: var(--w12-warn-soft); }
+.w12 .w12-prev-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; border-radius: 14px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); font-size: 14px; }
+.w12 .w12-prev-row .w12-txt { flex: 1; min-width: 0; color: var(--w12-text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.w12 .w12-prev-row .w12-txt b { font-weight: 350; color: var(--w12-text); }
+.w12 .w12-small-btn { height: 32px; line-height: 20px; padding: 0 14px; border-radius: 10px; background: var(--w12-field-2); font-size: 14px; color: var(--w12-text); transition: background-color .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-small-btn:hover { background: #2a1e52; }
+.w12 .w12-small-btn:active { transform: scale(.97); }
+.w12 .w12-track-row { display: flex; align-items: center; gap: 14px; padding: 12px 12px 12px 12px; border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); }
+.w12 .w12-round { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--w12-text); color: var(--w12-bg); flex: none; transition: transform .12s var(--w12-ease), opacity .15s ease; }
+.w12 .w12-round:active { transform: scale(.94); }
+.w12 .w12-round svg { width: 16px; height: 16px; fill: currentColor; stroke: none; }
+.w12 .w12-round .w12-pl { margin-left: 2px; }
+.w12 .w12-track-row .w12-name { flex: 1; min-width: 0; }
+.w12 .w12-track-row .w12-name b { display: block; font-weight: 400; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.w12 .w12-track-row .w12-name span { font-size: 13px; color: var(--w12-text-3); }
+/* волна и окно отрывка */
+.w12 .w12-cut { border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); padding: 16px 16px 14px; display: flex; flex-direction: column; gap: 12px; transition: border-color .15s ease, opacity .2s ease; }
+.w12 .w12-cut.w12-off { opacity: .45; pointer-events: none; }
+.w12 .w12-cut.w12-invalid { border-color: var(--w12-warn-line); }
+.w12 .w12-wave { position: relative; height: 120px; margin-top: 6px; border-radius: 10px; touch-action: none; cursor: crosshair; user-select: none; }
+.w12 .w12-bars { position: absolute; inset: 0; display: flex; align-items: center; gap: 2px; }
+.w12 .w12-bars i { flex: 1; border-radius: 2px; background: rgba(246, 245, 253, 0.2); transition: background-color .12s ease; }
+.w12 .w12-bars i.w12-in { background: var(--w12-accent); }
+.w12 .w12-win { position: absolute; top: -6px; bottom: -6px; border-radius: 10px; background: rgba(139, 111, 230, 0.14); box-shadow: inset 0 0 0 1.5px var(--w12-accent); cursor: grab; }
+.w12 .w12-win:active { cursor: grabbing; }
+.w12 .w12-win.w12-over { background: var(--w12-warn-soft); box-shadow: inset 0 0 0 1.5px var(--w12-warn); }
+.w12 .w12-handle { position: absolute; top: 0; bottom: 0; width: 18px; cursor: ew-resize; display: grid; place-items: center; }
+.w12 .w12-handle::after { content: ''; width: 4px; height: 30px; border-radius: 3px; background: var(--w12-text); box-shadow: 0 1px 4px rgba(5, 1, 15, .6); }
+.w12 .w12-handle.w12-l { left: -9px; }
+.w12 .w12-handle.w12-r { right: -9px; }
+.w12 .w12-win-label { position: absolute; left: 50%; top: -30px; transform: translateX(-50%); white-space: nowrap; font-size: 12px; line-height: 16px; padding: 3px 8px; border-radius: 7px; background: var(--w12-accent-strong); color: var(--w12-text); pointer-events: none; }
+.w12 .w12-win.w12-over .w12-win-label { background: #7a5a22; }
+.w12 .w12-playhead { position: absolute; top: 4px; bottom: 4px; width: 2px; border-radius: 2px; background: var(--w12-text); pointer-events: none; }
+.w12 .w12-wave-hint { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.w12 .w12-wave-hint span { font-size: 14px; line-height: 20px; padding: 6px 12px; border-radius: 9px; background: rgba(13, 8, 32, .85); color: var(--w12-text-2); }
+.w12 .w12-ruler { display: flex; justify-content: space-between; font-size: 11px; color: var(--w12-text-3); padding: 0 1px; margin-top: 12px; }
+.w12 .w12-cut-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.w12 .w12-play-cut { display: inline-flex; align-items: center; gap: 8px; height: 38px; line-height: 20px; padding: 0 14px 0 6px; border-radius: 12px; background: var(--w12-field); font-size: 14px; transition: background-color .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-play-cut:hover { background: var(--w12-field-2); }
+.w12 .w12-play-cut:active { transform: scale(.97); }
+.w12 .w12-play-cut .w12-dot { width: 28px; height: 28px; border-radius: 50%; background: var(--w12-text); color: var(--w12-bg); display: grid; place-items: center; }
+.w12 .w12-play-cut .w12-dot svg { width: 12px; height: 12px; fill: currentColor; stroke: none; }
+.w12 .w12-tf { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--w12-text-3); }
+.w12 .w12-tf input { width: 78px; height: 38px; border-radius: 10px; background: var(--w12-field); border: 1px solid transparent; text-align: center; font-size: 15px; font-variant-numeric: tabular-nums; outline: none; transition: border-color .15s ease; }
+.w12 .w12-tf input:focus { border-color: var(--w12-accent-line); }
+.w12 .w12-tf input.w12-bad { border-color: var(--w12-warn-line); }
+.w12 .w12-dur { margin-left: auto; font-size: 14px; color: var(--w12-text-2); }
+.w12 .w12-dur b { font-weight: 400; color: var(--w12-text); }
+.w12 .w12-dur.w12-over b { color: var(--w12-warn); }
+.w12 .w12-cut-msg { font-size: 13px; color: var(--w12-warn); margin: -2px 0 0; }
+/* ── правая колонка: текст ── */
+.w12 .w12-aside { flex: 1; min-height: 0; padding: 22px; display: flex; flex-direction: column; gap: 12px; }
+.w12 .w12-aside-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.w12 .w12-aside-head h2 { margin: 0; font-size: 18px; font-weight: 400; line-height: 24px; }
+.w12 .w12-aside-head .w12-meta { font-size: 13px; color: var(--w12-text-3); white-space: nowrap; }
+.w12 .w12-aside-head:has(.w12-drop-play) { align-items: center; }
+.w12 .w12-lyr { position: relative; flex: 1; min-height: 180px; border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); overflow: hidden; transition: border-color .15s ease; }
+.w12 .w12-lyr:focus-within { border-color: var(--w12-accent-line); }
+.w12 .w12-lyr.w12-invalid { border-color: var(--w12-warn-line); }
+.w12 .w12-lyr .w12-locked { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 14px; padding: 24px; text-align: center; }
+.w12 .w12-lyr .w12-ghost-lines { display: flex; flex-direction: column; gap: 10px; width: 70%; opacity: .5; }
+.w12 .w12-lyr .w12-ghost-lines i { height: 6px; border-radius: 3px; background: var(--w12-line-2); }
+.w12 .w12-lyr .w12-locked p { margin: 0; max-width: 260px; color: var(--w12-text-2); font-size: 14px; }
+.w12 .w12-editor { position: absolute; inset: 0; display: flex; }
+.w12 .w12-gutter { width: 40px; flex: none; padding: 14px 0; text-align: right; padding-right: 10px; color: var(--w12-text-3); font-size: 12px; line-height: 26px; font-variant-numeric: tabular-nums; overflow: hidden; border-right: 1px solid var(--w12-line); user-select: none; }
+.w12 .w12-editor textarea { flex: 1; min-width: 0; resize: none; background: transparent; border: 0; outline: none; padding: 14px 14px; font-size: 15px; line-height: 26px; color: var(--w12-text); caret-color: var(--w12-accent); }
+.w12 .w12-editor textarea::placeholder { color: var(--w12-text-3); }
+.w12 .w12-undo { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: var(--w12-warn-soft); color: var(--w12-warn); font-size: 13px; }
+.w12 .w12-undo span { flex: 1; }
+.w12 .w12-undo button { color: var(--w12-text); text-decoration: underline; text-underline-offset: 3px; font-size: 13px; }
+.w12 .w12-lyr-foot { margin: 0; font-size: 13px; color: var(--w12-text-3); min-height: 18px; }
+.w12 .w12-lyr-foot b { font-weight: 350; color: var(--w12-text-2); }
+.w12 .w12-cta { height: 52px; line-height: 20px; border-radius: 14px; display: flex; align-items: center; justify-content: center; gap: 10px; font-size: 16px; font-weight: 400; background: var(--w12-field); color: var(--w12-text-2); transition: background-color .18s ease, color .18s ease, transform .12s var(--w12-ease); flex: none; }
+.w12 .w12-cta-row .w12-cta { flex: 1; }
+.w12 .w12-cta:hover { color: var(--w12-text); }
+.w12 .w12-cta:active { transform: scale(.98); }
+.w12 .w12-cta.w12-ready { background: var(--w12-accent-strong); color: var(--w12-text); }
+.w12 .w12-cta.w12-ready:hover { background: #7458d8; }
+.w12 .w12-cta svg.w12-i { width: 18px; height: 18px; }
+.w12 .w12-back { width: 52px; height: 52px; border-radius: 14px; background: var(--w12-field); color: var(--w12-text-2); display: grid; place-items: center; flex: none; transition: color .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-back:hover { color: var(--w12-text); }
+.w12 .w12-back:active { transform: scale(.96); }
+.w12 .w12-cta-row { display: flex; gap: 10px; }
+/* ── фон ── */
+.w12 .w12-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: var(--w12-panel-2); position: relative; }
+.w12 .w12-mode { height: 44px; line-height: 20px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; gap: .45em; font-size: 16px; color: var(--w12-text-2); transition: background-color .18s ease, color .18s ease; }
+.w12 .w12-mode:hover:not([aria-selected="true"]) { color: var(--w12-text); background: var(--w12-field); }
+.w12 .w12-mode[aria-selected="true"] { background: var(--w12-accent-strong); color: var(--w12-text); }
+.w12 .w12-mode .w12-cnt { min-width: 22px; height: 22px; line-height: 14px; padding: 4px 6px 0; border-radius: 999px; background: rgba(246, 245, 253, 0.12); font-size: 12px; font-variant-numeric: tabular-nums; }
+.w12 .w12-mode .w12-cnt.w12-zero { opacity: 0; }
+.w12 .w12-mode svg.w12-i { width: 18px; height: 18px; }
+.w12 .w12-pool { border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); padding: 14px 0 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 300px; }
+.w12 .w12-pool.w12-invalid { border-color: var(--w12-warn-line); }
+.w12 .w12-pool-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 16px; flex-wrap: wrap; }
+.w12 .w12-types { display: inline-flex; gap: 4px; padding: 3px; border-radius: 11px; background: var(--w12-field); max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.w12 .w12-types::-webkit-scrollbar { display: none; }
+.w12 .w12-type { height: 30px; line-height: 20px; padding: 0 12px; border-radius: 8px; font-size: 13px; color: var(--w12-text-2); transition: background-color .15s ease, color .15s ease; white-space: nowrap; }
+.w12 .w12-type:hover:not([aria-pressed="true"]) { color: var(--w12-text); }
+.w12 .w12-type[aria-pressed="true"] { background: var(--w12-field-2); color: var(--w12-text); box-shadow: inset 0 0 0 1px var(--w12-line-2); }
+.w12 .w12-pool-note { font-size: 13px; color: var(--w12-text-3); display: inline-flex; align-items: center; gap: 6px; }
+.w12 .w12-pool-note svg.w12-i { width: 15px; height: 15px; color: var(--w12-accent); }
+.w12 .w12-rail { position: relative; flex: 1; min-height: 0; display: flex; }
+.w12 .w12-cards { flex: 1; display: flex; gap: 12px; overflow-x: auto; padding: 4px 16px; scrollbar-width: none; align-items: stretch; user-select: none; overscroll-behavior-x: contain; }
+.w12 .w12-cards::-webkit-scrollbar { display: none; }
+.w12 .w12-mcard { position: relative; flex: none; height: 100%; min-height: 220px; max-height: 330px; aspect-ratio: 9 / 16; border-radius: 14px; overflow: hidden; background: var(--w12-field); transition: transform .18s var(--w12-ease), box-shadow .15s ease; text-align: left; }
+.w12 .w12-mcard.w12-wide { aspect-ratio: 4 / 3; min-height: 180px; }
+.w12 .w12-mcard.w12-cine { aspect-ratio: 16 / 9; min-height: 150px; }
+.w12 .w12-mcard:hover { transform: translateY(-2px); }
+.w12 .w12-mcard .w12-media { position: absolute; inset: 0; background-size: 200% 200%; animation: w12-drift 9s ease-in-out infinite alternate; }
+@keyframes w12-drift { from { background-position: 0% 30%; } to { background-position: 100% 70%; } }
+.w12 .w12-mcard .w12-cap { position: absolute; left: 0; right: 0; bottom: 0; padding: 26px 10px 9px; font-size: 13px; line-height: 16px; background: linear-gradient(180deg, transparent, rgba(5, 1, 15, .75)); }
+.w12 .w12-mcard[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--w12-accent), 0 0 0 3px rgba(139, 111, 230, 0.28); }
+.w12 .w12-mcard .w12-badge svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.w12 .w12-mcard .w12-badge { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border-radius: 50%; background: var(--w12-accent-strong); color: var(--w12-text); font-size: 12px; line-height: 16px; display: grid; place-items: center; box-shadow: 0 0 0 2px rgba(5, 1, 15, .5); transform: scale(.6); opacity: 0; transition: transform .18s var(--w12-ease), opacity .12s ease; }
+.w12 .w12-mcard[aria-pressed="true"] .w12-badge { transform: none; opacity: 1; }
+.w12 .w12-rail-btn { position: absolute; top: 50%; width: 36px; height: 36px; margin-top: -18px; border-radius: 50%; background: rgba(13, 8, 32, .88); border: 1px solid var(--w12-line-2); display: grid; place-items: center; color: var(--w12-text); z-index: 2; transition: opacity .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-rail-btn:active { transform: scale(.94); }
+.w12 .w12-rail-btn.w12-l { left: 6px; }
+.w12 .w12-rail-btn.w12-r { right: 6px; }
+.w12 .w12-rail-btn[data-off] { opacity: 0; pointer-events: none; }
+.w12 .w12-colors { padding: 0 16px; display: flex; flex-direction: column; gap: 16px; }
+.w12 .w12-sw-row { display: flex; align-items: center; gap: 10px; }
+.w12 .w12-sw { width: 48px; height: 48px; border-radius: 12px; flex: none; transition: transform .12s var(--w12-ease), box-shadow .15s ease; }
+.w12 .w12-sw:active { transform: scale(.95); }
+.w12 .w12-sw[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--w12-panel-2), 0 0 0 4px var(--w12-accent); }
+.w12 .w12-sw.w12-white { background: #f6f5fd; }
+.w12 .w12-sw.w12-black { background: #05010f; box-shadow: inset 0 0 0 1px var(--w12-line-2); }
+.w12 .w12-sw.w12-black[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--w12-line-2), 0 0 0 2px var(--w12-panel-2), 0 0 0 4px var(--w12-accent); }
+.w12 .w12-hue { position: relative; flex: 1; height: 48px; border-radius: 12px; touch-action: none; cursor: pointer; background: linear-gradient(90deg, hsl(0,85%,55%), hsl(45,85%,55%), hsl(90,70%,48%), hsl(160,70%,45%), hsl(200,80%,52%), hsl(250,75%,62%), hsl(300,70%,58%), hsl(345,80%,52%)); }
+.w12 .w12-hue[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--w12-panel-2), 0 0 0 4px var(--w12-accent); }
+.w12 .w12-hue .w12-thumb { position: absolute; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 3px solid var(--w12-text); box-shadow: 0 1px 6px rgba(5, 1, 15, .5); pointer-events: none; }
+.w12 .w12-cur-color { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--w12-text-3); }
+.w12 .w12-cur-color i { width: 18px; height: 18px; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--w12-line-2); }
+.w12 .w12-cur-color b { font-weight: 350; color: var(--w12-text-2); font-variant-numeric: tabular-nums; }
+.w12 .w12-opt-row { display: flex; align-items: center; gap: 12px; padding-top: 14px; border-top: 1px solid var(--w12-line); }
+.w12 .w12-opt-row .w12-txt { flex: 1; }
+.w12 .w12-opt-row .w12-txt span { display: block; font-size: 13px; color: var(--w12-text-3); }
+.w12 .w12-switch { width: 40px; height: 24px; border-radius: 999px; background: rgba(246, 245, 253, .16); position: relative; flex: none; transition: background-color .18s ease; }
+.w12 .w12-switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--w12-text); transition: transform .18s var(--w12-ease), width .12s ease; box-shadow: 0 1px 3px rgba(5, 1, 15, .4); }
+.w12 .w12-switch[aria-checked="true"] { background: var(--w12-accent); }
+.w12 .w12-switch[aria-checked="true"]::after { transform: translateX(16px); }
+.w12 .w12-disclose { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .22s var(--w12-ease); }
+.w12 .w12-disclose[data-open] { grid-template-rows: 1fr; }
+.w12 .w12-disclose > div { overflow: hidden; }
+.w12 .w12-pills { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 2px; }
+.w12 .w12-pill { height: 34px; line-height: 20px; padding: 0 14px; border-radius: 999px; background: var(--w12-field); border: 1px solid var(--w12-line); font-size: 14px; color: var(--w12-text-2); transition: color .15s ease, border-color .15s ease, background-color .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-pill:hover { color: var(--w12-text); }
+.w12 .w12-pill:active { transform: scale(.96); }
+.w12 .w12-pill[aria-pressed="true"] { background: var(--w12-accent-soft); border-color: var(--w12-accent-line); color: var(--w12-text); }
+.w12 .w12-pill.w12-with-ic { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px 0 4px; }
+/* превью */
+.w12 .w12-pv-card { flex: 1; min-height: 0; padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+.w12 .w12-pv-stage { flex: 1; min-height: 0; display: flex; justify-content: center; align-items: center; }
+.w12 .w12-player { position: relative; height: 100%; max-height: 100%; max-width: 100%; aspect-ratio: 9 / 16; border-radius: 16px; overflow: hidden; background: var(--w12-field); }
+.w12 .w12-player.w12-wide { height: auto; width: 100%; aspect-ratio: 4 / 3; }
+.w12 .w12-player.w12-cine { height: auto; width: 100%; aspect-ratio: 16 / 9; }
+.w12 .w12-player .w12-media { position: absolute; inset: 0; background-size: 200% 200%; animation: w12-drift 9s ease-in-out infinite alternate; }
+.w12 .w12-player .w12-media.w12-strobe { animation: w12-strobe 1.2s steps(1) infinite; }
+@keyframes w12-strobe { 0%, 70% { background: var(--c); } 71%, 100% { background: #05010f; } }
+.w12 .w12-player .w12-fx-layer { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+.w12 .w12-player .w12-media.w12-still { animation: none; background-size: cover; }
+.w12 .w12-player.w12-ex-snap .w12-fx-layer { opacity: 1; background: #05010f; animation: w12-exSnap 1.8s var(--w12-ease) infinite; }
+@keyframes w12-exSnap { 0%, 50% { clip-path: inset(0 100% 0 0); } 60% { clip-path: inset(0 0 0 0); } 70%, 100% { clip-path: inset(0 0 0 100%); } }
+.w12 .w12-player.w12-ex-minimax .w12-media { animation: w12-exMini 1.8s ease-in-out infinite; }
+@keyframes w12-exMini { 0%, 52% { transform: scale(1); filter: none; } 60% { transform: scale(1.18); filter: blur(3px) brightness(1.3); } 72%, 100% { transform: scale(1); filter: none; } }
+.w12 .w12-player.w12-ex-extract .w12-media { animation: w12-exExtract 1.8s steps(1) infinite; }
+@keyframes w12-exExtract { 0%, 56% { filter: none; } 58% { filter: grayscale(1) contrast(3) brightness(1.5); } 66%, 100% { filter: none; } }
+.w12 .w12-player.w12-ex-invert .w12-media { animation: w12-exInvert 1.8s steps(1) infinite; }
+@keyframes w12-exInvert { 0%, 56% { filter: none; } 58% { filter: invert(1); } 68%, 100% { filter: none; } }
+.w12 .w12-player.w12-ex-flash .w12-fx-layer { background: #f6f5fd; animation: w12-exFlash 1.8s ease-out infinite; }
+@keyframes w12-exFlash { 0%, 56% { opacity: 0; } 58% { opacity: .95; } 80%, 100% { opacity: 0; } }
+.w12 .w12-player.w12-st-xerox .w12-media { filter: grayscale(1) contrast(1.25) brightness(2.3); }
+.w12 .w12-player.w12-st-glitch .w12-media { animation: w12-glitch .9s steps(2) infinite; }
+@keyframes w12-glitch { 0% { transform: none; } 25% { transform: translate(-5px, 1px); filter: hue-rotate(50deg) saturate(1.6); } 50% { transform: translate(4px, -1px); } 75% { transform: translate(-2px, 0); filter: hue-rotate(-40deg); } }
+.w12 .w12-player.w12-st-neon .w12-media { filter: saturate(2.2) brightness(1.25) contrast(1.2); }
+.w12 .w12-player.w12-st-oldcam .w12-media { filter: sepia(.85) contrast(1.1) blur(.6px); }
+.w12 .w12-player .w12-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(5, 1, 15, .4), transparent 22%, transparent 72%, rgba(5, 1, 15, .65)); pointer-events: none; }
+.w12 .w12-player .w12-lyric { position: absolute; left: 0; right: 0; top: 58%; text-align: center; font-weight: 400; font-size: 21px; letter-spacing: .02em; text-transform: uppercase; text-shadow: 0 2px 12px rgba(5, 1, 15, .55); padding: 0 16px; }
+.w12 .w12-player .w12-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--w12-text-3); font-size: 14px; }
+.w12 .w12-pv-play { position: absolute; left: 50%; top: 44%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; display: grid; place-items: center; background: rgba(5, 1, 15, .5); backdrop-filter: blur(8px); color: var(--w12-text); transition: transform .12s var(--w12-ease), opacity .18s ease; }
+.w12 .w12-pv-play svg { width: 20px; height: 20px; fill: currentColor; stroke: none; }
+.w12 .w12-pv-play .w12-pl { margin-left: 3px; }
+.w12 .w12-pv-play:active { transform: scale(.94); }
+.w12 .w12-player.w12-playing .w12-pv-play { opacity: 0; }
+.w12 .w12-player.w12-playing:hover .w12-pv-play { opacity: 1; }
+.w12 .w12-pv-bar { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.w12 .w12-pv-nav { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: rgba(5, 1, 15, .55); backdrop-filter: blur(8px); color: var(--w12-text); transition: opacity .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-pv-nav:active { transform: scale(.94); }
+.w12 .w12-pv-nav:disabled { opacity: .35; }
+.w12 .w12-pv-nav svg.w12-i { width: 16px; height: 16px; }
+.w12 .w12-pv-count { margin-left: auto; font-size: 12px; line-height: 16px; padding: 4px 8px; border-radius: 7px; background: rgba(5, 1, 15, .55); backdrop-filter: blur(8px); color: var(--w12-text-2); }
+.w12 .w12-pv-prog { flex: 1; height: 3px; border-radius: 3px; background: rgba(246, 245, 253, .22); overflow: hidden; }
+.w12 .w12-pv-prog i { display: block; height: 100%; background: var(--w12-text); transform-origin: left; transform: scaleX(var(--t, 0)); }
+.w12 .w12-pv-tag { position: absolute; left: 12px; top: 12px; font-size: 12px; line-height: 16px; padding: 4px 8px; border-radius: 7px; background: rgba(5, 1, 15, .55); backdrop-filter: blur(6px); color: var(--w12-text-2); }
+.w12 .w12-fx-box { border-top: 1px solid var(--w12-line); padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.w12 .w12-foot-card { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.w12 .w12-sum { display: flex; flex-wrap: wrap; gap: 8px; }
+.w12 .w12-sum button { display: inline-flex; align-items: center; gap: 8px; height: 34px; line-height: 20px; padding: 0 12px 0 6px; border-radius: 10px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); font-size: 14px; color: var(--w12-text-2); transition: color .15s ease, border-color .15s ease; }
+.w12 .w12-sum button:hover { color: var(--w12-text); }
+.w12 .w12-sum button.w12-on { border-color: var(--w12-accent-line); color: var(--w12-text); }
+.w12 .w12-sum button b { min-width: 22px; height: 22px; line-height: 14px; padding: 4px 6px 0; border-radius: 7px; background: var(--w12-field-2); font-weight: 400; font-size: 13px; text-align: center; font-variant-numeric: tabular-nums; }
+.w12 .w12-sum button.w12-zero b { color: var(--w12-text-3); }
+/* ── окно своих исходников ── */
+.w12 .w12-scrim { position: fixed; inset: 0; z-index: 50; background: rgba(5, 1, 15, .72); backdrop-filter: blur(6px); display: grid; place-items: center; padding: 16px; animation: w12-fade .2s var(--w12-ease); }
+.w12 .w12-modal { width: min(960px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; background: var(--w12-panel); border: 1px solid var(--w12-line-2); border-radius: 22px; overflow: hidden; }
+.w12 .w12-m-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px 22px 14px; }
+.w12 .w12-m-head h2 { margin: 0; font-size: 20px; font-weight: 400; }
+.w12 .w12-m-head p { margin: 6px 0 0; max-width: 620px; color: var(--w12-text-3); font-size: 14px; }
+.w12 .w12-m-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; padding: 6px 22px 20px; overflow-y: auto; min-height: 0; }
+.w12 .w12-m-col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.w12 .w12-m-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--w12-text-3); flex-wrap: wrap; }
+.w12 .w12-m-col h3 { margin: 0; font-size: 16px; font-weight: 400; }
+.w12 .w12-m-hint { margin: -6px 0 0; font-size: 13px; color: var(--w12-text-3); }
+.w12 .w12-queue { display: flex; flex-direction: column; gap: 6px; }
+.w12 .w12-q-row { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--w12-text-2); }
+.w12 .w12-q-row .w12-bar { flex: 1; height: 4px; border-radius: 3px; background: var(--w12-field-2); overflow: hidden; }
+.w12 .w12-q-row .w12-bar i { display: block; height: 100%; background: var(--w12-accent); transform-origin: left; transform: scaleX(var(--p, 0)); transition: transform .2s linear; }
+.w12 .w12-plan { border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.w12 .w12-plan-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14px; }
+.w12 .w12-plan-head .w12-tot { font-size: 13px; color: var(--w12-text-3); }
+.w12 .w12-plan-head .w12-tot.w12-short { color: var(--w12-warn); }
+.w12 .w12-clip { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; border-radius: 10px; background: var(--w12-field); font-size: 13px; }
+.w12 .w12-clip .w12-th { width: 24px; height: 36px; border-radius: 5px; flex: none; }
+.w12 .w12-clip .w12-nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.w12 .w12-clip .w12-nm span { color: var(--w12-text-3); }
+.w12 .w12-mini { width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; color: var(--w12-text-2); transition: background-color .15s ease, color .15s ease; }
+.w12 .w12-mini:hover:not(:disabled) { background: var(--w12-field-2); color: var(--w12-text); }
+.w12 .w12-mini:disabled { opacity: .3; }
+.w12 .w12-mini svg.w12-i { width: 14px; height: 14px; }
+.w12 .w12-split { height: 26px; padding: 0 9px; border-radius: 8px; background: var(--w12-accent-soft); font-size: 12px; line-height: 16px; color: var(--w12-text); }
+.w12 .w12-empty-plan { border-radius: 14px; background: var(--w12-panel-2); padding: 16px; font-size: 13px; color: var(--w12-text-3); }
+.w12 .w12-qr { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px; border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); }
+.w12 .w12-qr-grid { display: grid; grid-template-columns: repeat(21, 7px); gap: 0; padding: 10px; background: #f6f5fd; border-radius: 10px; }
+.w12 .w12-qr-grid i { width: 7px; height: 7px; }
+.w12 .w12-qr-grid i.w12-on { background: #05010f; }
+.w12 .w12-qr-link { display: flex; gap: 8px; width: 100%; }
+.w12 .w12-qr-link input { flex: 1; min-width: 0; height: 34px; border-radius: 9px; background: var(--w12-field); border: 0; padding: 0 10px; font-size: 12px; color: var(--w12-text-2); }
+.w12 .w12-m-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 22px; border-top: 1px solid var(--w12-line); font-size: 14px; color: var(--w12-text-2); }
+.w12 .w12-m-foot .w12-cta { padding: 0 28px; height: 44px; }
+.w12 .w12-ghost.w12-on { background: var(--w12-accent-soft); color: var(--w12-text); box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
+@media (max-width: 760px) {
+  .w12 .w12-m-body { grid-template-columns: minmax(0, 1fr); }
+}
+.w12 .w12-fade { animation: w12-fade .22s var(--w12-ease); }
+@keyframes w12-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (max-width: 1023px) {
+  .w12.w12-app { height: auto; grid-template-columns: minmax(0, 1fr); }
+  .w12 .w12-stage { overflow: visible; }
+  .w12 .w12-aside { min-height: 520px; }
+  .w12 .w12-pv-card { min-height: 560px; }
+  .w12 .w12-notes { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 560px) {
+  .w12 .w12-head { padding: 16px; }
+  .w12 .w12-tabs { display: flex; overflow-x: auto; scrollbar-width: none; }
+  .w12 .w12-tab { flex: none; padding: 0 12px; font-size: 14px; }
+  .w12 .w12-stage, .w12 .w12-aside { padding: 16px; }
+  .w12 .w12-tf input { width: 70px; }
+  .w12 .w12-dur { margin-left: 0; width: 100%; }
+  .w12 .w12-mode { font-size: 14px; gap: 6px; }
+  .w12 .w12-mode svg.w12-i { display: none; }
+  .w12 .w12-mcard { min-height: 200px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .w12 *::before, .w12 *::after { transition-duration: 1ms !important; animation-duration: 1ms !important; animation-iteration-count: 1 !important; }
+}
+
+
+/* ── дополнения для продукта (нет в макете как отдельных правил) ── */
+/* Зона визарда: верх = лого сайдбара, низ = аватар (как у остальных страниц). Поля слева и справа
+   от колонок равны: слева поле считается от иконок сайдбара (половина его пустой полосы), справа
+   добавляем столько же. Влево заходим только на паддинг .app-content (32px) — дальше она режет
+   содержимое (overflow). Размер композиции внутри — WizardCanvas. */
+.w12-zone {
+  --w12-side: calc((var(--sidebar-w) - 60px) / 2);
+  height: var(--app-page-h);
+  margin-left: calc(-1 * var(--space-6));
+  padding: calc(var(--rail-pad-y) - var(--space-6)) max(0px, calc(var(--w12-side) - var(--space-6))) calc(var(--rail-pad-y) - var(--space-6)) 0;
+}
+.w12-fit { height: 100%; min-width: 0; display: flex; justify-content: center; align-items: flex-start; }
+.w12.w12-app { width: 1240px; max-width: none; margin: 0; flex: none; }
+.w12 .w12-h2 { margin: 0; font-size: 18px; font-weight: 400; line-height: 24px; display: flex; align-items: center; gap: .45em; color: var(--w12-text); }
+.w12 .w12-rename { width: 100%; max-width: 420px; height: 32px; border-radius: 9px; border: 1px solid var(--w12-accent-line); background: var(--w12-field); padding: 0 10px; font-size: 24px; font-weight: 400; outline: none; }
+.w12 .w12-miss { margin: 0; font-size: 13px; color: var(--w12-warn); }
+.w12 .w12-cta .spinner { width: 18px; height: 18px; }
+.w12 .w12-drop.w12-over { background: rgba(139, 111, 230, 0.22); }
+.w12 .w12-sum-empty { display: inline-flex; align-items: center; height: 34px; font-size: 14px; color: var(--w12-text-3); }
+.w12 .w12-sum button.w12-sum-plus { padding: 0 8px; }
+.w12 .w12-sum button b img, .w12 .w12-sum button b svg { width: 14px; height: 14px; }
+.w12 .w12-mcard .w12-media { animation: none; }
+.w12 .w12-mcard .w12-media video, .w12 .w12-mcard .w12-media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.w12 .w12-mcard .w12-media.w12-own { display: grid; place-items: center; color: var(--w12-text-3); }
+.w12 .w12-mcard .w12-badge .w12-i { width: 13px; height: 13px; stroke-width: 2.6; }
+.w12 .w12-rail.w12-center { align-items: center; justify-content: center; }
+.w12 .w12-player .w12-media-el { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.w12 .w12-player .w12-example { background: var(--w12-bg); }
+/* иконка продукта — круг 40: кладём его ровно по центру кружка 28 и уменьшаем до 28 (40 × .7).
+   В сетке он клался от угла (переполнение) и после scale уезжал вправо-вниз под обрезку. */
+.w12 .w12-gicon { position: relative; }
+.w12 .w12-gicon .w12-gicon-scale { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; display: grid; place-items: center; transform: translate(-50%, -50%) scale(.7); }
+.w12 .w12-tab .w12-done svg { stroke: currentColor; fill: none; }
+.w12 .w12-round svg, .w12 .w12-play-cut .w12-dot svg, .w12 .w12-pv-play svg { fill: currentColor; stroke: none; }
+@media (max-width: 1023px) {
+  .w12-zone { height: auto; padding: 0; margin: 0; }
+  .w12-fit { display: block; height: auto; }
+  .w12.w12-app { width: auto; height: auto; }
+}
+.w12 .w12-qr-img { width: 168px; height: 168px; padding: 10px; border-radius: 10px; background: #f6f5fd; }
+/* Карточки растут на всю высоту ленты (и 9:16, и 4:3/16:9): под ними не остаётся воздуха.
+   Широкая карточка может стать почти шириной ленты — лента на то и листается. */
+.w12 .w12-mcard { max-height: none; }
+/* «Отрывок» на шаге «Трек» занимает всю свободную высоту карточки шага (снизу — её же паддинг 22,
+   как сверху над «Трек»); лишняя высота уходит в волну, минимум — высота волны из макета. */
+.w12 .w12-fill { flex: 1; min-height: 0; }
+.w12 .w12-wave-box { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.w12 .w12-wave-box .w12-wave { flex: 1; height: auto; min-height: 120px; }
+/* Снизу «Отрывок» отстоит от края карточки на тот же зазор, что от своего заголовка (10 + 2 на
+   высоту строки), а не на паддинг карточки 22. Только на десктопе — там карточка не скроллится. */
+@media (min-width: 1024px) {
+  .w12 .w12-stage > .w12-sec.w12-fill { margin-bottom: -10px; }
+}
+/* Столбики волны — 90% высоты дорожки: окно отрывка и ручки остаются на всю высоту, волна чуть ниже */
+.w12 .w12-wave-box .w12-bars { inset: 5% 0; }
+/* Выпадающий список типа подборки (вместо ряда кнопок: типов будет больше) */
+.w12 .w12-dd-wrap { position: relative; }
+.w12 .w12-dd { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 8px 0 12px; border-radius: 9px; background: var(--w12-field); border: 1px solid var(--w12-line); font-size: 13px; color: var(--w12-text); transition: border-color .15s ease; }
+.w12 .w12-dd:hover, .w12 .w12-dd[aria-expanded="true"] { border-color: var(--w12-accent-line); }
+.w12 .w12-dd svg.w12-i { width: 14px; height: 14px; color: var(--w12-text-3); transition: transform .18s var(--w12-ease); }
+.w12 .w12-dd[aria-expanded="true"] svg.w12-i { transform: rotate(180deg); }
+.w12 .w12-dd-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 5; min-width: 220px; padding: 4px; border-radius: 12px; background: var(--w12-panel); border: 1px solid var(--w12-line-2); box-shadow: 0 16px 40px rgba(0, 0, 0, .45); display: flex; flex-direction: column; gap: 2px; animation: w12-fade .16s var(--w12-ease); }
+.w12 .w12-dd-opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 36px; padding: 0 10px; border-radius: 8px; font-size: 14px; color: var(--w12-text-2); cursor: pointer; }
+.w12 .w12-dd-opt[data-active] { background: var(--w12-field); color: var(--w12-text); }
+.w12 .w12-dd-opt[aria-selected="true"] { color: var(--w12-text); }
+.w12 .w12-dd-opt svg.w12-i { width: 15px; height: 15px; color: var(--w12-accent); }
+/* превью в ленте не утаскивается как картинка при драге ленты */
+.w12 .w12-mcard .w12-media img, .w12 .w12-mcard .w12-media video { -webkit-user-drag: none; pointer-events: none; }
+/* Превью широкого кадра: зона превью заполнена размытой копией кадра, сам кадр — во всю ширину по центру */
+.w12 .w12-pv-stage.w12-pv-ambient { position: relative; border-radius: 16px; overflow: hidden; background: var(--w12-field); }
+.w12 .w12-pv-ambient .w12-ambient-bg { position: absolute; inset: -32px; width: calc(100% + 64px); height: calc(100% + 64px); object-fit: cover; filter: blur(28px) brightness(.5) saturate(1.15); pointer-events: none; }
+.w12 .w12-pv-ambient .w12-player { z-index: 1; border-radius: 0; box-shadow: 0 16px 40px rgba(5, 1, 15, .45); }
+/* ── Центровка текста по заглавным ──
+   Контролы центрировали строку, а не буквы: Chrome округляет ascent/descent шрифта до целых
+   пикселей, и при дробном масштабе (zoom холста) округление выпадало по-разному на разных кеглях —
+   текст в одних контролах вставал на ~1px выше, чем в соседних. text-box обрезает строку ровно по
+   высоте заглавных (cap у Point — 0.67em, как у реальных букв) и базовой линии, так что по центру
+   оказываются сами буквы. Метки контролов — в <span class="w12-l">; плашки из одного текста
+   (счётчики, бейджи, ярлыки) обрезаются сами и добирают высоту равными полями через единицу cap. */
+.w12 .w12-l { text-box: trim-both cap alphabetic; }
+.w12 .w12-sec-head h2 { min-height: 24px; }
+@supports (text-box: trim-both cap alphabetic) {
+  .w12 .w12-mode .w12-cnt { display: inline-block; height: 22px; line-height: normal; padding: calc((22px - 1cap) / 2) 6px 0; text-align: center; text-box: trim-both cap alphabetic; }
+  .w12 .w12-mcard .w12-badge.w12-num { display: block; line-height: normal; padding-top: calc((24px - 1cap) / 2); text-align: center; text-box: trim-both cap alphabetic; }
+  .w12 .w12-pv-tag, .w12 .w12-pv-count { height: 24px; line-height: normal; padding: calc((24px - 1cap) / 2) 8px 0; text-box: trim-both cap alphabetic; }
+  .w12 .w12-win-label { height: 22px; line-height: normal; padding: calc((22px - 1cap) / 2) 8px 0; text-box: trim-both cap alphabetic; }
+  .w12 .w12-sum button b:not(:has(svg, img, span)) { line-height: normal; padding: calc((22px - 1cap) / 2) 6px 0; text-box: trim-both cap alphabetic; }
+}
+/* значок-иконка вместо числа в пилюле итога — по центру своей плашки */
+.w12 .w12-sum button b:has(svg, img, span) { display: grid; place-items: center; padding: 0 4px; }
+/* кнопки без флекса: метка w12-l центрируется, только когда она флекс-элемент */
+.w12 .w12-type, .w12 .w12-split, .w12 .w12-small-btn { display: inline-flex; align-items: center; justify-content: center; }
+/* Галочка пройденного этапа: своя под круг 16 (а не общий значок 24, ужатый до 10 — его линия
+   ложилась между пикселями и выглядела кривой). Центр рисунка = центр круга. */
+.w12 .w12-tab .w12-done { width: 16px; height: 16px; }
+.w12 .w12-tab .w12-done svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+/* ── шаг «Текст»: проверка субтитров (дорожка слов) — в шкале «Отрывка» шага «Трек» ── */
+.w12 .w12-stl-failed { font-size: 13px; color: var(--w12-warn); }
+.w12 .w12-stl-help { position: relative; }
+.w12 .w12-stl-help .w12-icon-btn { font-size: 15px; color: var(--w12-text-2); }
+.w12 .w12-stl-tip-box { position: absolute; right: 0; top: calc(100% + 8px); z-index: 6; width: 300px; padding: 10px 12px; border-radius: 12px; background: var(--w12-field-2); border: 1px solid var(--w12-line-2); box-shadow: 0 16px 40px rgba(0, 0, 0, .45); font-size: 13px; line-height: 18px; color: var(--w12-text-2); opacity: 0; pointer-events: none; transition: opacity .15s ease; }
+.w12 .w12-stl-help:hover .w12-stl-tip-box, .w12 .w12-stl-help:focus-within .w12-stl-tip-box { opacity: 1; }
+.w12 .w12-stl-notes { display: flex; flex-direction: column; gap: 8px; }
+.w12 .w12-stl-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: var(--w12-warn-soft); border: 1px solid var(--w12-line); font-size: 13px; line-height: 18px; color: var(--w12-text-2); }
+.w12 .w12-stl-note b { font-weight: 400; color: var(--w12-text); margin-right: 6px; }
+.w12 .w12-stl-note-dot { flex: none; width: 6px; height: 6px; margin-top: 6px; border-radius: 50%; background: var(--w12-warn); }
+.w12 .w12-stl-box { position: relative; overflow: hidden; border-radius: 12px; background: rgba(5, 1, 15, .35); }
+.w12 .w12-stl-lane { position: relative; height: 100%; overflow-x: auto; overflow-y: hidden; outline: none; scrollbar-width: none; }
+.w12 .w12-stl-lane::-webkit-scrollbar { display: none; }
+.w12 .w12-stl-lane:focus-visible { box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
+.w12 .w12-stl-canvas { position: relative; height: 100%; }
+.w12 .w12-stl-empty { height: 100%; display: flex; align-items: center; justify-content: center; gap: 10px; padding: 0 20px; text-align: center; font-size: 14px; color: var(--w12-text-3); }
+.w12 .w12-stl-empty .spinner { width: 18px; height: 18px; }
+.w12 .w12-stl-zone { position: absolute; top: 0; pointer-events: none; background: rgba(246, 245, 253, .035); }
+.w12 .w12-stl-tick { position: absolute; top: 0; pointer-events: none; border-left: 1px dashed rgba(246, 245, 253, .16); }
+.w12 .w12-stl-wave { position: absolute; top: 0; pointer-events: none; }
+.w12 .w12-stl-word { position: absolute; display: flex; align-items: center; justify-content: center; padding: 0 10px; border-radius: 10px; background: var(--w12-field-2); color: var(--w12-text-2); font-size: 15px; white-space: nowrap; cursor: grab; touch-action: none; user-select: none; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06); transition: background-color .15s ease, color .15s ease, box-shadow .15s ease; }
+.w12 .w12-stl-word:active { cursor: grabbing; }
+.w12 .w12-stl-word > .w12-l { overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; }
+.w12 .w12-stl-word.w12-on { background: var(--w12-accent-strong); color: var(--w12-text); }
+.w12 .w12-stl-word.w12-focus { background: var(--w12-text); color: var(--w12-accent-strong); }
+.w12 .w12-stl-word.w12-weak { box-shadow: inset 0 0 0 1.5px var(--w12-warn-line); }
+.w12 .w12-stl-word.w12-sel { z-index: 2; color: var(--w12-text); box-shadow: inset 0 0 0 1.5px var(--w12-accent); }
+.w12 .w12-stl-word.w12-focus.w12-sel { color: var(--w12-accent-strong); box-shadow: 0 0 0 2px var(--w12-accent); }
+.w12 .w12-stl-word.w12-hover { z-index: 7; }
+.w12 .w12-stl-edge { position: absolute; top: 0; bottom: 0; width: 7px; cursor: ew-resize; touch-action: none; border-radius: 10px; }
+.w12 .w12-stl-edge:hover { background: rgba(246, 245, 253, .16); }
+.w12 .w12-stl-edge.w12-l-edge { left: 0; }
+.w12 .w12-stl-edge.w12-r-edge { right: 0; }
+.w12 .w12-stl-tip { position: absolute; left: 50%; top: calc(100% + 6px); z-index: 6; transform: translateX(-50%); white-space: nowrap; font-size: 12px; line-height: 16px; padding: 3px 8px; border-radius: 7px; background: var(--w12-accent-strong); color: var(--w12-text); pointer-events: none; }
+.w12 .w12-stl-lbl { position: absolute; pointer-events: none; font-size: 11px; line-height: 12px; color: var(--w12-text-3); }
+.w12 .w12-stl-lbl.w12-mid { transform: translateX(-50%); }
+.w12 .w12-stl-head { position: absolute; left: 0; top: 0; z-index: 3; width: 14px; cursor: ew-resize; will-change: transform; }
+.w12 .w12-stl-head::before { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); background: var(--w12-text); border-radius: 2px; }
+.w12 .w12-stl-head::after { content: ''; position: absolute; top: 0; left: 50%; width: 9px; height: 9px; transform: translate(-50%, -50%) rotate(45deg); background: var(--w12-text); border-radius: 2px; }
+/* ползунок непрозрачный: пунктир сетки и волна под ним не просвечивают */
+.w12 .w12-stl-sb { position: absolute; z-index: 4; border-radius: 999px; background: #2e2458; cursor: pointer; user-select: none; }
+.w12 .w12-stl-sb > span { position: absolute; top: 0; height: 100%; border-radius: 999px; background: #c9c4dc; }
+.w12 .w12-stl-time { display: inline-flex; align-items: center; height: 38px; padding: 0 12px; border-radius: 10px; background: var(--w12-field); font-size: 15px; color: var(--w12-text-2); }
+.w12 .w12-stl-focus { display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px 0 12px; border-radius: 10px; background: var(--w12-field); font-size: 14px; color: var(--w12-text-2); transition: background-color .15s ease, color .15s ease, box-shadow .15s ease; }
+.w12 .w12-stl-focus:not(:disabled):hover { color: var(--w12-text); background: var(--w12-field-2); }
+.w12 .w12-stl-focus:disabled { opacity: .45; }
+.w12 .w12-stl-focus[aria-pressed="true"] { background: var(--w12-accent-soft); color: var(--w12-text); box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
+.w12 .w12-stl-focus .w12-mi { color: var(--w12-accent); }
+.w12 .w12-stl-zoom { flex: 1; min-width: 150px; display: inline-flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; border-radius: 10px; background: var(--w12-field); font-size: 15px; color: var(--w12-text-3); }
+.w12 .w12-stl-zoom input { flex: 1; min-width: 0; height: 4px; appearance: none; -webkit-appearance: none; border-radius: 999px; background: rgba(139, 111, 230, .3); outline: none; cursor: pointer; }
+.w12 .w12-stl-zoom input::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--w12-text); border: 0; }
+.w12 .w12-stl-zoom input::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--w12-text); border: 0; }
+.w12 .w12-stl-zoom input:disabled { opacity: .4; cursor: default; }
+/* ── шаг «Текст»: стили и настройки текста ── */
+.w12 .w12-sec-note { margin: -4px 0 0; font-size: 13px; line-height: 18px; color: var(--w12-text-3); }
+.w12 .w12-pool.w12-pool-fixed { flex: none; min-height: 0; }
+.w12 .w12-pool-fixed .w12-rail { flex: none; height: 196px; }
+.w12 .w12-type[aria-selected="true"] { background: var(--w12-field-2); color: var(--w12-text); box-shadow: inset 0 0 0 1px var(--w12-line-2); }
+.w12 .w12-set { gap: 10px; }
+.w12 .w12-set > .w12-types { align-self: flex-start; }
+.w12 .w12-set-empty { margin: 0; padding: 6px 0; font-size: 14px; color: var(--w12-text-3); }
+.w12 .w12-set-note { margin: 0; font-size: 13px; line-height: 18px; color: var(--w12-text-3); }
+.w12 .w12-set-rows { display: flex; flex-direction: column; }
+.w12 .w12-set-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 52px; padding: 7px 0; border-bottom: 1px solid var(--w12-line); }
+.w12 .w12-set-rows > .w12-set-row:last-child { border-bottom: 0; }
+.w12 .w12-set-lbl { min-width: 0; font-size: 14px; color: var(--w12-text-2); }
+.w12 .w12-seg { display: inline-flex; gap: 3px; padding: 3px; border-radius: 11px; background: var(--w12-field); flex: none; }
+.w12 .w12-seg-btn { width: 42px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--w12-text-3); transition: background-color .15s ease, color .15s ease, box-shadow .15s ease; }
+.w12 .w12-seg-btn:hover { color: var(--w12-text); }
+.w12 .w12-seg-btn[aria-checked="true"] { background: var(--w12-accent-soft); color: var(--w12-text); box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
+.w12 .w12-g-letter { line-height: 1; font-weight: 400; }
+.w12 .w12-g-frame { position: relative; width: 24px; height: 16px; border-radius: 4px; border: 1.5px solid currentColor; opacity: .85; }
+.w12 .w12-g-frame i { position: absolute; top: 50%; width: 3px; height: 7px; margin-top: -3.5px; border-radius: 2px; background: currentColor; }
+.w12 .w12-g-frame[data-pos="left"] i { left: 2px; }
+.w12 .w12-g-frame[data-pos="center"] i { left: 50%; margin-left: -1.5px; }
+.w12 .w12-g-frame[data-pos="right"] i { right: 2px; }
+.w12 .w12-g-frame[data-pos="down"] i { top: auto; bottom: 2px; left: 50%; width: 9px; height: 3px; margin: 0 0 0 -4.5px; }
+.w12 .w12-g-height { width: 11px; border-radius: 3px; border: 1.5px solid currentColor; display: grid; place-items: center; }
+.w12 .w12-g-height i { width: 5px; height: 1px; background: currentColor; opacity: .7; }
+.w12 .w12-g-shadow { position: relative; width: 18px; height: 18px; }
+.w12 .w12-g-shadow i { position: absolute; left: 0; top: 0; width: 12px; height: 12px; border-radius: 3px; border: 1.5px solid currentColor; }
+.w12 .w12-g-shadow i:last-child { border-color: currentColor; background: currentColor; z-index: -1; }
+.w12 .w12-g-shadow { isolation: isolate; }
+.w12 .w12-set-color { flex: 1; max-width: 300px; display: flex; align-items: center; gap: 10px; }
+.w12 .w12-sw.w12-sw-sm { width: 36px; height: 36px; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--w12-line-2); }
+.w12 .w12-sw.w12-sw-sm[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--w12-line-2), 0 0 0 2px var(--w12-panel-2), 0 0 0 4px var(--w12-accent); }
+.w12 .w12-hue.w12-hue-sm { height: 36px; border-radius: 10px; }
+.w12 .w12-hue-sm .w12-thumb { width: 18px; height: 18px; margin: -9px 0 0 -9px; border-width: 2.5px; }
+.w12 .w12-font-dd { flex: 1; max-width: 300px; }
+.w12 .w12-font-dd .w12-dd { width: 100%; height: 36px; justify-content: space-between; font-size: 14px; }
+/* обрезка только по ширине: метка обрезана text-box по заглавным, overflow:hidden срезал бы
+   верх Й/Ё и выносные — по вертикали текст выходит за свой бокс, это нормально */
+.w12 .w12-font-dd .w12-dd > .w12-l { overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; white-space: nowrap; }
+.w12 .w12-font-menu { left: auto; right: 0; width: 100%; max-height: 280px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--w12-line-2) transparent; }
+.w12 .w12-font-menu .w12-dd-opt { height: auto; min-height: 40px; padding: 6px 10px; }
+.w12 .w12-font-menu .w12-dd-opt:hover:not(.w12-off) { background: var(--w12-field); color: var(--w12-text); }
+.w12 .w12-font-menu .w12-dd-opt[aria-selected="true"] { background: var(--w12-accent-soft); }
+.w12 .w12-dd-opt.w12-off { cursor: not-allowed; color: var(--w12-text-3); }
+.w12 .w12-font-name { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.w12 .w12-font-name small { font-size: 11px; line-height: 14px; color: var(--w12-text-3); }
+.w12 .w12-font-sample { flex: none; font-size: 18px; line-height: 1; color: var(--w12-text-2); }
+/* «?» у заголовка «Проверка субтитров» — круг рядом с текстом */
+.w12 .w12-sec-head h2 .w12-stl-help { display: inline-flex; margin-left: 2px; }
+.w12 .w12-help-dot { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--w12-field); color: var(--w12-text-2); font-size: 13px; transition: background-color .15s ease, color .15s ease; }
+.w12 .w12-help-dot:hover, .w12 .w12-help-dot:focus-visible { background: var(--w12-field-2); color: var(--w12-text); }
+.w12 .w12-sec-head h2 .w12-stl-tip-box { left: 0; right: auto; font-weight: 350; }
+
+/* ── превью субтитров: canvas по AE-геометрии стиля (SubtitleCanvas + lib/subtitleGeometry) ── */
+.w12 .w12-sub-canvas { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.w12 .w12-sub-canvas canvas { display: block; width: 100%; height: 100%; }
+.w12 .w12-sub-error { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 2; padding: 8px 10px; border-radius: 10px; background: rgba(5, 1, 15, .82); color: var(--w12-text-2); font-size: 13px; line-height: 18px; text-align: center; }
+/* Итог шага — одна строка с прокруткой вбок; затухает только тот край, за которым есть пилюли */
+.w12 .w12-sum { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.w12 .w12-sum::-webkit-scrollbar { display: none; }
+.w12 .w12-sum > * { flex: none; }
+.w12 .w12-sum[data-fade-l] { -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 28px); mask-image: linear-gradient(90deg, transparent 0, #000 28px); }
+.w12 .w12-sum[data-fade-r] { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent 100%); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent 100%); }
+.w12 .w12-sum[data-fade-l][data-fade-r] { -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); mask-image: linear-gradient(90deg, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); }
+
+/* ── шаг FX: тайминг дропа, типы-гармошка с вариантами, рабочая зона с доком ── */
+.w12 .w12-drops { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; padding: 4px; border-radius: 14px; background: var(--w12-panel-2); }
+.w12 .w12-drop-opt { height: 44px; min-width: 0; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 16px; color: var(--w12-text-2); transition: background-color .15s ease, color .15s ease; }
+.w12 .w12-drop-opt:hover { color: var(--w12-text); background: var(--w12-field); }
+.w12 .w12-drop-opt[aria-pressed="true"] { background: var(--w12-accent-strong); color: var(--w12-text); }
+.w12 .w12-drop-opt small { font-size: 12px; color: var(--w12-text-3); }
+.w12 .w12-drop-opt[aria-pressed="true"] small { color: rgba(246, 245, 253, .72); }
+.w12 .w12-drop-input { width: 100%; border: 0; outline: none; background: var(--w12-field); color: var(--w12-text); text-align: center; box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
+.w12 .w12-drop-opt.w12-skel i { width: 56%; height: 14px; border-radius: 6px; background: var(--w12-field); animation: w12-pulse 1.1s ease-in-out infinite alternate; }
+@keyframes w12-pulse { from { opacity: .45; } to { opacity: 1; } }
+.w12 .w12-fx-types { display: flex; flex-direction: column; gap: 8px; }
+.w12 .w12-fx-type { position: relative; border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); transition: border-color .15s ease, opacity .2s ease; }
+.w12 .w12-fx-type.w12-on { border-color: var(--w12-accent-line); }
+.w12 .w12-fx-type.w12-locked { opacity: .45; }
+.w12 .w12-fx-head { width: 100%; height: 62px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 16px; text-align: left; font-size: 16px; color: var(--w12-text); }
+.w12 .w12-fx-head:disabled { cursor: not-allowed; }
+.w12 .w12-fx-ic { flex: none; color: var(--w12-text-2); transform: scale(.9); }
+.w12 .w12-fx-type.w12-on .w12-fx-ic { color: var(--w12-accent); }
+.w12 .w12-fx-dots { display: inline-flex; gap: 4px; }
+.w12 .w12-fx-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.w12 .w12-fx-chev { margin-left: auto; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; color: var(--w12-text-3); transition: background-color .15s ease, color .15s ease; }
+.w12 .w12-fx-chev svg.w12-i { width: 16px; height: 16px; transition: transform .2s var(--w12-ease); }
+.w12 .w12-fx-type.w12-open .w12-fx-chev { background: var(--w12-field); color: var(--w12-text); }
+.w12 .w12-fx-type.w12-open .w12-fx-chev svg.w12-i { transform: rotate(180deg); }
+.w12 .w12-fx-hint { position: absolute; left: 16px; right: 16px; top: 58px; z-index: 3; padding: 10px 12px; border-radius: 12px; background: var(--w12-field-2); border: 1px solid var(--w12-line-2); box-shadow: 0 16px 40px rgba(0, 0, 0, .45); font-size: 13px; line-height: 18px; color: var(--w12-text-2); pointer-events: none; }
+.w12 .w12-fx-vars { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 10px; }
+.w12 .w12-fx-var { display: flex; align-items: center; height: 40px; padding-right: 4px; border-radius: 10px; background: rgba(5, 1, 15, .34); transition: background-color .15s ease, box-shadow .15s ease; }
+.w12 .w12-fx-var:hover { background: rgba(5, 1, 15, .5); }
+.w12 .w12-fx-var[data-active] { background: var(--w12-accent-soft); box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
+.w12 .w12-fx-var-main { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 10px; padding-left: 12px; text-align: left; font-size: 14px; color: var(--w12-text-2); }
+.w12 .w12-fx-var[data-active] .w12-fx-var-main { color: var(--w12-text); }
+.w12 .w12-fx-var-name { min-width: 0; overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; white-space: nowrap; }
+.w12 .w12-chip.w12-chip-sm { flex: none; height: 22px; padding: 0 8px; font-size: 12px; }
+.w12 .w12-fx-add { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px 0 10px; border-radius: 10px; background: var(--w12-field); font-size: 14px; color: var(--w12-text-2); transition: background-color .15s ease, color .15s ease; }
+.w12 .w12-fx-add:hover { background: var(--w12-field-2); color: var(--w12-text); }
+.w12 .w12-fx-add svg.w12-i { width: 15px; height: 15px; color: var(--w12-accent); stroke-width: 2; }
+.w12 .w12-fx-add small { font-size: 12px; color: var(--w12-text-3); }
+/* рабочая зона */
+.w12 .w12-tl-btn { box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
+.w12 .w12-tl-btn svg.w12-i { width: 16px; height: 16px; stroke-width: 1.4; }
+.w12 .w12-fx-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; border-radius: 16px; background: var(--w12-field); }
+.w12 .w12-fx-stage .w12-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--w12-text-3); font-size: 14px; }
+.w12 .w12-fx-media { position: absolute; inset: 0; }
+.w12 .w12-fx-media img, .w12 .w12-fx-media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover !important; }
+.w12 .w12-fx-tags { position: absolute; left: 12px; right: 12px; top: 12px; z-index: 4; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; pointer-events: none; }
+.w12 .w12-fx-tag { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 26px; padding: 0 9px; border-radius: 8px; background: rgba(5, 1, 15, .58); backdrop-filter: blur(8px); font-size: 12px; color: var(--w12-text); white-space: nowrap; }
+.w12 .w12-fx-tag-dim { color: var(--w12-text-3); }
+.w12 .w12-fx-picked { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 5px; background: var(--w12-accent-strong); font-size: 11px; font-style: normal; }
+.w12 .w12-fx-stage .w12-fx-nav { top: 38%; z-index: 4; }
+.w12 .w12-fx-dock { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 4; display: flex; flex-direction: column; gap: 10px; padding: 10px; border-radius: 14px; background: rgba(13, 8, 32, .8); backdrop-filter: blur(12px); border: 1px solid var(--w12-line); }
+.w12 .w12-fx-steps { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
+.w12 .w12-fx-step { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 6px 10px; border-radius: 10px; background: rgba(246, 245, 253, .06); text-align: left; transition: background-color .15s ease, box-shadow .15s ease; }
+.w12 .w12-fx-step:hover { background: rgba(246, 245, 253, .1); }
+.w12 .w12-fx-step[aria-selected="true"] { background: var(--w12-accent-soft); box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
+.w12 .w12-fx-step small { font-size: 10px; line-height: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--w12-text-3); }
+.w12 .w12-fx-step span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 18px; color: var(--w12-text); }
+.w12 .w12-fx-step span.w12-off { color: var(--w12-text-3); }
+.w12 .w12-fx-mod { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; font-size: 13px; color: var(--w12-text-3); }
+.w12 .w12-seg-btn.w12-seg-text { width: auto; height: 28px; padding: 0 10px; font-size: 12px; }
+.w12 .w12-seg-btn[aria-pressed="true"] { background: var(--w12-accent-soft); color: var(--w12-text); box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
+/* лента вариантов шага: одна строка, края тают там, где есть ещё; справа — перед зоной кнопки (--rg) */
+.w12 .w12-chiprow { --fl: 0px; --fr: 0px; display: flex; align-items: center; gap: 8px; min-width: 0; overflow-x: auto; scrollbar-width: none; user-select: none; padding-block: 2px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 var(--fl), #000 calc(100% - var(--rg, 0px) - var(--fr)), transparent calc(100% - var(--rg, 0px)));
+  mask-image: linear-gradient(90deg, transparent 0, #000 var(--fl), #000 calc(100% - var(--rg, 0px) - var(--fr)), transparent calc(100% - var(--rg, 0px))); }
+.w12 .w12-chiprow::-webkit-scrollbar { display: none; }
+.w12 .w12-chiprow[data-fade-l] { --fl: 24px; }
+.w12 .w12-chiprow[data-fade-r] { --fr: 24px; }
+.w12 .w12-chiprow > .w12-pill { flex: none; }
+/* «Прогрев»: свой звук или видео */
+.w12 .w12-warm-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.w12 .w12-warm-kinds .w12-small-btn { height: 38px; }
+.w12 .w12-warm { display: flex; flex-direction: column; gap: 8px; }
+.w12 .w12-warm-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.w12 .w12-drop.w12-drop-sm { gap: 12px; padding: 10px 12px; border-radius: 12px; font-size: 14px; }
+.w12 .w12-warm-media { width: 100%; max-height: 112px; border-radius: 10px; }
+.w12 .w12-warm-audio { width: 100%; height: 32px; }
+.w12 .w12-warm-del { align-self: flex-start; font-size: 12px; }
+@media (max-width: 1023px) {
+  .w12 .w12-fx-stage { flex: none; width: 100%; aspect-ratio: 9 / 16; }
+}
+/* теги над примером: вариант сжимается с многоточием, тег примера — целиком */
+.w12 .w12-fx-tag:first-child { flex: 0 1 auto; overflow: hidden; }
+.w12 .w12-fx-tag:first-child .w12-l { min-width: 0; overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; white-space: nowrap; }
+.w12 .w12-fx-tag + .w12-fx-tag { flex: none; }
+/* Список типов FX листается сам (как раньше в механике), края тают только там, где есть ещё строки */
+.w12 .w12-fx-scroll { --ft: 0px; --fb: 0px; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 var(--ft), #000 calc(100% - var(--fb)), transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 var(--ft), #000 calc(100% - var(--fb)), transparent 100%); }
+.w12 .w12-fx-scroll::-webkit-scrollbar { display: none; }
+.w12 .w12-fx-scroll[data-fade-t] { --ft: 24px; }
+.w12 .w12-fx-scroll[data-fade-b] { --fb: 24px; }
+@media (max-width: 1023px) {
+  .w12 .w12-fx-scroll { overflow: visible; -webkit-mask-image: none; mask-image: none; }
+}
+
+/* ── шаг «Пул»: всего видео, секции распределения со счётчиками, комбинации ── */
+.w12 .w12-pool-total { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px 10px 18px; border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-accent-line); }
+.w12 .w12-pool-total-side { display: flex; align-items: center; gap: 12px; }
+.w12 .w12-small-btn.w12-accent { background: var(--w12-accent-soft); box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
+.w12 .w12-small-btn.w12-accent:hover { background: rgba(139, 111, 230, .26); }
+.w12 .w12-step { flex: none; display: inline-flex; align-items: center; gap: 4px; }
+.w12 .w12-step button { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--w12-field); color: var(--w12-text-2); transition: background-color .15s ease, color .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-step button:hover:not(:disabled) { background: var(--w12-field-2); color: var(--w12-text); }
+.w12 .w12-step button:active:not(:disabled) { transform: scale(.94); }
+.w12 .w12-step button:disabled { opacity: .35; cursor: not-allowed; }
+.w12 .w12-step button svg.w12-i { width: 14px; height: 14px; stroke-width: 2; }
+.w12 .w12-step strong { min-width: 28px; display: inline-flex; justify-content: center; font-size: 16px; font-weight: 400; color: var(--w12-text); }
+.w12 .w12-pool-scroll { --ft: 0px; --fb: 0px; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 var(--ft), #000 calc(100% - var(--fb)), transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 var(--ft), #000 calc(100% - var(--fb)), transparent 100%); }
+.w12 .w12-pool-scroll::-webkit-scrollbar { display: none; }
+.w12 .w12-pool-scroll[data-fade-t] { --ft: 24px; }
+.w12 .w12-pool-scroll[data-fade-b] { --fb: 24px; }
+.w12 .w12-pool-secs { display: flex; flex-direction: column; gap: 12px; }
+.w12 .w12-pool-sec { gap: 10px; }
+.w12 .w12-pool-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.w12 .w12-pool-sec-head h3 { margin: 0; font-size: 16px; font-weight: 400; color: var(--w12-text); }
+.w12 .w12-pool-sec-note { font-size: 13px; color: var(--w12-text-3); text-align: right; }
+.w12 .w12-pool-sec-note.w12-warn { color: var(--w12-warn); }
+.w12 .w12-pool-rows { display: flex; flex-direction: column; gap: 8px; }
+.w12 .w12-pool-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
+.w12 .w12-pool-row-l { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.w12 .w12-mini-pill { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 32px; padding: 0 12px 0 5px; border-radius: 10px; background: var(--w12-field); font-size: 14px; color: var(--w12-text-2); }
+.w12 .w12-mini-pill > .w12-l { min-width: 0; overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; white-space: nowrap; }
+.w12 .w12-mini-ic { flex: none; width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--w12-field-2); color: var(--w12-text); font-size: 12px; }
+.w12 .w12-pool-font { display: flex; align-items: center; gap: 10px; flex: none; min-width: 0; }
+.w12 .w12-pool-font-l { font-size: 13px; color: var(--w12-text-3); white-space: nowrap; }
+.w12 .w12-pool-font .w12-types { padding: 2px; border-radius: 10px; }
+.w12 .w12-pool-font .w12-type { height: 28px; padding: 0 11px; }
+.w12 .w12-pager { align-self: center; display: inline-flex; align-items: center; gap: 2px; height: 30px; padding: 0 3px; border-radius: 10px; background: var(--w12-field); font-size: 13px; color: var(--w12-text-2); }
+.w12 .w12-pager button { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; color: var(--w12-text-2); transition: background-color .15s ease, color .15s ease; }
+.w12 .w12-pager button:hover:not(:disabled) { background: var(--w12-field-2); color: var(--w12-text); }
+.w12 .w12-pager button:disabled { opacity: .3; }
+.w12 .w12-pager svg.w12-i { width: 14px; height: 14px; }
+.w12 .w12-pager > span { min-width: 38px; display: inline-flex; justify-content: center; }
+.w12 .w12-aside-head .w12-tl-btn { align-self: center; }
+@media (max-width: 1023px) {
+  .w12 .w12-pool-scroll { overflow: visible; -webkit-mask-image: none; mask-image: none; }
+  .w12 .w12-pool-total { flex-wrap: wrap; }
+}
+
+/* хост лимитов (LimitsIndicator): затемнение и поповер позиционируются от этой карточки */
+.w12 [data-limits-dim] { position: relative; }
+.w12 [data-limits-dim] > span.rounded-r25 { border-radius: inherit; }
+
+/* шапка «Комбинаций»: заголовок слева, листалка в правом углу — одна ось, одна высота */
+.w12 .w12-combo-head { align-items: center; justify-content: space-between; }
+.w12 .w12-combo-head h2 { white-space: nowrap; }
+.w12 .w12-combo-head .w12-pager { height: 32px; }
+
+/* вход на таймлайн — главная строка футера «Пула»: фиолетовая, текст в две строки ровно по центру плитки */
+.w12 .w12-tl-entry { flex: none; display: flex; align-items: center; gap: 14px; width: 100%; height: 64px; padding: 0 16px 0 12px; border-radius: 14px; background: var(--w12-accent-strong); color: var(--w12-text); text-align: left; transition: background-color .15s ease, transform .12s var(--w12-ease); }
+@media (hover: hover) and (pointer: fine) { .w12 .w12-tl-entry:hover { background: #7458d8; } .w12 .w12-tl-entry:hover .w12-tl-entry-go { transform: translateX(2px); } }
+.w12 .w12-tl-entry:active { transform: scale(.985); }
+.w12 .w12-tl-entry-ic { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: rgba(246, 245, 253, .16); }
+.w12 .w12-tl-entry-ic svg.w12-i { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+/* обе строки обрезаны по высоте заглавных: блок встаёт по центру плитки без подгонок */
+.w12 .w12-tl-entry-t { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; }
+.w12 .w12-tl-entry-t b { display: block; font-weight: 400; font-size: 16px; line-height: 20px; }
+.w12 .w12-tl-entry-t small { display: block; font-size: 12px; line-height: 16px; color: rgba(246, 245, 253, .72); white-space: nowrap; overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; }
+.w12 .w12-tl-entry-go { flex: none; display: grid; place-items: center; transition: transform .15s var(--w12-ease); }
+.w12 .w12-tl-entry-go svg.w12-i { width: 16px; height: 16px; }
+/* «Сгенерировать» тоном «Назад» — рядом с главной фиолетовой строкой */
+.w12 .w12-cta.w12-cta-field { background: var(--w12-field); color: var(--w12-text); }
+.w12 .w12-cta.w12-cta-field:hover { background: var(--w12-field-2); }
+
+/* ── волна шага «Трек»: своя подложка по краям столбиков + зум ── */
+.w12 .w12-wave-frame { border-radius: 12px; background: rgba(5, 1, 15, .35); box-shadow: inset 0 0 0 1px var(--w12-line); padding: 0 12px 8px; }
+.w12 .w12-wave-scroll { flex: 1; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden; padding-top: 36px; scrollbar-width: thin; scrollbar-color: rgba(246, 245, 253, .16) transparent; }
+.w12 .w12-wave-scroll::-webkit-scrollbar { height: 6px; }
+.w12 .w12-wave-scroll::-webkit-scrollbar-thumb { background: rgba(246, 245, 253, .16); border-radius: 999px; }
+.w12 .w12-wave-inner { flex: none; min-width: 100%; display: flex; flex-direction: column; }
+.w12 .w12-wave-inner .w12-wave { flex: 1; height: auto; min-height: 96px; margin-top: 0; }
+.w12 .w12-wave-inner .w12-ruler { margin-top: 10px; }
+.w12 .w12-zoom { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; padding: 3px; border-radius: 12px; background: rgba(246, 245, 253, .04); }
+.w12 .w12-zoom-btn { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--w12-panel-3, rgba(246, 245, 253, .06)); color: var(--w12-text-2); font-size: 18px; line-height: 1; transition: background-color .15s ease, color .15s ease, transform .12s ease; }
+.w12 .w12-zoom-btn:active:not(:disabled) { transform: scale(.94); }
+.w12 .w12-zoom-btn:disabled { opacity: .35; cursor: default; }
+@media (hover: hover) and (pointer: fine) { .w12 .w12-zoom-btn:hover:not(:disabled) { color: var(--w12-text); background: rgba(246, 245, 253, .1); } }
+.w12 .w12-zoom-val { min-width: 2.6em; text-align: center; font-size: 14px; color: var(--w12-text-2); }
+@media (max-width: 767px) { .w12 .w12-zoom { margin-left: 0; } }
+
+/* ── прослушивание дропа на шаге FX ── */
+.w12 .w12-drop-listen { display: inline-flex; align-items: center; gap: 10px; }
+.w12 .w12-drop-play { display: inline-flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px 0 4px; border-radius: 10px; background: var(--w12-field); font-size: 14px; line-height: 20px; color: var(--w12-text); transition: background-color .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-drop-play:active:not(:disabled) { transform: scale(.97); }
+.w12 .w12-drop-play:disabled { opacity: .45; cursor: default; }
+@media (hover: hover) and (pointer: fine) { .w12 .w12-drop-play:hover:not(:disabled) { background: var(--w12-field-2); } }
+.w12 .w12-drop-play .w12-dot { width: 24px; height: 24px; border-radius: 50%; background: var(--w12-text); color: var(--w12-bg); display: grid; place-items: center; }
+.w12 .w12-drop-play .w12-dot svg { width: 10px; height: 10px; fill: currentColor; stroke: none; }
+/* ui-allow: Point в контролах сидит выше центра — опускаем цифры на 1px */
+.w12 .w12-drop-clock { min-width: 3.4em; font-variant-numeric: tabular-nums; transform: translateY(1px); }
+.w12 .w12-drop-left { font-size: 13px; line-height: 18px; color: var(--w12-text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (max-width: 767px) { .w12 .w12-drop-left { display: none; } }

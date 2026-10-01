@@ -1,4 +1,5 @@
 import { DragEvent, useEffect, useRef, useState } from 'react';
+import { Svg, W12 } from './WizardFrame';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '../../lib/api';
 import { HookConfig, useWizardStore } from '../../stores/wizardStore';
@@ -77,32 +78,31 @@ export function WarmupInput({ value, onPatch }: { value?: HookConfig; onPatch?: 
   };
 
   if (!selectedKind) return (
-    <div className="grid min-w-0 grid-cols-2 gap-3" role="group" aria-label={t('wizard.warmup.title')}>
+    <div className="w12-warm-kinds" role="group" aria-label={t('wizard.warmup.title')}>
       {(['audio', 'video'] as const).map(kind => (
-        <button key={kind} type="button"
-          className="flex min-h-[52px] items-center justify-center rounded-r10 border border-[rgba(246,245,253,0.16)] bg-grad-soft-10 px-4 text-[16px] text-text-60 transition hover:border-accent-light hover:text-text"
-          onClick={() => choose(kind)}>{t(`wizard.warmup.${kind}`)}</button>
+        <button key={kind} type="button" className="w12-small-btn" onClick={() => choose(kind)}><span className="w12-l">{t(`wizard.warmup.${kind}`)}</span></button>
       ))}
     </div>
   );
 
   return (
-    <div className="flex min-w-0 flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <span className="rounded-r10 bg-grad-soft-20 px-3 py-2 text-[15px] text-text-80">{t(`wizard.warmup.${selectedKind}`)}</span>
-        <button type="button" disabled={busy} className="text-[14px] text-text-60 underline underline-offset-4 transition hover:text-text disabled:opacity-40" onClick={goBack}>{t('wizard.warmup.back')}</button>
+    <div className="w12-warm">
+      <div className="w12-warm-head">
+        <span className="w12-chip"><span className="w12-l">{t(`wizard.warmup.${selectedKind}`)}</span></span>
+        <button type="button" disabled={busy} className="w12-link" onClick={goBack}>{t('wizard.warmup.back')}</button>
       </div>
       <input ref={input} className="sr-only" type="file" accept={video ? VIDEO_FILE_ACCEPT : AUDIO_FILE_ACCEPT} disabled={busy}
         onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; void upload(file); }} />
-      <button type="button" className="dash-panel-r10 flex min-h-[58px] items-center justify-center truncate px-3 py-2 text-sm transition hover:brightness-125" disabled={busy}
+      <button type="button" className="w12-drop w12-drop-sm" disabled={busy}
         onClick={() => input.current?.click()} onDragOver={event => event.preventDefault()} onDrop={onDrop}>
-        {busy ? t('wizard.warmup.processing') : config.sound || t('wizard.warmup.drop')}
+        <span className="w12-plus">{busy ? <span className="spinner" aria-hidden="true" /> : <Svg>{W12.upload}</Svg>}</span>
+        <span><b>{busy ? t('wizard.warmup.processing') : config.sound || t('wizard.warmup.drop')}</b></span>
       </button>
       {config.soundPlaybackUrl && (video
-        ? <video className="max-h-28 w-full" src={config.soundPlaybackUrl} controls playsInline />
-        : <audio className="h-8 w-full" src={config.soundPlaybackUrl} controls />)}
-      {config.sound && <button type="button" disabled={busy} className="self-start text-xs underline" onClick={() => clear(selectedKind)}>{t('wizard.fx.deleteSound')}</button>}
-      {error && <p role="alert" className="text-sm text-red-300">{error}</p>}
+        ? <video className="w12-warm-media" src={config.soundPlaybackUrl} controls playsInline />
+        : <audio className="w12-warm-audio" src={config.soundPlaybackUrl} controls />)}
+      {config.sound && <button type="button" disabled={busy} className="w12-link w12-warm-del" onClick={() => clear(selectedKind)}>{t('wizard.fx.deleteSound')}</button>}
+      {error && <p role="alert" className="w12-miss">{error}</p>}
     </div>
   );
 }

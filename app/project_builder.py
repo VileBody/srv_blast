@@ -576,7 +576,11 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "M
     hook = (str(f3_block.get("hook") or "").strip() or None)
     transition = (str(f3_block.get("transition") or "").strip() or None)
     extra = (str(f3_block.get("extra") or "").strip() or None)
-    if not (hook or transition or extra):
+    # Монтажный стол: переходы по склейкам и стили с окнами. Ключ присутствует —
+    # режим стола (пустой список = «без переходов»), None — прежний общий выбор.
+    cut_transitions = f3_block.get("cut_transitions")
+    extra_ranges = f3_block.get("extra_ranges")
+    if not (hook or transition or extra or cut_transitions or extra_ranges):
         return ""
 
     drop_time = f3_block.get("drop_time")
@@ -597,14 +601,19 @@ def _build_f3_overlay_js(full_edit_config: Dict[str, Any], *, comp_var: str = "M
         extra=extra,
         extra_full=extra_full,
         hook_extend=hook_extend,
+        cut_transitions=cut_transitions,
+        extra_ranges=extra_ranges,
         drop_time=float(drop_time),
         assets=assets,
         seed=seed,
         comp_var=comp_var,
     )
     LOGGER.info(
-        "f3 fx present hook=%s trans=%s extra=%s extra_full=%s extend=%s comp=%s js_len=%d",
-        hook, transition, extra, extra_full, hook_extend, comp_var, len(overlay),
+        "f3 fx present hook=%s trans=%s extra=%s extra_full=%s extend=%s cuts=%s ranges=%s comp=%s js_len=%d",
+        hook, transition, extra, extra_full, hook_extend,
+        len(cut_transitions) if isinstance(cut_transitions, list) else "-",
+        len(extra_ranges) if isinstance(extra_ranges, list) else "-",
+        comp_var, len(overlay),
     )
     return overlay
 
