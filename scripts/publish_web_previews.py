@@ -2,7 +2,7 @@
 """Новые превью эффектов и субтитров → S3 → каталоги сайта в .env.production (с бэкапом).
 
 Запускает workflow «Publish Web Previews» на runner'е деплоя сайта: только он читает
-.env.production (права 600). Превью заранее кладутся в папку на том же сервере:
+.env.production (права 600). Превью заранее кладутся в папку на том же сервере (в /home/deploy: у runner'а свой /tmp):
 
     <stage>/manifest.json   [{plane: "fx", category, id, file, name, in_registry}
                              | {plane: "subtitle", mode, file, name, new_style}]
