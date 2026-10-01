@@ -43,8 +43,14 @@
 .psb-var button { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: rgba(246, 245, 253, .8); }
 .psb-var button:hover { background: rgba(246, 245, 253, .1); color: var(--text); }
 .psb-var button:disabled { opacity: .25; pointer-events: none; }
-.psb-strip { display: flex; gap: 4px; height: 54px; }
-.psb-seg { position: relative; flex: 1 1 0; min-width: 18px; border-radius: 7px; overflow: hidden; background: #1a1230; box-shadow: 0 0 0 1px rgba(246, 245, 253, .12); cursor: pointer; transition: box-shadow .15s ease, opacity .15s ease; }
+.psb-strip { display: flex; gap: 4px; height: 58px; padding: 2px; margin: -2px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; }
+.psb-strip::-webkit-scrollbar { display: none; }
+/* На узком плеере кадры не сжимаются в щели: минимум 40px, лента едет вбок (useStripFollow держит
+   текущий кадр в центре), фейд — с той стороны, где за краем ещё есть кадры. */
+.psb-strip[data-fade-r] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); } /* ui-allow: альфа-маска фейда, не цвет */
+.psb-strip[data-fade-l] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 28px), transparent); } /* ui-allow: альфа-маска фейда, не цвет */
+.psb-strip[data-fade-l][data-fade-r] { -webkit-mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, transparent, #000 28px, #000 calc(100% - 28px), transparent); } /* ui-allow: альфа-маска фейда, не цвет */
+.psb-seg { position: relative; flex: 1 0 0; min-width: 40px; border-radius: 7px; overflow: hidden; background: #1a1230; box-shadow: 0 0 0 1px rgba(246, 245, 253, .12); cursor: pointer; transition: box-shadow .15s ease, opacity .15s ease; }
 .psb-seg video, .psb-seg img { width: 100%; height: 100%; object-fit: cover; object-position: center; display: block; opacity: .8; pointer-events: none; }
 .psb-seg:hover video, .psb-seg.cur video { opacity: 1; }
 .psb-seg.sel { box-shadow: 0 0 0 2px #fff; }

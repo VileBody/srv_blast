@@ -347,8 +347,10 @@
 }
 @media (max-width: 560px) {
   .w12 .w12-head { padding: 16px; }
-  .w12 .w12-tabs { display: flex; overflow-x: auto; scrollbar-width: none; }
-  .w12 .w12-tab { flex: none; padding: 0 12px; font-size: 14px; }
+  .w12 .w12-tabs { display: flex; }
+  .w12 .w12-tab { flex: 1 1 0; min-width: 0; padding: 0 8px; font-size: 14px; }
+  .w12 .w12-tab[aria-selected="true"] { flex: 0 0 auto; padding: 0 14px; }
+  .w12 .w12-tab:not([aria-selected="true"]) .w12-l { display: none; }
   .w12 .w12-stage, .w12 .w12-aside { padding: 16px; }
   .w12 .w12-tf input { width: 70px; }
   .w12 .w12-dur { margin-left: 0; width: 100%; }
@@ -581,7 +583,13 @@
 .w12 .w12-drop-opt { height: 44px; min-width: 0; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 16px; color: var(--w12-text-2); transition: background-color .15s ease, color .15s ease; }
 .w12 .w12-drop-opt:hover { color: var(--w12-text); background: var(--w12-field); }
 .w12 .w12-drop-opt[aria-pressed="true"] { background: var(--w12-accent-strong); color: var(--w12-text); }
-.w12 .w12-drop-opt small { font-size: 12px; color: var(--w12-text-3); }
+.w12 .w12-drop-opt small { font-size: 12px; color: var(--w12-text-3); white-space: nowrap; }
+.w12 .w12-drop-opt .w12-l { white-space: nowrap; }
+/* телефон: 4 чипа по ~75px — время сверху, «72% ★» строкой ниже, а не звезда, упавшая отдельно */
+@media (max-width: 560px) {
+  .w12 .w12-drop-opt { height: 52px; flex-direction: column; gap: 0; font-size: 15px; line-height: 20px; }
+  .w12 .w12-drop-opt small { line-height: 16px; }
+}
 .w12 .w12-drop-opt[aria-pressed="true"] small { color: rgba(246, 245, 253, .72); }
 .w12 .w12-drop-input { width: 100%; border: 0; outline: none; background: var(--w12-field); color: var(--w12-text); text-align: center; box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
 .w12 .w12-drop-opt.w12-skel i { width: 56%; height: 14px; border-radius: 6px; background: var(--w12-field); animation: w12-pulse 1.1s ease-in-out infinite alternate; }
@@ -705,6 +713,12 @@
 .w12 .w12-pool-font-l { font-size: 13px; color: var(--w12-text-3); white-space: nowrap; }
 .w12 .w12-pool-font .w12-types { padding: 2px; border-radius: 10px; }
 .w12 .w12-pool-font .w12-type { height: 28px; padding: 0 11px; }
+/* телефон: у строки цвета/строба выбор шрифта уходит второй строкой — в одну линию с подписью
+   и плашкой «1 видео» он не влезал и наезжал на них */
+@media (max-width: 560px) {
+  .w12 .w12-pool-color { flex-wrap: wrap; row-gap: 8px; }
+  .w12 .w12-pool-color .w12-pool-font { flex: 1 1 100%; justify-content: space-between; }
+}
 .w12 .w12-pager { align-self: center; display: inline-flex; align-items: center; gap: 2px; height: 30px; padding: 0 3px; border-radius: 10px; background: var(--w12-field); font-size: 13px; color: var(--w12-text-2); }
 .w12 .w12-pager button { width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; color: var(--w12-text-2); transition: background-color .15s ease, color .15s ease; }
 .w12 .w12-pager button:hover:not(:disabled) { background: var(--w12-field-2); color: var(--w12-text); }
