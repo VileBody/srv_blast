@@ -1,399 +1,211 @@
-/* ═══════════════════════════════════════════════════════════════
-   Blast Landing — main.js
-   • Burger / mobile menu toggle
-   • Smooth scroll for nav links (closes mobile menu)
-   • Active nav link on scroll (IntersectionObserver)
-   ═══════════════════════════════════════════════════════════════ */
+/* Blast landing — main.js. Живые фрагменты веб-приложения, стена роликов, шаги, язык через js/i18n.js. */
+(function(){
 
-(function () {
-  'use strict';
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /* ── Атрибуция кампаний в веб-приложение (как раньше) ── */
+  (() => { const keys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'], q = new URLSearchParams(location.search), c = new URLSearchParams();
+    keys.forEach(k => { const v = q.get(k); if(v) c.set(k, v.slice(0, 160)); });
+    if(c.size) document.querySelectorAll('a[href^="https://app.blast808.com/"]').forEach(a => { const u = new URL(a.href); c.forEach((v, k) => u.searchParams.set(k, v)); a.href = u.toString(); }); })();
 
-  /* ─── Preserve campaign attribution into the web app ─────── */
-  const campaignKeys = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term'];
-  const campaign = new URLSearchParams();
-  const landingParams = new URLSearchParams(window.location.search);
-  campaignKeys.forEach(key => {
-    const value = landingParams.get(key);
-    if (value) campaign.set(key, value.slice(0, 160));
+  /* ── Язык: ведёт общий js/i18n.js (BLAST_I18N, ?lang, blast_language), здесь — то, что он не знает ── */
+  const I18N = window.BLAST_I18N;
+  let LP_LANG = I18N ? I18N.getLanguage() : 'ru';
+  function trTree(root){ if(I18N) I18N.translateSubtree(root); }
+  window.__lpTr = trTree;
+  function syncLang(){
+    document.querySelectorAll('.lp-lang [role=radio], .lp-mfoot [role=radio]').forEach(b => { const on = b.dataset.language === LP_LANG;
+      b.setAttribute('aria-checked', on); b.classList.toggle('bg-field-hover', on); b.classList.toggle('text-text', on); b.classList.toggle('shadow-[inset_0_0_0_1px_var(--line-strong)]', on); b.classList.toggle('text-text-60', !on); });
+    /* в полосе этапов «Background» не влезает — короткое BG */
+    document.querySelectorAll('.w12-tab .w12-l').forEach(l => { if(l.textContent === 'Фон' || l.textContent === 'Background' || l.textContent === 'BG') l.textContent = LP_LANG === 'en' ? 'BG' : 'Фон'; });
+    document.querySelectorAll('textarea').forEach(ta => { if(!ta.dataset.ru) ta.dataset.ru = ta.value; ta.value = LP_LANG === 'en' ? '#nightcity #music #newtrack' : ta.dataset.ru; });
+    if(window.__lpBuildLyric) window.__lpBuildLyric(LP_LANG); (window.__lpRepaint || []).forEach(f => f());
+  }
+  document.addEventListener('blast:languagechange', e => { LP_LANG = e.detail.language; syncLang(); });
+
+  /* ── Ролики: base64 → blob, постер сразу, играют только в зоне видимости ── */
+  const MEDIA = 'media/';
+  function clipUrl(n){ return MEDIA + n + '.mp4'; }
+  function poster(n){ return MEDIA + n + '.jpg'; }
+  const vio = new IntersectionObserver(es => es.forEach(e => { const v = e.target;
+    if(e.isIntersecting){ if(!v.src) v.src = clipUrl(v.dataset.clip); if(!reduce || !v.muted) v.play().catch(()=>{}); } else v.pause(); }), {rootMargin:'150px 0px'});
+  function wire(v){ v.poster = poster(v.dataset.clip); vio.observe(v); }
+
+  /* ── Стена: три колонки, бесконечная лента; чипы — настоящие psb-chip из плеера Пула ── */
+  const chip = id => document.getElementById(id).innerHTML;
+  const W = [
+    [['w_h1','9/16','tpl-chip-bg'],['w_j2','1/1',''],['w_b1','4/3','tpl-chip-t'],['w_a1','1/1',''],['w_u1','4/5','']],
+    [['w_t1','3/4',''],['w_i1','1/1','tpl-chip-fx'],['w_b4','4/3',''],['w_h2','9/16','tpl-chip-t'],['w_a2','1/1','']],
+    [['w_j1','1/1','tpl-chip-t'],['w_u1','9/16',''],['w_b3','4/3','tpl-chip-bg'],['w_i2','1/1',''],['w_t2','3/4','tpl-chip-fx']]
+  ];
+  const wall = document.getElementById('wall'), cols = [];
+  W.forEach((list, ci) => {
+    const col = document.createElement('div'); col.className = 'lp-col'; const inner = document.createElement('div'); inner.className = 'lp-col-in'; col.appendChild(inner); wall.appendChild(col);
+    list.forEach(([n, r, c]) => { const t = document.createElement('div'); t.className = 'lp-tile'; t.style.aspectRatio = r;
+      const v = document.createElement('video'); v.muted = true; v.loop = true; v.playsInline = true; v.dataset.clip = n; t.appendChild(v);
+      if(c){ const ch = document.createElement('div'); ch.className = 'psb-chips'; ch.innerHTML = '<div class="rail">' + chip(c) + '</div>'; t.appendChild(ch); }
+      inner.appendChild(t); wire(v); });
+    cols.push({inner, y: [0,-120,-60][ci], speed: [22,-16,28][ci]});
   });
-  if (campaign.size) {
-    document.querySelectorAll('a[href^="https://app.blast808.com/"]').forEach(link => {
-      const target = new URL(link.href);
-      campaign.forEach((value, key) => target.searchParams.set(key, value));
-      link.href = target.toString();
+  function stepWall(dt){ cols.forEach(c => { c.y -= c.speed*dt; const f = c.inner.firstElementChild, l = c.inner.lastElementChild, g = 12;
+    if(c.speed > 0 && -c.y > f.offsetHeight + g){ c.y += f.offsetHeight + g; c.inner.appendChild(f); }
+    if(c.speed < 0 && c.y > 0){ c.inner.insertBefore(l, f); c.y -= l.offsetHeight + g; }
+    c.inner.style.transform = 'translate3d(0,' + c.y + 'px,0)'; }); }
+  stepWall(0); let wOn = false, wl = 0;
+  function wLoop(ts){ if(!wOn) return; const dt = wl ? Math.min(.05,(ts-wl)/1000) : 0; wl = ts; stepWall(dt); requestAnimationFrame(wLoop); }
+  if(!reduce) new IntersectionObserver(([e]) => { wOn = e.isIntersecting; wl = 0; if(wOn) requestAnimationFrame(wLoop); }).observe(wall);
+  document.querySelectorAll('video[data-clip]').forEach(v => { if(!v.closest('.lp-wall')) wire(v); });
+
+  document.querySelectorAll('[role=radiogroup]:not(.lp-lang [role=radiogroup])').forEach(g => g.querySelectorAll('[role=radio]').forEach(b => b.addEventListener('click', () => {
+    g.querySelectorAll('[role=radio]').forEach(x => { const on = x === b; x.setAttribute('aria-checked', on); x.classList.toggle('bg-field-hover', on); x.classList.toggle('text-text', on); x.classList.toggle('shadow-[inset_0_0_0_1px_var(--line-strong)]', on); x.classList.toggle('text-text-60', !on); }); })));
+
+  /* ── Соцдоказательство: слова и кружки загораются как субтитр ── */
+  const lyric = document.getElementById('lyric'); let lyricWords = [], lyricShown = false;
+  function buildLyric(lang){
+    lyric.innerHTML = lyric.dataset[lang];
+    const out = [];
+    [...lyric.childNodes].forEach(n => {
+      if(n.nodeType === 3){ n.textContent.split(/(\s+)/).forEach(w => { if(!w) return; if(/^\s+$/.test(w)){ out.push(document.createTextNode(w)); return; }
+        const s = document.createElement('span'); s.className = 'lp-w'; s.textContent = w; out.push(s); }); }
+      else { const s = document.createElement('span'); s.className = 'lp-w' + (n.classList && n.classList.contains('lp-stack') ? ' lp-pics' : ''); s.appendChild(n.cloneNode(true)); out.push(s); }
     });
+    lyric.replaceChildren(...out); lyricWords = [...lyric.querySelectorAll('.lp-w')];
+    lyric.classList.toggle('armed', !reduce);
+    if(lyricShown || reduce) lyricWords.forEach(w => w.classList.add('on'));
   }
+  window.__lpBuildLyric = buildLyric;
+  if(!reduce) new IntersectionObserver((es, ob) => es.forEach(e => { if(!e.isIntersecting) return; ob.disconnect(); lyricShown = true;
+    lyricWords.forEach((w,i) => setTimeout(() => w.classList.add('on'), i*230)); }), {threshold:.6}).observe(lyric);
 
-  /* ─── Burger menu ─────────────────────────────────────────── */
-  const burger     = document.querySelector('.burger');
-  const mobileMenu = document.querySelector('.mobile-menu');
+  /* ── Флоу: фрагменты въезжают при появлении ── */
+  const fcs = [...document.querySelectorAll('.lp-fc')];
+  const fio = new IntersectionObserver(es => es.forEach(e => { if(e.isIntersecting) e.target.classList.add('in'); }), {threshold:.25});
+  fcs.forEach(f => fio.observe(f)); if(reduce) fcs.forEach(f => f.classList.add('in'));
 
-  if (burger && mobileMenu) {
-    burger.addEventListener('click', () => {
-      const isOpen = burger.classList.toggle('open');
-      mobileMenu.classList.toggle('open', isOpen);
-      burger.setAttribute('aria-expanded', String(isOpen));
-      mobileMenu.setAttribute('aria-hidden', String(!isOpen));
-    });
+  /* ── Звук в примерах ── */
+  function setSound(btn){ const v = btn.closest('.lp-exclip').querySelector('video'), on = btn.getAttribute('aria-pressed') !== 'true';
+    document.querySelectorAll('video').forEach(o => o.muted = true);
+    document.querySelectorAll('.lp-snd').forEach(b => { b.setAttribute('aria-pressed','false'); b.classList.remove('bg-accent-strong'); });
+    if(on){ v.muted = false; v.currentTime = 0; v.play().catch(()=>{}); btn.setAttribute('aria-pressed','true'); btn.classList.add('bg-accent-strong'); } }
+  document.querySelectorAll('.lp-snd').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); setSound(b); }));
+  document.querySelectorAll('.lp-exclip').forEach(c => c.addEventListener('click', () => setSound(c.querySelector('.lp-snd'))));
 
-    // Close menu when any link inside is clicked
-    mobileMenu.querySelectorAll('a').forEach(link => {
-      link.addEventListener('click', () => {
-        burger.classList.remove('open');
-        mobileMenu.classList.remove('open');
-        burger.setAttribute('aria-expanded', 'false');
-        mobileMenu.setAttribute('aria-hidden', 'true');
-      });
-    });
-
-    // Close on outside click
-    document.addEventListener('click', (e) => {
-      if (!burger.contains(e.target) && !mobileMenu.contains(e.target)) {
-        burger.classList.remove('open');
-        mobileMenu.classList.remove('open');
-        burger.setAttribute('aria-expanded', 'false');
-        mobileMenu.setAttribute('aria-hidden', 'true');
-      }
-    });
+  /* ── Цифры из частиц ── */
+  function rng(s){return function(){s|=0;s=s+0x6D2B79F5|0;let t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+  function Particles(cv){
+    const ctx = cv.getContext('2d'); let pts = [], w = 0, h = 0, dpr = 1, on = false, mx = -9999, my = -9999;
+    function build(){ const r = cv.getBoundingClientRect(); dpr = Math.min(2, devicePixelRatio||1); w = Math.floor(r.width); h = Math.floor(r.height); if(!w) return;
+      cv.width = w*dpr; cv.height = h*dpr; const off = document.createElement('canvas'); off.width = w; off.height = h; const o = off.getContext('2d', {willReadFrequently:true});
+      const txt = cv.dataset.text, fs = Math.min(h*.62, w*(txt.length > 2 ? .3 : .44));
+      o.font = '400 ' + fs + 'px Point'; o.textAlign = 'right'; o.fillStyle = '#fff'; o.fillText(txt, w*.93, h*.5 + fs*.36);
+      const d = o.getImageData(0,0,w,h).data, rr = rng(9), old = pts; pts = [];
+      for(let y=0;y<h;y+=4) for(let x=0;x<w;x+=4){ if(d[(y*w+x)*4+3] > 128 && rr() > .18){ const p = old[pts.length] || {x: x+(rr()-.5)*w*.6, y: y+(rr()-.5)*h*.8, vx:0, vy:0};
+        p.hx = x+(rr()-.5)*2.5; p.hy = y+(rr()-.5)*2.5; p.s = rr() < .2 ? 2.4 : 1.6; p.a = .35 + rr()*.65; pts.push(p); } } }
+    function draw(){ ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,w,h); for(const p of pts){ ctx.fillStyle = 'rgba(232,226,255,' + p.a + ')'; ctx.fillRect(p.x,p.y,p.s,p.s); } }
+    function frame(){ if(!on) return;
+      for(const p of pts){ const dx = p.x-mx, dy = p.y-my, d2 = dx*dx+dy*dy; if(d2 < 6400){ const f = (6400-d2)/6400*2.4, dd = Math.sqrt(d2)||1; p.vx += dx/dd*f; p.vy += dy/dd*f; }
+        p.vx += (p.hx-p.x)*.045; p.vy += (p.hy-p.y)*.045; p.vx *= .82; p.vy *= .82; p.x += p.vx; p.y += p.vy; }
+      draw(); requestAnimationFrame(frame); }
+    const host = cv.parentElement;
+    host.addEventListener('pointermove', e => { const r = cv.getBoundingClientRect(); mx = e.clientX - r.left; my = e.clientY - r.top; });
+    host.addEventListener('pointerleave', () => { mx = my = -9999; });
+    Promise.race([document.fonts.load('400 100px Point'), new Promise(r => setTimeout(r, 1500))]).then(() => {
+      build(); if(reduce){ pts.forEach(p => { p.x = p.hx; p.y = p.hy; }); draw(); return; }
+      new IntersectionObserver(([e]) => { const was = on; on = e.isIntersecting; if(on && !was) requestAnimationFrame(frame); }, {threshold:.15}).observe(cv); });
+    let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { build(); if(reduce){ pts.forEach(p => { p.x = p.hx; p.y = p.hy; }); draw(); } }, 150); });
   }
+  document.querySelectorAll('canvas.lp-particles').forEach(Particles);
 
-  /* ─── Smooth scroll ───────────────────────────────────────── */
-  document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-    anchor.addEventListener('click', (e) => {
-      const targetId = anchor.getAttribute('href');
-      if (targetId === '#') return;
-      const target = document.querySelector(targetId);
-      if (!target) return;
-      e.preventDefault();
-      const navHeight = document.querySelector('.navbar-wrap')?.offsetHeight || 0;
-      const top = target.getBoundingClientRect().top + window.scrollY - navHeight - 16;
-      window.scrollTo({ top, behavior: 'smooth' });
-    });
-  });
+  /* ── Орбита: настоящие круги, пилюли идут по ним (внутренний и внешний в разные стороны) ── */
+  const orbit = document.getElementById('orbit'), ops = [...orbit.querySelectorAll('.lp-op')], rings = orbit.querySelectorAll('.lp-ring');
+  let oa = 0, oOn = false, ol = 0;
+  function radii(){ const m = Math.min(orbit.clientWidth, orbit.clientHeight); return { inner: m*.25, outer: m*.44 }; }
+  function placeOrbit(){ const R = radii(); rings[0].style.width = rings[0].style.height = R.inner*2 + 'px'; rings[1].style.width = rings[1].style.height = R.outer*2 + 'px';
+    const inner = ops.filter(p => p.dataset.ring === 'inner'), outer = ops.filter(p => p.dataset.ring === 'outer');
+    inner.forEach((p,i) => { const a = oa + i*Math.PI; p.style.transform = 'translate(-50%,-50%) translate(' + (Math.cos(a)*R.inner).toFixed(1) + 'px,' + (Math.sin(a)*R.inner).toFixed(1) + 'px)'; });
+    outer.forEach((p,i) => { const a = -oa*.7 + i*Math.PI*2/3 + .5; p.style.transform = 'translate(-50%,-50%) translate(' + (Math.cos(a)*R.outer).toFixed(1) + 'px,' + (Math.sin(a)*R.outer).toFixed(1) + 'px)'; }); }
+  function oLoop(ts){ if(!oOn) return; oa += ol ? (ts-ol)/1000*.22 : 0; ol = ts; placeOrbit(); requestAnimationFrame(oLoop); }
+  placeOrbit(); addEventListener('resize', placeOrbit);
+  if(!reduce) new IntersectionObserver(([e]) => { oOn = e.isIntersecting; ol = 0; if(oOn) requestAnimationFrame(oLoop); }).observe(orbit);
 
-  /* ─── Active nav link (IntersectionObserver) ──────────────── */
-  const sections  = document.querySelectorAll('section[id]');
-  const navLinks  = document.querySelectorAll('.navbar-links a[href^="#"]');
+  /* ── Шаги: наведение / клик меняет инфографику справа; без наведения листаются сами ── */
+  const steps = [...document.querySelectorAll('.lp-step')], panes = [...document.querySelectorAll('.lp-info-pane')]; let si = 0, sTimer, held = false;
+  function pickStep(i){ si = i; steps.forEach((s,j) => s.setAttribute('aria-selected', j === i)); panes.forEach((p,j) => p.classList.toggle('on', j === i)); }
+  steps.forEach((s,i) => { s.addEventListener('click', () => { held = true; pickStep(i); }); s.addEventListener('mouseenter', () => { held = true; pickStep(i); }); s.addEventListener('focus', () => { held = true; pickStep(i); }); });
+  const infoEl = document.getElementById('info');
+  infoEl.addEventListener('pointerenter', () => { held = true; }); infoEl.addEventListener('pointerdown', () => { held = true; });
+  document.querySelector('.lp-steps-grid').addEventListener('mouseleave', () => { held = false; });
+  function sNext(){ sTimer = setTimeout(() => { if(!held) pickStep((si+1) % 3); sNext(); }, si === 1 ? 9200 : 3200); }
+  if(!reduce) new IntersectionObserver(([e]) => { clearTimeout(sTimer); if(e.isIntersecting) sNext(); }).observe(document.getElementById('info'));
 
-  if (sections.length && navLinks.length) {
-    const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-          const id = entry.target.id;
-          navLinks.forEach(link => {
-            link.classList.toggle('active', link.getAttribute('href') === `#${id}`);
-          });
-        }
-      });
-    }, { rootMargin: '-30% 0px -60% 0px' });
-
-    sections.forEach(s => observer.observe(s));
-  }
-
-  /* ─── Add .active styles inline so no extra CSS needed ───── */
-  const styleEl = document.createElement('style');
-  styleEl.textContent = `.navbar-links a.active { opacity: 1; color: #A080FF; }`;
-  document.head.appendChild(styleEl);
-
-  const mediaConfig = window.BLAST_MEDIA_CONFIG;
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  function resolveMediaUrl(mediaKey) {
-    if (!mediaConfig || typeof mediaConfig !== 'object') {
-      throw new Error('Missing BLAST_MEDIA_CONFIG');
-    }
-    const baseUrl = String(mediaConfig.baseUrl || '').trim().replace(/\/+$/, '');
-    if (!baseUrl) {
-      throw new Error('BLAST_MEDIA_CONFIG.baseUrl is required');
-    }
-    const files = mediaConfig.files;
-    if (!files || typeof files !== 'object') {
-      throw new Error('BLAST_MEDIA_CONFIG.files is required');
-    }
-    const fileName = String(files[mediaKey] || '').trim();
-    if (!fileName) {
-      throw new Error(`Missing media mapping for key: ${mediaKey}`);
-    }
-    return `${baseUrl}/${fileName}`;
-  }
-
-  function safePlay(video) {
-    if (!video || prefersReducedMotion) return;
-    const promise = video.play();
-    if (promise && typeof promise.catch === 'function') {
-      promise.catch(() => {});
-    }
-  }
-
-  /* ─── Hero video source (S3) ─────────────────────────────── */
-  const heroVideo = document.querySelector('.hero-video[data-media-key]');
-  if (heroVideo) {
-    try {
-      heroVideo.src = resolveMediaUrl(heroVideo.dataset.mediaKey);
-      heroVideo.load();
-      safePlay(heroVideo);
-    } catch (err) {
-      console.error('[landing] hero media init failed', err);
-    }
-  }
-
-  /* ─── How It Works — sticky 3-state scroll ────────────────── */
-  const stepsWrapper = document.querySelector('.steps-scroll-wrapper');
-  const stepsLines   = document.querySelectorAll('.steps-line');
-  const stepsStages  = document.querySelectorAll('.steps-stage');
-
-  const stepsCard = document.querySelector('.steps-card');
-  const statOverlayMob = document.querySelector('.steps-stat-overlay--mob');
-  function setStep(index) {
-    stepsLines.forEach((el, i)  => el.classList.toggle('active', i === index));
-    stepsStages.forEach(el => {
-      const step = parseInt(el.dataset.step, 10);
-      el.classList.toggle('active', step === index);
-    });
-    if (statOverlayMob && window.innerWidth <= 768) {
-      statOverlayMob.style.opacity = index === 2 ? '1' : '0';
-      statOverlayMob.style.pointerEvents = index === 2 ? 'auto' : 'none';
-    }
-  }
-
-  function onStepsScroll() {
-    if (!stepsWrapper) return;
-    const rect     = stepsWrapper.getBoundingClientRect();
-    const scrolled = -rect.top;                          // px scrolled past top of wrapper
-    const total    = rect.height - window.innerHeight;   // total scrollable distance
-    const progress = Math.max(0, Math.min(1, scrolled / total));
-    const step     = progress < 0.33 ? 0 : progress < 0.66 ? 1 : 2;
-    setStep(step);
-  }
-
-  if (stepsWrapper) {
-    window.addEventListener('scroll', onStepsScroll, { passive: true });
-    onStepsScroll(); // init on load
-  }
-
-  /* ─── 1. Reveal on scroll ────────────────────────────────── */
-  const autoRevealTargets = document.querySelectorAll(
-    '.section-head, .feat-col, .example-col, .steps-card, .cta-head, .cta-card'
-  );
-  const manualRevealTargets = document.querySelectorAll('.reveal');
-  const revealObs = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('revealed');
-        revealObs.unobserve(entry.target);
-      }
-    });
-  }, { threshold: 0.12 });
-  autoRevealTargets.forEach((el, i) => {
-    el.classList.add('reveal');
-    el.style.transitionDelay = (i % 3) * 80 + 'ms';
-    revealObs.observe(el);
-  });
-  manualRevealTargets.forEach((el) => {
-    revealObs.observe(el);
+  /* ── Живые фрагменты: всё на aria-атрибутах, как в приложении ── */
+  document.addEventListener('click', e => {
+    const tab = e.target.closest('.w12-tab, .w12-mode, .w12-fx-step');
+    if(tab && tab.closest('.lp-frag, .lp-mw')){ const list = tab.parentElement; list.querySelectorAll('[role=tab]').forEach(x => x.setAttribute('aria-selected', x === tab));
+      if(list.closest('.lp-mw-tabs')){ const i = [...list.children].indexOf(tab); document.querySelectorAll('#mw .lp-mw-p').forEach((p,j) => p.classList.toggle('on', j === i)); } return; }
+    const fxh = e.target.closest('.w12-fx-head'); if(fxh){ fxh.setAttribute('aria-expanded', fxh.getAttribute('aria-expanded') !== 'true'); return; }
+    const drop = e.target.closest('.w12-drop-opt'); if(drop){ drop.parentElement.querySelectorAll('.w12-drop-opt').forEach(x => x.setAttribute('aria-pressed', x === drop)); return; }
+    const pill = e.target.closest('.w12-chiprow .w12-pill'); if(pill){ pill.parentElement.querySelectorAll('.w12-pill').forEach(x => x.setAttribute('aria-pressed', x === pill)); return; }
+    const card = e.target.closest('.w12-mcard'); if(card){ card.setAttribute('aria-pressed', card.getAttribute('aria-pressed') !== 'true');
+      let n = 0; card.parentElement.querySelectorAll('.w12-mcard').forEach(c => { const b = c.querySelector('.w12-badge'); if(b) b.textContent = c.getAttribute('aria-pressed') === 'true' ? ++n : ''; }); return; }
+    const sbtn = e.target.closest('.w12-step button'); if(sbtn){ const st = sbtn.parentElement, num = st.querySelector('.w12-l'), btns = st.querySelectorAll('button');
+      const v = Math.max(0, (parseInt(num.textContent)||0) + (sbtn === btns[btns.length-1] ? 1 : -1)); num.textContent = v; return; }
+    const radio = e.target.closest('.ttp-seg [role=radio]'); if(radio && !radio.disabled){ const seg = radio.parentElement, rs = [...seg.querySelectorAll('[role=radio]')];
+      rs.forEach(x => x.setAttribute('aria-checked', x === radio)); const th = seg.querySelector('.ttp-seg-thumb'); if(th) th.style.setProperty('--i', rs.indexOf(radio)); seg.dataset.picked = radio.dataset.value || ''; return; }
+    const sw = e.target.closest('.ttp-switch, .ttp-box'); if(sw){ const on = sw.getAttribute('aria-checked') !== 'true'; sw.setAttribute('aria-checked', on);
+      if(sw.classList.contains('ttp-box')) document.querySelectorAll('.ttp-act').forEach(b => b.classList.toggle('pending', !on)); return; }
+    const tag = e.target.closest('.ttp-tag'); if(tag){ const ta = tag.closest('.ttp-field').querySelector('textarea'); if(ta) ta.value = (ta.value + ' ' + tag.textContent.replace('+','').trim()).trim(); tag.remove(); return; }
+    if(e.target.closest('.lp-frag button, .lp-mw button')) e.preventDefault();
   });
 
-  /* ─── 3. Counter animation ───────────────────────────────── */
-  function animateCount(el, target, suffix, duration) {
-    const start = performance.now();
-    (function tick(now) {
-      const p = Math.min((now - start) / duration, 1);
-      const eased = 1 - Math.pow(1 - p, 3);
-      el.textContent = Math.round(target * eased) + suffix;
-      if (p < 1) requestAnimationFrame(tick);
-    })(start);
-  }
-  const counterEls = document.querySelectorAll('.social-count .gradient-text');
-  const counterObs = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (!entry.isIntersecting) return;
-      const el = entry.target;
-      const raw = el.textContent.trim();
-      const num = parseInt(raw);
-      const suffix = raw.replace(/[0-9]/g, '');
-      animateCount(el, num, suffix, 1400);
-      counterObs.unobserve(el);
-    });
-  }, { threshold: 0.5 });
-  counterEls.forEach(el => counterObs.observe(el));
+  /* ── «Сгенерируй»: живой экран рендера — проценты растут, готовые ролики получают теги ── */
+  const procRows = document.getElementById('procRows'), tplDone = document.getElementById('tpl-row-done').innerHTML, tplLoad = document.getElementById('tpl-row-load').innerHTML, tplQueue = document.getElementById('tpl-row-queue').innerHTML;
+  const vids = [['Ночной город','Brat'],['Неон','Jakson'],['Ночной город','Impulse'],['Неон','Brat']];
+  const bar = document.querySelector('#proc .bg-grad-main'), barTxt = bar ? bar.parentElement.querySelectorAll('span.relative') : [];
+  let pk = 1, pp = 40, pT;
+  function rowHtml(i){ let h = i < pk ? tplDone : i === pk ? tplLoad : tplQueue; h = h.replace(/Видео №\d/, 'Видео №' + (i+1));
+    if(i < pk) h = h.replace('>Ночной город<', '>' + vids[i][0] + '<').replace('>Brat<', '>' + vids[i][1] + '<');
+    if(i === pk) h = h.replace(/>\d+%</, '>' + pp + '%<'); return h; }
+  function renderProc(){ procRows.innerHTML = vids.map((_, i) => rowHtml(i)).join(''); if(window.__lpTr) window.__lpTr(procRows);
+    if(bar){ bar.style.width = Math.min(100, Math.round((pk + pp/100) / vids.length * 100)) + '%';
+      if(barTxt[0]) barTxt[0].textContent = LP_LANG === 'en' ? 'Progress: ' + Math.min(pk, vids.length) + '/' + vids.length + ' videos' : 'Прогресс: ' + Math.min(pk, vids.length) + '/' + vids.length + ' видео';
+      if(barTxt[1]){ const m = Math.max(1, (vids.length - pk) * 2 - Math.round(pp/50)); barTxt[1].textContent = pk >= vids.length ? (LP_LANG === 'en' ? 'Done' : 'Готово') : (LP_LANG === 'en' ? m + (m === 1 ? ' minute left' : ' minutes left') : 'Осталось ' + m + ' минут'); } } }
+  function tickProc(){ if(pk >= vids.length){ pk = 0; pp = 0; } else { pp += 6; if(pp >= 100){ pp = 0; pk++; } } renderProc(); }
+  renderProc(); (window.__lpRepaint = window.__lpRepaint || []).push(renderProc);
+  if(!reduce) new IntersectionObserver(([e]) => { clearInterval(pT); if(e.isIntersecting) pT = setInterval(tickProc, 220); }).observe(document.getElementById('proc'));
 
-  /* ─── 5. Typing effect on "— вирусным" ───────────────────── */
-  const typingEl = document.querySelector('.hero-h1-italic');
-  if (typingEl) {
-    const hasBr = !!typingEl.querySelector('br');
-    const fullText = typingEl.textContent.replace(/\n/g, '').trim();
-    const textNode = document.createTextNode('');
-    typingEl.innerHTML = '';
-    typingEl.appendChild(textNode);
-    if (hasBr) typingEl.appendChild(document.createElement('br'));
-    const caret = document.createElement('span');
-    caret.className = 'typing-cursor';
-    typingEl.parentElement.insertBefore(caret, typingEl.nextSibling);
-    let i = 0;
-    function typeNext() {
-      if (i < fullText.length) {
-        textNode.textContent += fullText[i++];
-        setTimeout(typeNext, fullText[i - 1] === ' ' ? 40 : 75);
-      } else {
-        setTimeout(() => caret.remove(), 1200);
-      }
-    }
-    setTimeout(typeNext, 400);
-  }
-
-/* ─── Examples: stream from S3 + lazy viewport autoplay ──── */
-  const exampleSlides = Array.from(document.querySelectorAll('.example-slide[data-media-key]'));
-  const exampleVideos = [];
-  exampleSlides.forEach((slide) => {
-    const mediaKey = String(slide.dataset.mediaKey || '').trim();
-    const video = slide.querySelector('video');
-    if (!mediaKey || !(video instanceof HTMLVideoElement)) return;
-    try {
-      const url = resolveMediaUrl(mediaKey);
-      slide.dataset.mediaUrl = url;
-      video.dataset.mediaUrl = url;
-      video.preload = 'none';
-      exampleVideos.push(video);
-    } catch (err) {
-      console.error('[landing] example media init failed', { mediaKey, err });
-    }
+  /* ── Отрывок: окно на волне тянется, края меняют длину (3–15 с) ── */
+  const TRACK = 204, MIN = 3, MAX = 30;
+  const fmtT = s => { const m = Math.floor(s / 60), r = s - m * 60; return m + ':' + (r < 10 ? '0' : '') + r.toFixed(1); };
+  document.querySelectorAll('.w12-wave').forEach(wave => {
+    const win = wave.querySelector('.w12-win'); if(!win) return;
+    const bars = [...wave.querySelectorAll('.w12-bars i')], label = win.querySelector('.w12-win-label'), cut = wave.closest('.w12-cut');
+    const ins = cut ? cut.querySelectorAll('.w12-tf input') : [];
+    let a = parseFloat(win.style.left) / 100 * TRACK, b = a + parseFloat(win.style.width) / 100 * TRACK;
+    function paint(){ win.style.left = (a / TRACK * 100) + '%'; win.style.width = ((b - a) / TRACK * 100) + '%';
+      label.textContent = fmtT(a) + ' – ' + fmtT(b) + ' · ' + (LP_LANG === 'en' ? (b - a).toFixed(1) + ' s' : (b - a).toFixed(1).replace('.', ',') + ' с');
+      bars.forEach((el, i) => { const tc = (i + .5) / bars.length * TRACK; el.classList.toggle('w12-in', tc >= a && tc <= b); });
+      if(ins[0]) ins[0].value = fmtT(a); if(ins[1]) ins[1].value = fmtT(b); }
+    let mode = null, x0 = 0, a0 = 0, b0 = 0;
+    win.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); const h = e.target.closest('.w12-handle');
+      mode = h ? h.dataset.handle : 'move'; x0 = e.clientX; a0 = a; b0 = b; win.setPointerCapture(e.pointerId); win.classList.add('drag');
+      const st = wave.closest('.lp-steps-grid'); if(st) held = true; });
+    win.addEventListener('pointermove', e => { if(!mode) return; const d = (e.clientX - x0) / wave.getBoundingClientRect().width * TRACK;
+      if(mode === 'move'){ const len = b0 - a0; a = Math.min(Math.max(0, a0 + d), TRACK - len); b = a + len; }
+      if(mode === 'l'){ a = Math.min(Math.max(0, a0 + d, b0 - MAX), b0 - MIN); }
+      if(mode === 'r'){ b = Math.max(Math.min(TRACK, b0 + d, a0 + MAX), a0 + MIN); }
+      paint(); });
+    const end = () => { mode = null; win.classList.remove('drag'); };
+    win.addEventListener('pointerup', end); win.addEventListener('pointercancel', end);
+    paint(); (window.__lpRepaint = window.__lpRepaint || []).push(paint);
   });
 
-  if (exampleVideos.length) {
-    const ensureLoaded = (video) => {
-      if (video.dataset.loaded === '1') return;
-      const mediaUrl = String(video.dataset.mediaUrl || '').trim();
-      if (!mediaUrl) return;
-      video.src = mediaUrl;
-      video.load();
-      video.dataset.loaded = '1';
-    };
-
-    if (!('IntersectionObserver' in window)) {
-      exampleVideos.forEach((video) => {
-        ensureLoaded(video);
-        safePlay(video);
-      });
-    } else {
-      const previewObserver = new IntersectionObserver((entries) => {
-        entries.forEach((entry) => {
-          const video = entry.target;
-          if (!(video instanceof HTMLVideoElement)) return;
-          if (entry.isIntersecting) {
-            ensureLoaded(video);
-            safePlay(video);
-          } else {
-            video.pause();
-          }
-        });
-      }, { threshold: 0.35, rootMargin: '180px 0px' });
-
-      exampleVideos.forEach((video) => previewObserver.observe(video));
-    }
-  }
-
-/* ─── Examples: highlight centered card on mobile ────────── */
-  if (window.innerWidth <= 768) {
-    const exScroll = document.querySelector('.examples-scroll');
-    if (exScroll) {
-      const updateCentered = () => {
-        const cols = exScroll.querySelectorAll('.example-col');
-        const center = exScroll.scrollLeft + exScroll.offsetWidth / 2;
-        let closest = null;
-        let minDist = Infinity;
-        cols.forEach(col => {
-          const colCenter = col.offsetLeft + col.offsetWidth / 2;
-          const scrollCenter = exScroll.scrollLeft + exScroll.offsetWidth / 2;
-          const dist = Math.abs(scrollCenter - colCenter);
-          if (dist < minDist) { minDist = dist; closest = col; }
-        });
-        cols.forEach(col => col.classList.toggle('is-centered', col === closest));
-      };
-      exScroll.addEventListener('scroll', updateCentered, { passive: true });
-      exScroll.addEventListener('scrollend', updateCentered);
-      // Center 3rd card — overflow starts hidden so scrollLeft won't cause page jump
-      const centerThird = () => {
-        const thirdCol = exScroll.querySelectorAll('.example-col')[2];
-        if (!thirdCol) return;
-        const scrollPad = parseFloat(getComputedStyle(exScroll).paddingLeft) || 0;
-        // Set scrollLeft while overflow is hidden (no page jump possible)
-        exScroll.style.overflowX = 'hidden';
-        exScroll.scrollLeft = thirdCol.offsetLeft - scrollPad;
-        // Re-enable scrolling and snap on next frame
-        requestAnimationFrame(() => {
-          exScroll.style.overflowX = 'auto';
-          exScroll.style.scrollSnapType = 'x mandatory';
-          updateCentered();
-        });
-      };
-      centerThird();
-      // Re-center after fonts/images load (layout may shift)
-      window.addEventListener('load', () => {
-        centerThird();
-      });
-    }
-  }
-
-/* ─── Video modal ─────────────────────────────────────────── */
-  const videoModal   = document.getElementById('videoModal');
-  const modalPlayer  = videoModal && videoModal.querySelector('.video-modal-player');
-  const modalClose   = videoModal && videoModal.querySelector('.video-modal-close');
-  const modalBackdrop = videoModal && videoModal.querySelector('.video-modal-backdrop');
-
-  function openVideoModal(src, portrait) {
-    modalPlayer.src = src;
-    videoModal.classList.toggle('video-modal--portrait', !!portrait);
-    videoModal.classList.add('open');
-    videoModal.setAttribute('aria-hidden', 'false');
-    modalPlayer.play();
-  }
-
-  function closeVideoModal() {
-    videoModal.classList.remove('open', 'video-modal--portrait');
-    videoModal.setAttribute('aria-hidden', 'true');
-    modalPlayer.pause();
-    modalPlayer.src = '';
-  }
-
-  if (videoModal) {
-    document.querySelectorAll('.example-slide[data-media-key]').forEach(slide => {
-      slide.addEventListener('click', () => {
-        const mediaKey = String(slide.dataset.mediaKey || '').trim();
-        if (!mediaKey) return;
-        try {
-          openVideoModal(resolveMediaUrl(mediaKey), slide.dataset.portrait);
-        } catch (err) {
-          console.error('[landing] modal media resolve failed', { mediaKey, err });
-        }
-      });
-    });
-    modalClose.addEventListener('click', closeVideoModal);
-    modalBackdrop.addEventListener('click', closeVideoModal);
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeVideoModal(); });
-  }
-
-  /* ─── Legal popups ──────────────────────────────────────── */
-  document.querySelectorAll('[data-popup]').forEach(link => {
-    link.addEventListener('click', e => {
-      e.preventDefault();
-      const popup = document.getElementById(link.dataset.popup);
-      if (popup) {
-        popup.classList.add('is-open');
-        popup.setAttribute('aria-hidden', 'false');
-        document.body.style.overflow = 'hidden';
-      }
-    });
-  });
-
-  document.querySelectorAll('.legal-popup').forEach(popup => {
-    const close = () => {
-      popup.classList.remove('is-open');
-      popup.setAttribute('aria-hidden', 'true');
-      document.body.style.overflow = '';
-    };
-    popup.querySelector('.legal-popup-close')?.addEventListener('click', close);
-    popup.querySelector('.legal-popup-backdrop')?.addEventListener('click', close);
-    document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
-  });
-
+  /* ── «Настрой»: мини-визард сам листает Фон → Текст → FX → Пул, пока его не трогают ── */
+  const mwTabs = [...document.querySelectorAll('#mw .lp-mw-tabs [role=tab]')], mwPanes = [...document.querySelectorAll('#mw .lp-mw-p')];
+  let mwi = 1, mwTimer;
+  function mwPick(i){ mwi = i; mwTabs.forEach((x, j) => x.setAttribute('aria-selected', j === i)); mwPanes.forEach((p, j) => p.classList.toggle('on', j === i)); }
+  let mwHeld = false; document.getElementById('mw').addEventListener('pointerdown', () => { mwHeld = true; });
+  mwTabs.forEach((x, i) => x.addEventListener('click', () => { mwHeld = true; mwi = i; }));
+  mwPick(1);
+  if(!reduce) mwTimer = setInterval(() => { if(mwHeld || si !== 1) return; mwPick(mwi >= 4 ? 1 : mwi + 1); }, 2200);
+  trTree(document.body); syncLang();
 })();
