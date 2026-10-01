@@ -3,14 +3,15 @@ name: Publish Web Previews
 # Превью эффектов/субтитров → S3 → каталоги сайта в .env.production → перезапуск сайта.
 # Только этот runner читает .env.production (права 600), поэтому публикация идёт здесь.
 # Перед запуском превью кладутся на тот же сервер: <stage_dir>/manifest.json + previews/*.mp4
-# (scp от deploy; формат — в scripts/publish_web_previews.py).
+# (scp от deploy; формат — в scripts/publish_web_previews.py). Папка — в /home/deploy: у сервиса
+# runner'а свой /tmp (PrivateTmp), положенное туда по ssh он не видит.
 on:
   workflow_dispatch:
     inputs:
       stage_dir:
-        description: "Папка с manifest.json и previews/ на сервере (только /tmp/...)"
+        description: "Папка с manifest.json и previews/ на сервере (только /home/deploy/<имя>)"
         required: true
-        default: /tmp/blast_previews_v2
+        default: /home/deploy/blast_previews_v2
       wave:
         description: "Номер волны в ключах S3 (previews/<plane>/<wave>/...)"
         required: true
@@ -46,7 +47,7 @@ jobs:
       - name: Check inputs
         run: |
           set -euo pipefail
-          [[ "$STAGE_DIR" =~ ^/tmp/[A-Za-z0-9_.-]+$ ]] || { echo "stage_dir должен быть /tmp/<имя>: $STAGE_DIR" >&2; exit 1; }
+          [[ "$STAGE_DIR" =~ ^/home/deploy/blast_previews[A-Za-z0-9_.-]*$ ]] || { echo "stage_dir должен быть /home/deploy/blast_previews<…>: $STAGE_DIR" >&2; exit 1; }
           [[ "$WAVE" =~ ^v[0-9]+$ ]] || { echo "wave должен быть вида v2: $WAVE" >&2; exit 1; }
           test -r "$BLAST_WEB_PRODUCTION_ENV_FILE" || { echo "env не читается этим runner'ом" >&2; exit 1; }
           test -s "$STAGE_DIR/manifest.json" || { echo "нет $STAGE_DIR/manifest.json на этом сервере" >&2; exit 1; }
