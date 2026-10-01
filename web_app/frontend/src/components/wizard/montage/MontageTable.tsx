@@ -108,6 +108,21 @@ const META: Record<string, string> = {
   'Ксерокс': 'жёсткий контраст и зерно', 'Глитч': 'цифровые сбои и сдвиги', 'Неон': 'светящиеся насыщенные цвета', 'Старая камера': 'сепия, виньетка, плёнка',
   'Ч/Б': 'выжженные чёрные', 'Crystal Glow': 'мягкое свечение', 'Night Vision': 'прибор ночного видения', 'Wave': 'синий тон и волна'
 };
+/*
+ * Эффекты, заведённые в реестр со своими полями стола (montageGroup / montageGlyph / meta) —
+ * например, пресеты Kant: глиф и подпись берутся из реестра, без правки этих таблиц.
+ * Ручные записи выше важнее: реестр только дополняет.
+ */
+interface RegistryFx { label: string; montageGroup?: string; montageGlyph?: string; meta?: string }
+const REGISTRY_FX: RegistryFx[] = [...(effectsRegistry.glue as RegistryFx[]), ...(effectsRegistry.style as RegistryFx[])];
+for (const e of REGISTRY_FX) {
+  if (e.montageGlyph && !GLYPH[e.label]) GLYPH[e.label] = e.montageGlyph;
+  if (e.meta && !META[e.label]) META[e.label] = e.meta;
+}
+/** Дописать в группы стола эффекты реестра с montageGroup этой группы (порядок — как в реестре). */
+function withRegistryItems(groups: Group[], list: RegistryFx[]): Group[] {
+  return groups.map((g) => ({ ...g, items: [...g.items, ...list.filter((e) => e.montageGroup === g.id && !g.items.includes(e.label)).map((e) => e.label)] }));
+}
 const TRANSITION_ANIM: Record<string, string> = { 'Щелчок': 'snap', 'Минимакс': 'minimax', 'Экстракт': 'extract', 'Инверт': 'invert', 'Вспышка': 'flash' };
 const GLUES = [NO_GLUE, ...effectsRegistry.glue.map((e) => e.label)];
 const STYLES = effectsRegistry.style.map((e) => e.label);
@@ -359,7 +374,7 @@ function useTooltips(root: React.RefObject<HTMLElement | null>) {
 
 /* ── группы библиотеки: переходы и стилизации раскладываются так же, как хуки ── */
 interface Group { id: string; label: string; icon: string; items: string[] }
-const GLUE_GROUPS: Group[] = [
+const GLUE_GROUPS: Group[] = withRegistryItems([
   { id: 'shake', label: 'Шейки', icon: 'shake', items: [] },
   { id: 'oneshot', label: 'Ваншоты', icon: 'oneshot', items: [] },
   { id: 'flash', label: 'Флеши', icon: 't_flash', items: ['Вспышка', 'Инверт'] },
@@ -368,7 +383,7 @@ const GLUE_GROUPS: Group[] = [
   { id: 'zoom', label: 'Зумы', icon: 't_minimax', items: ['Минимакс'] },
   { id: 'push', label: 'Сдвиги', icon: 't_extract', items: ['Экстракт'] },
   { id: 'glitchcut', label: 'Глитчи', icon: 'glitch', items: [] }
-];
+], effectsRegistry.glue as RegistryFx[]);
 /*
  * Переходы в том же порядке и тех же группах, что во вкладке «Переходы» библиотеки: окно
  * выбора на склейке листает это дерево (стрелки и «2/6» идут по нему), иначе один и тот же
@@ -389,12 +404,12 @@ const GLUE_OPTIONS: PopOption[] = (() => {
   for (const label of GLUES) if (!placed.has(label)) out.push({ id: label, label, glyph: label, group: 'Другие' });
   return out;
 })();
-const STYLE_GROUPS: Group[] = [
+const STYLE_GROUPS: Group[] = withRegistryItems([
   { id: 'color', label: 'Цвет', icon: 'bw', items: ['Ч/Б', 'Неон', 'Night Vision'] },
   { id: 'film', label: 'Плёнка и фактура', icon: 'oldcam', items: ['Старая камера', 'Ксерокс'] },
   { id: 'distort', label: 'Искажение', icon: 'wave', items: ['Глитч', 'Wave'] },
   { id: 'light', label: 'Свет', icon: 'crystal', items: ['Crystal Glow'] }
-];
+], effectsRegistry.style as RegistryFx[]);
 
 /* ── библиотека ── */
 const Library = memo(function Library({ tab, setTab, open, setOpen, used, activeHookKind, subStyle, subPreviews, onPickSub, textCfg, onAdd, onDragStart, frames, frameId, onPickFrame, frameNote, frameBase, frameAll, previewOf }: {

@@ -70,6 +70,16 @@ function detectCuts(comp){
 function effById(man, id){ for (var i=0;i<man.effects.length;i++) if (man.effects[i].id===id) return man.effects[i]; return null; }
 function poolDir(man, pool){ return (man.sounds && man.sounds.pools && man.sounds.pools[pool]) ? (ASSET_ROOT + "/" + man.sounds.pools[pool]) : null; }
 
+// ---- эффекты Kant (manifest: preset) — путь к .ffx, режим и длина для kantfx/apply_kantfx.jsx ----
+function presetParams(eff, params, span){
+    if (!eff.preset) return params;
+    params.preset = BASE + "/" + eff.preset;
+    params.mode = eff.mode || "window";
+    params.label = eff.label || eff.id;
+    if (span != null) params.span = span;
+    return params;
+}
+
 // ---- вызвать дочерний скрипт с параметрами ----
 function runScript(relPath, params){
     var f = new File(BASE + "/" + relPath);
@@ -165,8 +175,8 @@ function attachCutSounds(man, comp, poolName, cuts, drop, used){
         if (job.transition){
             var t = effById(manifest, job.transition);
             if (t){
-                runScript(t.script, { targetCompName: comp.name, dropTime: drop,
-                                      duration: t.default_duration, place: "below:"+placeRef, cuts: cuts });
+                runScript(t.script, presetParams(t, { targetCompName: comp.name, dropTime: drop,
+                                      duration: t.default_duration, place: "below:"+placeRef, cuts: cuts }, t.default_duration));
                 if (t.sound && t.sound.pool) attachCutSounds(manifest, comp, t.sound.pool, cuts, drop, usedSnd);
             }
         }
@@ -175,10 +185,10 @@ function attachCutSounds(man, comp, poolName, cuts, drop, used){
         if (job.extra){
             var e = effById(manifest, job.extra);
             if (e){
-                runScript(e.script, { targetCompName: comp.name, dropTime: drop,
+                runScript(e.script, presetParams(e, { targetCompName: comp.name, dropTime: drop,
                                       startTime: (job.extraStart!=null?job.extraStart:0),
                                       duration: (job.extraDuration!=null?job.extraDuration:(drop>0?drop:null)),
-                                      place: "below:"+placeRef, cuts: cuts });
+                                      place: "below:"+placeRef, cuts: cuts }));
                 if (e.sound && e.sound.pool) attachCutSounds(manifest, comp, e.sound.pool, cuts, drop, usedSnd);
             }
         }

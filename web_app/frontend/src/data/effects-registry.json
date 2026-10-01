@@ -65,6 +65,114 @@
       "manifestId": "flash_on_cuts",
       "icon": "efg-vspyshka.svg",
       "inner": false
+    },
+    {
+      "label": "Твич",
+      "manifestId": "sh_twitch_flicker",
+      "icon": "efg-k-sh-twitch-flicker.svg",
+      "inner": false,
+      "montageGroup": "shake",
+      "montageGlyph": "shake",
+      "meta": "дёрганая тряска с миганием"
+    },
+    {
+      "label": "Хрома-тряска",
+      "manifestId": "sh_chroma_lens_shake",
+      "icon": "efg-k-sh-chroma-lens-shake.svg",
+      "inner": false,
+      "montageGroup": "shake",
+      "montageGlyph": "shake",
+      "meta": "тряска с разъездом цвета"
+    },
+    {
+      "label": "Тряска-растворение",
+      "manifestId": "sh_dissolve_shake",
+      "icon": "efg-k-sh-dissolve-shake.svg",
+      "inner": false,
+      "montageGroup": "shake",
+      "montageGlyph": "shake",
+      "meta": "тряска и радиальный смаз"
+    },
+    {
+      "label": "Тряска с повтором",
+      "manifestId": "sh_tile_shake",
+      "icon": "efg-k-sh-tile-shake.svg",
+      "inner": false,
+      "montageGroup": "shake",
+      "montageGlyph": "shake",
+      "meta": "тряска с размножением кадра"
+    },
+    {
+      "label": "Рябь",
+      "manifestId": "sh_puddle_shake",
+      "icon": "efg-k-sh-puddle-shake.svg",
+      "inner": false,
+      "montageGroup": "shake",
+      "montageGlyph": "shake",
+      "meta": "тряска с волной по воде"
+    },
+    {
+      "label": "Рябь с искажением",
+      "manifestId": "sh_puddle_warp_shake",
+      "icon": "efg-k-sh-puddle-warp-shake.svg",
+      "inner": false,
+      "montageGroup": "shake",
+      "montageGlyph": "shake",
+      "meta": "рябь, сетка и пересвет"
+    },
+    {
+      "label": "Контур",
+      "manifestId": "of_edge_radial",
+      "icon": "efg-k-of-edge-radial.svg",
+      "inner": false,
+      "montageGroup": "oneshot",
+      "montageGlyph": "oneshot",
+      "meta": "вспышка контуров"
+    },
+    {
+      "label": "Пересвет",
+      "manifestId": "of_exposure_flicker",
+      "icon": "efg-k-of-exposure-flicker.svg",
+      "inner": false,
+      "montageGroup": "flash",
+      "montageGlyph": "t_flash",
+      "meta": "мигание пересвета"
+    },
+    {
+      "label": "Негатив-вспышка",
+      "manifestId": "of_invert_flash",
+      "icon": "efg-k-of-invert-flash.svg",
+      "inner": false,
+      "montageGroup": "flash",
+      "montageGlyph": "t_invert",
+      "meta": "негатив и свечение на кадр"
+    },
+    {
+      "label": "Шторка",
+      "manifestId": "of_linear_wipe",
+      "icon": "efg-k-of-linear-wipe.svg",
+      "inner": false,
+      "montageGroup": "wipe",
+      "montageGlyph": "t_snap",
+      "meta": "линейная шторка"
+    },
+    {
+      "label": "RGB-взрыв",
+      "manifestId": "of_rgb_glitch_burst",
+      "icon": "efg-k-of-rgb-glitch-burst.svg",
+      "inner": false,
+      "montageGroup": "glitchcut",
+      "montageGlyph": "glitch",
+      "meta": "глитч RGB со свечением"
+    },
+    {
+      "label": "Рыбий глаз",
+      "manifestId": "of_fisheye_scan",
+      "icon": "efg-k-of-fisheye-scan.svg",
+      "inner": false,
+      "montageGroup": "glitchcut",
+      "montageGlyph": "glitch",
+      "meta": "рыбий глаз и скан-линии"
     }
   ],
   "style": [
@@ -116,6 +224,321 @@
       "manifestId": "wave",
       "icon": "efs-wave.svg",
       "inner": true
+    },
+    {
+      "label": "Красный тритон",
+      "manifestId": "cc_tritone_red",
+      "icon": "efs-k-cc-tritone-red.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "neon",
+      "meta": "красный монохром"
+    },
+    {
+      "label": "Нейтральный тритон",
+      "manifestId": "cc_neutral_tritone",
+      "icon": "efs-k-cc-neutral-tritone.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "bw",
+      "meta": "приглушённый тритон"
+    },
+    {
+      "label": "Тритон с пересветом",
+      "manifestId": "cc_tritone_exposure",
+      "icon": "efs-k-cc-tritone-exposure.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "bw",
+      "meta": "тритон и экспозиция"
+    },
+    {
+      "label": "Колориста",
+      "manifestId": "cc_colorista_looks",
+      "icon": "efs-k-cc-colorista-looks.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "neon",
+      "meta": "кино-грейд Colorista"
+    },
+    {
+      "label": "Кино-грейд",
+      "manifestId": "cc_lumetri_curves_looks",
+      "icon": "efs-k-cc-lumetri-curves-looks.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "neon",
+      "meta": "Lumetri, кривые и Looks"
+    },
+    {
+      "label": "Контраст",
+      "manifestId": "cc_lumetri_contrast",
+      "icon": "efs-k-cc-lumetri-contrast.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "bw",
+      "meta": "плотный контрастный грейд"
+    },
+    {
+      "label": "Люметри",
+      "manifestId": "cc_lumetri_mb",
+      "icon": "efs-k-cc-lumetri-mb.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "neon",
+      "meta": "Lumetri и Magic Bullet"
+    },
+    {
+      "label": "Яркий лук",
+      "manifestId": "cc_looks_exposure_grain",
+      "icon": "efs-k-cc-looks-exposure-grain.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "crystal",
+      "meta": "лук с пересветом и зерном"
+    },
+    {
+      "label": "Заливка",
+      "manifestId": "fx_paint_bucket",
+      "icon": "efs-k-fx-paint-bucket.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "neon",
+      "meta": "плоская цветовая заливка"
+    },
+    {
+      "label": "Тепловизор",
+      "manifestId": "fx_cartoon_thermal",
+      "icon": "efs-k-fx-cartoon-thermal.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "night",
+      "meta": "мультяшный тепловой спектр"
+    },
+    {
+      "label": "Инверсия",
+      "manifestId": "fx_invert_curves",
+      "icon": "efs-k-fx-invert-curves.svg",
+      "inner": false,
+      "montageGroup": "color",
+      "montageGlyph": "bw",
+      "meta": "негатив с кривыми"
+    },
+    {
+      "label": "Мягкая плёнка",
+      "manifestId": "cc_lumetri_looks_grain",
+      "icon": "efs-k-cc-lumetri-looks-grain.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "oldcam",
+      "meta": "Lumetri, Looks и шум"
+    },
+    {
+      "label": "Плёночный грейд",
+      "manifestId": "cc_looks_curves_grain",
+      "icon": "efs-k-cc-looks-curves-grain.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "oldcam",
+      "meta": "Looks, кривые и шум"
+    },
+    {
+      "label": "Двойной лук",
+      "manifestId": "cc_double_looks_grain",
+      "icon": "efs-k-cc-double-looks-grain.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "oldcam",
+      "meta": "два Looks и зерно"
+    },
+    {
+      "label": "Зерно A",
+      "manifestId": "cc_film_grain_looks_a",
+      "icon": "efs-k-cc-film-grain-looks-a.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "xerox",
+      "meta": "плёночное зерно и Looks"
+    },
+    {
+      "label": "Зерно B",
+      "manifestId": "cc_film_grain_looks_b",
+      "icon": "efs-k-cc-film-grain-looks-b.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "xerox",
+      "meta": "плёночное зерно, второй вариант"
+    },
+    {
+      "label": "Мэджик Буллет",
+      "manifestId": "cc_mb_suite_grain",
+      "icon": "efs-k-cc-mb-suite-grain.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "oldcam",
+      "meta": "Magic Bullet с зерном"
+    },
+    {
+      "label": "Шумный лук",
+      "manifestId": "cc_looks_curves_noise",
+      "icon": "efs-k-cc-looks-curves-noise.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "xerox",
+      "meta": "Looks и крупный шум"
+    },
+    {
+      "label": "Плёнка",
+      "manifestId": "fx_film_damage",
+      "icon": "efs-k-fx-film-damage.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "oldcam",
+      "meta": "царапины и пыль плёнки"
+    },
+    {
+      "label": "VHS",
+      "manifestId": "fx_universe_vhs",
+      "icon": "efs-k-fx-universe-vhs.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "oldcam",
+      "meta": "кассета VHS"
+    },
+    {
+      "label": "Скан-линии",
+      "manifestId": "fx_scanlines_displace",
+      "icon": "efs-k-fx-scanlines-displace.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "xerox",
+      "meta": "строки развёртки"
+    },
+    {
+      "label": "Гравюра",
+      "manifestId": "fx_etching_fisheye",
+      "icon": "efs-k-fx-etching-fisheye.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "xerox",
+      "meta": "гравюра и рыбий глаз"
+    },
+    {
+      "label": "Люма-шум",
+      "manifestId": "fx_luma_key_noise",
+      "icon": "efs-k-fx-luma-key-noise.svg",
+      "inner": false,
+      "montageGroup": "film",
+      "montageGlyph": "xerox",
+      "meta": "шум по яркости"
+    },
+    {
+      "label": "Кросс-глитч",
+      "manifestId": "fx_cross_glitch",
+      "icon": "efs-k-fx-cross-glitch.svg",
+      "inner": false,
+      "montageGroup": "distort",
+      "montageGlyph": "glitch",
+      "meta": "цифровые разрывы BCC"
+    },
+    {
+      "label": "JPEG-артефакты",
+      "manifestId": "fx_jpeg_damage",
+      "icon": "efs-k-fx-jpeg-damage.svg",
+      "inner": false,
+      "montageGroup": "distort",
+      "montageGlyph": "glitch",
+      "meta": "блоки сжатия"
+    },
+    {
+      "label": "JPEG-тритон",
+      "manifestId": "fx_jpeg_tritone",
+      "icon": "efs-k-fx-jpeg-tritone.svg",
+      "inner": false,
+      "montageGroup": "distort",
+      "montageGlyph": "glitch",
+      "meta": "блоки сжатия в тритоне"
+    },
+    {
+      "label": "Хроматика",
+      "manifestId": "fx_chroma_distort",
+      "icon": "efs-k-fx-chroma-distort.svg",
+      "inner": false,
+      "montageGroup": "distort",
+      "montageGlyph": "glitch",
+      "meta": "разъезд RGB-каналов"
+    },
+    {
+      "label": "Смещение",
+      "manifestId": "fx_bcc_displace",
+      "icon": "efs-k-fx-bcc-displace.svg",
+      "inner": false,
+      "montageGroup": "distort",
+      "montageGlyph": "wave",
+      "meta": "карта смещения BCC"
+    },
+    {
+      "label": "Турбулентность",
+      "manifestId": "fx_turbulent_noise",
+      "icon": "efs-k-fx-turbulent-noise.svg",
+      "inner": false,
+      "montageGroup": "distort",
+      "montageGlyph": "wave",
+      "meta": "плывущее изображение"
+    },
+    {
+      "label": "Сигнал",
+      "manifestId": "fx_signal_mesh",
+      "icon": "efs-k-fx-signal-mesh.svg",
+      "inner": false,
+      "montageGroup": "distort",
+      "montageGlyph": "wave",
+      "meta": "сбой сигнала и сетка"
+    },
+    {
+      "label": "Смаз",
+      "manifestId": "fx_directional_blur",
+      "icon": "efs-k-fx-directional-blur.svg",
+      "inner": false,
+      "montageGroup": "distort",
+      "montageGlyph": "wave",
+      "meta": "сдвиг и смаз по направлению"
+    },
+    {
+      "label": "Моджо-свечение",
+      "manifestId": "fx_mojo_glow_grade",
+      "icon": "efs-k-fx-mojo-glow-grade.svg",
+      "inner": false,
+      "montageGroup": "light",
+      "montageGlyph": "crystal",
+      "meta": "свечение и тёплый Mojo"
+    },
+    {
+      "label": "Блики",
+      "manifestId": "fx_hotspot_flicker",
+      "icon": "efs-k-fx-hotspot-flicker.svg",
+      "inner": false,
+      "montageGroup": "light",
+      "montageGlyph": "crystal",
+      "meta": "мигающие блики"
+    },
+    {
+      "label": "Мерцание",
+      "manifestId": "fx_sapphire_flicker",
+      "icon": "efs-k-fx-sapphire-flicker.svg",
+      "inner": false,
+      "montageGroup": "light",
+      "montageGlyph": "crystal",
+      "meta": "мерцание яркости"
+    },
+    {
+      "label": "Линза",
+      "manifestId": "fx_lens_blur",
+      "icon": "efs-k-fx-lens-blur.svg",
+      "inner": false,
+      "montageGroup": "light",
+      "montageGlyph": "crystal",
+      "meta": "мягкий расфокус BCC"
     }
   ]
 }

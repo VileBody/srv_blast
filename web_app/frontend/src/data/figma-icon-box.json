@@ -30,6 +30,14 @@
    60.0,
    60.0
   ],
+  "combo-style.svg": [
+   24.0,
+   24.0
+  ],
+  "combo-transition.svg": [
+   24.0,
+   24.0
+  ],
   "deco-footage.svg": [
    60.0,
    60.0
@@ -39,6 +47,54 @@
    40.0
   ],
   "efg-invert.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-of-edge-radial.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-of-exposure-flicker.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-of-fisheye-scan.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-of-invert-flash.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-of-linear-wipe.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-of-rgb-glitch-burst.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-sh-chroma-lens-shake.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-sh-dissolve-shake.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-sh-puddle-shake.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-sh-puddle-warp-shake.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-sh-tile-shake.svg": [
+   40.0,
+   40.0
+  ],
+  "efg-k-sh-twitch-flicker.svg": [
    40.0,
    40.0
   ],
@@ -82,6 +138,146 @@
    40.0,
    40.0
   ],
+  "efs-k-cc-colorista-looks.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-double-looks-grain.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-film-grain-looks-a.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-film-grain-looks-b.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-looks-curves-grain.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-looks-curves-noise.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-looks-exposure-grain.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-lumetri-contrast.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-lumetri-curves-looks.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-lumetri-looks-grain.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-lumetri-mb.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-mb-suite-grain.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-neutral-tritone.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-tritone-exposure.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-cc-tritone-red.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-bcc-displace.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-cartoon-thermal.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-chroma-distort.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-cross-glitch.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-directional-blur.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-etching-fisheye.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-film-damage.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-hotspot-flicker.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-invert-curves.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-jpeg-damage.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-jpeg-tritone.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-lens-blur.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-luma-key-noise.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-mojo-glow-grade.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-paint-bucket.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-sapphire-flicker.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-scanlines-displace.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-signal-mesh.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-turbulent-noise.svg": [
+   40.0,
+   40.0
+  ],
+  "efs-k-fx-universe-vhs.svg": [
+   40.0,
+   40.0
+  ],
   "efs-neon.svg": [
    40.0,
    40.0
@@ -93,14 +289,6 @@
   "efs-oldcam.svg": [
    40.0,
    40.0
-  ],
-  "efs-pixel.svg": [
-   24.0,
-   24.0
-  ],
-  "efs-warm.svg": [
-   24.0,
-   24.0
   ],
   "efs-wave.svg": [
    24.0,
