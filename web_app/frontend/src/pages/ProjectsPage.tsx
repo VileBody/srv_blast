@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { usePhone } from '../lib/usePhone';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { cn } from '../lib/cn';
@@ -26,17 +25,16 @@ const gradLight = {
     `value` может быть словом («Без лимита») — тогда кегль меньше, иначе фигмовские 104 не влезают. */
 function StatCard({ label, value, to, onClick, variant }: { label: string; value: number | string; to?: string; onClick?: () => void; variant: 'primary' | 'muted' }) {
   const muted = variant === 'muted';
-  const phone = usePhone();
   const wordy = typeof value === 'string' && !/^\d+$/.test(value);
-  // цвет фейда = фон карты, чтобы частицы жёстко «уходили» в него слева (эффект глубины).
-  // Тянем до 80% ширины — иначе не достаёт до свирла muted-карты (он правее).
-  const fade = muted
-    ? 'linear-gradient(90deg, #211742 0%, #211742 55%, rgba(33,23,66,0) 80%)'
-    : 'linear-gradient(90deg, #241a3c 0%, #241a3c 55%, rgba(36,26,60,0) 80%)';
+  // Фейд — тем же токеном, что и фон карты: частицы «уходят» в фон слева (эффект глубины).
+  // Тянем до 80% ширины — иначе не достаёт до свирла muted-карты (он правее). Раньше фейд и
+  // фон были захардкожены разными тонами (#241a3c поверх field) — карта шла двумя полосами,
+  // а две карты ряда отличались цветом.
+  const fade = 'linear-gradient(90deg, var(--field) 0%, var(--field) 55%, transparent 80%)';
   // «Сделать ещё» ведёт не по ссылке, а в визард: карта умеет быть и ссылкой, и кнопкой
   const className = 'group relative flex h-[200px] w-[360px] shrink-0 flex-col overflow-hidden rounded-r15 text-left max-md:h-[112px] max-md:w-[210px]';
-  // телефон: непрозрачный фон (grad-soft-20 полупрозрачен и просвечивал линии подложки)
-  const style = muted ? { background: 'var(--field-hover)' } : { background: phone ? 'var(--field)' : 'var(--grad-soft-20)' };
+  // обе карты ряда — одна поверхность field; различаются только рисунком
+  const style = { background: 'var(--field)' };
   const body = (
     <>
       {/* мягкое свечение (две размытые эллипс-частицы) + свирл — точные позиции/наклоны из Figma */}
@@ -86,12 +84,12 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
     <Link
       to={`/app/projects/${project.id}`}
       className={cn('group relative flex max-h-[380px] w-[300px] shrink-0 flex-col overflow-hidden rounded-r15 max-md:h-[112px] max-md:w-[150px]', project.archived && 'opacity-60')}
-      style={{ background: 'var(--grad-soft-20)' }}
+      style={{ background: 'var(--field)' }}
     >
-      {/* обложка: отступ 14 слева/сверху, уходит за правый край (bleed 38px) и перекрыта фейдом в #281e47 */}
+      {/* обложка: отступ 14 слева/сверху, уходит за правый край (bleed 38px) и перекрыта фейдом в цвет карты */}
       <div className="relative ml-[14px] mr-[-38px] mt-[14px] min-h-0 flex-1 max-md:!min-h-0 max-md:!flex-1 max-md:ml-[10px] max-md:mt-[10px]">
         <ProjectCover name={project.name} src={project.coverUrl} track={project.coverTrack} className="h-full w-full rounded-[14px]" />
-        <div className="pointer-events-none absolute inset-y-0 right-[38px] w-[100px]" style={{ background: 'linear-gradient(90deg, rgba(40,30,71,0) 0%, #281e47 100%)' }} />
+        <div className="pointer-events-none absolute inset-y-0 right-[38px] w-[100px]" style={{ background: 'linear-gradient(90deg, transparent 0%, var(--field) 100%)' }} />
       </div>
 
       <button
