@@ -177,6 +177,65 @@ def expand_asset_rows(
     return out
 
 
+# Edited pins: every shot becomes its own clip. Shorter shots are flashes and
+# inserts — no interval the picker builds can be filled by them, and in the pool
+# they would only be dead rows.
+DEFAULT_MIN_SHOT_SEC = 1.0
+
+
+def min_shot_sec() -> float:
+    return _env_float("FOOTAGE_MIN_SHOT_SEC", DEFAULT_MIN_SHOT_SEC)
+
+
+def pin_shots_enabled() -> bool:
+    return str(os.environ.get("FOOTAGE_SPLIT_PIN_SHOTS", "1")).strip().lower() not in ("0", "false", "no", "off")
+
+
+def shot_bounds(duration_sec: float, scene_cuts: Sequence[float], *, min_shot: float) -> List[Tuple[float, float]]:
+    """[0, duration) split exactly on the edits; shots shorter than `min_shot` dropped."""
+    dur = _f(duration_sec)
+    edges = [0.0] + sorted({_f(c) for c in scene_cuts if 0.0 < _f(c) < dur}) + [dur]
+    return [(round(a, 3), round(b, 3)) for a, b in zip(edges, edges[1:]) if b - a >= min_shot]
+
+
+def expand_shot_rows(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    min_shot: float | None = None,
+) -> List[Dict[str, Any]]:
+    """Split edited pins into one virtual clip per shot (same file, `~segNN` rows).
+
+    A pin is often already a montage. As one clip it either drags an internal edit
+    into the video as an off-beat jump cut, or needs the picker to dodge it; as N
+    shot-clips every montage cut stays ours and on the beat, the storyboard shows
+    each shot as what it is, and no-repeat/cooldown treat shots independently while
+    the media layer still downloads one file. Rows without `scene_cuts` and rows
+    that are already segments pass through, so a rebuild over an expanded index
+    cannot compound. The edits stay on every shot row (file seconds), which keeps
+    the picker's in-shot offset a no-op guard.
+    """
+    floor = min_shot_sec() if min_shot is None else float(min_shot)
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        name = str(item.get("file_name") or "").strip()
+        cuts = item.get("scene_cuts") or ()
+        if not name or not cuts or item.get("segment_base_sec") is not None:
+            out.append(item)
+            continue
+        shots = shot_bounds(_f(item.get("duration_sec")), cuts, min_shot=floor)
+        if not shots:
+            continue  # nothing but flashes — no usable footage in this pin
+        for idx, (start, end) in enumerate(shots):
+            seg = dict(item)
+            seg["file_name"] = make_segment_name(name, idx)
+            seg["media_file_name"] = str(item.get("media_file_name") or name)
+            seg["duration_sec"] = round(end - start, 3)
+            seg["segment_base_sec"] = round(start, 3)
+            out.append(seg)
+    return out
+
+
 def media_file_name(asset: Mapping[str, Any]) -> str:
     """The name the media layer should fetch/import this asset under."""
     return str(asset.get("media_file_name") or asset.get("file_name") or "").strip()

@@ -489,6 +489,17 @@ def build_inventory_and_bundle(
             f"(scene-cut data for {len(scene_cuts)})"
         )
 
+    # Video pool: an edited pin becomes one clip per shot, so its internal edits never
+    # reach a video as off-beat jump cuts (FOOTAGE_SPLIT_PIN_SHOTS=0 turns it off).
+    if str(media_type or "video").strip().lower() == "video":
+        from mlcore.footage_segments import expand_shot_rows, pin_shots_enabled
+
+        if pin_shots_enabled():
+            before = len(assets)
+            edited = sum(1 for a in assets if a.get("scene_cuts"))
+            assets = expand_shot_rows(assets)
+            print(f"[video] shot split: {before} pins ({edited} edited) -> {len(assets)} clips")
+
     inv_obj: Dict[str, Any] = {
         "version": "v2",
         "source_static_assets_index": str(static_assets_index_path),
