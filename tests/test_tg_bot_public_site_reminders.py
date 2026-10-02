@@ -222,3 +222,38 @@ def test_tripwire_offer_is_chased_within_its_day_even_right_after_another_remind
     asyncio.run(_app(db, bot)._site_reminders_tick(DAY))
     assert bot.sent and "21 ч" in bot.sent[0][1] and "399" in bot.sent[0][1]
     assert db.single_use == [True]  # ссылки из напоминаний одноразовые
+
+
+def test_reminder_track_link_is_marked_so_it_does_not_restart_the_chain():
+    """Ссылка из напоминания — тот же трек, но source=reminder: следующая выборка
+    по-прежнему держит возраст от развилки, а не от свежего токена."""
+    db, bot = _DB(handoffs=[_handoff()]), _Bot()
+    asyncio.run(_app(db, bot)._site_reminders_tick(DAY))
+    assert db.tokens[0][2]["source"] == "reminder"
+    assert db.tokens[0][2]["audioS3Url"] == "s3://x"
+    # исходная строка развилки не мутирована
+    assert "source" not in db.handoffs[0]["payload"]
+
+
+def test_unopened_chain_moves_to_next_step_from_the_fork_age():
+    """Через 3 часа после развилки (а не после последнего напоминания) — шаг 2."""
+    db, bot = _DB(handoffs=[_handoff()]), _Bot()
+    app = _app(db, bot)
+    asyncio.run(app._site_reminders_tick(DAY))
+    db.handoffs = [_handoff(age_s=4 * 3600)]
+    db.last = {}  # пауза между напоминаниями прошла
+    assert asyncio.run(app._site_reminders_tick(DAY)) == 1
+    assert (1, "unopened", f"{'a' * 16}:1") in db.marked
+
+
+def test_remix_offer_reuses_the_fork_hash_for_the_same_file(tmp_path: Path, monkeypatch):
+    audio = tmp_path / "p.mp3"
+    audio.write_bytes(b"prepared")
+    db, bot = _DB(), _Bot()
+    app = _app(db, bot)
+    st = ChatState(chat_id=9, batch_audio_s3_url="s3://raw/9/p.mp3", prepared_audio_local_path=str(audio),
+                   web_handoff_audio_s3_url="s3://raw/9/p.mp3", web_handoff_audio_hash="forkhash",
+                   web_handoff_prepared_path=str(audio), web_handoff_prepared_sig=app._file_signature(audio))
+    monkeypatch.setattr(app, "_sha256_file", lambda path: (_ for _ in ()).throw(AssertionError("rehash")))
+    asyncio.run(app._offer_site_remix_best_effort(bot=bot, st=st, source=app._site_remix_source(st)))
+    assert db.tokens[0][2]["audioHash"] == "forkhash"

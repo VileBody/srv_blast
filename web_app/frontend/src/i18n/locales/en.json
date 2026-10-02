@@ -1415,7 +1415,11 @@
     "expiredText": "Send /site to the bot to get a new one, or log in with Telegram.",
     "error": "Couldn't open the link",
     "errorText": "Refresh the page. If that doesn't help, log in with Telegram.",
-    "toLogin": "Log in"
+    "toLogin": "Log in",
+    "otherAccount": "Log in as another account?",
+    "otherAccountText": "Another Blast account is open in this browser. The bot link leads to the account of your Telegram.",
+    "otherAccountConfirm": "Switch account",
+    "otherAccountStay": "Stay here"
   },
   "funnel": {
     "step": "{{n}} of {{total}}",
@@ -1424,7 +1428,6 @@
       "prompt": "Rate this video",
       "thanksHigh": "Thanks for rating",
       "thanksLow": "What's off?",
-      "whatsWrong": "What's off",
       "fix": "Fix on the timeline",
       "reason": {
         "subtitles": "Subtitles",
@@ -1471,7 +1474,7 @@
       "description": "Build as many versions of one track as you need. Free, two steps in Telegram.",
       "cta": "Unlock for free",
       "freeTitle": "Unlimited on one track",
-      "freeText": "Up to {{cap}} videos per batch, {{hours}} hours between batches.",
+      "freeText": "Up to {{cap}} videos per batch, $t(funnel.units.hours, {\"count\": {{hours}} }) between batches.",
       "freePrice": "Free",
       "tripwireTitle": "Any track, no limits",
       "tripwireText": "Up to {{cap}} videos per batch, no waiting. One-time payment.",
@@ -1536,8 +1539,12 @@
       "generate": "Build more",
       "left": "{{n}} of {{cap}} available",
       "ruleCap": "Up to {{cap}} videos per batch",
-      "ruleCooldown": "{{hours}} hours between batches",
-      "ruleDaily": "{{batches}} batches on day one, then {{videos}} videos a day"
+      "ruleCooldown_one": "{{count}} hour between batches",
+      "ruleCooldown_other": "{{count}} hours between batches",
+      "ruleDaily_one": "{{count}} batch on day one, then $t(funnel.units.videos, {\"count\": {{videos}} }) a day",
+      "ruleDaily_other": "{{count}} batches on day one, then $t(funnel.units.videos, {\"count\": {{videos}} }) a day",
+      "descriptionWait": "Unlimited is on for this track. The limit is used up for now; we'll ping you in Telegram when it refreshes.",
+      "nextIn": "next batch in {{time}}"
     },
     "other": {
       "title": "Unlimited is already on",
@@ -1563,12 +1570,12 @@
       "cooldown": {
         "title": "Recharging",
         "until": "until the next batch",
-        "text": "There are {{hours}} hours between unlimited batches. We'll ping you in Telegram when you can build again."
+        "text": "There are $t(funnel.units.hours, {\"count\": {{hours}} }) between unlimited batches. We'll ping you in Telegram when you can build again."
       },
       "daily": {
         "title": "Today's limit",
         "until": "until new videos",
-        "text": "{{batches}} batches on day one, then {{videos}} videos a day. We'll ping you when the limit refreshes."
+        "text": "$t(funnel.units.batches, {\"count\": {{batches}} }) on day one, then $t(funnel.units.videos, {\"count\": {{videos}} }) a day. We'll ping you when the limit refreshes."
       },
       "creditsOut": {
         "title": "Free videos are used up",
@@ -1578,7 +1585,17 @@
     },
     "errors": {
       "noTrack": "Upload a track first",
-      "unlock": "Couldn't unlock. Try again."
+      "unlock": "Couldn't unlock. Try again.",
+      "save": "Couldn't save. Try again."
+    },
+    "badge": "Track unlimited",
+    "units": {
+      "hours_one": "{{count}} hour",
+      "hours_other": "{{count}} hours",
+      "batches_one": "{{count}} batch",
+      "batches_other": "{{count}} batches",
+      "videos_one": "{{count}} video",
+      "videos_other": "{{count}} videos"
     }
   }
 }

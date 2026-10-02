@@ -121,9 +121,20 @@ def _send(chat_id: object, text: str, markup: dict | None = None, *, manager: bo
 NOTIFY_LIMIT = 5
 
 
-def _batch_button(app_url: str, project_id: str) -> dict:
-    """Кнопка-диплинк на страницу батча: возвращает человека ровно туда, где лежат ролики."""
-    return {"inline_keyboard": [[{"text": "Открыть батч", "url": f"{app_url}/app/projects/{project_id}"}]]}
+UNLIMITED_OFFER_BUTTON = "Оценить и получить безлимит"
+
+
+def _batch_button(app_url: str, project_id: str, *, unlimited_offer: bool = False) -> dict:
+    """Кнопка-диплинк на страницу батча: возвращает человека ровно туда, где лежат ролики.
+
+    `unlimited_offer` — вторая кнопка для бесплатных без безлимита: страница батча по
+    `?unlimited=1` сразу открывает модалку «Оцени ролики и получи безлимит»
+    (docs/BOT_TO_WEB_FLOW.md, раздел 4, п. 5)."""
+    page = f"{app_url}/app/projects/{project_id}"
+    rows = [[{"text": "Открыть батч", "url": page}]]
+    if unlimited_offer:
+        rows.append([{"text": UNLIMITED_OFFER_BUTTON, "url": f"{page}?unlimited=1"}])
+    return {"inline_keyboard": rows}
 
 
 def notify_video_ready(chat_id: object, index: int, total: int, project_id: str, app_url: str) -> None:
@@ -134,11 +145,13 @@ def notify_video_ready(chat_id: object, index: int, total: int, project_id: str,
           via=auth_store.notify_bot_for_chat(chat_id))
 
 
-def notify_batch_done(chat_id: object, total: int, project_id: str, app_url: str) -> None:
+def notify_batch_done(chat_id: object, total: int, project_id: str, app_url: str, *,
+                      unlimited_offer: bool = False) -> None:
     """Итоговая сводка по батчу — приходит всегда, даже если поштучные были обрезаны."""
     if not configured() or not chat_id:
         return
-    _send(chat_id, f"Батч готов: {total} роликов. Можно выкладывать.", _batch_button(app_url, project_id),
+    _send(chat_id, f"Батч готов: {total} роликов. Можно выкладывать.",
+          _batch_button(app_url, project_id, unlimited_offer=unlimited_offer),
           via=auth_store.notify_bot_for_chat(chat_id))
 
 

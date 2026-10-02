@@ -162,8 +162,10 @@ export const api = {
   /**
    * Ссылка «на сайт» из публичного бота (`/go/<token>`): бэк логинит по токену и,
    * если в ссылке трек, заводит проект с этим треком. Протухшая ссылка — 410.
+   * В браузере открыт другой аккаунт — 409 handoff_other_account; `force` — человек
+   * подтвердил вход под аккаунтом из ссылки.
    */
-  botHandoff: (token: string) =>
+  botHandoff: (token: string, force = false) =>
     request<{
       ok: boolean;
       created: boolean;
@@ -174,7 +176,7 @@ export const api = {
       trackError?: 'tracks_limit';
       /** «Докрутить на сайте»: отрезок и текст ролика из бота */
       draft?: { clipStart: number; clipEnd: number; lyrics: string };
-    }>('/api/auth/handoff', { method: 'POST', body: JSON.stringify({ token }) }),
+    }>('/api/auth/handoff', { method: 'POST', body: JSON.stringify(force ? { token, force } : { token }) }),
   logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
   /* ---------------- воронка после генерации (docs/BOT_TO_WEB_FLOW.md) ---------------- */
   funnelState: () => request<FunnelState>('/api/funnel/state'),

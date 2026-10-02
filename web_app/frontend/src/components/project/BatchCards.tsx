@@ -398,7 +398,7 @@ export function GenerationsCard({
 }: {
   videos: VideoVersion[];
   /** трек батча — для безлимита из окна у кружка лимитов */
-  track?: { id?: string; title?: string; projectId?: string };
+  track?: { id?: string; audioHash?: string; title?: string; projectId?: string };
   /** подвал строки готового ролика — оценка 1–10 */
   videoFooter?: (video: VideoVersion) => ReactNode;
   postAll?: () => void;

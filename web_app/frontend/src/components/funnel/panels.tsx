@@ -275,7 +275,8 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
           stepKey="done"
           onClose={on.onClose}
           title={t('funnel.done.title')}
-          description={t('funnel.done.description')}
+          // «собирай бесплатно» — только когда сейчас есть что собрать; иначе время в билете
+          description={t(view.quota && !view.quota.allowed ? 'funnel.done.descriptionWait' : 'funnel.done.description')}
           actions={
             <>
               <Button variant="ghost" onClick={on.onClose}>{t('common.close')}</Button>

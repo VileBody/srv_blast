@@ -868,13 +868,28 @@ class CreditsDB:
             "kind              TEXT NOT NULL,"
             "payload           JSONB NOT NULL DEFAULT '{}'::jsonb,"
             "result            JSONB NOT NULL DEFAULT '{}'::jsonb,"
-            "created_at        TIMESTAMP NOT NULL DEFAULT NOW(),"
-            "expires_at        TIMESTAMP NOT NULL,"
+            "created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "expires_at        TIMESTAMPTZ NOT NULL,"
             "redeem_count      INTEGER NOT NULL DEFAULT 0,"
-            "first_redeemed_at TIMESTAMP,"
-            "last_redeemed_at  TIMESTAMP"
+            "first_redeemed_at TIMESTAMPTZ,"
+            "last_redeemed_at  TIMESTAMPTZ"
             ")"
         )
+        # Таблица заводилась с TIMESTAMP: NOW() писал туда наивное время в таймзоне
+        # сессии, а web_activity_log хранит наивное UTC — при TZ сервера не UTC
+        # напоминания сравнивали бы время со сдвигом. Переводим в TIMESTAMPTZ; старые
+        # значения писались в таймзоне сессии, поэтому и читаем их в ней же.
+        for column in ("created_at", "expires_at", "first_redeemed_at", "last_redeemed_at"):
+            data_type = await conn.fetchval(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_name = 'web_handoff_tokens' AND column_name = $1",
+                column,
+            )
+            if data_type == "timestamp without time zone":
+                await conn.execute(
+                    f"ALTER TABLE web_handoff_tokens ALTER COLUMN {column} TYPE TIMESTAMPTZ "
+                    f"USING {column} AT TIME ZONE current_setting('TimeZone')"
+                )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_web_handoff_tg_created ON web_handoff_tokens(tg_id, created_at)"
         )
@@ -2145,6 +2160,21 @@ class CreditsDB:
             "redeem_count": int(row["redeem_count"]),
         }
 
+    async def peek_web_handoff_owner(self, token: str) -> Optional[int]:
+        """Чей живой токен — без погашения. Сайт сперва сверяет аккаунт в браузере:
+        одноразовую ссылку нельзя тратить на вопрос «войти как другой аккаунт?»."""
+        token = str(token or "").strip()
+        if not token:
+            return None
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            tg_id = await conn.fetchval(
+                "SELECT tg_id FROM web_handoff_tokens WHERE token_hash = $1 AND expires_at > NOW() "
+                "AND (max_redeems IS NULL OR redeem_count < max_redeems)",
+                self.hash_handoff_token(token),
+            )
+        return None if tg_id is None else int(tg_id)
+
     async def set_web_handoff_result(self, token: str, result: Dict[str, Any]) -> None:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
@@ -2374,32 +2404,53 @@ class CreditsDB:
     # Напоминания про сайт (services/tg_bot_public/site_reminders.py)
 
     async def site_handoff_reminder_rows(self, max_age_days: int = 4) -> List[Dict[str, Any]]:
-        """Последняя ссылка «на сайт» с треком у каждого человека + что было после неё.
+        """Последняя развилка «на сайт» у каждого человека + что было после неё.
 
-        Возраст считается в SQL: все created_at здесь — наивное UTC, а сравнивать их
-        с datetime процесса значит гадать о таймзоне сервера."""
+        Цепочку держит токен развилки (`payload.source` пуст или `fork`): ссылки,
+        выпущенные напоминаниями, `/site` и CTA, её не перезапускают — иначе каждое
+        напоминание «ссылку не открыл» выпускало новый токен, обнуляло возраст и
+        слалось по кругу. «Открыл» — любой погашенный `track`-токен того же трека
+        (audioHash) после развилки: и сама ссылка развилки, и из напоминания.
+
+        Время сравнивается в SQL и в одной шкале: web_handoff_tokens — TIMESTAMPTZ,
+        activity_log — наивное время сессии (так его пишет NOW()), web_activity_log —
+        наивное UTC (см. _web_event_ts)."""
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT DISTINCT ON (t.tg_id)
-                    t.tg_id, t.token_hash, t.payload, t.redeem_count,
-                    EXTRACT(EPOCH FROM NOW() - t.created_at) AS age_s,
-                    EXTRACT(EPOCH FROM NOW() - t.first_redeemed_at) AS since_open_s,
-                    (t.expires_at > NOW()) AS alive,
+                WITH forks AS (
+                    SELECT DISTINCT ON (t.tg_id) t.tg_id, t.token_hash, t.payload, t.created_at, t.expires_at
+                    FROM web_handoff_tokens t
+                    WHERE t.kind = 'track'
+                      AND COALESCE(t.payload->>'source', 'fork') = 'fork'
+                      AND t.created_at > NOW() - make_interval(days => $1)
+                    ORDER BY t.tg_id, t.created_at DESC
+                )
+                SELECT
+                    f.tg_id, f.token_hash, f.payload,
+                    opened.redeem_count,
+                    EXTRACT(EPOCH FROM NOW() - f.created_at) AS age_s,
+                    EXTRACT(EPOCH FROM NOW() - opened.first_open) AS since_open_s,
+                    (f.expires_at > NOW()) AS alive,
                     EXISTS (
                         SELECT 1 FROM activity_log a
-                        WHERE a.tg_id = t.tg_id AND a.created_at >= t.created_at
+                        WHERE a.tg_id = f.tg_id AND a.created_at::timestamptz >= f.created_at
                           AND a.event IN ('web_fork_bot', 'generation_started')
                     ) AS stayed_in_bot,
                     EXISTS (
                         SELECT 1 FROM web_activity_log w
-                        WHERE w.tg_id = t.tg_id AND w.event = 'generation_started'
-                          AND w.created_at >= t.created_at
+                        WHERE w.tg_id = f.tg_id AND w.event = 'generation_started'
+                          AND (w.created_at AT TIME ZONE 'UTC') >= f.created_at
                     ) AS generated_on_site
-                FROM web_handoff_tokens t
-                WHERE t.kind = 'track' AND t.created_at > NOW() - make_interval(days => $1)
-                ORDER BY t.tg_id, t.created_at DESC
+                FROM forks f
+                CROSS JOIN LATERAL (
+                    SELECT COALESCE(SUM(r.redeem_count), 0)::int AS redeem_count,
+                           MIN(r.first_redeemed_at) AS first_open
+                    FROM web_handoff_tokens r
+                    WHERE r.tg_id = f.tg_id AND r.kind = 'track' AND r.created_at >= f.created_at
+                      AND COALESCE(r.payload->>'audioHash', '') = COALESCE(f.payload->>'audioHash', '')
+                ) opened
                 """,
                 int(max_age_days),
             )
@@ -2427,13 +2478,15 @@ class CreditsDB:
                 """
                 WITH gens AS (
                     -- только окно до max_days: более старые генерации в ответ не попадут
-                    -- никогда, а без границы каждый тик сканировал бы всю историю
-                    SELECT tg_id, created_at FROM activity_log
+                    -- никогда, а без границы каждый тик сканировал бы всю историю.
+                    -- Обе ветки приводим к TIMESTAMPTZ: activity_log пишет NOW() во
+                    -- времени сессии, web_activity_log — наивное UTC.
+                    SELECT tg_id, created_at::timestamptz AS created_at FROM activity_log
                     WHERE event = 'generation_started' AND created_at > NOW() - make_interval(days => $2)
                     UNION ALL
-                    SELECT tg_id, created_at FROM web_activity_log
+                    SELECT tg_id, created_at AT TIME ZONE 'UTC' AS created_at FROM web_activity_log
                     WHERE event = 'generation_started' AND tg_id IS NOT NULL
-                      AND created_at > NOW() - make_interval(days => $2)
+                      AND created_at > (NOW() AT TIME ZONE 'UTC') - make_interval(days => $2)
                 ), last AS (
                     SELECT tg_id, MAX(created_at) AS last_at FROM gens GROUP BY tg_id
                 )

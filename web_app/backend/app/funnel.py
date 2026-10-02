@@ -159,21 +159,22 @@ def now_utc() -> datetime:
 
 # ------------------------------------------------------------------ квиз
 
-def web_bridge(text: str) -> str:
-    """Мостик из бота — для сайта: в Telegram он свёрстан ручными переносами строк и
-    заканчивается стрелкой-эмодзи на документ; на сайте строки переносит сама вёрстка,
-    а методичка стоит карточкой ниже."""
-    flat = " ".join(part.strip() for part in str(text or "").splitlines() if part.strip())
-    return flat.replace(" 👇", ".").replace("👇", "").strip()
+def web_bridge(branch: str) -> str:
+    """Мостик для сайта: свой текст из marketing_texts (WEB_*). Ботовый свёрстан под
+    Telegram (ручные переносы, длинные тире, стрелка-эмодзи на документ), а на сайте
+    методичка стоит карточкой ниже и действуют правила копирайта сайта."""
+    return mt.web_bridge_text_for_branch(branch)
 
 
 def survey_questions() -> list[dict[str, Any]]:
-    """Вопросы квиза в порядке и с ветвлением — те же, что у бота."""
+    """Вопросы квиза в порядке и с ветвлением — те же, что у бота (тексты — сайта)."""
     return [
         {
             "id": q.id,
-            "text": q.text,
-            "options": [{"id": o.id, "label": o.label} for o in q.options],
+            "text": mt.WEB_SURVEY_QUESTION_TEXT.get(q.id, q.text),
+            "options": [
+                {"id": o.id, "label": mt.WEB_SURVEY_OPTION_LABEL.get((q.id, o.id), o.label)} for o in q.options
+            ],
             "next": {**{o.id: q.next_by_answer.get(o.id, q.next_default) for o in q.options}},
         }
         for q in mt.SURVEY_QUESTIONS.values()
@@ -202,7 +203,7 @@ async def answer_survey(tg_id: int, question_id: str, answer_id: str) -> dict[st
     out: dict[str, Any] = {"next": nxt or None, "done": not nxt}
     if not nxt:
         out["branch"] = branch_q3
-        out["bridge"] = web_bridge(mt.bridge_text_for_branch(branch_q3))
+        out["bridge"] = web_bridge(branch_q3)
     return out
 
 
@@ -322,6 +323,9 @@ async def state(tg_id: int, *, saved_tracks: list[dict[str, Any]]) -> dict[str, 
         track = next((t for t in saved_tracks if t.get("audioHash") == unl["audio_hash"]), None)
         q = unl_quota = await track_quota(tg_id, unl["audio_hash"])
         unlimited = {
+            # Трек сверяется по хэшу: SavedTrack мог пропасть (или трек открыт из бота),
+            # а id на сайте у одного трека бывает не один.
+            "audioHash": unl["audio_hash"],
             "trackId": track["id"] if track else None,
             "trackTitle": track_title(track["filename"]) if track else None,
             "unlockedAt": unl["unlocked_at"].isoformat(),
@@ -334,7 +338,7 @@ async def state(tg_id: int, *, saved_tracks: list[dict[str, Any]]) -> dict[str, 
             "answers": dict(survey.get("answers") or {}),
             "completed": survey.get("completed_at") is not None,
             "branch": str(survey.get("branch_q3") or ""),
-            "bridge": web_bridge(mt.bridge_text_for_branch(str(survey.get("branch_q3") or ""))) if survey.get("completed_at") else None,
+            "bridge": web_bridge(str(survey.get("branch_q3") or "")) if survey.get("completed_at") else None,
         },
         "actions": {a: a in actions for a in UNLOCK_ACTIONS},
         "tripwireOffer": await tripwire_offer(tg_id, unl_quota),
@@ -360,6 +364,9 @@ async def state(tg_id: int, *, saved_tracks: list[dict[str, Any]]) -> dict[str, 
 async def unlock(tg_id: int, audio_hash: str) -> dict[str, Any]:
     """Открыть безлимит: оба действия выполнены. Повторно на другой трек — отказ."""
     r = repo()
+    # Воронка конверсионная: платящим безлимит не открываем (у них тариф).
+    if await r.has_paid(int(tg_id)):
+        raise FunnelError("unlimited_paid", "Безлимит на трек открывается только на бесплатном тарифе.", 409)
     actions = await r.funnel_actions(int(tg_id))
     missing = [a for a in UNLOCK_ACTIONS if a not in actions]
     if missing:
@@ -368,6 +375,14 @@ async def unlock(tg_id: int, audio_hash: str) -> dict[str, Any]:
     if row["audio_hash"] != audio_hash:
         raise FunnelError("unlimited_other_track", "Безлимит уже открыт на другом треке.", 409)
     return row
+
+
+async def unlimited_offer_due(tg_id: int) -> bool:
+    """Звать ли в «батч готов» за безлимитом: бесплатный, и безлимит ещё не открыт."""
+    r = repo()
+    if await r.has_paid(int(tg_id)):
+        return False
+    return await r.get_track_unlimited(int(tg_id)) is None
 
 
 async def plan_generation(tg_id: int, audio_hash: str, videos: int, credits_left: int) -> tuple[str, tu.TrackQuota | None]:

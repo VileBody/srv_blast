@@ -239,6 +239,30 @@ def user_by_id(user_id: str) -> dict[str, Any] | None:
     return next((u for u in USERS.values() if u.get("id") == user_id), None)
 
 
+def link_telegram(user_id: str, chat_id: Any, profile: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Привязать Telegram к УЖЕ существующему аккаунту без Telegram (вход по ссылке
+    из бота, когда человек уже залогинен на сайте, например через Google).
+
+    Если этот chat_id уже у другого аккаунта — отказ: склеивать два аккаунта молча
+    нельзя, у каждого свои проекты и своя подписка."""
+    user = user_by_id(user_id)
+    if user is None:
+        raise ValueError("user_not_found")
+    owner = get_user_by_chat(chat_id)
+    if owner is not None and owner.get("id") != user_id:
+        raise ValueError("telegram_taken")
+    if user.get("tgChatId") not in (None, chat_id):
+        raise ValueError("telegram_other")
+    username = str((profile or {}).get("username") or "").strip() or None
+    with _lock:
+        user["tgChatId"] = chat_id
+        user["tgVerified"] = True
+        if username:
+            user["tgUsername"] = username
+        _save()
+    return user
+
+
 # Через какого бота писать человеку уведомления сайта. «auth» — бот входа (его
 # человек запускал сам, когда входил на сайт). «public» — @blast808bot: так
 # помечаем пришедших по ссылке из бота. Бота входа они не запускали, а первым

@@ -211,3 +211,59 @@ def test_tripwire_offer_opens_at_first_limit_and_lives_a_day(client, monkeypatch
     assert offer["expiresAt"] == (now + timedelta(hours=24)).isoformat()
     monkeypatch.setattr(funnel, "now_utc", lambda: now + timedelta(hours=25))
     assert run(funnel.tripwire_offer(tg, None)) is None
+
+
+def test_site_copy_has_no_em_dash_and_no_emoji(client) -> None:
+    """Тексты квиза и мостики на сайте — свои (WEB_*), по правилам копирайта сайта."""
+    tc, main = client
+    questions = tc.get("/api/funnel/state").json()["questions"]
+    texts = [q["text"] for q in questions] + [o["label"] for q in questions for o in q["options"]]
+    for branch in ("time", "money", "ideas", "meaning", "unknown"):
+        texts.append(main.funnel.web_bridge(branch))
+    for text in texts:
+        assert "—" not in text and "\U0001f447" not in text and "\n" not in text, text
+    q2 = next(q for q in questions if q["id"] == "q2")
+    assert q2["text"].startswith("Как ты монтируешь:")
+
+
+def test_survey_stores_the_bot_label_for_the_shared_table(client) -> None:
+    """В survey_responses ответ пишется тем же текстом, что у бота: таблица общая."""
+    tc, main = client
+    tc.post("/api/funnel/survey", json={"questionId": "q2", "answerId": "no_edit"})
+    tg = next(iter(main.funnel._MEMORY.surveys))
+    assert main.funnel._MEMORY.surveys[tg]["answers"]["q2"]["label"] == "Не монтирую — ролики не делаю"
+
+
+def test_state_exposes_the_unlimited_track_hash(client) -> None:
+    """Трек безлимита сверяется по хэшу: SavedTrack мог пропасть, а безлимит остаётся."""
+    tc, main = client
+    track = _track_with_hash(main)
+    tc.post("/api/funnel/actions/channel")
+    tc.post("/api/funnel/actions/manager")
+    state = tc.post("/api/funnel/unlock", json={"trackId": track["id"]}).json()
+    assert state["unlimited"]["audioHash"] == "h" * 64
+    main.store.ws().saved_tracks.clear()
+    state = tc.get("/api/funnel/state").json()
+    assert state["unlimited"]["trackId"] is None and state["unlimited"]["audioHash"] == "h" * 64
+
+
+def test_paid_users_cannot_unlock(client) -> None:
+    tc, main = client
+    track = _track_with_hash(main)
+    tg = main._funnel_tg_id()
+    main.funnel._MEMORY.paid.add(tg)
+    tc.post("/api/funnel/actions/channel")
+    tc.post("/api/funnel/actions/manager")
+    r = tc.post("/api/funnel/unlock", json={"trackId": track["id"]})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "unlimited_paid"
+    assert main.funnel._MEMORY.unlimited == {}
+
+
+def test_unlimited_offer_only_for_free_without_unlimited(client) -> None:
+    _, main = client
+    funnel, run = main.funnel, asyncio.run
+    assert run(funnel.unlimited_offer_due(11)) is True
+    funnel._MEMORY.paid.add(12)
+    assert run(funnel.unlimited_offer_due(12)) is False
+    run(funnel.repo().unlock_track_unlimited(13, "h"))
+    assert run(funnel.unlimited_offer_due(13)) is False

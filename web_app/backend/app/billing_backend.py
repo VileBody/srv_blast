@@ -362,6 +362,10 @@ class BillingBackend:
         """Ссылка «на сайт» из публичного бота: запись токена или None (протух/неизвестен)."""
         return await self._db.redeem_web_handoff(token)
 
+    async def peek_handoff_owner(self, token: str) -> int | None:
+        """chat_id владельца живого токена, не погашая его."""
+        return await self._db.peek_web_handoff_owner(token)
+
     async def set_handoff_result(self, token: str, result: dict[str, Any]) -> None:
         await self._db.set_web_handoff_result(token, result)
 

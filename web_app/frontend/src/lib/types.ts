@@ -602,6 +602,8 @@ export interface FunnelState {
   /** предложение трипваера: сутки с первого упора в лимит; null — закрыто или не открывалось */
   tripwireOffer: { expiresAt: string; priceRub: number } | null;
   unlimited: null | {
+    /** хэш трека безлимита: по нему сверяем трек (SavedTrack мог пропасть, тогда trackId null) */
+    audioHash: string;
     trackId: string | null;
     trackTitle: string | null;
     unlockedAt: string;

@@ -6,8 +6,9 @@ import { Button, buttonClass } from '../components/ui/kit';
 import { useToast } from '../contexts/ToastContext';
 import { api, ApiError } from '../lib/api';
 import { useWizardStore } from '../stores/wizardStore';
+import { apiErrorCode } from '../components/funnel/useFunnel';
 
-type Failure = 'expired' | 'error';
+type Failure = 'expired' | 'error' | 'otherAccount';
 
 /** секунды → «мм:сс:сс» (формат полей тайминга визарда, см. timingToSeconds) */
 function secondsToTiming(value: number): string {
@@ -33,14 +34,16 @@ export function HandoffPage() {
   const queryClient = useQueryClient();
   const { push } = useToast();
   const [failure, setFailure] = useState<Failure | null>(null);
+  // В браузере другой аккаунт: входим по ссылке только после подтверждения (force).
+  const [force, setForce] = useState(false);
   // StrictMode в деве зовёт эффект дважды; сама ручка идемпотентна, но лишний
-  // запрос съедал бы лимит /api/auth/*.
-  const started = useRef(false);
+  // запрос съедал бы лимит /api/auth/*. Помним, с каким force уже ходили.
+  const started = useRef<boolean | null>(null);
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    api.botHandoff(token)
+    if (started.current === force) return;
+    started.current = force;
+    api.botHandoff(token, force)
       .then((res) => {
         queryClient.removeQueries({ queryKey: ['me'] });
         if (res.projectId) {
@@ -64,9 +67,10 @@ export function HandoffPage() {
         navigate(res.redirectTo, { replace: true });
       })
       .catch((error: unknown) => {
-        setFailure(error instanceof ApiError && error.status === 410 ? 'expired' : 'error');
+        if (apiErrorCode(error) === 'handoff_other_account') setFailure('otherAccount');
+        else setFailure(error instanceof ApiError && error.status === 410 ? 'expired' : 'error');
       });
-  }, [token, navigate, queryClient, push, t]);
+  }, [token, force, navigate, queryClient, push, t]);
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-bg p-[24px] text-center">
@@ -76,6 +80,19 @@ export function HandoffPage() {
           <p className="mt-[32px] text-ui-16 font-[350] text-text-60" role="status">
             {t('handoff.loading')}
           </p>
+        ) : failure === 'otherAccount' ? (
+          <>
+            <h1 className="mt-[32px] text-ui-32 font-[400] text-text">{t('handoff.otherAccount')}</h1>
+            <p className="mt-[16px] max-w-[480px] text-ui-16 font-[350] text-text-60">{t('handoff.otherAccountText')}</p>
+            <div className="mt-[32px] flex flex-wrap justify-center gap-[12px]">
+              <Button variant="primary" size="lg" onClick={() => { setFailure(null); setForce(true); }}>
+                {t('handoff.otherAccountConfirm')}
+              </Button>
+              <Link className={buttonClass({ variant: 'secondary', size: 'lg' })} to="/app">
+                {t('handoff.otherAccountStay')}
+              </Link>
+            </div>
+          </>
         ) : (
           <>
             <h1 className="mt-[32px] text-ui-32 font-[400] text-text">
