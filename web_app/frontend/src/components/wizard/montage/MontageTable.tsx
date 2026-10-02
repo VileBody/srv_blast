@@ -5,7 +5,7 @@ import { api } from '../../../lib/api';
 import { isVideoUrl } from '../../../lib/media';
 import effectsRegistry from '../../../data/effects-registry.json';
 import { HookConfig, HookKind, MontageVideo, TimelinePace, TimelineRecipe, TimelineStyleRange, textSettingsFor, useWizardStore } from '../../../stores/wizardStore';
-import { styleIdOf } from '../../../lib/subtitleText';
+import { KANT_STYLES, styleIdOf } from '../../../lib/subtitleText';
 import { EFFECT_HOOKS, MOTIONS, NO_GLUE, OBJECTS, THOUGHTS, previewIdFor } from '../hookCatalog';
 import { PACES, useRecipeCuts } from '../storyboardData';
 import { usePlaybackUrl } from '../useFragmentAudio';
@@ -28,13 +28,12 @@ import { FrameDock, FrameView, useFramesOf, type Frame } from './sources';
  * в этот ролик; «Во все N» у выделенного переносит её на весь батч. Отсюда же — рендер.
  */
 type VideoFx = MontageVideo;
-const SUB_STYLES = [
+const SUB_STYLES: readonly { id: string; name: string }[] = [
   { id: 'brat', name: 'Brat' }, { id: 'jakson', name: 'Jakson' }, { id: 'impulse', name: 'Impulse' },
   { id: 'tape', name: 'Tape' }, { id: 'trendy', name: 'Trendy' },
-  // тайтлы Kant: имя = ключ WEB_SUBTITLE_MODE_MAP_JSON (lib/subtitleText KANT_STYLE_BY_NAME)
-  { id: 'kant_two_frames', name: 'Duo' }, { id: 'kant_gum', name: 'Bubble' }, { id: 'kant_matrix', name: 'Code' },
-  { id: 'kant_edit', name: 'Novel' }, { id: 'kant_vhs', name: 'Retro' }, { id: 'kant_lani_style', name: 'Scribble' }
-] as const;
+  // тайтлы — тот же список, что разбирает styleIdOf (lib/subtitleText)
+  ...KANT_STYLES,
+];
 
 const FPS = 30;
 const TD = 0.36;

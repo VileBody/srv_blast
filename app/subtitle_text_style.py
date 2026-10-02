@@ -100,6 +100,28 @@ def _render_preset() -> str:
     return active_preset().name
 
 
+def kant_layout_config(mode: str, style: Optional[SubtitleTextStyle] = None,
+                       accent_color: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Тайтл Kant: шрифт, цвет и анимация зашиты в .aep — из настроек текста применимы только
+    размер и положение (layout для build_kant_title_overlay). Остальное — ошибка, не тихий сброс.
+    None — прод (крупно, по центру)."""
+    from app.subtitle_font_layout import POSITION_PRESETS, SAFE_MARGIN_X, SIZE_PRESETS
+
+    if accent_color is not None:
+        raise ValueError(f"{mode}: Kant titles have no accent color")
+    if style is None:
+        return None
+    if (style.font, style.accent_font, style.focus_style, style.height, style.shadow) != (None, None, None, "normal", "soft"):
+        raise ValueError(f"{mode}: Kant titles take only size and position")
+    if style.size not in SIZE_PRESETS or style.position not in POSITION_PRESETS:
+        raise ValueError(f"{mode}: unknown size/position {style.size!r}/{style.position!r}")
+    if style.size == "large" and style.position == "center":
+        return None
+    align, center_y = POSITION_PRESETS[style.position]
+    return {"scale": round(SIZE_PRESETS[style.size] * 100.0, 3), "align": align,
+            "centerY": center_y, "marginX": SAFE_MARGIN_X}
+
+
 def jsx_style_config(mode: str, style: Optional[SubtitleTextStyle] = None,
                      accent_color: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """trendy/brat: CONFIG-оверрайды для скрипта (None — прод)."""
@@ -107,10 +129,7 @@ def jsx_style_config(mode: str, style: Optional[SubtitleTextStyle] = None,
     from core.subtitles_mode import SUBTITLES_MODE_KANT_TITLES
 
     if mode in SUBTITLES_MODE_KANT_TITLES:
-        # у тайтлов Kant шрифт, цвет и анимация зашиты в .aep — настроек текста нет
-        if (style is not None and not style.is_default()) or accent_color is not None:
-            raise ValueError(f"{mode}: Kant titles have no text settings")
-        return None
+        return kant_layout_config(mode, style, accent_color)
     if style is None or style.is_default():
         # выбран только цвет — прод-CONFIG скрипта, меняется лишь цвет фокус-слов
         return None if accent_color is None else {"focusFillColor": hex_to_rgb01(accent_color)}

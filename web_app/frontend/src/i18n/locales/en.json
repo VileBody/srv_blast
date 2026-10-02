@@ -635,7 +635,7 @@
         "poolStyle": "Style in pool: {{name}}",
         "fontDefault": "Style default",
         "fontLockedBrat": "Brat uses a fixed font — Arial Narrow",
-        "fixedTitle": "This is a ready-made title: font, colour, size and animation are baked into it, so there is nothing to tune",
+        "fixedTitle": "A ready-made title: the font, colour and animation are baked in. You can change its size and position",
         "fontUnavailable": "Not available for: {{styles}}",
         "fontInvalid": "The selected font is not available for {{styles}} — pick another one",
         "accentFont": "Accent font",
