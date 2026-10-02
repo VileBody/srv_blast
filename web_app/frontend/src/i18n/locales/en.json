@@ -597,7 +597,8 @@
       "dropListenHint": "3 s before the drop, 2 after",
       "dropListenClipHint": "the whole clip",
       "dropIn": "drop in {{seconds}} s",
-      "dropNow": "drop"
+      "dropNow": "drop",
+      "dropBadFormat": "The drop timing is incomplete — enter minutes and seconds: 00:42 or 00:42:50."
     },
     "subs": {
       "title": "Subtitles",

@@ -1,10 +1,11 @@
-import { CSSProperties, useEffect, useState } from 'react';
+import { CSSProperties, ReactNode, useEffect, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { useChip } from '../../i18n/useChip';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
-import { HookConfig, HookKind } from '../../stores/wizardStore';
+import { HOOK_LABELS, HookConfig, HookKind } from '../../stores/wizardStore';
+import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import effectsRegistry from '../../data/effects-registry.json';
 import { CatalogMedia } from './CatalogPreview';
 import { useDragScroll } from './useDragScroll';
@@ -156,6 +157,8 @@ const STYLE_STEP: HookStep = { key: 'effectStyle', title: 'wizard.fx.stepStyle',
 
 /** Стили, которые манифест всегда тянет на весь ролик — у них выбора нет. */
 const FULL_WINDOW_STYLES = new Set(effectsRegistry.style.filter((e) => e.fullWindow).map((e) => e.label));
+/** Стиль всегда идёт на весь ролик (ЧБ и т.п.): «До дропа» для него — обещание, которого рендер не выполнит. */
+export const styleLocksFullWindow = (style?: string) => Boolean(style && FULL_WINDOW_STYLES.has(style));
 
 /**
  * Охват грейда: до дропа (по умолчанию) или на весь ролик — то же, что спрашивает бот
@@ -163,7 +166,7 @@ const FULL_WINDOW_STYLES = new Set(effectsRegistry.style.filter((e) => e.fullWin
  */
 export function StyleScopeToggle({ config, onPick }: { config: HookConfig; onPick: (full: boolean) => void }) {
   const { t } = useTranslation();
-  const locked = Boolean(config.effectStyle && FULL_WINDOW_STYLES.has(config.effectStyle));
+  const locked = styleLocksFullWindow(config.effectStyle);
   const full = locked || Boolean(config.effectStyleFull);
   // Живёт в строке заголовка шага, без подписи: два сегмента объясняют себя сами, а
   // лишнее слово съедало название шага в узкой рабочей зоне.
@@ -334,10 +337,62 @@ export function ChipRow({ options, value, values, onPick, rightGap = 0, edgePad 
 }
 
 
+/**
+ * Каталог превью эффектов почти не меняется, а presigned-ссылки в нём новые на каждый
+ * запрос — частый refetch заставлял видео примеров скачиваться заново. Держим 6 ч.
+ */
+export const FX_PREVIEWS_STALE_MS = 6 * 60 * 60_000;
+
 /** The selected hook/shape/motion sample is already rendered and stored in S3. */
 export function EffectPreview({ previewId }: { previewId?: string }) {
-  const query = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews });
+  const query = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews, staleTime: FX_PREVIEWS_STALE_MS });
   if (!previewId || query.isLoading) return null;
   const effect = query.data?.previews.find(item => item.id === previewId);
   return <CatalogMedia url={effect?.previewUrl} className="absolute inset-0 h-full w-full" />;
+}
+
+/**
+ * Строка типа хука: иконка · название (кнопка, растянутая на всю строку) · «?» · хвост
+ * (метки вариантов, стрелка). «?» — кнопка-соседка, а не span внутри кнопки: так она
+ * достаётся с клавиатуры и работает и у заблокированной строки (без дропа).
+ */
+export function HookTypeHead({ item, locked, pressed, expanded, onToggle, hintOpen, onHint, children }: {
+  item: (typeof HOOK_TYPES)[number];
+  locked: boolean;
+  pressed?: boolean;
+  expanded?: boolean;
+  onToggle: () => void;
+  hintOpen: boolean;
+  onHint: (open: boolean) => void;
+  children?: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const chip = useChip();
+  const hintId = useId();
+  const label = chip(HOOK_LABELS[item.kind]);
+  return (
+    <>
+      <div className="w12-fx-head">
+        <SvgMaskIcon src={item.icon} className="w12-fx-ic" style={{ width: item.iconW, height: item.iconH }} />
+        <button type="button" disabled={locked} className="w12-fx-toggle" aria-pressed={pressed} aria-expanded={expanded} onClick={onToggle}>
+          <span className="w12-fx-name w12-l">{label}</span>
+        </button>
+        <button
+          type="button"
+          className="w12-help-dot w12-fx-help"
+          aria-label={t('wizard.fx.whatIs', { label })}
+          aria-expanded={hintOpen}
+          aria-controls={hintOpen ? hintId : undefined}
+          onMouseEnter={() => onHint(true)}
+          onMouseLeave={() => onHint(false)}
+          onClick={() => onHint(!hintOpen)}
+          onKeyDown={(e) => { if (e.key === 'Escape') onHint(false); }}
+        >
+          <span className="w12-l">?</span>
+        </button>
+        {children}
+      </div>
+      {hintOpen && <span id={hintId} role="tooltip" className="w12-fx-hint">{t(item.hint)}</span>}
+    </>
+  );
 }

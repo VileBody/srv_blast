@@ -597,9 +597,17 @@
 .w12 .w12-fx-types { display: flex; flex-direction: column; gap: 8px; }
 .w12 .w12-fx-type { position: relative; border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); transition: border-color .15s ease, opacity .2s ease; }
 .w12 .w12-fx-type.w12-on { border-color: var(--w12-accent-line); }
-.w12 .w12-fx-type.w12-locked { opacity: .45; }
-.w12 .w12-fx-head { width: 100%; height: 62px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 16px; text-align: left; font-size: 16px; color: var(--w12-text); }
-.w12 .w12-fx-head:disabled { cursor: not-allowed; }
+.w12 .w12-fx-type.w12-locked > .w12-fx-head > :not(.w12-fx-help) { opacity: .45; }
+.w12 .w12-fx-head { position: relative; width: 100%; height: 62px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 16px; text-align: left; font-size: 16px; color: var(--w12-text); }
+/* Строка типа кликабельна целиком через растянутый ::after кнопки-названия, а «?» — отдельная
+   кнопка-соседка поверх него: вложенная кнопка в кнопке не доступна с клавиатуры и гасла вместе
+   с заблокированной строкой. */
+.w12 .w12-fx-toggle { min-width: 0; display: inline-flex; align-items: center; text-align: left; color: inherit; }
+.w12 .w12-fx-toggle::after { content: ''; position: absolute; inset: 0; border-radius: 15px; }
+.w12 .w12-fx-toggle:disabled { cursor: not-allowed; }
+.w12 .w12-fx-toggle:focus-visible { outline: none; }
+.w12 .w12-fx-toggle:focus-visible::after { box-shadow: inset 0 0 0 2px var(--w12-accent-line); }
+.w12 .w12-fx-help { position: relative; z-index: 1; flex: none; }
 .w12 .w12-fx-ic { flex: none; color: var(--w12-text-2); transform: scale(.9); }
 .w12 .w12-fx-type.w12-on .w12-fx-ic { color: var(--w12-accent); }
 .w12 .w12-fx-dots { display: inline-flex; gap: 4px; }

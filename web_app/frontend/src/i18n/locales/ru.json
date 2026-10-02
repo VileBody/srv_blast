@@ -600,7 +600,8 @@
       "dropListenHint": "3 с до дропа и 2 после",
       "dropListenClipHint": "весь отрывок",
       "dropIn": "дроп через {{seconds}} с",
-      "dropNow": "дроп"
+      "dropNow": "дроп",
+      "dropBadFormat": "Тайминг дропа неполный — впиши минуты и секунды: 00:42 или 00:42:50."
     },
     "subs": {
       "title": "Субтитры",
