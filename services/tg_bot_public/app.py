@@ -65,7 +65,13 @@ from .credits_db import CreditsDB, package_video_credits
 from .marketing_texts import (
     BTN_VERSIONS_WARN_CHANGE,
     BTN_VERSIONS_WARN_CONTINUE,
+    BTN_WEB_FORK_BOT,
+    BTN_WEB_FORK_SITE,
+    BTN_WEB_SITE_OPEN,
     METHODOLOGY_FILE_ID,
+    SITE_MORE_STYLES,
+    SITE_MORE_SUBTITLES,
+    SITE_MORE_TRANSITIONS,
     SURVEY_CB_PREFIX,
     SURVEY_FIRST_QUESTION_ID,
     SURVEY_Q2_BRANCH_BY_ANSWER,
@@ -77,6 +83,13 @@ from .marketing_texts import (
     VERSIONS_PROMPT_FREE_SUFFIX,
     VERSIONS_WARN_INVALID,
     VERSION_CHOICE_BUTTONS,
+    WEB_FORK_BOT_PREFIX,
+    WEB_FORK_CALLBACK_BOT,
+    WEB_FORK_REMINDER,
+    WEB_FORK_TEXT,
+    WEB_FORK_UNAVAILABLE,
+    WEB_SITE_DISABLED,
+    WEB_SITE_TEXT,
     bridge_text_for_branch,
     versions_warning_text,
 )
@@ -91,6 +104,7 @@ from .state_store import (
     STAGE_IDLE,
     STAGE_PROCESSING,
     STAGE_WAIT_AUDIO,
+    STAGE_WAIT_WEB_FORK,
     STAGE_WAIT_CONFIRM,
     STAGE_WAIT_CONFIRM_MODE,
     STAGE_WAIT_CONFIRM_TEXT,
@@ -1143,6 +1157,14 @@ def _kb(*rows: list[str]) -> ReplyKeyboardMarkup:
     for row in rows:
         keyboard.append([KeyboardButton(text=str(x)) for x in row])
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def _site_more_line(line: str) -> str:
+    """«На сайте ещё N» suffix for an option step, or "" when the site is off.
+
+    Module-level like the other step flags (HOOK_FLOW_ENABLED etc.): the option
+    steps are shared helpers that do not depend on per-instance state."""
+    return f"\n\n{line}" if SETTINGS.web_handoff_enabled else ""
 
 
 def _safe_name(name: str) -> str:
@@ -3464,6 +3486,26 @@ class BlastBotApp:
                         "Активной подписки не нашёл. Напиши @impulsemanage.",
                     )
 
+        @self.router.message(Command("site"))
+        async def _on_site(message: Message) -> None:
+            if message.chat is None:
+                return
+            self._log_incoming_message(message, handler="site_command")
+            if await self._maybe_reply_maintenance_stub(message):
+                return
+            await self._send_site_link(message)
+
+        @self.router.callback_query(lambda c: c.data == WEB_FORK_CALLBACK_BOT)
+        async def _on_web_fork_bot(callback: CallbackQuery) -> None:
+            if callback.message is None or callback.message.chat is None:
+                return
+            st = await self.store.get(int(callback.message.chat.id))
+            if st.stage != STAGE_WAIT_WEB_FORK:
+                await callback.answer("Уже выбрано.")
+                return
+            await callback.answer()
+            await self._choose_bot_at_fork(callback.message, st)
+
         @self.router.message(Command("sendtrack"))
         async def _on_sendtrack(message: Message) -> None:
             if message.chat is None:
@@ -3566,6 +3608,10 @@ class BlastBotApp:
 
             if st.stage == STAGE_WAIT_AUDIO:
                 await self._handle_wait_audio(message, st)
+                return
+
+            if st.stage == STAGE_WAIT_WEB_FORK:
+                await self._handle_wait_web_fork(message, st)
                 return
 
             if st.stage in {STAGE_WAIT_LYRICS_CHOICE, STAGE_WAIT_LYRICS_TEXT}:
@@ -3786,6 +3832,11 @@ class BlastBotApp:
         await bot.set_my_commands([
             BotCommand(command="start", description="Запустить бота"),
             BotCommand(command="sendtrack", description="Отправить трек"),
+            *(
+                [BotCommand(command="site", description="Сайт")]
+                if self.settings.web_handoff_enabled
+                else []
+            ),
             # /packets stays a valid alias (handler still accepts it) but is
             # dropped from the menu — it duplicated /packages.
             BotCommand(command="packages", description="Посмотреть тарифы"),
@@ -3933,11 +3984,18 @@ class BlastBotApp:
 
     async def _handle_wait_start(self, message: Message, st: ChatState) -> None:
         if str(message.text or "").strip() == BTN_LETS_GO:
-            await self._move_to_subscription(int(message.chat.id), message)
+            if self.settings.onboarding_subscription_required:
+                await self._move_to_subscription(int(message.chat.id), message)
+            else:
+                await self._finish_onboarding(int(message.chat.id), message)
         else:
             await message.answer("Нажми «Едем!», чтобы продолжить.", reply_markup=_kb([BTN_LETS_GO]))
 
     async def _handle_wait_subscription(self, message: Message, st: ChatState) -> None:
+        if not self.settings.onboarding_subscription_required:
+            # Gate switched off while this chat was parked on it: let them in.
+            await self._finish_onboarding(int(message.chat.id), message)
+            return
         if str(message.text or "").strip() != BTN_SUBSCRIBED:
             await self._timed_answer(
                 message,
@@ -3954,8 +4012,11 @@ class BlastBotApp:
             return
         chat_id = int(message.chat.id)
         await self.credits_db.log_event(chat_id, "subscription_ok")
-        # Grant initial credits after subscription (not on /start) to avoid
-        # race conditions with deep-link users who never subscribe.
+        await self._finish_onboarding(chat_id, message)
+
+    async def _finish_onboarding(self, chat_id: int, message: Message) -> None:
+        # Initial credits are granted when onboarding completes (not on /start)
+        # so deep-link users who never press «Едем!» don't get a free quota.
         if self.settings.initial_credits > 0 or self.settings.initial_track_credits > 0:
             grant = await self.credits_db.grant_initial_credits_once(
                 chat_id,
@@ -5657,7 +5718,8 @@ class BlastBotApp:
         await message.answer(
             f"Шаг 1/2: переход на склейках {'картинок' if st.bg_mode == 'photo' else 'футажа'}.\n\n"
             "• Снап-вайп\n• Минимакс\n• Инверт\n• Экстракт\n• Вспышки\n\n"
-            "Можно пропустить.",
+            "Можно пропустить."
+            f"{'' if st.bg_mode == 'photo' else _site_more_line(SITE_MORE_TRANSITIONS)}",
             reply_markup=_kb(
                 [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
                 [BTN_FX_TR_INVERT, BTN_FX_TR_EXTRACT],
@@ -5692,7 +5754,8 @@ class BlastBotApp:
             f"Шаг 2/2: стилизация {'картинок' if st.bg_mode == 'photo' else 'футажа'}.\n\n"
             "Выбранный эффект применяется ко всему ролику.\n\n"
             "• Ксерокс\n• Аналог-глитч\n• Неон\n• Старая камера\n"
-            "• Ч/Б\n• Crystal Glow\n• Night Vision\n• Wave",
+            "• Ч/Б\n• Crystal Glow\n• Night Vision\n• Wave"
+            f"{'' if st.bg_mode == 'photo' else _site_more_line(SITE_MORE_STYLES)}",
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
@@ -5774,7 +5837,8 @@ class BlastBotApp:
             "• Инверт\n"
             "• Экстракт\n"
             "• Вспышки\n\n"
-            "Можно пропустить.",
+            "Можно пропустить."
+            f"{_site_more_line(SITE_MORE_TRANSITIONS)}",
             reply_markup=_kb(
                 [BTN_FX_TR_SNAP, BTN_FX_TR_MINIMAX],
                 [BTN_FX_TR_INVERT, BTN_FX_TR_EXTRACT],
@@ -5814,7 +5878,8 @@ class BlastBotApp:
             "• Аналог-глитч\n"
             "• Неон\n"
             "• Старая камера\n\n"
-            "Можно пропустить.",
+            "Можно пропустить."
+            f"{_site_more_line(SITE_MORE_STYLES)}",
             reply_markup=_kb(
                 [BTN_FX_EX_XEROX, BTN_FX_EX_ANALOG],
                 [BTN_FX_EX_NEON, BTN_FX_EX_OLDCAM],
@@ -6454,7 +6519,7 @@ class BlastBotApp:
             message, ["subtitles:trendy_5th", "subtitles:brat_5th"]
         )
         await message.answer(
-            "Выбери режим субтитров:",
+            f"Выбери режим субтитров:{_site_more_line(SITE_MORE_SUBTITLES)}",
             reply_markup=_kb(
                 [BTN_SUB_MODE_IMPULSE],
                 [BTN_SUB_MODE_SCENES],
@@ -6648,7 +6713,116 @@ class BlastBotApp:
         # aligner only the fragment is used as reference text, so the full
         # lyrics were collected and thrown away. Timing comes first now — the
         # user picks the window, then copies the lines that sound in it.
+        if self.settings.web_handoff_enabled:
+            await self._offer_web_fork(message, st)
+            return
         await self._ask_timing_choice(message, st, prefix="Трек готов! ")
+
+    # ------------------------------------------------------------------
+    # Bot → site handoff (docs/BOT_TO_WEB_FLOW.md)
+    # ------------------------------------------------------------------
+
+    def _web_handoff_link(self, token: str) -> str:
+        return f"{self.settings.web_app_url.rstrip('/')}/go/{token}"
+
+    @staticmethod
+    def _web_handoff_profile(message: Message) -> Dict[str, str]:
+        user = message.from_user
+        if user is None:
+            return {}
+        return {
+            "name": str(getattr(user, "first_name", "") or "").strip(),
+            "surname": str(getattr(user, "last_name", "") or "").strip(),
+            "username": str(getattr(user, "username", "") or "").strip(),
+        }
+
+    async def _offer_web_fork(self, message: Message, st: ChatState) -> None:
+        """Upload the prepared track, mint a handoff link and ask where to build.
+
+        The track goes to the same raw-audio bucket the site reads, so the site
+        registers it by its s3:// URL without a second upload. The hash is the
+        one the bot itself charges track slots by (prepared mp3), which keeps a
+        later bot generation of the same track from consuming a second slot."""
+        chat_id = int(st.chat_id)
+        prepared_path = Path(str(st.prepared_audio_local_path or ""))
+        try:
+            audio_hash = await asyncio.to_thread(self._sha256_file, prepared_path)
+            audio_s3_url = await asyncio.to_thread(
+                self.s3.upload_file,
+                path=prepared_path,
+                bucket=self.settings.s3_bucket_raw_audio,
+                key=self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name),
+                content_type="audio/mpeg",
+            )
+            token = await self.credits_db.create_web_handoff(
+                chat_id,
+                "track",
+                {
+                    "audioS3Url": audio_s3_url,
+                    "audioHash": audio_hash,
+                    "filename": str(st.pending_audio_filename or prepared_path.name),
+                    "profile": self._web_handoff_profile(message),
+                },
+                ttl_seconds=self.settings.web_handoff_ttl_s,
+            )
+        except Exception:
+            # The bot path is a full alternative, so a failed link does not
+            # block the user — but it is logged and counted, never silent.
+            log.exception("web_fork_failed chat=%s", chat_id)
+            await self.credits_db.log_event(chat_id, "web_fork_failed")
+            await message.answer(WEB_FORK_UNAVAILABLE)
+            await self._ask_timing_choice(message, st, prefix="Трек готов! ")
+            return
+        st.stage = STAGE_WAIT_WEB_FORK
+        st.web_handoff_url = self._web_handoff_link(token)
+        await self.store.set(st)
+        await self.credits_db.log_event(chat_id, "web_fork_shown")
+        await self._send_web_fork(message, st)
+
+    @staticmethod
+    def _web_fork_kb(url: str) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=BTN_WEB_FORK_SITE, url=url)],
+            [InlineKeyboardButton(text=BTN_WEB_FORK_BOT, callback_data=WEB_FORK_CALLBACK_BOT)],
+        ])
+
+    async def _send_web_fork(self, message: Message, st: ChatState, *, text: str = WEB_FORK_TEXT) -> None:
+        await message.answer(text, reply_markup=self._web_fork_kb(st.web_handoff_url))
+
+    async def _choose_bot_at_fork(self, message: Message, st: ChatState) -> None:
+        await self.credits_db.log_event(int(st.chat_id), "web_fork_bot")
+        await self._ask_timing_choice(message, st, prefix=WEB_FORK_BOT_PREFIX)
+
+    async def _handle_wait_web_fork(self, message: Message, st: ChatState) -> None:
+        if _extract_audio_spec(message) is not None:
+            # A different track: start over with it (it gets its own link).
+            await self._handle_wait_audio(message, st)
+            return
+        if str(message.text or "").strip() == BTN_WEB_FORK_BOT:
+            await self._choose_bot_at_fork(message, st)
+            return
+        await self._send_web_fork(message, st, text=WEB_FORK_REMINDER)
+
+    async def _send_site_link(self, message: Message) -> None:
+        """/site: a fresh login link (no track) — straight into the account."""
+        chat_id = int(message.chat.id)
+        if not self.settings.web_handoff_enabled:
+            await message.answer(WEB_SITE_DISABLED)
+            return
+        token = await self.credits_db.create_web_handoff(
+            chat_id,
+            "site",
+            {"profile": self._web_handoff_profile(message)},
+            ttl_seconds=self.settings.web_handoff_ttl_s,
+        )
+        await self.credits_db.log_event(chat_id, "web_site_link")
+        await message.answer(
+            WEB_SITE_TEXT,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=BTN_WEB_SITE_OPEN, url=self._web_handoff_link(token))],
+            ]),
+        )
+
 
     async def _ensure_prepared_audio_for_confirm(self, *, message: Message, st: ChatState) -> Path | None:
         prepared_raw = str(st.prepared_audio_local_path or "").strip()

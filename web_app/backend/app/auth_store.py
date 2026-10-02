@@ -239,6 +239,31 @@ def user_by_id(user_id: str) -> dict[str, Any] | None:
     return next((u for u in USERS.values() if u.get("id") == user_id), None)
 
 
+# Через какого бота писать человеку уведомления сайта. «auth» — бот входа (его
+# человек запускал сам, когда входил на сайт). «public» — @blast808bot: так
+# помечаем пришедших по ссылке из бота. Бота входа они не запускали, а первым
+# бот написать не может — без пометки «Ролик готов» до них просто не доходил бы.
+NOTIFY_BOTS = ("auth", "public")
+
+
+def set_notify_bot(user_id: str, bot: str) -> None:
+    if bot not in NOTIFY_BOTS:
+        raise ValueError(f"unknown notify bot: {bot!r}")
+    with _lock:
+        user = next((u for u in USERS.values() if u.get("id") == user_id), None)
+        if user is None:
+            raise KeyError(f"user not found: {user_id}")
+        if user.get("notifyBot") == bot:
+            return
+        user["notifyBot"] = bot
+        _save()
+
+
+def notify_bot_for_chat(chat_id: Any) -> str:
+    user = get_user_by_chat(chat_id)
+    return str((user or {}).get("notifyBot") or "auth")
+
+
 def find_user_by_google(email: str) -> dict[str, Any] | None:
     """Аккаунт по почте Google: сам ключ реестра либо ПРИВЯЗАННАЯ почта.
 

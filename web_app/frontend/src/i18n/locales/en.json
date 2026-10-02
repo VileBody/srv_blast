@@ -1403,5 +1403,17 @@
     "showAll": "Show all ({{count}})",
     "showLess": "Show less",
     "failedPart": "{{count}} failed"
+  },
+  "handoff": {
+    "loading": "Opening your track…",
+    "trackReady": "Your track from the bot is here",
+    "trackReadyText": "Add the lyrics and pick a segment — we'll guide you from there.",
+    "tracksLimit": "Track limit reached",
+    "tracksLimitText": "This track doesn't fit your plan. Upgrade it to build a video.",
+    "expired": "This link has expired",
+    "expiredText": "Send /site to the bot to get a new one, or log in with Telegram.",
+    "error": "Couldn't open the link",
+    "errorText": "Refresh the page. If that doesn't help, log in with Telegram.",
+    "toLogin": "Log in"
   }
 }

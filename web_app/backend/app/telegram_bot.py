@@ -77,7 +77,11 @@ def _api(method: str, params: dict, *, token: str | None = None) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _send(chat_id: object, text: str, markup: dict | None = None, *, manager: bool = False) -> bool:
+def _send(chat_id: object, text: str, markup: dict | None = None, *, manager: bool = False,
+          via: str = "auth") -> bool:
+    """`via="public"` — отправить от публичного бота (@blast808bot) тем, кто пришёл
+    на сайт по ссылке из него. Только sendMessage: апдейты этого бота принимает его
+    вебхук, и отправка ему не мешает."""
     try:
         params: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if markup:
@@ -86,6 +90,12 @@ def _send(chat_id: object, text: str, markup: dict | None = None, *, manager: bo
             token = os.getenv("WEB_MANAGER_BOT_TOKEN", "").strip()
             if not token:
                 log.error("telegram_auth: WEB_MANAGER_BOT_TOKEN is not configured")
+                return False
+            result = _api("sendMessage", params, token=token)
+        elif via == "public":
+            token = os.getenv("WEB_PUBLIC_BOT_TOKEN", "").strip()
+            if not token:
+                log.error("telegram_auth: WEB_PUBLIC_BOT_TOKEN is not configured")
                 return False
             result = _api("sendMessage", params, token=token)
         else:
@@ -120,14 +130,16 @@ def notify_video_ready(chat_id: object, index: int, total: int, project_id: str,
     """«Ролик N готов» — по мере рендера, но не больше NOTIFY_LIMIT сообщений на батч."""
     if not configured() or not chat_id or index > NOTIFY_LIMIT:
         return
-    _send(chat_id, f"Ролик {index} из {total} готов", _batch_button(app_url, project_id))
+    _send(chat_id, f"Ролик {index} из {total} готов", _batch_button(app_url, project_id),
+          via=auth_store.notify_bot_for_chat(chat_id))
 
 
 def notify_batch_done(chat_id: object, total: int, project_id: str, app_url: str) -> None:
     """Итоговая сводка по батчу — приходит всегда, даже если поштучные были обрезаны."""
     if not configured() or not chat_id:
         return
-    _send(chat_id, f"Батч готов: {total} роликов. Можно выкладывать.", _batch_button(app_url, project_id))
+    _send(chat_id, f"Батч готов: {total} роликов. Можно выкладывать.", _batch_button(app_url, project_id),
+          via=auth_store.notify_bot_for_chat(chat_id))
 
 
 def app_url() -> str:

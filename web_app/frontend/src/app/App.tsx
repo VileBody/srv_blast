@@ -5,6 +5,7 @@ import { AdminAnalyticsPage } from '../pages/AdminAnalyticsPage';
 import { AuthPage } from '../pages/AuthPage';
 import { BlockedPage } from '../pages/BlockedPage';
 import { DashboardPage } from '../pages/DashboardPage';
+import { HandoffPage } from '../pages/HandoffPage';
 import { LegalPage } from '../pages/LegalPage';
 import { PricingPage } from '../pages/PricingPage';
 import { ProcessingPage } from '../pages/ProcessingPage';
@@ -25,6 +26,8 @@ export function App() {
       <Route path="/login" element={<AuthPage mode="login" />} />
       <Route path="/register" element={<AuthPage mode="register" />} />
       <Route path="/blocked" element={<BlockedPage />} />
+      {/* ссылка «на сайт» из публичного бота: вход по токену + трек в визарде */}
+      <Route path="/go/:token" element={<HandoffPage />} />
       <Route path="/not-found" element={<SimplePage kind="404" />} />
       <Route path="/error" element={<SimplePage kind="error" />} />
       <Route path="/legal/policy" element={<LegalPage kind="policy" />} />

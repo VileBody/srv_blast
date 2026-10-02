@@ -581,6 +581,20 @@ class ProductionBackend:
             "key": key,
         }
 
+    def register_bot_track(self, s3_url: str, *, filename: str) -> dict[str, str]:
+        """Трек, который уже залил публичный бот (ссылка «на сайт»), без повторной загрузки.
+
+        Берём только из бакета сырых треков — тот же, куда пишет и бот, и сайт.
+        Объект проверяем на месте: без него визард упал бы позже, на генерации."""
+        bucket, key = self._parse_s3_locator(s3_url)
+        if bucket != self.config.raw_audio_bucket:
+            raise ProductionBackendError(f"bot track is outside the raw audio bucket: {bucket}")
+        self._s3.head_object(Bucket=bucket, Key=key)
+        return {
+            "s3_url": f"s3://{bucket}/{key}",
+            "playback_url": self._presign(bucket, key, filename=filename, attachment=False),
+        }
+
     def upload_source(
         self,
         *,

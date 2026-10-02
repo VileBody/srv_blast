@@ -671,6 +671,119 @@ def api_ban_status(request: Request) -> dict[str, Any]:
     return ban or {"banned": False, "reason": None, "bannedAt": None}
 
 
+class HandoffPayload(BaseModel):
+    token: str = Field(min_length=16, max_length=128)
+
+
+# Двойной клик или два открытых таба по одной ссылке не должны завести два проекта.
+_HANDOFF_LOCKS: dict[str, asyncio.Lock] = {}
+
+
+def _handoff_lock(token: str) -> asyncio.Lock:
+    key = hashlib.sha256(token.encode()).hexdigest()
+    lock = _HANDOFF_LOCKS.get(key)
+    if lock is None:
+        lock = _HANDOFF_LOCKS[key] = asyncio.Lock()
+    return lock
+
+
+async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int) -> dict[str, Any]:
+    """Проект с треком из бота. Повторное открытие той же ссылки ведёт в тот же проект."""
+    known = record["result"]
+    if known.get("projectId") and store.get_project(str(known["projectId"])):
+        project_id = str(known["projectId"])
+        track = store.saved_track(str(known["trackId"])) if known.get("trackId") else None
+        return {"projectId": project_id, "track": track, "repeat": True}
+
+    payload = record["payload"]
+    audio_s3_url = str(payload.get("audioS3Url") or "")
+    audio_hash = str(payload.get("audioHash") or "")
+    filename = security.sanitize_filename(str(payload.get("filename") or ""), "track.mp3")
+    if not audio_s3_url or not audio_hash:
+        raise HTTPException(status_code=422, detail={"code": "handoff_invalid", "message": "Ссылка без трека."})
+
+    billing = _billing_backend()
+    project = store.create_project(Path(filename).stem or "Новый проект", "TRIAL", "auto")
+    analytics.track("project_created", store.current_user_id(), {"projectId": project["id"], "source": "bot_handoff"})
+    result: dict[str, Any] = {"projectId": project["id"], "track": None, "repeat": False}
+    try:
+        allowed = await billing.can_upload_track(tg_id, audio_hash)
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    if not allowed:
+        analytics.track("limit_hit", store.current_user_id(), {"limit": "tracks", "source": "bot_handoff"})
+        result["trackError"] = "tracks_limit"
+        await billing.set_handoff_result(token, {"projectId": project["id"]})
+        return result
+    try:
+        registered = await run_in_threadpool(
+            _production_backend().register_bot_track, audio_s3_url, filename=filename
+        )
+        # Слот трека тратим здесь, как при обычной загрузке на сайте. Хэш тот же, по
+        # которому бот считает свои треки, — генерация этого трека в боте второй слот не возьмёт.
+        await billing.consume_track(tg_id, audio_hash)
+    except Exception as exc:
+        from .billing_backend import TrackQuotaExhausted
+
+        if isinstance(exc, TrackQuotaExhausted):
+            analytics.track("limit_hit", store.current_user_id(), {"limit": "tracks", "source": "bot_handoff"})
+            result["trackError"] = "tracks_limit"
+            await billing.set_handoff_result(token, {"projectId": project["id"]})
+            return result
+        raise _production_error(exc) from exc
+    track = store.save_track(
+        filename,
+        s3_url=registered["s3_url"],
+        playback_url=registered["playback_url"],
+        audio_hash=audio_hash,
+    )
+    analytics.track("track_uploaded", store.current_user_id(), {"trackId": track["id"], "source": "bot_handoff"})
+    await billing.set_handoff_result(token, {"projectId": project["id"], "trackId": track["id"]})
+    result["track"] = track
+    return result
+
+
+# Ссылка «на сайт» из публичного бота: бот уже знает chat_id, поэтому подтверждать вход
+# через бота верификации не нужно — токен из общей с ботом БД и есть подтверждение.
+@app.post("/api/auth/handoff", tags=["auth"])
+async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[str, Any]:
+    if RUNTIME.backend != "production":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "handoff_unavailable", "message": "Вход по ссылке из бота работает только в проде."},
+        )
+    async with _handoff_lock(payload.token):
+        try:
+            record = await _billing_backend().redeem_handoff(payload.token)
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        if record is None:
+            raise HTTPException(
+                status_code=410,
+                detail={"code": "handoff_expired", "message": "Ссылка устарела. Новую пришлёт бот по команде /site."},
+            )
+        tg_id = int(record["tg_id"])
+        user = auth_store.get_user_by_chat(tg_id)
+        created = user is None
+        if user is None:
+            user = auth_store.create_user_from_telegram(tg_id, dict(record["payload"].get("profile") or {}))
+        request.session["user_id"] = user["id"]
+        _sync_current_user(user)
+        auth_store.set_notify_bot(user["id"], "public")
+        if created:
+            analytics.track("signup_completed", user["id"], {"source": "bot_handoff"})
+        analytics.track("bot_handoff", user["id"], {"kind": record["kind"], "redeemCount": record["redeem_count"]})
+        if record["kind"] != "track":
+            return {"ok": True, "created": created, "redirectTo": "/app"}
+        project = await _handoff_track_project(payload.token, record, tg_id)
+        return {
+            "ok": True,
+            "created": created,
+            "redirectTo": f"/app/generate?project={project['projectId']}",
+            **project,
+        }
+
+
 @app.get("/api/auth/tg-verify", tags=["auth"])
 def api_tg_verify(request: Request, token: str | None = None) -> dict[str, Any]:
     if not token:

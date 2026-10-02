@@ -161,3 +161,30 @@ def test_production_monitor_advances_without_browser_and_refunds_owner(outbox, m
     asyncio.run(run())
     assert job["status"] == "FAILED"
     assert refunds == [(777, "j", 1)]
+
+
+def test_user_notifications_follow_the_account_bot_flag(outbox, monkeypatch):
+    """Пришедшим по ссылке из бота пишем от публичного бота: бота входа они не запускали."""
+    auth = importlib.import_module("web_app.backend.app.auth_store")
+    monkeypatch.setattr(auth, "notify_bot_for_chat", lambda chat: "public" if chat == 555 else "auth")
+    monkeypatch.setattr(outbox.time, "time", lambda: 1000)
+    outbox.enqueue("video:a", chat_id=555, text="ready", user_route=True)
+    outbox.enqueue("video:b", chat_id=666, text="ready", user_route=True)
+    outbox.enqueue("login:x", chat_id=555, text="welcome")  # ответ на вход — всегда бот входа
+    sent = []
+    monkeypatch.setattr(outbox.telegram_bot, "_send",
+                        lambda chat, text, markup=None, **kw: sent.append((chat, text, kw.get("via"))) or True)
+    outbox.deliver_pending()
+    assert sorted(sent) == [(555, "ready", "public"), (555, "welcome", "auth"), (666, "ready", "auth")]
+
+
+def test_send_via_public_bot_uses_its_token(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "web_app" / "backend"))
+    bot = importlib.import_module("web_app.backend.app.telegram_bot")
+    calls = []
+    monkeypatch.setattr(bot, "_api", lambda method, params, token=None: calls.append(token) or {"ok": True})
+    monkeypatch.setenv("WEB_PUBLIC_BOT_TOKEN", "public-token")
+    assert bot._send(1, "hi", via="public") is True
+    monkeypatch.delenv("WEB_PUBLIC_BOT_TOKEN")
+    assert bot._send(1, "hi", via="public") is False  # не настроено — явный отказ, не бот входа
+    assert calls == ["public-token"]

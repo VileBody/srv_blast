@@ -15,8 +15,11 @@ from . import db, telegram_bot
 log = logging.getLogger(__name__)
 
 
-def enqueue(key: str, *, chat_id: object, text: str, markup: dict | None = None, manager: bool = False) -> None:
-    payload = {"chat_id": chat_id, "text": text, "markup": markup, "manager": manager}
+def enqueue(key: str, *, chat_id: object, text: str, markup: dict | None = None, manager: bool = False,
+            user_route: bool = False) -> None:
+    """`user_route=True` — бота выбираем на доставке по пометке аккаунта
+    (`auth_store.notify_bot_for_chat`): пометка может появиться позже постановки."""
+    payload = {"chat_id": chat_id, "text": text, "markup": markup, "manager": manager, "user_route": user_route}
     with db.transaction() as cursor:
         cursor.execute(db.sql(
             "INSERT INTO notification_outbox (event_key, payload) VALUES (%s, %s) "
@@ -42,8 +45,13 @@ def deliver_pending() -> None:
         payload: dict[str, Any] = db.json_value(raw)
         manager = bool(payload.get("manager"))
         chat_id = os.getenv("WEB_MANAGER_CHAT_ID", "").strip() if manager else payload["chat_id"]
+        via = "auth"
+        if not manager and payload.get("user_route"):
+            from . import auth_store
+
+            via = auth_store.notify_bot_for_chat(chat_id)
         ok = bool(chat_id) and telegram_bot._send(
-            chat_id, payload["text"], payload.get("markup"), manager=manager
+            chat_id, payload["text"], payload.get("markup"), manager=manager, via=via
         )
         delay = min(900, 30 * 2 ** min(int(attempts), 5))
         with db.transaction() as cursor:
@@ -67,13 +75,13 @@ def queue_job(job: dict[str, Any]) -> None:
     for index, video in enumerate(videos, 1):
         if index <= telegram_bot.NOTIFY_LIMIT and video.get("status") == "COMPLETED":
             enqueue(f"job:{job['id']}:video:{video['id']}", chat_id=chat_id,
-                    text=f"Ролик {index} из {len(videos)} готов", markup=markup)
+                    text=f"Ролик {index} из {len(videos)} готов", markup=markup, user_route=True)
     if job.get("status") in {"COMPLETED", "FAILED"}:
         completed = sum(v.get("status") == "COMPLETED" for v in videos)
         text = (f"Батч готов: {completed} роликов. Можно открыть их на сайте."
                 if job["status"] == "COMPLETED" else
                 f"Генерация остановилась. Готово {completed} из {len(videos)} роликов. Подробности — на сайте.")
-        enqueue(f"job:{job['id']}:terminal", chat_id=chat_id, text=text, markup=markup)
+        enqueue(f"job:{job['id']}:terminal", chat_id=chat_id, text=text, markup=markup, user_route=True)
         if job["status"] == "FAILED":
             error = next((str(v.get("error")) for v in videos if v.get("error")), "unknown")
             contact = auth_store.telegram_contact_for_user(job.get("userId") or "")

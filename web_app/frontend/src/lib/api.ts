@@ -155,6 +155,20 @@ export const api = {
     }),
   tgVerify: (token: string) =>
     request<{ verified: boolean; noAccount?: boolean; user?: { id: string; email: string; name: string } }>(`/api/auth/tg-verify?token=${encodeURIComponent(token)}`),
+  /**
+   * Ссылка «на сайт» из публичного бота (`/go/<token>`): бэк логинит по токену и,
+   * если в ссылке трек, заводит проект с этим треком. Протухшая ссылка — 410.
+   */
+  botHandoff: (token: string) =>
+    request<{
+      ok: boolean;
+      created: boolean;
+      redirectTo: string;
+      projectId?: string;
+      track?: SavedTrack | null;
+      repeat?: boolean;
+      trackError?: 'tracks_limit';
+    }>('/api/auth/handoff', { method: 'POST', body: JSON.stringify({ token }) }),
   logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
   /** Причина блокировки аккаунта — единственная ручка, которая забаненному отвечает 200 */
   banStatus: () => request<{ banned: boolean; reason: string | null; bannedAt: string | null }>('/api/auth/ban-status'),

@@ -18,6 +18,8 @@ STAGE_IDLE = "IDLE"
 STAGE_WAIT_START = "WAIT_START"
 STAGE_WAIT_SUBSCRIPTION = "WAIT_SUBSCRIPTION"
 STAGE_WAIT_AUDIO = "WAIT_AUDIO"
+# Track uploaded, the user picks: build on the site (handoff link) or in the bot.
+STAGE_WAIT_WEB_FORK = "WAIT_WEB_FORK"
 STAGE_WAIT_LYRICS_CHOICE = "WAIT_LYRICS_CHOICE"
 STAGE_WAIT_LYRICS_TEXT = "WAIT_LYRICS_TEXT"
 STAGE_WAIT_FRAGMENT_CHOICE = "WAIT_FRAGMENT_CHOICE"
@@ -285,6 +287,9 @@ class ChatState(BaseModel):
     # Batch metadata for sequential multi-version generation.
     batch_id: str = ""
     batch_audio_s3_url: str = ""
+    # Handoff link shown at the bot/site fork for the current track (re-sent if
+    # the user types instead of tapping a button).
+    web_handoff_url: str = ""
     batch_total_versions: int = 1
     next_version_to_enqueue: int = 1
     master_job_id: str = ""
@@ -610,6 +615,7 @@ class RedisChatStateStore:
         existing.completed_job_ids = []
         existing.batch_id = ""
         existing.batch_audio_s3_url = ""
+        existing.web_handoff_url = ""
         existing.batch_total_versions = 1
         existing.next_version_to_enqueue = 1
         existing.master_job_id = ""

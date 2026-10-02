@@ -215,3 +215,42 @@ def versions_warning_text(versions: int, free_limit: int) -> Optional[str]:
     if pct >= 100:
         return VERSIONS_WARN_FULL
     return VERSIONS_WARN_PARTIAL.format(pct=pct)
+
+
+# --------------------------------------------------------------------------
+# Bot → site handoff (docs/BOT_TO_WEB_FLOW.md)
+# --------------------------------------------------------------------------
+
+WEB_FORK_CALLBACK_BOT = "webfork:bot"
+
+BTN_WEB_FORK_SITE = "Открыть на сайте"
+BTN_WEB_FORK_BOT = "Собрать в боте"
+BTN_WEB_SITE_OPEN = "Открыть Blast"
+
+WEB_FORK_TEXT = (
+    "Трек на месте! Собирай контент на сайте — там гораздо эффективнее:\n\n"
+    "1. Вариативность: 43 стилизации вместо 8, 17 переходов вместо 5, "
+    "11 стилей субтитров и 23 шрифта\n"
+    "2. Удобство: ролик видно ещё до генерации. Не понравился кадр, переход "
+    "или тайминг слова — меняешь на таймлайне, перегенерировать не нужно\n"
+    "3. Скорость: правка занимает секунды, а не новую генерацию\n\n"
+    "Трек уже загружен, регистрироваться не нужно, можно прямо с телефона."
+)
+
+# Shown when the user types at the fork instead of tapping a button.
+WEB_FORK_REMINDER = "Выбери, где собирать ролик: на сайте или здесь, в боте."
+
+# The upload/link step failed — say so and continue in the bot.
+WEB_FORK_UNAVAILABLE = "Ссылку на сайт сейчас сделать не получилось, собираем здесь."
+
+WEB_FORK_BOT_PREFIX = "Собираем в боте. "
+
+WEB_SITE_TEXT = "Твой аккаунт на сайте — вход без регистрации, ссылка действует 48 часов."
+WEB_SITE_DISABLED = "Сайт сейчас недоступен. Собрать ролик можно здесь — пришли трек."
+
+# «На сайте ещё N» — appended to the footage option steps of the bot flow.
+# Site catalog sizes as of 2026-10 (bot has 5 subtitle modes, 5 transitions,
+# 8 stylizations). Update together with the site catalogs.
+SITE_MORE_SUBTITLES = "На сайте 11 стилей субтитров и выбор из 23 шрифтов: /site"
+SITE_MORE_TRANSITIONS = "На сайте 17 переходов, и каждый можно поставить на отдельную склейку: /site"
+SITE_MORE_STYLES = "На сайте 43 стилизации, и их можно растянуть на нужные кадры: /site"

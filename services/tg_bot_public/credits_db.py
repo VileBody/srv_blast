@@ -29,6 +29,23 @@ _NO_ADMINS = " AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
 _NO_ADMINS_BARE = " AND tg_id NOT IN (SELECT tg_id FROM admins)"
 
 
+# Bot → site handoff link kinds: "track" carries an uploaded track into a new
+# project; "site" just logs the user in (the /site command).
+WEB_HANDOFF_KINDS = ("track", "site")
+
+
+def _jsonb_dict(value: Any) -> Dict[str, Any]:
+    """asyncpg returns JSONB as text unless a codec is registered."""
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise ValueError("expected a JSON object")
+    return parsed
+
+
 def hash_partner_password(password: str) -> str:
     """PBKDF2-HMAC-SHA256, stdlib only (no bcrypt dep in this image)."""
     salt = secrets.token_hex(16)
@@ -828,6 +845,31 @@ class CreditsDB:
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_link_code TEXT NOT NULL DEFAULT ''")
         await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS partner_attributed_at TIMESTAMP")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_partner_id ON users(partner_id)")
+        # Bot → site handoff. The public bot mints a link token for a chat
+        # (optionally bound to an already-uploaded track); the web backend
+        # redeems it to log the user in without the verification bot. Only a
+        # SHA-256 of the token is stored, so a DB read does not leak live links.
+        # Tokens are multi-use until `expires_at`: the link stays in the chat
+        # and may be opened later from a computer. `result` remembers what the
+        # first redemption created (project id), so repeat opens land on the
+        # same project instead of creating a new one each time.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS web_handoff_tokens ("
+            "token_hash        TEXT PRIMARY KEY,"
+            "tg_id             BIGINT NOT NULL,"
+            "kind              TEXT NOT NULL,"
+            "payload           JSONB NOT NULL DEFAULT '{}'::jsonb,"
+            "result            JSONB NOT NULL DEFAULT '{}'::jsonb,"
+            "created_at        TIMESTAMP NOT NULL DEFAULT NOW(),"
+            "expires_at        TIMESTAMP NOT NULL,"
+            "redeem_count      INTEGER NOT NULL DEFAULT 0,"
+            "first_redeemed_at TIMESTAMP,"
+            "last_redeemed_at  TIMESTAMP"
+            ")"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_handoff_tg_created ON web_handoff_tokens(tg_id, created_at)"
+        )
 
         # Marketing spend per calendar month — the only input the dashboard
         # cannot derive from product data. Feeds CAC / cost-per-signup on the
@@ -1942,6 +1984,77 @@ class CreditsDB:
                 int(tg_id),
                 str(event or ""),
                 str(detail or ""),
+            )
+
+    # Bot → site handoff tokens
+
+    @staticmethod
+    def hash_handoff_token(token: str) -> str:
+        return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+    async def create_web_handoff(
+        self,
+        tg_id: int,
+        kind: str,
+        payload: Optional[Dict[str, Any]] = None,
+        *,
+        ttl_seconds: int,
+    ) -> str:
+        """Mint a link token for the site and return the raw token.
+
+        Only the hash is persisted; the raw token lives in the link alone."""
+        if kind not in WEB_HANDOFF_KINDS:
+            raise ValueError(f"unknown web handoff kind: {kind!r}")
+        if int(ttl_seconds) <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        token = secrets.token_urlsafe(24)
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO web_handoff_tokens (token_hash, tg_id, kind, payload, expires_at) "
+                "VALUES ($1, $2, $3, $4::jsonb, NOW() + make_interval(secs => $5))",
+                self.hash_handoff_token(token),
+                int(tg_id),
+                kind,
+                json.dumps(payload or {}, ensure_ascii=False),
+                int(ttl_seconds),
+            )
+        return token
+
+    async def redeem_web_handoff(self, token: str) -> Optional[Dict[str, Any]]:
+        """Count a redemption and return the token row, or None if unknown/expired.
+
+        Multi-use by design (see the table comment). The returned `result` is
+        whatever an earlier redemption stored via `set_web_handoff_result`."""
+        token = str(token or "").strip()
+        if not token:
+            return None
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "UPDATE web_handoff_tokens SET redeem_count = redeem_count + 1, "
+                "first_redeemed_at = COALESCE(first_redeemed_at, NOW()), last_redeemed_at = NOW() "
+                "WHERE token_hash = $1 AND expires_at > NOW() "
+                "RETURNING tg_id, kind, payload, result, redeem_count",
+                self.hash_handoff_token(token),
+            )
+        if row is None:
+            return None
+        return {
+            "tg_id": int(row["tg_id"]),
+            "kind": str(row["kind"]),
+            "payload": _jsonb_dict(row["payload"]),
+            "result": _jsonb_dict(row["result"]),
+            "redeem_count": int(row["redeem_count"]),
+        }
+
+    async def set_web_handoff_result(self, token: str, result: Dict[str, Any]) -> None:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE web_handoff_tokens SET result = $2::jsonb WHERE token_hash = $1",
+                self.hash_handoff_token(token),
+                json.dumps(result or {}, ensure_ascii=False),
             )
 
     async def count_events(self, tg_id: int, event: str) -> int:

@@ -340,6 +340,13 @@ class BillingBackend:
         await self._db.claim_web_subscription_bonus(int(tg_id))
         return await self.snapshot(int(tg_id))
 
+    async def redeem_handoff(self, token: str) -> dict[str, Any] | None:
+        """Ссылка «на сайт» из публичного бота: запись токена или None (протух/неизвестен)."""
+        return await self._db.redeem_web_handoff(token)
+
+    async def set_handoff_result(self, token: str, result: dict[str, Any]) -> None:
+        await self._db.set_web_handoff_result(token, result)
+
     async def consume_track(self, tg_id: int, audio_hash: str) -> str:
         result = await self._db.consume_track_slot(int(tg_id), audio_hash)
         if result == "blocked":

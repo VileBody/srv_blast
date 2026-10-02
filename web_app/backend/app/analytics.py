@@ -34,6 +34,7 @@ EXTRA_EVENTS = {
     "payment_failed",
     "subscription_canceled",
     "limit_hit",
+    "bot_handoff",  # открыл ссылку «на сайт» из публичного бота
 }
 
 # Events accepted from the authenticated browser. Server-owned milestones such
