@@ -118,7 +118,7 @@
 
 /* ── колонка дорожек: часть полотна в пустой зоне перед нулём ролика (ноль — под центральной
       линией); уезжает вместе с дорожками, к ней можно отлистать в начало ── */
-.mm-heads { position: absolute; left: 0; top: 0; bottom: 0; width: 76px; z-index: 6; pointer-events: none; }
+.mm-heads { position: absolute; left: 0; top: 0; bottom: 0; width: 150px; z-index: 6; pointer-events: none; }
 .mm-h { display: flex; align-items: center; gap: 6px; padding-left: 10px; height: 32px; font-size: 11px; line-height: 14px; color: var(--fxt-t60); } /* ui-allow: подпись дорожки в узкой колонке */
 .mm-h .tx { top: 0; white-space: nowrap; }
 .mm-h .fxt-ic.sm { width: 20px; height: 20px; }
@@ -126,7 +126,8 @@
 .mm-h.f { height: 52px; }
 .mm-h.hk, .mm-h.st { height: 34px; }
 .mm-h.sb, .mm-h.au { height: 32px; }
-.mob .mm-hadd { pointer-events: auto; display: grid; place-items: center; width: 22px; height: 22px; margin-left: -2px; border-radius: 50%; background: var(--fxt-style-soft); color: var(--fxt-style); }
+.mob .mm-hadd { pointer-events: auto; display: grid; place-items: center; width: 60px; height: 24px; margin-left: 4px; border-radius: var(--r6); background: var(--fxt-raise); box-shadow: inset 0 0 0 1px var(--fxt-line2); color: var(--fxt-t80); }
+.mob .mm-hadd:active { background: var(--fxt-t06); color: var(--text); }
 
 /* ── панель замены кадра — на месте нижней панели: отмена · варианты · готово ── */
 .mm-replace-slot { padding: 8px 12px 10px; }

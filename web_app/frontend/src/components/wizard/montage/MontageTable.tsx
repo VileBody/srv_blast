@@ -1355,7 +1355,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
           <div className="mm-h hk"><span className="fxt-ic k-hook sm"><Glyph name="effects" size={13} /></span><span className="tx">Хук</span></div>
           <div className="mm-h st">
             <span className="fxt-ic k-style sm"><Glyph name="crystal" size={13} /></span><span className="tx">Стиль</span>
-            {!lane2 && <button type="button" className="mm-hadd" aria-label="Добавить вторую дорожку стиля" onClick={() => setLane2Open(true)}><Glyph name="plus" size={12} sw={2} /></button>}
+            {!lane2 && <button type="button" className="mm-hadd" aria-label="Добавить вторую дорожку стиля" onClick={() => setLane2Open(true)}><Glyph name="plus" size={14} sw={2} /></button>}
           </div>
           {lane2 && (
             <div className="mm-h st">
