@@ -824,10 +824,15 @@ export const useWizardStore = create<WizardStore>()(
       )),
       setTrack: (track) => set((state) => (
         // Другой трек = другой дроп: хуки сбрасываются, поэтому и пройденность
-        // откатывается к «Треку». Повторная установка того же трека ничего не трогает.
+        // откатывается к «Треку». Примерка субтитров, склейки, раскадровка, правки стола
+        // и раздача «Пула» посчитаны под старый трек — тоже с чистого листа, иначе они
+        // уехали бы в генерацию нового. Повторная установка того же трека ничего не трогает.
         state.track?.id && track?.id === state.track.id
           ? { track }
-          : { track, hooks: initialData().hooks, reachedIndex: 0 }
+          : {
+            track, hooks: initialData().hooks, reachedIndex: 0, asr: emptyAsr(), timeline: emptyTimeline(),
+            storyboard: emptyStoryboard(), montage: emptyMontage(), allocation: initialData().allocation
+          }
       )),
       setField: (key, value) => set({ [key]: value } as Partial<WizardStore>),
       setBackground: (patch) => set((state) => ({ background: { ...state.background, ...patch } })),
