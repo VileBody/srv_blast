@@ -122,26 +122,46 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
   const storyboard = useWizardStore((s) => s.storyboard);
   const setStoryboardVideo = useWizardStore((s) => s.setStoryboardVideo);
   const recipe = useRecipeCuts();
-  const [edit, setEdit] = useState<null | { k: number; orig: StoryboardVideo; candidates: StoryboardCandidate[]; pos: number; loading: boolean }>(null);
+  // sbKey — раскадровка, под которую открыта замена: если её пересобрали, прежний клип уже не про неё
+  const [edit, setEdit] = useState<null | { k: number; orig: StoryboardVideo; sbKey: string; candidates: StoryboardCandidate[]; pos: number; loading: boolean }>(null);
+  const editRef = useRef(edit);
+  editRef.current = edit;
   const [busy, setBusy] = useState(false);
-  // Номер запроса: ответ, пришедший после смены ролика (или нового запроса), отбрасываем —
-  // иначе клип подбора лёг бы в кадр уже другого видео.
-  const reqId = useRef(0);
-  useEffect(() => { reqId.current += 1; setEdit(null); onEdit(null); setBusy(false); }, [combo.index]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Номера запросов: ответ, пришедший после смены ролика, отмены или нового запроса,
+  // отбрасываем — иначе клип подбора лёг бы в кадр уже другого видео (или вернул бы замену).
+  const editReq = useRef(0);
+  const shuffleReq = useRef(0);
+  const cutsRef = useRef(recipe.cuts);
+  cutsRef.current = recipe.cuts;
+  /** Бросить замену: пролистанный вариант не должен уехать в рендер — возвращаем прежний клип. */
+  const abandon = () => {
+    editReq.current += 1;
+    const cur = editRef.current;
+    if (cur && useWizardStore.getState().storyboard.key === cur.sbKey) setStoryboardVideo(cur.orig);
+    editRef.current = null;
+  };
+  // другой ролик или стол закрыли (док размонтирован) — замена и перемешивание бросаются
+  useEffect(() => () => {
+    abandon(); shuffleReq.current += 1;
+    setEdit(null); onEdit(null); setBusy(false);
+  }, [combo.index]); // eslint-disable-line react-hooks/exhaustive-deps
   const allFiles = useMemo(() => Object.values(storyboard.videos).flatMap((v) => v.clips.map((c) => c.fileName)), [storyboard.videos]);
 
   const startEdit = async () => {
-    if (!recipe.cuts) return;
-    const id = ++reqId.current;
-    setEdit({ k, orig: video, candidates: [], pos: -1, loading: true }); onEdit(k);
+    // замена и перемешивание взаимоисключающие: оба переписывают кадры этого ролика
+    if (!recipe.cuts || edit || busy) return;
+    const id = ++editReq.current;
+    const sbKey = storyboard.key;
+    setEdit({ k, orig: video, sbKey, candidates: [], pos: -1, loading: true }); onEdit(k);
     try {
       const res = await api.storyboardAlternatives({ clipFrom: timingFrom, clipTo: timingTo, cuts: recipe.cuts, group: video.group, shot: k, seedKey: video.seedKey, exclude: allFiles, limit: 20 });
-      if (id !== reqId.current) return;
+      if (id !== editReq.current) return;
+      if (useWizardStore.getState().storyboard.key !== sbKey) { setEdit(null); onEdit(null); return; }
       if (!res.candidates.length) { setEdit(null); onEdit(null); onError?.('У вайба не нашлось других клипов для этого кадра'); return; }
-      setEdit({ k, orig: video, candidates: res.candidates, pos: 0, loading: false });
+      setEdit({ k, orig: video, sbKey, candidates: res.candidates, pos: 0, loading: false });
       setStoryboardVideo(withClip(video, k, res.candidates[0]));
     } catch (error) {
-      if (id !== reqId.current) return;
+      if (id !== editReq.current) return;
       setEdit(null); onEdit(null);
       onError?.(error instanceof Error && error.message ? `Не удалось подобрать клипы: ${error.message}` : 'Не удалось подобрать клипы — попробуй ещё раз');
     }
@@ -153,21 +173,25 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
     setEdit({ ...edit, pos });
     setStoryboardVideo(withClip(edit.orig, edit.k, edit.candidates[pos]));
   };
-  const cancel = () => { if (!edit) return; setStoryboardVideo(edit.orig); setEdit(null); onEdit(null); };
+  // отмена в т.ч. пока варианты ещё грузятся: поздний ответ не должен снова открыть замену
+  const cancel = () => { if (!edit) return; abandon(); setEdit(null); onEdit(null); };
   const done = () => {
     if (!edit) return;
     const chosen = edit.candidates[edit.pos];
     const current = useWizardStore.getState().storyboard.videos[video.index] ?? video;
     if (chosen) { setStoryboardVideo({ ...current, pins: { ...current.pins, [edit.k]: chosen.fileName } }); onChanged?.(); }
+    editReq.current += 1;
     setEdit(null); onEdit(null);
   };
   const unpin = (i: number) => { const { [i]: _gone, ...pins } = video.pins; setStoryboardVideo({ ...video, pins }); };
   const shuffle = async () => {
-    if (!recipe.cuts || busy) return;
+    if (!recipe.cuts || busy || edit) return;
     const seedKey = seedKeyFor(batchKey, video.index, shuffleOf(video.seedKey) + 1);
     // остальные видео того же вайба закреплены целиком: не меняются и не отдают свои клипы
     const others = Object.values(storyboard.videos).filter((v) => v.group === video.group && v.index !== video.index);
-    const id = ++reqId.current;
+    const id = ++shuffleReq.current;
+    const sbKey = storyboard.key;
+    const cutsKey = JSON.stringify(recipe.cuts);
     setBusy(true);
     try {
       const res = await api.storyboardPick({
@@ -177,18 +201,23 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
           { index: video.index, group: video.group, seedKey, pins: video.pins }
         ]
       });
-      if (id !== reqId.current) return;
+      if (id !== shuffleReq.current) return;
+      // пока ждали, склейки или раскадровка поменялись — ответ про старые кадры, не кладём его
+      if (useWizardStore.getState().storyboard.key !== sbKey || JSON.stringify(cutsRef.current) !== cutsKey) return;
       const mine = res.videos.find((v) => v.index === video.index);
       if (mine) { setStoryboardVideo(toVideo(mine, seedKey, video.pins)); onChanged?.(); }
     } catch (error) {
-      if (id === reqId.current) onError?.(error instanceof Error && error.message ? `Не удалось перемешать: ${error.message}` : 'Не удалось перемешать — попробуй ещё раз');
-    } finally { if (id === reqId.current) setBusy(false); }
+      if (id === shuffleReq.current) onError?.(error instanceof Error && error.message ? `Не удалось перемешать: ${error.message}` : 'Не удалось перемешать — попробуй ещё раз');
+    } finally { if (id === shuffleReq.current) setBusy(false); }
   };
   const step = (d: number) => { if (!edit) onSeek((k + d + shots) % shots); };
   const lastRequest = useRef(request?.n ?? 0);
   useEffect(() => {
     if (!request || request.n === lastRequest.current) return;
     lastRequest.current = request.n;
+    // занятый док не молчит: иначе тап по инструменту на телефоне выглядел бы мёртвым
+    if (busy) { onError?.('Кадры ещё перемешиваются — подожди секунду'); return; }
+    if (edit) return;
     if (request.kind === 'edit') void startEdit(); else void shuffle();
   }, [request]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -257,8 +286,8 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
               </b>
               <small className="tx">{combo.bgLabel} · закреплено {pinned} из {shots}</small>
             </div>
-            <button type="button" className="psb-btn" onClick={() => void shuffle()} disabled={busy} aria-label="Перемешать" title="Перемешать незакреплённые кадры ролика"><I d={DICE} /></button>
-            <button type="button" className="psb-btn pri" onClick={() => void startEdit()}><I d={REROLL} /><span className="tx">Заменить кадр</span></button>
+            <button type="button" className="psb-btn" onClick={() => void shuffle()} disabled={busy} aria-busy={busy || undefined} aria-label="Перемешать" title="Перемешать незакреплённые кадры ролика"><I d={DICE} /></button>
+            <button type="button" className="psb-btn pri" onClick={() => void startEdit()} disabled={busy}><I d={REROLL} /><span className="tx">Заменить кадр</span></button>
           </div>
         )}
         {!compact && <div ref={strip.ref} className={`psb-strip${edit ? ' editing' : ''}`} data-fade-l={strip.fadeLeft || undefined} data-fade-r={strip.fadeRight || undefined}>

@@ -134,6 +134,8 @@ export function useRecipeCuts() {
     data: query.data,
     loading: query.isLoading,
     error: query.error as Error | null,
+    /** склейки не пришли (сеть, 5xx) — запросить ещё раз: staleTime Infinity сам не повторит */
+    retry: () => { void query.refetch(); },
     cuts: timeline.key === key && timeline.cuts ? timeline.cuts : query.data?.cuts[timeline.pace] ?? null,
     pace: timeline.pace,
     setPace

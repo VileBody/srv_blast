@@ -89,6 +89,8 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   const footageSlots = slots.filter((s) => s.group);
   const key = JSON.stringify([timingFrom, timingTo, cuts, footageSlots.map((s) => [s.index, s.group])]);
   const [status, setStatus] = useState<{ loading: boolean; error: string | null }>({ loading: false, error: null });
+  // «Повторить» после сбоя подбора: тот же подбор под те же вводные ещё раз
+  const [attempt, setAttempt] = useState(0);
 
   /* ── подбор на весь батч, когда поменялись окно, склейки или раскладка вайбов ──
         Раскадровка под старые вводные сразу выбрасывается: иначе, пока идёт новый
@@ -112,7 +114,7 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
     }).catch((err: Error) => { if (!cancelled) setStatus({ loading: false, error: err.message }); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, attempt]);
 
   /* ── генерация ждёт, пока раскадровка не соберётся под текущие вводные ──
         Ошибка подбора генерацию не держит: видео без плана рендер подберёт сам по
@@ -123,7 +125,9 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   const recipeCustom = timeline.pace !== 'auto' || timeline.edited;
   const recipeReady = timeline.key === currentRecipeKey && Boolean(timeline.cuts);
   const storyboardPending = footageSlots.length > 0 && Boolean(cuts) && storyboard.key !== key && !status.error;
-  const busy = status.loading || storyboardPending || (recipeCustom && !recipeReady);
+  // перемешивание одного видео тоже держит генерацию: иначе в рендер ушёл бы план до него
+  const [shuffling, setShuffling] = useState<number | null>(null);
+  const busy = status.loading || shuffling !== null || storyboardPending || (recipeCustom && !recipeReady);
   const setBusy = useStoryboardBusy((s) => s.setBusy);
   useEffect(() => { setBusy(busy); }, [busy, setBusy]);
   useEffect(() => () => setBusy(false), [setBusy]);
@@ -146,8 +150,10 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   // дёргалась назад), на кнопке — загрузка вместо «мёртвого» плея
   const [buffering, setBuffering] = useState(false);
   const bufRef = useRef(false);
-  const [edit, setEdit] = useState<null | { k: number; orig: StoryboardVideo; candidates: StoryboardCandidate[]; pos: number; loading: boolean }>(null);
-  useEffect(() => { setEdit(null); tRef.current = 0.4; setT(0.4); }, [current]);
+  // sbKey — раскадровка, под которую открыта замена: пересобрали её — прежний клип уже не про неё
+  const [edit, setEdit] = useState<null | { k: number; orig: StoryboardVideo; sbKey: string; candidates: StoryboardCandidate[]; pos: number; loading: boolean }>(null);
+  const editRef = useRef(edit);
+  editRef.current = edit;
   const audioUrl = usePlaybackUrl(track);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   useEffect(() => {
@@ -214,34 +220,50 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   const step = (d: number) => { if (!shots || edit) return; seekShot((s + d + shots) % shots); };
   const allFiles = () => Object.values(storyboard.videos).flatMap((v) => v.clips.map((c) => c.fileName));
 
-  // Номер запроса замены: ответ после перелистывания видео (или нового запроса) отбрасываем,
-  // иначе подобранный клип лёг бы в кадр уже другого видео.
+  // Номера запросов: ответ после перелистывания видео, отмены или нового запроса
+  // отбрасываем, иначе подобранный клип лёг бы в кадр уже другого видео.
   const editReq = useRef(0);
-  useEffect(() => { editReq.current += 1; }, [current]);
-  // Сбой подбора ОДНОГО кадра — временная строка в доке, а не заглушка на всю раскадровку:
-  // раскадровка цела, человек просто пробует ещё раз.
-  const [editNote, setEditNote] = useState<string | null>(null);
+  const shuffleReq = useRef(0);
+  const cutsRef = useRef(cuts);
+  cutsRef.current = cuts;
+  /** Бросить замену: пролистанный вариант не должен уехать в рендер — возвращаем прежний клип. */
+  const abandonEdit = () => {
+    editReq.current += 1;
+    const cur = editRef.current;
+    if (cur && useWizardStore.getState().storyboard.key === cur.sbKey) setStoryboardVideo(cur.orig);
+    editRef.current = null;
+  };
+  // другое видео или ушли с «Пула» — замена бросается, время — к началу видео
+  useEffect(() => { tRef.current = 0.4; setT(0.4); return () => { abandonEdit(); setEdit(null); }; }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
+  // раскадровку пересобрали (новые склейки или вайбы) — замена была про старую
+  useEffect(() => { if (edit && edit.sbKey !== storyboard.key) { editReq.current += 1; setEdit(null); } }, [storyboard.key, edit]);
+  // Сбой подбора или перемешивания ОДНОГО видео — временная строка в его доке, а не заглушка
+  // на всю раскадровку: раскадровка цела, человек просто пробует ещё раз.
+  const [note, setNote] = useState<{ index: number; text: string } | null>(null);
   useEffect(() => {
-    if (!editNote) return undefined;
-    const timer = window.setTimeout(() => setEditNote(null), 4000);
+    if (!note) return undefined;
+    const timer = window.setTimeout(() => setNote(null), 4000);
     return () => window.clearTimeout(timer);
-  }, [editNote]);
+  }, [note]);
+  const editNote = note && video && note.index === video.index ? note.text : null;
   const startEdit = async () => {
-    if (!video || !cuts) return;
+    // замена и перемешивание взаимоисключающие: оба переписывают кадры этого видео
+    if (!video || !cuts || edit || shuffling !== null) return;
     const k = s;
     const id = ++editReq.current;
-    setEdit({ k, orig: video, candidates: [], pos: -1, loading: true });
+    const sbKey = storyboard.key;
+    setEdit({ k, orig: video, sbKey, candidates: [], pos: -1, loading: true });
     seekTo(bounds[k] + 0.001); setPlaying(true);
     try {
       const res = await api.storyboardAlternatives({ clipFrom: timingFrom, clipTo: timingTo, cuts, group: video.group, shot: k, seedKey: video.seedKey, exclude: allFiles(), limit: 20 });
       if (id !== editReq.current) return;
-      if (!res.candidates.length) { setEdit(null); setEditNote('У вайба не нашлось других клипов для этого кадра'); return; }
-      setEdit({ k, orig: video, candidates: res.candidates, pos: 0, loading: false });
+      if (!res.candidates.length) { setEdit(null); setNote({ index: video.index, text: 'У вайба не нашлось других клипов для этого кадра' }); return; }
+      setEdit({ k, orig: video, sbKey, candidates: res.candidates, pos: 0, loading: false });
       setStoryboardVideo(withClip(video, k, res.candidates[0]));
     } catch (err) {
       if (id !== editReq.current) return;
       setEdit(null);
-      setEditNote((err as Error).message ? `Не удалось подобрать клипы: ${(err as Error).message}` : 'Не удалось подобрать клипы — попробуй ещё раз');
+      setNote({ index: video.index, text: (err as Error).message ? `Не удалось подобрать клипы: ${(err as Error).message}` : 'Не удалось подобрать клипы — попробуй ещё раз' });
     }
   };
   const variant = (dir: number) => {
@@ -252,11 +274,13 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
     setStoryboardVideo(withClip(edit.orig, edit.k, edit.candidates[pos]));
     seekTo(bounds[edit.k] + 0.001);
   };
-  const cancelEdit = () => { if (!edit) return; setStoryboardVideo(edit.orig); setEdit(null); };
+  // отмена в т.ч. пока варианты ещё грузятся: поздний ответ не должен снова открыть замену
+  const cancelEdit = () => { if (!edit) return; abandonEdit(); setEdit(null); };
   const doneEdit = () => {
     if (!edit || !video) return;
     const chosen = edit.candidates[edit.pos];
     if (chosen) setStoryboardVideo({ ...video, pins: { ...video.pins, [edit.k]: chosen.fileName } });
+    editReq.current += 1;
     setEdit(null);
   };
   const unpin = () => {
@@ -265,11 +289,14 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
     setStoryboardVideo({ ...video, pins });
   };
   const shuffle = async () => {
-    if (!video || !cuts) return;
+    if (!video || !cuts || edit || shuffling !== null || status.loading) return;
     const seedKey = seedKeyFor(batchKey, video.index, shuffleOf(video.seedKey) + 1);
     // Остальные видео того же вайба закреплены целиком: не меняются и не отдают свои клипы.
     const others = Object.values(storyboard.videos).filter((v) => v.group === video.group && v.index !== video.index);
-    setStatus({ loading: true, error: null });
+    const id = ++shuffleReq.current;
+    const sbKey = storyboard.key;
+    const cutsKey = JSON.stringify(cuts);
+    setShuffling(video.index);
     try {
       const res = await api.storyboardPick({
         clipFrom: timingFrom, clipTo: timingTo, cuts,
@@ -278,12 +305,13 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
           { index: video.index, group: video.group, seedKey, pins: video.pins }
         ]
       });
+      // пока ждали, склейки или раскадровка поменялись — ответ про старые кадры, не кладём его
+      if (id !== shuffleReq.current || useWizardStore.getState().storyboard.key !== sbKey || JSON.stringify(cutsRef.current) !== cutsKey) return;
       const mine = res.videos.find((v) => v.index === video.index);
       if (mine) setStoryboardVideo(toVideo(mine, seedKey, video.pins));
-      setStatus({ loading: false, error: null });
     } catch (err) {
-      setStatus({ loading: false, error: (err as Error).message });
-    }
+      if (id === shuffleReq.current) setNote({ index: video.index, text: (err as Error).message ? `Не удалось перемешать: ${(err as Error).message}` : 'Не удалось перемешать — попробуй ещё раз' });
+    } finally { if (id === shuffleReq.current) setShuffling(null); }
   };
 
   /* ── клавиатура: стрелки — кадры (в замене — варианты), Esc/Enter — отмена/готово ── */
@@ -345,6 +373,8 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
       : status.error ? `Не удалось подобрать исходники: ${status.error}`
         : !video ? 'Подбираем исходники…'
           : null;
+  // сбой — не тупик: склейки при выбранном темпе держат генерацию, без «Повторить» навсегда
+  const retry = !slot ? null : recipe.error ? recipe.retry : slot.group && status.error ? () => setAttempt((n) => n + 1) : null;
 
   // лента кадров: на узком экране прокручивается и держит текущий кадр в центре
   const strip = useStripFollow(edit?.k ?? s, video?.clips.length ?? 0);
@@ -363,7 +393,14 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
               // раньше все кадры ролика грузились разом, на слабой сети это забивало канал
               : <video key={`${c.fileName}:${i}`} ref={(el) => { videoRefs.current[i] = el; }} className={`shot${visible ? ' on' : ''}`} src={Math.abs(i - s) <= 1 || (s === video.clips.length - 1 && i === 0) ? c.previewUrl : undefined} muted playsInline preload="auto" style={style} />;
           })}
-          {placeholder && <div className="psb-ph"><span className="tx">{placeholder}</span></div>}
+          {placeholder && (
+            <div className="psb-ph" role={retry ? 'alert' : undefined}>
+              <div className="psb-ph-in">
+                <span className="tx">{placeholder}</span>
+                {retry && <button type="button" className="psb-btn" onClick={retry}><Svg d={REROLL} /><span className="tx">Повторить</span></button>}
+              </div>
+            </div>
+          )}
           <div className="psb-shade" />
           <div className="psb-chips" data-mark={edited || undefined} style={markW ? ({ '--mark-w': `${markW}px` } as React.CSSProperties) : undefined}>
             {/* «Изменён» стоит на месте, чипы уезжают под него и тают у его края */}
@@ -410,8 +447,8 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
                     </b>
                     <small className={editNote ? 'tx psb-note' : 'tx'} role={editNote ? 'status' : undefined}>{editNote ?? (clip.tags.length ? clip.tags.join(' · ') : `${shots} ${kadr(shots)} · закреплено ${pinned}`)}</small>
                   </div>
-                  <button type="button" className="psb-btn" onClick={() => void shuffle()} disabled={status.loading} aria-label="Перемешать видео" title="Перемешать незакреплённые кадры этого видео"><Svg d={DICE} /></button>
-                  <button type="button" className="psb-btn pri" onClick={() => { setReplaceGuideDismissed(true); void startEdit(); }} aria-label="Заменить кадр" title="Подобрать другой клип для кадра на экране"><Svg d={REROLL} /><span className="tx">Заменить кадр</span></button>
+                  <button type="button" className="psb-btn" onClick={() => void shuffle()} disabled={status.loading || shuffling !== null} aria-busy={shuffling === video.index || undefined} aria-label="Перемешать видео" title="Перемешать незакреплённые кадры этого видео"><Svg d={DICE} /></button>
+                  <button type="button" className="psb-btn pri" disabled={shuffling !== null} onClick={() => { setReplaceGuideDismissed(true); void startEdit(); }} aria-label="Заменить кадр" title="Подобрать другой клип для кадра на экране"><Svg d={REROLL} /><span className="tx">Заменить кадр</span></button>
                 </div>
               )}
               <div ref={strip.ref} className={`psb-strip${edit ? ' editing' : ''}`} data-fade-l={strip.fadeLeft || undefined} data-fade-r={strip.fadeRight || undefined}>
