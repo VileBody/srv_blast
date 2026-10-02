@@ -1415,6 +1415,9 @@
     "expiredText": "Send /site to the bot to get a new one, or log in with Telegram.",
     "error": "Couldn't open the link",
     "errorText": "Refresh the page. If that doesn't help, log in with Telegram.",
+    "remixReady": "Your bot video is on the editing table",
+    "remixReadyText": "Same cuts, clips, transitions and subtitles. Edit and generate.",
+    "remixFailed": "The video edit did not carry over",
     "toLogin": "Log in"
   },
   "funnel": {

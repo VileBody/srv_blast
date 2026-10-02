@@ -174,6 +174,10 @@ export const api = {
       trackError?: 'tracks_limit';
       /** «Докрутить на сайте»: отрезок и текст ролика из бота */
       draft?: { clipStart: number; clipEnd: number; lyrics: string };
+      /** …и весь монтаж роликов бота для стола (stores/wizardImport.ts) */
+      wizardImport?: import('../stores/wizardImport').WizardImport;
+      /** монтаж не переехал: почему (визард откроется только с треком, окном и текстом) */
+      wizardImportError?: string;
     }>('/api/auth/handoff', { method: 'POST', body: JSON.stringify({ token }) }),
   logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
   /* ---------------- воронка после генерации (docs/BOT_TO_WEB_FLOW.md) ---------------- */
