@@ -483,6 +483,14 @@ interface WizardStore extends WizardStateData {
   /** закрыть подсказку «вводные перенесены из прошлого батча» */
   ackCarriedOver: () => void;
   restoreSession: (projectId: string | null | undefined, stage: number, data: Record<string, unknown>) => void;
+  /**
+   * «Докрутить на сайте»: черновик целиком из ролика бота (stores/wizardImport.ts) — сразу
+   * на «Пуле» со всеми пройденными шагами, монтажный стол откроется сам (openTableOnLoad).
+   */
+  importEdit: (data: Partial<WizardStateData>) => void;
+  /** разовый флаг: WizardPage открывает монтажный стол и сбрасывает его; в localStorage не едет */
+  openTableOnLoad: boolean;
+  consumeOpenTable: () => void;
   stageData: () => Record<string, unknown>;
 }
 
@@ -538,6 +546,7 @@ export const useWizardStore = create<WizardStore>()(
     (set, get) => ({
       ...initialData(),
       stage: 1,
+      openTableOnLoad: false,
       setStage: (stage) => set((state) => {
         const next = Math.max(1, Math.min(5, stage));
         return { stage: next, reachedIndex: Math.max(state.reachedIndex, stageIndex(next)) };
@@ -705,6 +714,15 @@ export const useWizardStore = create<WizardStore>()(
           reachedIndex: stageIndex(Math.max(1, Math.min(5, Number(stage) || 1)))
         };
       }),
+      importEdit: (data) => set(() => ({
+        ...initialData(data.projectId),
+        ...data,
+        carriedOverInputs: false,
+        stage: 5,
+        reachedIndex: STAGE_ORDER.length - 1,
+        openTableOnLoad: true
+      })),
+      consumeOpenTable: () => set({ openTableOnLoad: false }),
       stageData: () => {
         const state = get();
         return {

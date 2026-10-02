@@ -45,6 +45,7 @@ from .schemas import (
     AlignmentSmokeEnqueueResponse,
     AlignmentSmokeRequest,
     AsrPreviewEnqueueResponse,
+    AsrPreviewFromJobRequest,
     AsrPreviewRequest,
     AsrWordsUpdateRequest,
     AsrWordsUpdateResponse,
@@ -57,6 +58,7 @@ from .schemas import (
     StoryboardCutsRequest,
     StoryboardPickRequest,
     HookAnalyzeResponse,
+    JobEditStateResponse,
     JobState,
     JobsBatchRequest,
     JobsBatchResponse,
@@ -78,8 +80,11 @@ from .schemas import (
 )
 from .tasks import (
     alignment_smoke_job,
+    EditStateUnavailable,
     apply_asr_words_edit,
     asr_preview_job,
+    clone_asr_preview_from_job,
+    job_edit_state,
     build_job,
     build_job_hybrid,
     build_job_openrouter,
@@ -796,6 +801,30 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=500, detail="Failed to enqueue asr preview job")
         queued = store.get(st.job_id) or st
         return AsrPreviewEnqueueResponse(job_id=queued.job_id, status=queued.status, created=True)
+
+    @app.post("/asr/preview/from-job", response_model=AsrPreviewEnqueueResponse)
+    def asr_preview_from_job(req: AsrPreviewFromJobRequest) -> AsrPreviewEnqueueResponse:
+        """«Докрутить на сайте»: asr_preview-джоба со словами готовой джобы (без выравнивания).
+
+        Сразу SUCCEEDED: Stage 1 копируется из resume_state источника. Источник не
+        local_ctc — 422 (рендер сайта такой Stage 1 не переиспользует, правки слов
+        пропали бы молча); нет состояния — 404.
+        """
+        try:
+            out = clone_asr_preview_from_job(store=store, source_job_id=req.source_job_id)
+        except EditStateUnavailable:
+            raise HTTPException(status_code=404, detail="source job state not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return AsrPreviewEnqueueResponse(job_id=out["job_id"], status=out["status"], created=bool(out["created"]))
+
+    @app.get("/jobs/{job_id}/edit_state", response_model=JobEditStateResponse)
+    def get_job_edit_state(job_id: str) -> JobEditStateResponse:
+        """Состояние монтажа готовой джобы: окно, склейки, клипы, слова, настройки хука."""
+        try:
+            return JobEditStateResponse(**job_edit_state(store=store, job_id=job_id))
+        except EditStateUnavailable:
+            raise HTTPException(status_code=404, detail="job state not found")
 
     @app.put("/jobs/{job_id}/asr-words", response_model=AsrWordsUpdateResponse)
     def update_asr_words(job_id: str, req: AsrWordsUpdateRequest) -> AsrWordsUpdateResponse:

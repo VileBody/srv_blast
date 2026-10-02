@@ -1431,7 +1431,10 @@
     "otherAccount": "Войти как другой аккаунт?",
     "otherAccountText": "В этом браузере открыт другой аккаунт Blast. Ссылка из бота ведёт в аккаунт твоего Telegram.",
     "otherAccountConfirm": "Сменить аккаунт",
-    "otherAccountStay": "Остаться"
+    "otherAccountStay": "Остаться",
+    "remixReady": "Ролик из бота на монтажном столе",
+    "remixReadyText": "Те же склейки, клипы, переходы и субтитры. Правь и генерируй.",
+    "remixFailed": "Монтаж ролика не переехал"
   },
   "funnel": {
     "step": "{{n}} из {{total}}",

@@ -388,6 +388,15 @@ export function WizardPage() {
   useEffect(() => { setTimelineFlag(tableOpen && stage === 5); }, [tableOpen, stage, setTimelineFlag]);
   // ушли с «Пула» — стол закрыт: возврат на «Пул» не должен сам открывать его поверх
   useEffect(() => { if (stage !== 5) setTableOpen(false); }, [stage]);
+  // «Докрутить на сайте»: ролик из бота открывается сразу на монтажном столе (флаг разовый)
+  const openTableOnLoad = useWizardStore((s) => s.openTableOnLoad);
+  const consumeOpenTable = useWizardStore((s) => s.consumeOpenTable);
+  useEffect(() => {
+    if (!openTableOnLoad || stage !== 5) return;
+    consumeOpenTable();
+    setPoolIndex(0);
+    setTableOpen(true);
+  }, [openTableOnLoad, stage, consumeOpenTable]);
   useEffect(() => () => setTimelineFlag(false), [setTimelineFlag]);
   const safePoolIndex = Math.min(poolIndex, Math.max(0, combos.length - 1));
   const poolCombo = combos[safePoolIndex];

@@ -1419,7 +1419,10 @@
     "otherAccount": "Log in as another account?",
     "otherAccountText": "Another Blast account is open in this browser. The bot link leads to the account of your Telegram.",
     "otherAccountConfirm": "Switch account",
-    "otherAccountStay": "Stay here"
+    "otherAccountStay": "Stay here",
+    "remixReady": "Your bot video is on the editing table",
+    "remixReadyText": "Same cuts, clips, transitions and subtitles. Edit and generate.",
+    "remixFailed": "The video edit did not carry over"
   },
   "funnel": {
     "step": "{{n}} of {{total}}",

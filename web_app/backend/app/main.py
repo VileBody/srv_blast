@@ -25,7 +25,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import mock_store as store
-from . import analytics, asr_preview, auth_store, fraud_guard, funnel, google_auth, persistence, security, telegram_bot
+from . import analytics, asr_preview, auth_store, bot_import, fraud_guard, funnel, google_auth, persistence, security, telegram_bot
 from . import render_job as render_job_builder
 from . import demo_media, effect_map
 from . import storyboard as storyboard_svc
@@ -673,6 +673,67 @@ def api_ban_status(request: Request) -> dict[str, Any]:
     return ban or {"banned": False, "reason": None, "bannedAt": None}
 
 
+# DEV (mock + dev-ручки): `/go#t=dev-remix-demo-0001` проигрывает «Докрутить на сайте»
+# на демо-ролике — тот же импорт и тот же HandoffPage, без бота и оркестратора.
+DEV_REMIX_TOKEN_PREFIX = "dev-remix-"
+
+
+def _dev_remix_edit_states(*, start: float, end: float, drop: float, lyrics: str) -> tuple[list[dict[str, Any]], bot_import.ImportCatalog]:
+    vibe = next(v for v in store.VIBES if v.get("plane") == "vibes")
+    catalog = bot_import.ImportCatalog(
+        subtitle_modes=dict(bot_import.MOCK_SUBTITLE_MODES),
+        footage={str(v["name"]): {"rotationTheme": "mock", "rotationTagsGroup": str(v["id"]), "plane": str(v.get("plane") or "vibes"),
+                                  "renderPreset": "wide" if v.get("plane") == "cine16x9" else "vertical"} for v in store.VIBES},
+    )
+    # окно плана уже окна слов, как у бота, когда субтитры прибили окно к фразам
+    plan_start, plan_end = start + 0.4, end - 0.3
+    cuts = storyboard_svc.mock_cuts(start=plan_start, end=plan_end, drop=drop)["cuts"]["auto"]
+    picked = storyboard_svc.mock_pick(vibes=list(store.VIBES), start=plan_start, end=plan_end, cuts=cuts, videos=[
+        {"index": i, "group": vibe["name"], "seedKey": f"dev-remix:{i}"} for i in (1, 2)
+    ])["videos"]
+    words = [{"text": w["text"], "t_start": w["tStart"], "t_end": w["tEnd"]} for w in asr_preview.mock_words(lyrics, start, end)]
+    request = {
+        "subtitles_mode": "brat_5th", "user_clip_start_sec": start, "user_clip_end_sec": end,
+        "hook_enabled": True, "user_drop_t": drop, "f2_shape": "rhomb",
+        "effect_transition": "minimax", "effect_extra": "xerox", "effect_extra_full": True,
+        "frame_id": "rounded", "subtitle_color_hex": "f6f5fd", "accent_color_hex": "#e38fb5",
+        "rotation_theme": "mock", "rotation_tags_group": str(vibe["id"]), "bg_mode": "footage", "render_preset": "vertical",
+    }
+    states = [{
+        "job_id": f"dev-remix-job-{p['index']}", "status": "SUCCEEDED", "request": dict(request),
+        "window": {"clip_start_abs": start, "clip_end_abs": end},
+        "footage_plan": p["plan"], "footage_plan_meta": {"bg_mode": "footage", "exact_slot": True},
+        "switch_points_abs": list(cuts), "words": words,
+        "asr": {"available": True, "mode": "local_ctc", "alignment_backend": "local_ctc", "reference_text": lyrics},
+    } for p in picked]
+    return states, catalog
+
+
+async def _dev_remix_handoff() -> dict[str, Any]:
+    lyrics = "Я знаю этот город не уснёт\nПока музыка ведёт нас вперёд"
+    start, end, drop = 10.234, 21.987, 15.5
+    states, catalog = _dev_remix_edit_states(start=start, end=end, drop=drop, lyrics=lyrics)
+    project = store.create_project("Ролик из бота", "TRIAL", "auto")
+    track = store.save_track("Ролик из бота.mp3", s3_url="s3://demo/bot-remix.mp3", playback_url=None,
+                             audio_hash=f"dev-remix-{uuid4().hex[:8]}")
+    imported = bot_import.build_wizard_import(states, catalog)
+
+    def _mock_clone(source: str) -> str:
+        return f"mock_asr_clone_{source}"
+
+    def _mock_state(job_id: str) -> dict[str, Any]:
+        return {"status": "COMPLETED", "words": asr_preview.words_from_orchestrator(states[0]["words"]),
+                "clipStart": start, "clipEnd": end, "error": None, "notes": [], "workingEnd": None}
+
+    imported = await _finish_remix_import(imported, track, asr_job=_mock_clone, asr_state=_mock_state)
+    return {
+        "ok": True, "created": False, "redirectTo": f"/app/generate?project={project['id']}",
+        "projectId": project["id"], "track": track, "repeat": False,
+        "draft": {"clipStart": start, "clipEnd": end, "lyrics": lyrics},
+        "wizardImport": imported, "mock": True,
+    }
+
+
 class HandoffPayload(BaseModel):
     # Длину схемой не режем: битая или обрезанная ссылка — тот же экран «ссылка
     # устарела» (410), а не 422 «не получилось открыть» (см. _handoff_token_ok).
@@ -767,6 +828,8 @@ async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int)
 # через бота верификации не нужно — токен из общей с ботом БД и есть подтверждение.
 @app.post("/api/auth/handoff", tags=["auth"])
 async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[str, Any]:
+    if RUNTIME.backend != "production" and DEV_TOOLS and payload.token.startswith(DEV_REMIX_TOKEN_PREFIX):
+        return await _dev_remix_handoff()
     if RUNTIME.backend != "production":
         raise HTTPException(
             status_code=503,
@@ -842,7 +905,121 @@ async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[st
                 "clipEnd": float(draft.get("clipEnd") or 0.0),
                 "lyrics": str(draft.get("lyrics") or ""),
             }
+            # …и весь монтаж ролика сразу на столе — только при первом открытии ссылки:
+            # повтор не должен затирать правки, сделанные на сайте.
+            if not project.get("repeat") and record["payload"].get("jobIds"):
+                out.update(await _remix_import_or_error(record["payload"], project))
         return out
+
+
+async def _remix_import_or_error(payload: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
+    """{"wizardImport": …} или {"wizardImportError": текст}. Ошибка не роняет вход по
+    ссылке: визард откроется по-старому (трек, окно, текст), а человек увидит, почему
+    монтаж не переехал (No Fallback — не молча)."""
+    try:
+        return {"wizardImport": await _remix_wizard_import(payload, project)}
+    except bot_import.BotImportError as exc:
+        logger.warning("bot_remix_import_refused jobs=%s reason=%s", payload.get("jobIds"), exc)
+        return {"wizardImportError": str(exc)}
+    except Exception:
+        logger.exception("bot_remix_import_failed jobs=%s", payload.get("jobIds"))
+        return {"wizardImportError": "Монтаж ролика из бота не загрузился"}
+
+
+def _remix_edit_states(job_ids: list[str]) -> list[dict[str, Any]]:
+    backend = _production_backend()
+    states: list[dict[str, Any]] = []
+    for job_id in job_ids:
+        try:
+            states.append(backend.job_edit_state(job_id))
+        except Exception as exc:  # один ролик без состояния не отменяет остальные
+            logger.warning("bot_remix_edit_state_unavailable job=%s err=%s", job_id, exc)
+            states.append({"job_id": job_id, "status": "UNAVAILABLE"})
+    return states
+
+
+async def _remix_wizard_import(payload: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
+    job_ids = [str(j) for j in payload.get("jobIds") or [] if str(j or "").strip()][:20]
+    backend = _production_backend()
+    states = await run_in_threadpool(_remix_edit_states, job_ids)
+    imported = bot_import.build_wizard_import(
+        states, backend.remix_catalog(),
+        snapshot=dict(payload.get("settings") or {}), draft=dict(payload.get("draft") or {}),
+    )
+    return await _finish_remix_import(imported, project.get("track") or {},
+                                      asr_job=backend.asr_preview_from_job, asr_state=backend.asr_preview_state)
+
+
+async def _finish_remix_import(imported: dict[str, Any], track: dict[str, Any], *, asr_job, asr_state) -> dict[str, Any]:
+    """Превью клипов раскадровки + примерка субтитров со словами ролика."""
+    notes: list[str] = list(imported.get("notes") or [])
+    imported["storyboard"] = await _remix_storyboard_views(imported, notes)
+    imported["asr"] = None
+    if imported.get("asrAvailable") and imported.get("asrSourceJobId"):
+        try:
+            job_id = await run_in_threadpool(asr_job, imported["asrSourceJobId"])
+            fresh = await run_in_threadpool(asr_state, job_id)
+            if fresh.get("status") != "COMPLETED":
+                raise RuntimeError(f"asr clone status {fresh.get('status')}")
+            text = asr_preview.target_fragment({"fragment": imported["lyrics"], "lyrics": imported["lyrics"]})
+            window = imported["window"]
+            key = asr_preview.preview_key(str(track.get("s3Key") or ""), window["start"], window["end"], text)
+            state = {**asr_preview.empty_state(key), **fresh, "key": key, "jobId": job_id}
+            store.set_asr_preview(state)
+            imported["asr"] = state
+        except Exception as exc:
+            logger.warning("bot_remix_asr_clone_failed source=%s err=%s", imported.get("asrSourceJobId"), exc)
+    if imported["asr"] is None:
+        notes.append("Слова ролика не перенеслись: примерка субтитров посчитается заново.")
+    imported["notes"] = notes
+    for internal in ("asrSourceJobId", "asrAvailable", "words"):
+        imported.pop(internal, None)
+    return imported
+
+
+async def _remix_storyboard_views(imported: dict[str, Any], notes: list[str]) -> list[dict[str, Any]]:
+    """Превью клипов плана: тот же подбор «Пула», что и на сайте, с закреплёнными клипами
+    бота на каждом кадре. План остаётся ботовым (смещения в исходниках — те же кадры)."""
+    entries = list(imported.get("storyboard") or [])
+    if not entries:
+        return []
+    window, cuts = imported["window"], list(imported["timeline"]["cuts"])
+    by_group: dict[str, list[dict[str, Any]]] = {}
+    for entry in entries:
+        by_group.setdefault(entry["group"], []).append(entry)
+    out: list[dict[str, Any]] = []
+    try:
+        for group, items in by_group.items():
+            videos = [
+                {"index": e["index"], "group": group, "seedKey": f"bot:{e['index']}",
+                 "pins": {str(k): c["file_name"] for k, c in enumerate(e["plan"]["clips"])}}
+                for e in items
+            ]
+            if RUNTIME.backend == "production":
+                res = await run_in_threadpool(
+                    lambda: _production_backend().storyboard_pick(
+                        group_name=group, clip_start_abs=window["start"], clip_end_abs=window["end"],
+                        switch_points_abs=cuts,
+                        videos=[{"seed_key": v["seedKey"], "pins": v["pins"]} for v in videos],
+                    )
+                )
+                picked = [
+                    {"clips": [storyboard_svc.clip_view(c) for c in p.get("clips") or []]}
+                    for p in res.get("videos") or []
+                ]
+            else:
+                picked = storyboard_svc.mock_pick(vibes=list(store.VIBES), start=window["start"], end=window["end"],
+                                                  cuts=cuts, videos=videos)["videos"]
+            for entry, view in zip(items, picked, strict=True):
+                names = [c["file_name"] for c in entry["plan"]["clips"]]
+                if [c.get("fileName") for c in view["clips"]] != names:
+                    raise bot_import.BotImportError("подбор вернул другие клипы")
+                out.append({**entry, "clips": view["clips"], "repeats": []})
+    except Exception as exc:
+        logger.warning("bot_remix_storyboard_unavailable err=%s", exc)
+        notes.append("Клипы роликов из бота на сайте больше недоступны: склейки те же, клипы подберутся заново.")
+        return []
+    return sorted(out, key=lambda e: e["index"])
 
 
 @app.get("/api/auth/tg-verify", tags=["auth"])

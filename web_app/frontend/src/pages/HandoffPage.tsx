@@ -44,23 +44,36 @@ export function HandoffPage() {
     if (started.current === force) return;
     started.current = force;
     api.botHandoff(token, force)
-      .then((res) => {
+      .then(async (res) => {
         queryClient.removeQueries({ queryKey: ['me'] });
+        let imported = false;
         if (res.projectId) {
           const store = useWizardStore.getState();
-          if (store.projectId !== res.projectId) store.reset(res.projectId);
-          if (res.track) store.setTrack(res.track);
-          // «Докрутить на сайте»: отрезок и текст ролика из бота сразу в черновике
-          // только при первом открытии: повтор той же ссылки не затирает правки
-          if (!res.repeat && res.draft && res.draft.clipEnd > res.draft.clipStart) {
-            store.setField('timingMode', 'manual');
-            store.setField('timingFrom', secondsToTiming(res.draft.clipStart));
-            store.setField('timingTo', secondsToTiming(res.draft.clipEnd));
-            if (res.draft.lyrics) store.setField('lyrics', res.draft.lyrics);
+          if (!res.repeat && res.wizardImport) {
+            // «Докрутить на сайте»: весь монтаж роликов бота сразу на столе (только при
+            // первом открытии: повтор той же ссылки не затирает правки на сайте)
+            const { applyWizardImport } = await import('../stores/wizardImport');
+            applyWizardImport(res.projectId, res.track, res.wizardImport);
+            imported = true;
+          } else {
+            if (store.projectId !== res.projectId) store.reset(res.projectId);
+            if (res.track) store.setTrack(res.track);
+            // Монтаж не переехал (или ссылка старого вида): отрезок и текст ролика — в черновик
+            if (!res.repeat && res.draft && res.draft.clipEnd > res.draft.clipStart) {
+              store.setField('timingMode', 'manual');
+              store.setField('timingFrom', secondsToTiming(res.draft.clipStart));
+              store.setField('timingTo', secondsToTiming(res.draft.clipEnd));
+              if (res.draft.lyrics) store.setField('lyrics', res.draft.lyrics);
+            }
           }
         }
         if (res.trackError === 'tracks_limit') {
           push({ variant: 'error', title: t('handoff.tracksLimit'), text: t('handoff.tracksLimitText') });
+        } else if (!res.repeat && res.wizardImportError) {
+          push({ variant: 'error', title: t('handoff.remixFailed'), text: res.wizardImportError });
+        } else if (imported) {
+          const notes = res.wizardImport?.notes ?? [];
+          push({ variant: notes.length ? 'info' : 'success', title: t('handoff.remixReady'), text: notes.length ? notes.join(' ') : t('handoff.remixReadyText') });
         } else if (res.track && !res.repeat) {
           push({ variant: 'success', title: t('handoff.trackReady'), text: t('handoff.trackReadyText') });
         }

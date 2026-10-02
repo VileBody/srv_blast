@@ -302,3 +302,140 @@ def test_account_without_telegram_gets_the_chat_linked(client, monkeypatch) -> N
     assert body["created"] is False
     linked = main.auth_store.get_user_by_chat(CHAT2)
     assert linked["id"] == google_user["id"] and linked["tgVerified"] is True
+
+
+# ── «Докрутить на сайте»: монтаж ролика сразу на столе ─────────────────────────
+
+class _RemixBackend(_Backend):
+    """Оркестратор с двумя готовыми роликами бота (edit_state) и клоном примерки."""
+
+    def __init__(self, *, clips_gone: bool = False) -> None:
+        super().__init__()
+        self.cloned: list[str] = []
+        self.picks: list[dict[str, Any]] = []
+        self.clips_gone = clips_gone
+
+    def remix_catalog(self):
+        from app import bot_import
+
+        return bot_import.ImportCatalog(
+            subtitle_modes={"Brat": "brat_5th"},
+            footage={"Неон": {"rotationTheme": "visual", "rotationTagsGroup": "neon", "renderPreset": "vertical", "plane": "vibes"}},
+        )
+
+    def job_edit_state(self, job_id: str) -> dict[str, Any]:
+        cuts = [12.0, 15.0]
+        bounds = [10.5, *cuts, 19.5]
+        return {
+            "job_id": job_id, "status": "SUCCEEDED",
+            "request": {"subtitles_mode": "brat_5th", "user_drop_t": 15.0, "hook_enabled": True, "effect_hook": "hook_light",
+                        "effect_transition": "minimax", "rotation_theme": "visual", "rotation_tags_group": "neon", "bg_mode": "footage"},
+            "window": {"clip_start_abs": 10.0, "clip_end_abs": 20.0},
+            "footage_plan": {"version": 1, "clip_start_abs": 10.5, "clip_end_abs": 19.5, "switch_points_abs": cuts, "clips": [
+                {"file_name": f"{job_id}-{i}.mp4", "fit_mode": "cover", "in_point": bounds[i], "out_point": bounds[i + 1],
+                 "start_time": bounds[i], "source_offset_sec": 0.0} for i in range(3)]},
+            "footage_plan_meta": {"bg_mode": "footage", "exact_slot": True},
+            "switch_points_abs": cuts,
+            "words": [{"text": "раз", "t_start": 10.2, "t_end": 10.6}],
+            "asr": {"available": True, "mode": "local_ctc", "alignment_backend": "local_ctc", "reference_text": "раз два"},
+        }
+
+    def storyboard_pick(self, *, group_name, clip_start_abs, clip_end_abs, switch_points_abs, videos):
+        self.picks.append({"group": group_name, "start": clip_start_abs, "end": clip_end_abs, "videos": videos})
+        if self.clips_gone:
+            from app.production_backend import ProductionBackendError
+
+            raise ProductionBackendError("clip is not in the inventory of this slot")
+        return {"videos": [{"clips": [{"file_name": name, "in_point": 0, "out_point": 1, "preview_url": "https://p/x.mp4"}
+                                      for _, name in sorted(v["pins"].items(), key=lambda kv: int(kv[0]))], "plan": {}}
+                           for v in videos]}
+
+    def asr_preview_from_job(self, source_job_id: str) -> str:
+        self.cloned.append(source_job_id)
+        return "asr-clone-1"
+
+    def asr_preview_state(self, job_id: str) -> dict[str, Any]:
+        return {"status": "COMPLETED", "words": [{"text": "раз", "tStart": 10.2, "tEnd": 10.6, "weak": False}],
+                "clipStart": 10.0, "clipEnd": 20.0, "error": None, "notes": [], "workingEnd": None}
+
+
+def _remix_record(job_ids: list[str]) -> dict[str, Any]:
+    record = _track_record()
+    record["kind"] = "remix"
+    record["payload"].update({
+        "draft": {"clipStart": 10.0, "clipEnd": 20.0, "lyrics": "раз два"},
+        "jobIds": job_ids, "masterJobId": job_ids[0], "settings": {},
+    })
+    return record
+
+
+def test_remix_link_opens_the_whole_montage_on_the_table(client, monkeypatch) -> None:
+    tc, main = client
+    billing, backend = _Billing(_remix_record(["bot-a", "bot-b"])), _RemixBackend()
+    _production(monkeypatch, main, billing, backend)
+
+    body = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+
+    imp = body["wizardImport"]
+    assert "wizardImportError" not in body
+    assert imp["timing"] == {"from": "00:10:00", "to": "00:20:00"}
+    assert imp["timeline"]["cuts"] == [12.0, 15.0]
+    assert imp["fxVariants"][0]["kind"] == "effects"
+    # превью клипов — подбор «Пула» с клипами бота, закреплёнными на каждом кадре
+    assert [v["pins"] for v in backend.picks[0]["videos"]] == [
+        {"0": "bot-a-0.mp4", "1": "bot-a-1.mp4", "2": "bot-a-2.mp4"},
+        {"0": "bot-b-0.mp4", "1": "bot-b-1.mp4", "2": "bot-b-2.mp4"},
+    ]
+    assert [c["fileName"] for c in imp["storyboard"][1]["clips"]] == ["bot-b-0.mp4", "bot-b-1.mp4", "bot-b-2.mp4"]
+    assert imp["storyboard"][0]["plan"]["clip_start_abs"] == 10.0
+    # слова — клон Stage 1 бота, примерка готова под ключом трек+окно+текст сайта
+    assert backend.cloned == ["bot-a"]
+    assert imp["asr"]["jobId"] == "asr-clone-1" and imp["asr"]["status"] == "COMPLETED"
+    _as_user(main)
+    key = main.asr_preview.preview_key(body["track"]["s3Key"], 10.0, 20.0, "раз два")
+    assert imp["asr"]["key"] == key and main.store.get_asr_preview()["jobId"] == "asr-clone-1"
+
+    # повтор ссылки монтаж не пересобирает: правки на сайте не затираются
+    again = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+    assert again["repeat"] is True and "wizardImport" not in again
+
+
+def test_remix_without_exact_clips_says_so_and_keeps_the_cuts(client, monkeypatch) -> None:
+    tc, main = client
+    billing, backend = _Billing(_remix_record(["bot-a"])), _RemixBackend(clips_gone=True)
+    _production(monkeypatch, main, billing, backend)
+    imp = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()["wizardImport"]
+    assert imp["storyboard"] == [] and imp["timeline"]["cuts"] == [12.0, 15.0]
+    assert any("подберутся заново" in n for n in imp["notes"])
+
+
+def test_remix_that_cannot_be_imported_falls_back_to_the_draft_with_a_reason(client, monkeypatch) -> None:
+    tc, main = client
+    backend = _RemixBackend()
+    original = backend.job_edit_state
+
+    def other_window(job_id: str) -> dict[str, Any]:
+        state = original(job_id)
+        if job_id == "bot-b":
+            state["window"] = {"clip_start_abs": 30.0, "clip_end_abs": 40.0}
+        return state
+
+    backend.job_edit_state = other_window
+    _production(monkeypatch, main, _Billing(_remix_record(["bot-a", "bot-b"])), backend)
+    body = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+    assert "wizardImport" not in body
+    assert "разные отрывки" in body["wizardImportError"]
+    assert body["draft"]["clipEnd"] == 20.0
+
+
+def test_dev_remix_link_plays_the_flow_in_mock(client, monkeypatch) -> None:
+    tc, main = client
+    # без dev-ручек ссылка-демо — обычный отказ мока
+    assert tc.post("/api/auth/handoff", json={"token": "dev-remix-demo-0001"}).status_code == 503
+    monkeypatch.setattr(main, "DEV_TOOLS", True)
+    body = tc.post("/api/auth/handoff", json={"token": "dev-remix-demo-0001"}).json()
+    imp = body["wizardImport"]
+    assert body["mock"] is True and body["redirectTo"].startswith("/app/generate?project=")
+    assert imp["timing"] == {"from": "00:10:23", "to": "00:21:99"}
+    assert len(imp["storyboard"]) == 2 and imp["asr"]["status"] == "COMPLETED"
+    assert imp["frames"] == {"0": "rounded", "1": "rounded"}
