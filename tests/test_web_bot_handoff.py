@@ -112,7 +112,8 @@ def test_track_link_creates_account_project_and_track(client, monkeypatch) -> No
     _as_user(main)
     assert main.store.get_project(body["projectId"]) is not None
     assert backend.registered == [body["track"]["s3Key"]]
-    assert billing.consumed == [(CHAT, "a" * 64)]
+    # слот трека тратится при первой генерации на сайте, а не при открытии ссылки
+    assert billing.consumed == []
     assert billing.results[-1] == {"projectId": body["projectId"], "trackId": body["track"]["id"]}
 
 
@@ -131,7 +132,7 @@ def test_reopening_the_link_lands_on_the_same_project(client, monkeypatch) -> No
     assert body["created"] is False
     _as_user(main)
     assert [p["id"] for p in main.store.ws().projects] == [first["projectId"]]
-    assert len(backend.registered) == 1 and len(billing.consumed) == 1
+    assert len(backend.registered) == 1 and billing.consumed == []
 
 
 def test_expired_link_is_410_with_code(client, monkeypatch) -> None:
@@ -142,15 +143,14 @@ def test_expired_link_is_410_with_code(client, monkeypatch) -> None:
     assert r.json()["detail"]["code"] == "handoff_expired"
 
 
-def test_no_track_slot_opens_project_without_the_track(client, monkeypatch) -> None:
+def test_no_track_slot_still_brings_the_track_with_a_warning(client, monkeypatch) -> None:
+    """Слот не тратим при открытии: трек кладём в проект, генерация упрётся в лимит треков."""
     tc, main = client
     billing, backend = _Billing(_track_record(), allowed=False), _Backend()
     _production(monkeypatch, main, billing, backend)
     body = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
-    assert body["trackError"] == "tracks_limit"
-    _as_user(main)
-    assert body["track"] is None and main.store.get_project(body["projectId"]) is not None
-    assert backend.registered == [] and billing.consumed == []
+    assert body["trackError"] == "tracks_limit" and body["track"] is not None
+    assert backend.registered and billing.consumed == []
 
 
 def test_site_link_only_logs_in(client, monkeypatch) -> None:
@@ -224,4 +224,4 @@ def test_s3_failure_leaves_no_empty_project(client, monkeypatch) -> None:
     body = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
     _as_user(main)
     assert [p["id"] for p in main.store.ws().projects] == [body["projectId"]]
-    assert billing.consumed == [(CHAT, "a" * 64)]
+    assert billing.consumed == []

@@ -45,8 +45,8 @@ class _CreditsDB:
     async def log_event(self, tg_id, event, detail=""):
         self.events.append((tg_id, event))
 
-    async def create_web_handoff(self, tg_id, kind, payload=None, *, ttl_seconds):
-        self.handoffs.append({"tg_id": tg_id, "kind": kind, "payload": payload, "ttl": ttl_seconds})
+    async def create_web_handoff(self, tg_id, kind, payload=None, *, ttl_seconds, single_use=False):
+        self.handoffs.append({"tg_id": tg_id, "kind": kind, "payload": payload, "ttl": ttl_seconds, "single_use": single_use})
         return f"tok{len(self.handoffs)}"
 
     async def grant_initial_credits_once(self, tg_id, credits, track_credits, *, actor=""):
@@ -133,7 +133,7 @@ def test_fork_uploads_track_and_offers_site_link(tmp_path):
     assert payload["profile"] == {"name": "Лена", "surname": "", "username": "lena_beats"}
     saved = app.store.by_id[CHAT]
     assert saved.stage == STAGE_WAIT_WEB_FORK
-    assert saved.web_handoff_url == "https://app.blast808.com/go/tok1"
+    assert saved.web_handoff_url == "https://app.blast808.com/go#t=tok1"
     text, markup = msg.answers[-1]
     assert text == mt.WEB_FORK_TEXT
     site_btn, bot_btn = markup.inline_keyboard[0][0], markup.inline_keyboard[1][0]
@@ -164,7 +164,7 @@ def test_typing_at_fork_resends_the_same_link(tmp_path):
 
     text, markup = msg.answers[-1]
     assert text == mt.WEB_FORK_REMINDER
-    assert markup.inline_keyboard[0][0].url == "https://app.blast808.com/go/tok1"
+    assert markup.inline_keyboard[0][0].url == "https://app.blast808.com/go#t=tok1"
     assert len(app.credits_db.handoffs) == 1  # новый токен не выпускаем
 
 
@@ -227,10 +227,10 @@ def test_site_command_sends_a_fresh_login_link():
     app = _make_app()
     msg = _Msg(text="/site")
     _run(app._send_site_link(msg))
-    assert app.credits_db.handoffs[0]["kind"] == "site"
+    assert app.credits_db.handoffs[0]["kind"] == "site" and app.credits_db.handoffs[0]["single_use"] is True
     text, markup = msg.answers[0]
     assert text == mt.WEB_SITE_TEXT
-    assert markup.inline_keyboard[0][0].url == "https://app.blast808.com/go/tok1"
+    assert markup.inline_keyboard[0][0].url == "https://app.blast808.com/go#t=tok1"
 
 
 def test_site_command_without_site_says_so():
@@ -295,7 +295,7 @@ def test_stale_fork_link_is_reissued(tmp_path):
     msg = _Msg(text="привет")
     _run(app._handle_wait_web_fork(msg, st))
     assert len(app.credits_db.handoffs) == 2
-    assert msg.answers[-1][1].inline_keyboard[0][0].url == "https://app.blast808.com/go/tok2"
+    assert msg.answers[-1][1].inline_keyboard[0][0].url == "https://app.blast808.com/go#t=tok2"
     assert app.credits_db.handoffs[1]["payload"]["audioS3Url"] == st.web_handoff_audio_s3_url
 
 

@@ -25,7 +25,10 @@ function secondsToTiming(value: number): string {
  */
 export function HandoffPage() {
   const { t } = useTranslation();
-  const { token = '' } = useParams();
+  // Токен приходит во фрагменте (#t=…), чтобы не попадать в логи сервера; старый вид
+  // /go/<token> тоже понимаем.
+  const { token: pathToken = '' } = useParams();
+  const token = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('t') || pathToken;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { push } = useToast();

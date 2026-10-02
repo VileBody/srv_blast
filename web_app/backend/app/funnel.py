@@ -61,6 +61,7 @@ class _Repo(Protocol):
     async def record_track_batch(self, **kw: Any) -> None: ...
     async def release_track_batch(self, job_id: str, videos: int) -> None: ...
     async def drop_track_batch(self, job_id: str) -> None: ...
+    async def has_track_tripwire(self, tg_id: int, audio_hash: str) -> bool: ...
 
 
 class MemoryRepo:
@@ -73,6 +74,7 @@ class MemoryRepo:
         self.actions: dict[int, dict[str, datetime]] = {}
         self.unlimited: dict[int, dict[str, Any]] = {}
         self.batches: list[dict[str, Any]] = []
+        self.tripwire: set[tuple[int, str]] = set()
 
     async def has_paid(self, tg_id: int) -> bool:
         return int(tg_id) in self.paid
@@ -135,6 +137,9 @@ class MemoryRepo:
 
     async def drop_track_batch(self, job_id: str) -> None:
         self.batches = [b for b in self.batches if b["job_id"] != job_id]
+
+    async def has_track_tripwire(self, tg_id: int, audio_hash: str) -> bool:
+        return (int(tg_id), audio_hash) in self.tripwire
 
 
 _MEMORY = MemoryRepo()
@@ -273,8 +278,10 @@ def quota_view(q: tu.TrackQuota) -> dict[str, Any]:
 
 
 async def track_quota(tg_id: int, audio_hash: str) -> tu.TrackQuota | None:
-    """Квота трека, если безлимит открыт именно на нём; иначе None."""
+    """Квота трека: купленный трипваер на нём, бесплатный безлимит на нём или None."""
     r = repo()
+    if audio_hash and await r.has_track_tripwire(int(tg_id), audio_hash):
+        return tu.evaluate(now=now_utc(), unlocked_at=now_utc(), tripwire=True, batches=[])
     unl = await r.get_track_unlimited(int(tg_id))
     if not unl or unl["audio_hash"] != audio_hash:
         return None
@@ -287,6 +294,22 @@ async def track_quota(tg_id: int, audio_hash: str) -> tu.TrackQuota | None:
     )
 
 
+async def tripwire_offer(tg_id: int, quota: tu.TrackQuota | None) -> dict[str, Any] | None:
+    """Окно предложения трипваера: открывается при первом упоре в лимит, живёт сутки.
+
+    Отметка ставится на сервере (funnel_actions) — от неё же считает догон бота."""
+    r = repo()
+    if quota is not None and not quota.allowed and not quota.tripwire:
+        await r.mark_funnel_action(int(tg_id), "tripwire_offer")
+    opened = (await r.funnel_actions(int(tg_id))).get("tripwire_offer")
+    if opened is None:
+        return None
+    expires = opened + tu.TRIPWIRE_OFFER_WINDOW
+    if now_utc() >= expires:
+        return None
+    return {"expiresAt": expires.isoformat(), "priceRub": tu.TRIPWIRE_PRICE_RUB}
+
+
 async def state(tg_id: int, *, saved_tracks: list[dict[str, Any]]) -> dict[str, Any]:
     r = repo()
     tg_id = int(tg_id)
@@ -294,14 +317,15 @@ async def state(tg_id: int, *, saved_tracks: list[dict[str, Any]]) -> dict[str, 
     actions = await r.funnel_actions(tg_id)
     unl = await r.get_track_unlimited(tg_id)
     unlimited = None
+    unl_quota = None
     if unl:
         track = next((t for t in saved_tracks if t.get("audioHash") == unl["audio_hash"]), None)
-        q = await track_quota(tg_id, unl["audio_hash"])
+        q = unl_quota = await track_quota(tg_id, unl["audio_hash"])
         unlimited = {
             "trackId": track["id"] if track else None,
             "trackTitle": track_title(track["filename"]) if track else None,
             "unlockedAt": unl["unlocked_at"].isoformat(),
-            "tripwire": unl.get("tripwire_paid_at") is not None,
+            "tripwire": bool(q and q.tripwire),
             "quota": quota_view(q) if q else None,
         }
     return {
@@ -313,6 +337,7 @@ async def state(tg_id: int, *, saved_tracks: list[dict[str, Any]]) -> dict[str, 
             "bridge": web_bridge(mt.bridge_text_for_branch(str(survey.get("branch_q3") or ""))) if survey.get("completed_at") else None,
         },
         "actions": {a: a in actions for a in UNLOCK_ACTIONS},
+        "tripwireOffer": await tripwire_offer(tg_id, unl_quota),
         "unlimited": unlimited,
         "links": {
             "channel": channel_link(),

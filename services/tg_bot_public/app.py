@@ -70,6 +70,7 @@ from .marketing_texts import (
     BTN_WEB_FORK_BOT,
     BTN_REMIND_CONTINUE,
     BTN_REMIND_GENERATE,
+    BTN_REMIND_TRIPWIRE,
     BTN_WEB_FORK_SITE,
     BOT_ONE_VIDEO_NOTE,
     GEN_SUBSCRIPTION_MISSING,
@@ -91,6 +92,7 @@ from .marketing_texts import (
     SURVEY_Q3_BRANCH_BY_ANSWER,
     SURVEY_QUESTIONS,
     REMIND_SITE_IDLE,
+    REMIND_TRIPWIRE,
     REMIND_SITE_NO_GEN,
     REMIND_SITE_RECHARGE,
     REMIND_SITE_UNOPENED,
@@ -6752,7 +6754,9 @@ class BlastBotApp:
     # ------------------------------------------------------------------
 
     def _web_handoff_link(self, token: str) -> str:
-        return f"{self.settings.web_app_url.rstrip('/')}/go/{token}"
+        # Токен — во фрагменте (#t=…): фрагмент не уходит на сервер и не оседает в логах
+        # nginx; сайт достаёт его из location.hash.
+        return f"{self.settings.web_app_url.rstrip('/')}/go#t={token}"
 
     @staticmethod
     def _web_handoff_profile(message: Message) -> Dict[str, str]:
@@ -6951,6 +6955,7 @@ class BlastBotApp:
             "site",
             {"profile": self._web_handoff_profile(message)},
             ttl_seconds=self.settings.web_handoff_ttl_s,
+            single_use=True,
         )
         await self.credits_db.log_event(chat_id, "web_site_link")
         await message.answer(
@@ -9974,6 +9979,19 @@ class BlastBotApp:
                 link_kind="site", payload={},
             )
 
+        for row in await self.credits_db.tripwire_offer_rows():
+            tg_id = int(row["tg_id"])
+            age = timedelta(seconds=float(row["age_s"]))
+            step = site_reminders.due_step(age, site_reminders.TRIPWIRE_STEPS)
+            if step is None:
+                continue
+            hours_left = max(1, int((track_unlimited.TRIPWIRE_OFFER_WINDOW - age).total_seconds() // 3600))
+            sent += await self._send_site_reminder(
+                now, tg_id, kind="tripwire", ref=f"{row['created_at'].isoformat()}:{step}",
+                text=REMIND_TRIPWIRE[step].format(hours=hours_left, price=track_unlimited.TRIPWIRE_PRICE_RUB),
+                button=BTN_REMIND_TRIPWIRE, link_kind="site", payload={}, urgent=True,
+            )
+
         for row in await self.credits_db.idle_generation_rows():
             tg_id = int(row["tg_id"])
             if not await self._is_free_funnel_chat(tg_id):
@@ -9998,15 +10016,19 @@ class BlastBotApp:
         button: str,
         link_kind: str,
         payload: Dict[str, Any],
+        urgent: bool = False,
     ) -> int:
-        if not site_reminders.can_send(now, await self.credits_db.last_reminder_at(tg_id)):
+        # urgent — у повода свой срок (предложение на сутки): общий интервал не держим,
+        # но ночью всё равно не пишем.
+        last = None if urgent else await self.credits_db.last_reminder_at(tg_id)
+        if not site_reminders.can_send(now, last):
             return 0
         # Отмечаем ДО отправки: лучше не дослать, чем прислать дважды.
         if not await self.credits_db.try_mark_reminder(tg_id, kind, ref):
             return 0
         try:
             token = await self.credits_db.create_web_handoff(
-                tg_id, link_kind, payload, ttl_seconds=self.settings.web_handoff_ttl_s
+                tg_id, link_kind, payload, ttl_seconds=self.settings.web_handoff_ttl_s, single_use=True,
             )
             await self._require_bot().send_message(
                 tg_id,

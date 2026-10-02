@@ -48,6 +48,7 @@ export function LimitsPopoutCard({
   rules,
   onBuy,
   buyPending,
+  offerExpiresAt,
   onUnlock,
   onClose,
   now
@@ -56,7 +57,9 @@ export function LimitsPopoutCard({
   trackTitle?: string | null;
   availableAt?: string | null;
   rules: FunnelRules;
+  /** нет onBuy — предложение трипваера закрыто (сутки прошли или не открывалось) */
   onBuy?: () => void;
+  offerExpiresAt?: string | null;
   buyPending?: boolean;
   onUnlock?: () => void;
   onClose: () => void;
@@ -106,7 +109,7 @@ export function LimitsPopoutCard({
           <p className="text-ui-14 text-text-60 [text-wrap:pretty]">
             {t(`funnel.popout.${variant}.text`, { batches: rules.firstDayBatches, videos: rules.dailyVideos, hours: rules.cooldownHours })}
           </p>
-          <TripwireOffer rules={rules} onBuy={onBuy} pending={buyPending} stacked />
+          {onBuy && <TripwireOffer rules={rules} onBuy={onBuy} pending={buyPending} stacked expiresAt={offerExpiresAt} now={now} />}
         </>
       )}
     </div>

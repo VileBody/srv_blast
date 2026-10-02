@@ -599,6 +599,8 @@ export interface FunnelState {
     bridge: string | null;
   };
   actions: { channel_subscribed: boolean; manager_contacted: boolean };
+  /** предложение трипваера: сутки с первого упора в лимит; null — закрыто или не открывалось */
+  tripwireOffer: { expiresAt: string; priceRub: number } | null;
   unlimited: null | {
     trackId: string | null;
     trackTitle: string | null;

@@ -43,7 +43,8 @@ class _Bot:
 
 
 class _DB:
-    def __init__(self, *, handoffs=(), unlimited=(), batches=None, idle=(), paid=()):
+    def __init__(self, *, handoffs=(), unlimited=(), batches=None, idle=(), paid=(), tripwire=()):
+        self.tripwire = list(tripwire)
         self.handoffs = list(handoffs)
         self.unlimited = list(unlimited)
         self.batches = batches or {}
@@ -66,6 +67,9 @@ class _DB:
     async def idle_generation_rows(self):
         return self.idle
 
+    async def tripwire_offer_rows(self):
+        return self.tripwire
+
     async def last_reminder_at(self, tg_id):
         return self.last.get(tg_id)
 
@@ -77,8 +81,9 @@ class _DB:
         self.last[tg_id] = DAY
         return True
 
-    async def create_web_handoff(self, tg_id, kind, payload=None, *, ttl_seconds):
+    async def create_web_handoff(self, tg_id, kind, payload=None, *, ttl_seconds, single_use=False):
         self.tokens.append((tg_id, kind, payload or {}))
+        self.single_use = getattr(self, "single_use", []) + [single_use]
         return f"tok{len(self.tokens)}"
 
     async def log_event(self, tg_id, event, detail=""):
@@ -110,7 +115,7 @@ def test_unopened_link_gets_a_fresh_track_link_once():
     assert asyncio.run(app._site_reminders_tick(DAY)) == 1
     chat, text, markup = bot.sent[0]
     assert chat == 1 and text == mt.REMIND_SITE_UNOPENED
-    assert markup.inline_keyboard[0][0].url == "https://app.blast808.com/go/tok1"
+    assert markup.inline_keyboard[0][0].url == "https://app.blast808.com/go#t=tok1"
     assert db.tokens[0][1] == "track" and db.tokens[0][2]["audioS3Url"] == "s3://x"
     assert asyncio.run(app._site_reminders_tick(DAY)) == 0  # тот же шаг второй раз не шлём
 
@@ -193,13 +198,27 @@ class _Conn:
         self.sql.append(sql)
         return self.row_after
 
+    async def execute(self, sql, *args):
+        self.sql.append(sql)
+
 
 def test_tripwire_payment_lifts_limits_on_the_ordered_track():
     conn = _Conn("h", {"audio_hash": "h"})
     asyncio.run(CreditsDB.__new__(CreditsDB)._apply_tripwire(conn, tg_id=1, order_id="o1"))
-    assert "tripwire_paid_at" in conn.sql[1]
+    # трипваер — на любой трек: отдельная запись, а не правка бесплатного безлимита
+    assert "INSERT INTO track_tripwire" in conn.sql[1]
 
 
 def test_tripwire_order_without_track_is_an_error():
     with pytest.raises(ValueError):
         asyncio.run(CreditsDB.__new__(CreditsDB)._apply_tripwire(_Conn(None, None), tg_id=1, order_id="o1"))
+
+
+def test_tripwire_offer_is_chased_within_its_day_even_right_after_another_reminder():
+    opened = DAY - timedelta(hours=3)
+    db = _DB(tripwire=[{"tg_id": 8, "created_at": opened, "age_s": 3 * 3600}])
+    db.last[8] = DAY - timedelta(hours=1)  # недавнее напоминание не держит догон: у оффера свой срок
+    bot = _Bot()
+    asyncio.run(_app(db, bot)._site_reminders_tick(DAY))
+    assert bot.sent and "21 ч" in bot.sent[0][1] and "399" in bot.sent[0][1]
+    assert db.single_use == [True]  # ссылки из напоминаний одноразовые

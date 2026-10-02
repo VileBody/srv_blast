@@ -1,8 +1,10 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { isSubscriptionPlan } from '../../lib/types';
 import { cssZoom } from '../../lib/zoom';
 import { LimitsPopoutCard, TrackLimitBar, type PopoutVariant } from '../funnel/LimitsPopout';
 import { quotaLeft, useFunnelState, useTripwirePurchase } from '../funnel/useFunnel';
@@ -24,6 +26,23 @@ import { funnelSeen, markFunnelSeen, useFunnelUi } from '../../stores/funnelUi';
  * поповера и окно у кружка, которое всплывает само один раз на каждое исчерпание —
  * перезарядка с трипваером или «бесплатные ролики кончились» со входом в безлимит.
  */
+
+/** Стрелка «→» ссылки «Обновить» — та же, что в «Лимитах» профиля (home-arrow, grad-main). */
+function SvgArrow() {
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-block shrink-0 transition-transform duration-150 group-hover:translate-x-[2px]"
+      style={{
+        width: 6.4,
+        height: 11.2,
+        background: 'var(--grad-main)',
+        WebkitMask: 'url(/assets/figma/home-arrow.svg) center / contain no-repeat',
+        mask: 'url(/assets/figma/home-arrow.svg) center / contain no-repeat'
+      }}
+    />
+  );
+}
 
 /** Донат-индикатор (Figma 758:584): кольцо whitey + дуга grad-main от 12 часов по часовой */
 function LimitRing({ pct }: { pct: number }) {
@@ -100,6 +119,18 @@ export function LimitsIndicator({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  // Поповер кликабельный («Обновить»): закрываем с задержкой, чтобы курсор успел
+  // перейти с кружка на поповер через зазор между ними.
+  const closeTimer = useRef<number | null>(null);
+  const show = () => {
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    setOpen(true);
+  };
+  const hideSoon = () => {
+    if (closeTimer.current) window.clearTimeout(closeTimer.current);
+    closeTimer.current = window.setTimeout(() => setOpen(false), 160);
+  };
+  useEffect(() => () => { if (closeTimer.current) window.clearTimeout(closeTimer.current); }, []);
   const [anchor, setAnchor] = useState<{ host: HTMLElement; x: number; y: number } | null>(null);
   const ringRef = useRef<HTMLSpanElement>(null);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
@@ -157,8 +188,8 @@ export function LimitsIndicator({
     <span
       ref={ringRef}
       className="relative z-[8] inline-flex max-md:translate-y-[1px]"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
+      onMouseEnter={show}
+      onMouseLeave={hideSoon}
     >
       <button
         type="button"
@@ -180,7 +211,11 @@ export function LimitsIndicator({
               trackTitle={unlimited?.trackTitle}
               availableAt={quota?.availableAt}
               rules={funnel.rules}
-              onBuy={unlimited?.trackId ? () => tripwire.mutate(unlimited.trackId as string) : undefined}
+              onBuy={funnel.tripwireOffer && (track?.id || unlimited?.trackId)
+                // трипваер — на любой трек: покупаем на трек этой страницы, иначе на трек безлимита
+                ? () => tripwire.mutate((track?.id || unlimited?.trackId) as string)
+                : undefined}
+              offerExpiresAt={funnel.tripwireOffer?.expiresAt}
               buyPending={tripwire.isPending}
               onUnlock={track?.id ? () => {
                 closePopout();
@@ -199,13 +234,33 @@ export function LimitsIndicator({
           <span className="pointer-events-none absolute z-[8] h-[25px] w-[25px] max-md:!left-[20px] max-md:right-[20px] max-md:w-auto" style={{ left: anchor.x, top: anchor.y }}>
             <span
               role="tooltip"
-              className="absolute right-0 flex w-[360px] flex-col gap-[20px] rounded-r15 bg-grad-soft-20 p-[24px] shadow-[0_24px_60px_rgba(5,1,15,0.45)] backdrop-blur-[50px] max-md:left-0 max-md:w-auto max-md:p-[16px]"
+              onMouseEnter={show}
+              onMouseLeave={hideSoon}
+              className="pointer-events-auto absolute right-0 flex w-[360px] flex-col gap-[20px] rounded-r15 bg-grad-soft-20 p-[24px] shadow-[0_24px_60px_rgba(5,1,15,0.45)] backdrop-blur-[50px] max-md:left-0 max-md:w-auto max-md:p-[16px]"
               style={{ top: 25 + offsetY }}
             >
-              <span className="text-ui-20 text-text">{t('limits.title')}</span>
+              <span className="flex items-center justify-between gap-space-4">
+                <span className="text-ui-20 text-text">{t('limits.title')}</span>
+                {/* Платящим — «Обновить →» как в «Лимитах» профиля: питч они уже видели,
+                    им нужен короткий путь продлить или расширить тариф. */}
+                {funnel?.hasPaid && (
+                  <Link
+                    to="/app/pricing"
+                    className="group flex items-center gap-[8px] text-ui-14 text-transparent transition hover:brightness-125"
+                    style={{ backgroundImage: 'var(--grad-main)', WebkitBackgroundClip: 'text', backgroundClip: 'text' }}
+                  >
+                    {t('profile.update')}
+                    <SvgArrow />
+                  </Link>
+                )}
+              </span>
               <LimitBar label={t('limits.tracks')} used={tracksUsed} total={tracksTotal} />
               <LimitBar label={t('limits.videos')} used={videosUsed} total={videosTotal} />
               {quota && <TrackLimitBar trackTitle={unlimited?.trackTitle ?? null} quota={quota} />}
+              {/* Платят, но не на подписке (пакет, трипваер) — напоминаем про Бласт */}
+              {funnel?.hasPaid && sub && !isSubscriptionPlan(sub) && (
+                <span className="border-t border-line pt-[14px] text-ui-14 text-text-60">{t('limits.blastNudge')}</span>
+              )}
             </span>
           </span>
         </>,

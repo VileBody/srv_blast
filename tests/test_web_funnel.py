@@ -181,3 +181,33 @@ def test_dev_funnel_demo_scenes_build_real_states(dev_client) -> None:
         quota = (state["unlimited"] or {}).get("quota")
         assert (quota or {}).get("reason") == reason, scene
     assert tc.post("/api/dev/funnel-demo/nope").status_code == 422
+
+
+def test_tripwire_is_bought_for_any_track_and_lifts_its_limits(client) -> None:
+    _, main = client
+    funnel = main.funnel
+    run = asyncio.run
+    tg = 77
+    run(funnel.repo().unlock_track_unlimited(tg, "free-track"))
+    funnel._MEMORY.tripwire.add((tg, "pushed-track"))  # купил на другой трек
+    q = run(funnel.track_quota(tg, "pushed-track"))
+    assert q.tripwire and q.max_videos == 25
+    assert run(funnel.plan_generation(tg, "pushed-track", 25, 0))[0] == "free"
+
+
+def test_tripwire_offer_opens_at_first_limit_and_lives_a_day(client, monkeypatch) -> None:
+    _, main = client
+    funnel = main.funnel
+    run = asyncio.run
+    tg = 78
+    assert run(funnel.tripwire_offer(tg, None)) is None  # лимит ещё не упирался
+    now = datetime(2026, 10, 3, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(funnel, "now_utc", lambda: now)
+    blocked = funnel.tu.TrackQuota(False, "cooldown", 0, 5, now, False)
+    funnel._MEMORY.actions.setdefault(tg, {})
+    offer = run(funnel.tripwire_offer(tg, blocked))
+    funnel._MEMORY.actions[tg]["tripwire_offer"] = now
+    offer = run(funnel.tripwire_offer(tg, None))
+    assert offer["expiresAt"] == (now + timedelta(hours=24)).isoformat()
+    monkeypatch.setattr(funnel, "now_utc", lambda: now + timedelta(hours=25))
+    assert run(funnel.tripwire_offer(tg, None)) is None

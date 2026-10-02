@@ -26,6 +26,9 @@ REMINDER_GAP = timedelta(hours=20)
 UNOPENED_STEPS = (timedelta(minutes=30), timedelta(hours=3), timedelta(hours=20))
 NO_GEN_STEPS = (timedelta(hours=3), timedelta(days=1), timedelta(days=3))
 IDLE_STEPS = (timedelta(days=3), timedelta(days=7), timedelta(days=14))
+# Догон трипваера: предложение живёт сутки, поэтому шаги внутри суток и без общего
+# «не чаще раза в 20 часов» — иначе к последнему шагу предложение уже закончится.
+TRIPWIRE_STEPS = (timedelta(hours=2), timedelta(hours=12), timedelta(hours=21))
 
 
 @dataclass(frozen=True)

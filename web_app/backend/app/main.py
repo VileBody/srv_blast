@@ -706,39 +706,16 @@ async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int)
         raise HTTPException(status_code=422, detail={"code": "handoff_invalid", "message": "Ссылка без трека."})
 
     billing = _billing_backend()
-    from .billing_backend import TrackQuotaExhausted
-
     try:
+        # Слот трека здесь НЕ тратим: открыть ссылку «посмотреть» не значит взять трек.
+        # Слот спишется при первой генерации на сайте (consume_track в сабмите). Здесь
+        # только предупреждаем, если генерация по треку упрётся в лимит треков.
         allowed = await billing.can_upload_track(tg_id, audio_hash)
-        registered = (
-            await run_in_threadpool(_production_backend().register_bot_track, audio_s3_url, filename=filename)
-            if allowed
-            else None
-        )
+        registered = await run_in_threadpool(_production_backend().register_bot_track, audio_s3_url, filename=filename)
     except Exception as exc:
         raise _production_error(exc) from exc
-
-    def _new_project() -> dict[str, Any]:
-        project = store.create_project(Path(filename).stem or "Новый проект", "TRIAL", "auto")
-        analytics.track("project_created", store.current_user_id(), {"projectId": project["id"], "source": "bot_handoff"})
-        return project
-
-    async def _without_track(project: dict[str, Any]) -> dict[str, Any]:
-        analytics.track("limit_hit", store.current_user_id(), {"limit": "tracks", "source": "bot_handoff"})
-        await billing.set_handoff_result(token, {"projectId": project["id"]})
-        return {"projectId": project["id"], "track": None, "repeat": False, "trackError": "tracks_limit"}
-
-    if registered is None:
-        return await _without_track(_new_project())
-    try:
-        # Слот трека тратим здесь, как при обычной загрузке на сайте. Хэш тот же, по
-        # которому бот считает свои треки, — генерация этого трека в боте второй слот не возьмёт.
-        await billing.consume_track(tg_id, audio_hash)
-    except TrackQuotaExhausted:
-        return await _without_track(_new_project())
-    except Exception as exc:
-        raise _production_error(exc) from exc
-    project = _new_project()
+    project = store.create_project(Path(filename).stem or "Новый проект", "TRIAL", "auto")
+    analytics.track("project_created", store.current_user_id(), {"projectId": project["id"], "source": "bot_handoff"})
     track = store.save_track(
         filename,
         s3_url=registered["s3_url"],
@@ -747,7 +724,11 @@ async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int)
     )
     analytics.track("track_uploaded", store.current_user_id(), {"trackId": track["id"], "source": "bot_handoff"})
     await billing.set_handoff_result(token, {"projectId": project["id"], "trackId": track["id"]})
-    return {"projectId": project["id"], "track": track, "repeat": False}
+    out: dict[str, Any] = {"projectId": project["id"], "track": track, "repeat": False}
+    if not allowed:
+        analytics.track("limit_hit", store.current_user_id(), {"limit": "tracks", "source": "bot_handoff"})
+        out["trackError"] = "tracks_limit"
+    return out
 
 
 # Ссылка «на сайт» из публичного бота: бот уже знает chat_id, поэтому подтверждать вход
@@ -2301,12 +2282,14 @@ async def api_funnel_tripwire(payload: FunnelTripwirePayload) -> dict[str, Any]:
         )
     _, audio_hash = _track_hash_for(payload.trackId)
     tg_id = _telegram_chat_id()
-    unl = await funnel.repo().get_track_unlimited(tg_id)
-    if unl and unl["audio_hash"] != audio_hash:
+    # Трипваер — на любой трек; но предложение живёт сутки с первого упора в лимит.
+    if await funnel.tripwire_offer(tg_id, None) is None:
         raise HTTPException(
-            status_code=409,
-            detail={"code": "unlimited_other_track", "message": "Безлимит уже открыт на другом треке."},
+            status_code=410,
+            detail={"code": "tripwire_expired", "message": "Предложение уже закончилось."},
         )
+    if await funnel.repo().has_track_tripwire(tg_id, audio_hash):
+        raise HTTPException(status_code=409, detail={"code": "tripwire_owned", "message": "Лимиты с этого трека уже сняты."})
     from .billing_backend import PaymentInitError
 
     try:

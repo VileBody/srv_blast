@@ -32,7 +32,8 @@ def test_first_day_is_two_batches_four_hours_apart():
     assert q.allowed and q.max_videos == 5
     b2 = tu.TrackBatch(T0 + 5 * H, 3, "free")
     q = _q(T0 + 10 * H, batches=[b1, b2])
-    assert q.reason == tu.REASON_DAILY_LIMIT and q.available_at == T0 + 24 * H
+    # в конце суток окно ещё держит 8 роликов первого дня: можно, когда выпадет b1
+    assert q.reason == tu.REASON_DAILY_LIMIT and q.available_at == b1.created_at + 24 * H
 
 
 def test_after_first_day_five_videos_per_rolling_day():
@@ -57,3 +58,16 @@ def test_credit_batches_do_not_eat_the_daily_quota():
     day2 = T0 + 30 * H
     paid = tu.TrackBatch(day2, 5, "credits")
     assert _q(day2 + H, batches=[paid]).max_videos == 5
+
+
+def test_starter_batch_is_the_first_of_the_two():
+    """Первые 5 роликов за кредиты открывают первые сутки: бесплатно ещё один батч."""
+    trial = tu.TrackBatch(T0 - 10 * timedelta(minutes=1), 5, "credits")
+    unlocked = T0
+    assert _q(T0 + 4 * H, unlocked=unlocked, batches=[trial]).allowed
+    free = tu.TrackBatch(T0 + 4 * H, 5, "free")
+    q = _q(T0 + 9 * H, unlocked=unlocked, batches=[trial, free])
+    assert q.reason == tu.REASON_DAILY_LIMIT
+    # дальше — 5 в скользящие сутки: бесплатный батч первого дня держит окно ещё сутки
+    assert q.available_at == free.created_at + 24 * H
+    assert _q(free.created_at + 24 * H + timedelta(minutes=1), unlocked=unlocked, batches=[trial, free]).max_videos == 5

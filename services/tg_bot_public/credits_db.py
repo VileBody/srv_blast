@@ -878,6 +878,9 @@ class CreditsDB:
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_web_handoff_tg_created ON web_handoff_tokens(tg_id, created_at)"
         )
+        # NULL — многоразовая (развилка: открыть позже с компьютера), 1 — одноразовая
+        # (/site, напоминания: человек всегда может попросить новую).
+        await conn.execute("ALTER TABLE web_handoff_tokens ADD COLUMN IF NOT EXISTS max_redeems INTEGER")
         # Бесплатный «безлимит на трек» (services/tg_bot_public/track_unlimited.py).
         # PRIMARY KEY tg_id: безлимит открывается на ОДИН трек и не переносится.
         # TIMESTAMPTZ — квоты считаются по UTC-времени, без наивных datetime.
@@ -906,6 +909,16 @@ class CreditsDB:
         )
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_track_batches_track ON track_batches(tg_id, audio_hash, created_at)"
+        )
+        # Купленный безлимит (трипваер 399 ₽): на ЛЮБОЙ трек, независимо от бесплатного.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS track_tripwire ("
+            "tg_id       BIGINT NOT NULL,"
+            "audio_hash  TEXT NOT NULL,"
+            "order_id    TEXT NOT NULL,"
+            "paid_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "PRIMARY KEY (tg_id, audio_hash)"
+            ")"
         )
         await conn.execute(
             "CREATE TABLE IF NOT EXISTS track_tripwire_orders ("
@@ -2080,6 +2093,7 @@ class CreditsDB:
         payload: Optional[Dict[str, Any]] = None,
         *,
         ttl_seconds: int,
+        single_use: bool = False,
     ) -> str:
         """Mint a link token for the site and return the raw token.
 
@@ -2092,13 +2106,14 @@ class CreditsDB:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             await conn.execute(
-                "INSERT INTO web_handoff_tokens (token_hash, tg_id, kind, payload, expires_at) "
-                "VALUES ($1, $2, $3, $4::jsonb, NOW() + make_interval(secs => $5))",
+                "INSERT INTO web_handoff_tokens (token_hash, tg_id, kind, payload, expires_at, max_redeems) "
+                "VALUES ($1, $2, $3, $4::jsonb, NOW() + make_interval(secs => $5), $6)",
                 self.hash_handoff_token(token),
                 int(tg_id),
                 kind,
                 json.dumps(payload or {}, ensure_ascii=False),
                 int(ttl_seconds),
+                1 if single_use else None,
             )
         return token
 
@@ -2116,6 +2131,7 @@ class CreditsDB:
                 "UPDATE web_handoff_tokens SET redeem_count = redeem_count + 1, "
                 "first_redeemed_at = COALESCE(first_redeemed_at, NOW()), last_redeemed_at = NOW() "
                 "WHERE token_hash = $1 AND expires_at > NOW() "
+                "AND (max_redeems IS NULL OR redeem_count < max_redeems) "
                 "RETURNING tg_id, kind, payload, result, redeem_count",
                 self.hash_handoff_token(token),
             )
@@ -2149,21 +2165,38 @@ class CreditsDB:
         )
         if not audio_hash:
             raise ValueError(f"tripwire order {order_id} has no track")
-        row = await conn.fetchrow(
-            "INSERT INTO track_unlimited (tg_id, audio_hash, tripwire_order_id, tripwire_paid_at) "
-            "VALUES ($1, $2, $3, NOW()) "
-            "ON CONFLICT (tg_id) DO UPDATE SET tripwire_order_id = EXCLUDED.tripwire_order_id, "
-            "tripwire_paid_at = COALESCE(track_unlimited.tripwire_paid_at, NOW()) "
-            "WHERE track_unlimited.audio_hash = EXCLUDED.audio_hash "
-            "RETURNING audio_hash",
+        # Трипваер — на любой трек, не обязательно тот, где открыт бесплатный безлимит:
+        # бывает, человек тестировал на одном треке, а пушить хочет другой.
+        await conn.execute(
+            "INSERT INTO track_tripwire (tg_id, audio_hash, order_id) VALUES ($1, $2, $3) "
+            "ON CONFLICT (tg_id, audio_hash) DO NOTHING",
             int(tg_id),
             str(audio_hash),
             order_id,
         )
-        if row is None:
-            # Заказ оформлен на другой трек, чем открытый безлимит. Сайт такое не
-            # создаёт; деньги приняты — оператор должен увидеть и разобрать вручную.
-            log.error("tripwire_track_mismatch tg=%s order=%s", tg_id, order_id)
+
+    async def has_track_tripwire(self, tg_id: int, audio_hash: str) -> bool:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT 1 FROM track_tripwire WHERE tg_id = $1 AND audio_hash = $2",
+                int(tg_id),
+                str(audio_hash),
+            )
+        return row is not None
+
+    async def tripwire_offer_rows(self, max_age_hours: int = 24) -> List[Dict[str, Any]]:
+        """Открытые предложения трипваера (24 ч с первого упора в лимит) без покупки."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT a.tg_id, a.created_at, EXTRACT(EPOCH FROM NOW() - a.created_at) AS age_s "
+                "FROM funnel_actions a "
+                "WHERE a.action = 'tripwire_offer' AND a.created_at > NOW() - make_interval(hours => $1) "
+                "AND NOT EXISTS (SELECT 1 FROM track_tripwire t WHERE t.tg_id = a.tg_id AND t.paid_at >= a.created_at)",
+                int(max_age_hours),
+            )
+        return [dict(r) for r in rows]
 
     async def record_tripwire_order(self, *, order_id: str, tg_id: int, audio_hash: str) -> None:
         pool = self._pool_or_fail()

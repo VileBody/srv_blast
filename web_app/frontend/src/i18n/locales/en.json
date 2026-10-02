@@ -1001,7 +1001,8 @@
     "unlimited": "∞ uses",
     "noLimit": "No limit",
     "of": "{{used}} of {{total}}",
-    "out": "used up"
+    "out": "used up",
+    "blastNudge": "Blast subscription: 100 videos and 4 tracks a month for 1 990 ₽"
   },
   "auth": {
     "registerTitle": "Sign up",
@@ -1409,7 +1410,7 @@
     "trackReady": "Your track from the bot is here",
     "trackReadyText": "Add the lyrics and pick a segment — we'll guide you from there.",
     "tracksLimit": "Track limit reached",
-    "tracksLimitText": "This track doesn't fit your plan. Upgrade it to build a video.",
+    "tracksLimitText": "The track is in the project, but your track limit is used up. Upgrade to build videos.",
     "expired": "This link has expired",
     "expiredText": "Send /site to the bot to get a new one, or log in with Telegram.",
     "error": "Couldn't open the link",
@@ -1511,10 +1512,11 @@
     },
     "tripwire": {
       "title": "No waiting for {{price}} ₽",
-      "text": "Same track: up to {{cap}} videos per batch, no cooldown. One-time, not a subscription.",
+      "text": "Any of your tracks: up to {{cap}} videos per batch, no cooldown. One-time, not a subscription.",
       "buy": "Remove limits",
       "paid": "Limits removed from the track",
-      "failed": "Payment didn't go through"
+      "failed": "Payment didn't go through",
+      "expires": "Offer ends in {{time}}"
     },
     "limits": {
       "track": "Track unlimited",

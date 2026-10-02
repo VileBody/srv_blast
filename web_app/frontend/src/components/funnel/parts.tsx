@@ -383,15 +383,21 @@ export function TripwireOffer({
   rules,
   onBuy,
   pending,
-  stacked = false
+  stacked = false,
+  expiresAt,
+  now
 }: {
   rules: FunnelRules;
   onBuy?: () => void;
   pending?: boolean;
   /** узкое место (окно у кружка лимитов): текст на всю ширину, кнопка под ним */
   stacked?: boolean;
+  /** конец суточного окна предложения — показываем, сколько осталось */
+  expiresAt?: string | null;
+  now?: number;
 }) {
   const { t } = useTranslation();
+  const left = useCountdown(expiresAt ?? null, now);
   return (
     <div className={cn('flex gap-[16px] rounded-r15 border border-accent-line bg-accent-soft p-[16px]', stacked ? 'flex-col' : 'items-center max-md:flex-col max-md:items-stretch')}>
       {!stacked && (
@@ -405,6 +411,12 @@ export function TripwireOffer({
           {t('funnel.tripwire.title', { price: rules.tripwirePriceRub })}
         </p>
         <p className="mt-[4px] text-ui-14 text-text-60 [text-wrap:pretty]">{t('funnel.tripwire.text', { cap: rules.tripwireBatchCap })}</p>
+        {expiresAt && (
+          <p className="mt-[8px] flex items-center gap-[6px] text-ui-12 tabular-nums text-accent-light">
+            <Icon>{FN_GLYPH.clock}</Icon>
+            {t('funnel.tripwire.expires', { time: left.text })}
+          </p>
+        )}
       </div>
       {onBuy && (
         <Button variant="primary" size="sm" loading={pending} onClick={onBuy} className={stacked ? 'self-start' : undefined}>

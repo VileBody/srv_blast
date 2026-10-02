@@ -28,6 +28,7 @@ export function App() {
       <Route path="/register" element={<AuthPage mode="register" />} />
       <Route path="/blocked" element={<BlockedPage />} />
       {/* ссылка «на сайт» из публичного бота: вход по токену + трек в визарде */}
+      <Route path="/go" element={<HandoffPage />} />
       <Route path="/go/:token" element={<HandoffPage />} />
       <Route path="/not-found" element={<SimplePage kind="404" />} />
       <Route path="/error" element={<SimplePage kind="error" />} />
