@@ -10,6 +10,7 @@ import { EFFECT_HOOKS, MOTIONS, NO_GLUE, OBJECTS, THOUGHTS, previewIdFor } from 
 import { PACES, useRecipeCuts } from '../storyboardData';
 import { secondsToDropTime, usePlaybackUrl, useWaveSourceUrl } from '../useFragmentAudio';
 import { useSegmentWave } from './segmentWave';
+import { usePhone } from '../../../lib/usePhone';
 import { SubtitleTextCustomization } from '../SubtitlesPanel';
 import { SubtitleCanvas, type SubtitleCanvasProps } from '../SubtitleCanvas';
 import { StoryboardReplaceGuideVisual, TimelineEntryGuideVisual } from '../timelineGuides';
@@ -18,6 +19,7 @@ import { useTranslation } from 'react-i18next';
 import { ActionGuideOverlay } from '../../guidance/ActionGuideOverlay';
 import '../FxTimeline.css';
 import './montage.css';
+import './montage.mobile.css';
 import { useCombos, type Combo } from './combos';
 import { FrameDock, FrameView, useFramesOf, type Frame } from './sources';
 
@@ -416,7 +418,7 @@ const STYLE_GROUPS: Group[] = withRegistryItems([
 ], effectsRegistry.style as RegistryFx[]);
 
 /* ── библиотека ── */
-const Library = memo(function Library({ tab, setTab, open, setOpen, used, activeHookKind, subStyle, subPreviews, onPickSub, textCfg, onAdd, onDragStart, frames, frameId, onPickFrame, frameNote, frameBase, frameAll, previewOf }: {
+const Library = memo(function Library({ tab, setTab, open, setOpen, used, activeHookKind, subStyle, subPreviews, onPickSub, textCfg, onAdd, onDragStart, frames, frameId, onPickFrame, frameNote, frameBase, frameAll, previewOf, tapAdd }: {
   tab: LibKind; setTab: (tab: LibKind) => void; open: Record<string, boolean>; setOpen: (kind: string) => void;
   used: (item: LibItem) => boolean; activeHookKind?: HookKind;
 
@@ -426,12 +428,15 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
   frames: { id: string; label: string; previewUrl: string }[]; frameId?: string | null; onPickFrame: (id: string | null) => void; frameNote?: string; frameBase?: ReactNode; frameAll?: ReactNode;
   /** пример пункта хуков/переходов/стилей — плитка с автоплеем: по одному названию не выбрать */
   previewOf: (item: LibItem) => LibPreview;
+  /** телефон: тап по плитке ставит её (CapCut) — перетаскивать на дорожку пальцем неудобно */
+  tapAdd?: boolean;
 }) {
   const tile = (item: LibItem) => {
     const on = used(item);
     return (
       <div key={`${item.kind}:${item.label}`} className={`mt-fxtile${on ? ' on' : ''}`} tabIndex={0} data-tip={META[item.label] || undefined}
-        onPointerDown={(e) => { if (!(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
+        onPointerDown={(e) => { if (!tapAdd && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
+        onClick={tapAdd ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}
         onKeyDown={(e) => { if (e.key === 'Enter') onAdd(item); }}>
         <TileMedia preview={previewOf(item)} />
         <span className="nm"><b>{item.label}</b></span>
@@ -445,7 +450,8 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
     const on = used(item);
     return (
       <div key={`${item.kind}:${item.label}`} className={`fxt-item${on ? ' on' : ''}${disabled ? ' off' : ''}`} tabIndex={0}
-        onPointerDown={(e) => { if (!disabled && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
+        onPointerDown={(e) => { if (!tapAdd && !disabled && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
+        onClick={tapAdd && !disabled ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}
         onKeyDown={(e) => { if (e.key === 'Enter' && !disabled) onAdd(item); }}>
         {lead}
         <span className="nm"><b>{item.label}</b><small>{meta ?? META[item.label] ?? ''}</small></span>
@@ -744,6 +750,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const framesOfCombo = useFramesOf(shots);
   const clipsOf = framesOfCombo;
   const clips = framesOfCombo(combo);
+  // статичный цвет (без стробоскопа) склеек в рендере не имеет — переход на нём бэк отвергнет
+  // при генерации (montage.py), поэтому склейки-переходы на таком ролике не показываем вовсе
+  const staticColor = clips.length > 0 && clips.every((c) => c.color && !c.strobe);
   // Пример пункта библиотеки: настоящий рендер из каталога эффектов (как на шаге FX), а если его
   // нет — тот же эффект на кадрах этого ролика (переход — на первой склейке, хук — у дропа).
   const previewOf = (item: LibItem): LibPreview => {
@@ -826,6 +835,25 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const [keysOpen, setKeysOpen] = useState(false);
   const [switchOpen, setSwitchOpen] = useState(false);
   const [lane2Open, setLane2Open] = useState(false);
+  /*
+   * Телефон — раскладка по CapCut: превью сверху, под ним время и плей, таймлайн с неподвижной
+   * линией по центру (листаешь дорожки — двигается время), внизу панель инструментов; у
+   * выбранного элемента — свои действия, библиотека открывается шторкой. Логика правок та же.
+   */
+  const phone = usePhone();
+  const [sheet, setSheet] = useState<null | 'hook' | 'trans' | 'style' | 'text' | 'frame' | 'pace'>(null);
+  const [dockReq, setDockReq] = useState<{ kind: 'edit' | 'shuffle'; n: number } | null>(null);
+  const askDock = (kind: 'edit' | 'shuffle') => setDockReq((r) => ({ kind, n: (r?.n ?? 0) + 1 }));
+  /** телефон: панель замены кадра встаёт на место нижней панели инструментов */
+  const [replaceSlot, setReplaceSlot] = useState<HTMLElement | null>(null);
+  // шторка открывается сразу с плитками: если в ней ничего не раскрыто — раскрываем первую
+  // непустую группу (на телефоне лишний тап по заголовку группы — это лишний шаг)
+  useEffect(() => {
+    if (!sheet || sheet === 'pace' || sheet === 'text' || sheet === 'frame') return;
+    const ids = sheet === 'hook' ? HOOK_CATS.filter((c) => c.options.length).map((c) => c.kind as string)
+      : (sheet === 'trans' ? GLUE_GROUPS : STYLE_GROUPS).filter((g) => g.items.length).map((g) => g.id);
+    setOpenState((cur) => (ids.some((id) => cur[id]) || !ids.length ? cur : { ...cur, [ids[0]]: true }));
+  }, [sheet]);
   // Исходники в два шага: вайб в библиотеке → кадры ролика справа (механика раскадровки «Пула»)
   const [editK, setEditK] = useState<number | null>(null);
   const dockRef = useRef<HTMLDivElement>(null);
@@ -915,26 +943,68 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const [stageSize, setStageSize] = useState({ w: 360, h: 640 });
   const [mainSize, setMainSize] = useState({ w: 1200, h: 800 });
   const [scrollW, setScrollW] = useState(800);
+  const pvRef = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
     const main = mainRef.current;
     if (!main) return undefined;
     const fit = () => {
-      const H = main.clientHeight - 28;
-      setStageSize({ w: Math.round(H * 9 / 16), h: H });
+      const pv = pvRef.current;
+      if (phone && pv) {
+        const w = Math.min(pv.clientWidth, Math.floor(pv.clientHeight * 9 / 16));
+        setStageSize({ w, h: Math.round(w * 16 / 9) });
+      } else {
+        const H = main.clientHeight - 28;
+        setStageSize({ w: Math.round(H * 9 / 16), h: H });
+      }
       setMainSize({ w: main.clientWidth, h: main.clientHeight });
       if (scrollRef.current) setScrollW(scrollRef.current.clientWidth);
     };
     fit();
     const ro = new ResizeObserver(fit);
-    ro.observe(main); if (tlRef.current) ro.observe(tlRef.current);
+    ro.observe(main); if (tlRef.current) ro.observe(tlRef.current); if (pvRef.current) ro.observe(pvRef.current);
     return () => ro.disconnect();
-  }, [view]);
-  const pps = Math.max(10, (scrollW - X0 * 2) / dur) * zoom;
-  const tx = (s: number) => X0 + s * pps;
-  const xt = (x: number) => (x - X0) / pps;
-  const canvasW = tx(dur) + X0;
+  }, [view, phone]);
+  // телефон: ноль времени стоит под центральной линией, на экране ~6 секунд (масштаб — щипком)
+  const x0 = phone ? Math.round(scrollW / 2) : X0;
+  const pps = phone ? Math.max(8, scrollW / 6) * zoom : Math.max(10, (scrollW - X0 * 2) / dur) * zoom;
+  const tx = (s: number) => x0 + s * pps;
+  const xt = (x: number) => (x - x0) / pps;
+  const canvasW = tx(dur) + x0;
   const frameAt = (v: number) => frameIndex(bounds, v);
   const fNow = frameAt(t);
+
+  // Прокрутка дорожек и время связаны в обе стороны: играет ролик — дорожки едут под линией;
+  // палец листает дорожки — время идёт за ними (ролик при этом встаёт на паузу, как в CapCut).
+  const ownScroll = useRef(0);
+  useLayoutEffect(() => {
+    if (!phone) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const want = t * pps;
+    if (Math.abs(el.scrollLeft - want) > 1) { ownScroll.current = performance.now(); el.scrollLeft = want; }
+  }, [phone, t, pps, canvasW, view]);
+  const onPhoneScroll = () => {
+    const el = scrollRef.current;
+    if (!el || performance.now() - ownScroll.current < 80) return;
+    if (playing) setPlaying(false);
+    const v = clamp(el.scrollLeft / pps, 0, dur - 1 / FPS);
+    if (Math.abs(v - tRef.current) > 1e-3) seek(v);
+  };
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!phone || !el) return undefined;
+    let d0 = 0; let z0 = 1;
+    const dist = (e: TouchEvent) => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    const startT = (e: TouchEvent) => { if (e.touches.length === 2) { d0 = dist(e); z0 = zoomRef.current; } };
+    const moveT = (e: TouchEvent) => { if (e.touches.length === 2 && d0) { e.preventDefault(); setZoom(clamp(z0 * dist(e) / d0, 0.4, 5)); } };
+    const endT = (e: TouchEvent) => { if (e.touches.length < 2) d0 = 0; };
+    el.addEventListener('touchstart', startT, { passive: true });
+    el.addEventListener('touchmove', moveT, { passive: false });
+    el.addEventListener('touchend', endT);
+    return () => { el.removeEventListener('touchstart', startT); el.removeEventListener('touchmove', moveT); el.removeEventListener('touchend', endT); };
+  }, [phone, view]);
 
   /* ── стили на дорожках ── */
   const styles = vfx.styles;
@@ -953,7 +1023,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     }
     say('На этом кадре уже два стиля — это максимум');
   };
-  const setTransition = (i: number, label: string) => { remember(); setTimeline({ transitions: { ...vfx.transitions, [i]: label } }); };
+  const noCutsNote = () => say('У статичного цвета нет склеек — переход на нём не встанет');
+  const setTransition = (i: number, label: string) => { if (staticColor && label !== NO_GLUE) { noCutsNote(); return; } remember(); setTimeline({ transitions: { ...vfx.transitions, [i]: label } }); };
   const popEdited = useRef<number | null>(null);
   const setCutTransition = (i: number, label: string) => {
     if (popEdited.current !== i) { remember(); popEdited.current = i; }
@@ -961,6 +1032,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     setTimeline({ transitions: { ...cur, [i]: label } });
   };
   const setTransitionAll = (label: string) => {
+    if (staticColor && label !== NO_GLUE) { noCutsNote(); return; }
     remember();
     setTimeline({ transitions: Object.fromEntries(cuts.map((_, i) => [i, label])) });
     setHooks({ config: { effectGlue: label } });
@@ -1129,6 +1201,28 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   });
 
   const srcPins: Record<number, string> = sbVideo?.pins ?? {};
+  const tapStart = useRef<{ x: number; y: number } | null>(null);
+  const onCanvasDownPhone = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    const selected = target.closest('.fxt-clip.sel');
+    // у выбранного кадра тянутся только края (двигают склейку), у остального — и тело
+    if (selected && (!selected.classList.contains('fr') || target.closest('.fxt-edge'))) { tapStart.current = null; onCanvasDown(e); return; }
+    tapStart.current = { x: e.clientX, y: e.clientY };
+  };
+  const onCanvasTap = (e: React.MouseEvent<HTMLDivElement>) => {
+    const from = tapStart.current; tapStart.current = null;
+    if (!from || Math.hypot(e.clientX - from.x, e.clientY - from.y) > 8) return;
+    const target = e.target as HTMLElement;
+    if (target.closest('.fxt-join')) return;
+    const st = target.closest<HTMLElement>('.fxt-clip.st');
+    if (st) { setSel({ type: 'style', uid: Number(st.dataset.uid) }); return; }
+    if (target.closest('.fxt-clip.hk')) { setSel({ type: 'hook' }); return; }
+    const sb = target.closest<HTMLElement>('.fxt-clip.sb');
+    if (sb) { setSel({ type: 'sub', i: Number(sb.dataset.sub) }); return; }
+    const fr = target.closest<HTMLElement>('.fxt-clip.fr');
+    if (fr) { setSel({ type: 'frame', i: Number(fr.dataset.frame) }); return; }
+    setSel(null);
+  };
   const onCanvasDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
@@ -1231,8 +1325,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   };
   const stageFxFor = (c: Combo): StageFx => { const v = fxOf(c.index); return { transitionAt: transitionAtFor(v), styles: v.styles, hookKind: v.kind, hookLabel: hookLabel(v.kind, v.config), hookRange: hookRangeFor(v), frameUrl: frameUrlOf(v.frame) }; };
   const subFor = (c: Combo) => subProps(fxOf(c.index).sub ?? c.sub, !c.vertical);
-  const showFramesGuide = view === 'table' && Boolean(sbVideo) && !framesGuideDismissed && editK === null;
-  const showLanesGuide = view === 'table' && (framesGuideDismissed || !sbVideo) && !lanesGuideDismissed && editK === null && !pop && !keysOpen;
+  const showFramesGuide = !phone && view === 'table' && Boolean(sbVideo) && !framesGuideDismissed && editK === null;
+  const showLanesGuide = !phone && view === 'table' && (framesGuideDismissed || !sbVideo) && !lanesGuideDismissed && editK === null && !pop && !keysOpen;
   useMarkGuideSeen('table-frames', showFramesGuide);
   useMarkGuideSeen('table-lanes', showLanesGuide);
   const isEdited = (c: Combo) => fxOf(c.index).edited || Object.keys(storyboard.videos[c.slotIndex]?.pins ?? {}).length > 0;
@@ -1250,9 +1344,281 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     return best;
   }, [mainSize, total]);
 
+  const canvas = (
+                <div ref={cvRef} className="fxt-cv" style={{ width: canvasW }} onPointerDown={phone ? onCanvasDownPhone : onCanvasDown} onClick={phone ? onCanvasTap : undefined}>
+                {/* телефон: слева от начала ролика пусто (ноль — под линией по центру), там названия
+                    дорожек. Они часть полотна — уезжают вместе с дорожками, к ним можно отлистать */}
+                {phone && (
+        <div className="mm-heads">
+          <div className="mm-h r" />
+          <div className="mm-h f"><span className="fxt-ic k-frame sm"><Glyph name="film" size={13} /></span><span className="tx">Кадры</span></div>
+          <div className="mm-h hk"><span className="fxt-ic k-hook sm"><Glyph name="effects" size={13} /></span><span className="tx">Хук</span></div>
+          <div className="mm-h st">
+            <span className="fxt-ic k-style sm"><Glyph name="crystal" size={13} /></span><span className="tx">Стиль</span>
+            {!lane2 && <button type="button" className="mm-hadd" aria-label="Добавить вторую дорожку стиля" onClick={() => setLane2Open(true)}><Glyph name="plus" size={14} sw={2} /></button>}
+          </div>
+          {lane2 && (
+            <div className="mm-h st">
+              <span className="fxt-ic k-style sm"><Glyph name="crystal" size={13} /></span><span className="tx">Стиль 2</span>
+              {!styles.some((x) => x.lane === 1) && <button type="button" className="mm-hadd" aria-label="Убрать вторую дорожку стиля" onClick={() => setLane2Open(false)}><Glyph name="close" size={11} sw={2} /></button>}
+            </div>
+          )}
+          <div className="mm-h sb"><span className="fxt-ic k-trans sm"><Glyph name="text" size={13} /></span><span className="tx">Текст</span></div>
+          <div className="mm-h au"><span className="fxt-ic k-trans sm"><Glyph name="audio" size={13} /></span><span className="tx">Биты</span></div>
+        </div>
+                )}
+                  <div className="fxt-ruler">
+                    {ticks.map(({ v, maj }) => <span key={v}><i className={`fxt-tick${maj ? ' maj' : ''}`} style={{ left: tx(v) }} />{maj && <span className="fxt-tlab num" style={{ left: tx(v) }}>{pad(Math.floor((start + v) / 60))}:{pad(Math.round(start + v) % 60)}</span>}</span>)}
+                    {dropView !== null && <div className="fxt-dropflag num" style={{ left: tx(dropView) }}><span>Дроп {tc(start + dropView)}</span></div>}
+                  </div>
+                  <div ref={(el) => { laneRefs.current.frames = el; }} className={`fxt-lane l-frames mt-l-src${place && 'lane' in place && place.lane === 'frames' ? ' over' : ''}`}>
+                    {recipe.loading && <span className="fxt-hint" style={{ left: x0 + 8 }}>Считаем склейки по темпу трека…</span>}
+                    {!recipe.loading && Array.from({ length: shots }, (_, i) => {
+                      const x = tx(bounds[i]); const w = tx(bounds[i + 1]) - x; const clip = clips[i]; const pinned = Boolean(srcPins[i]);
+                      return (
+                        <div key={`f${i}`} className={`fxt-clip fr mt-fr${sel?.type === 'frame' && sel.i === i ? ' sel' : ''}${i === fNow ? ' cur' : ''}`} data-frame={i} style={{ left: x + 1, width: w - 2 }}
+                          >
+                          {clip?.url && <span className={`mt-film${clip.fit === 'contain' ? ' wide' : ''}`} style={{ backgroundImage: `url("${clip.url}")` }} />}
+                          {clip?.color && <span className={`mt-film mt-filmc${clip.strobe ? ' strobe' : ''}`} style={{ background: clip.color }} />}
+                          {i > 0 && <i className="fxt-edge l" data-cut={i - 1} />}
+                          <span className="n num">{pad(i + 1)}</span>
+                          {pinned && <span className="mt-pin" data-tip="Закреплён вручную"><Glyph name="lock" size={10} sw={2.2} /></span>}
+                          {w > 86 && <span className="d num">{secs(bounds[i + 1] - bounds[i])}</span>}
+                          {i < shots - 1 && <i className="fxt-edge r" data-cut={i} />}
+                        </div>
+                      );
+                    })}
+                    {!recipe.loading && !staticColor && cuts.map((c, i) => {
+                      const label = transitionAt(i);
+                      return (
+                        <button key={`j${i}`} type="button" className={`fxt-join${label === NO_GLUE ? ' none' : ''}${sel?.type === 'frame' && (sel.i === i || sel.i === i + 1) ? ' under' : ''}${sel?.type === 'cut' && sel.i === i ? ' sel' : ''}${place && 'join' in place && place.join === i ? ' target' : ''}`} style={{ left: tx(c) }} aria-label={`Склейка ${i + 1}: ${label}`}
+                          onClick={(e) => { setSel({ type: 'cut', i }); popEdited.current = null; if (phone) { setSheet('trans'); return; } seek(Math.max(0, c - 0.5)); const z = zoomScale(); const r = e.currentTarget.getBoundingClientRect(); setPop({ type: 'cut', i, x: (r.left + r.width / 2) / z, y: r.top / z }); }}>
+                          {label === NO_GLUE ? <Glyph name="plus" size={12} sw={2} /> : <Ic kind="trans" label={label} on size={24} />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div ref={(el) => { laneRefs.current.hook = el; }} className={`fxt-lane l-hook${place && 'lane' in place && place.lane === 'hook' ? ' over' : ''}`}>
+                    {hookRange && activeHookLabel
+                      ? (() => { const x = tx(hookRange[0]); const w = Math.max(18, tx(hookRange[1]) - x); return <><div className={`fxt-clip hk${sel?.type === 'hook' ? ' sel' : ''}${dragDrop !== null ? ' drag' : ''}`} style={{ left: x, width: w }} data-tip="Тяни — сдвинуть дроп (прилипает к битам) · ← → по битам"><Glyph name={GLYPH[activeHookLabel]} size={13} />{w >= 80 && <span className="lab">{activeHookLabel}</span>}{config.effectHook === 'Слоу-шаттер' && kind === 'effects' && <i className="fxt-edge r" data-hookedge="r" data-tip="Тяни: стандарт · 3 кадра · до конца" />}</div>{w < 80 && <span className="fxt-outlab" style={{ left: x + w + 8 }}>{activeHookLabel}</span>}</>; })()
+                      : <span className="fxt-hint" style={{ left: tx(drop ?? 0) + 10 }}>{drop === null ? 'Выбери дроп на шаге FX — хук встанет на него' : 'Без хука — перетащи хук из библиотеки, он встанет на дроп'}</span>}
+                  </div>
+                  {(lane2 ? [0, 1] as const : [0] as const).map((L) => (
+                    <div key={L} ref={(el) => { laneRefs.current[`s${L}`] = el; }} className={`fxt-lane l-s${L}${place && 'lane' in place && place.lane === `s${L}` ? ' over' : ''}`}>
+                      {!styles.some((s) => s.lane === L) && <span className="fxt-hint" style={{ left: x0 + 8 }}>{L ? 'Второй стиль поверх первого — до двух на кадр' : 'Перетащи стиль — он ляжет по границам кадров'}</span>}
+                      {styles.filter((s) => s.lane === L && s.b <= shots).map((s) => {
+                        const x = tx(bounds[s.a]); const w = tx(bounds[s.b]) - x;
+                        return (
+                          <div key={s.uid} className={`fxt-clip st${sel?.type === 'style' && sel.uid === s.uid ? ' sel' : ''}`} data-uid={s.uid} style={{ left: x + 1, width: w - 2 }}>
+                            <i className="fxt-edge l" data-side="l" /><Glyph name={GLYPH[s.style]} size={13} /><span className="lab">{s.style}</span><i className="fxt-edge r" data-side="r" />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                  <div ref={(el) => { laneRefs.current.subs = el; }} className={`fxt-lane l-subs${place && 'lane' in place && place.lane === 'subs' ? ' over' : ''}`}>
+                    {!subs.length && <span className="fxt-hint" style={{ left: x0 + 8 }}>Субтитры появятся после примерки на шаге «Текст»</span>}
+                    {subs.map((s, i) => { const x = tx(Math.max(0, s.a)); const w = tx(Math.min(dur, s.b)) - x; return <div key={`s${i}`} className={`fxt-clip sb mt-word${s.focus ? ' focus' : ''}${sel?.type === 'sub' && sel.i === i ? ' sel' : ''}${t >= s.a && t < s.b ? ' cur' : ''}`} data-sub={i} style={{ left: x + 1, width: Math.max(2, w - 2) }} title={`${s.text}${s.focus ? ' · фокус-слово' : ''} — тяни, края поджимают, двойной клик — фокус`} onDoubleClick={() => toggleAsrFocus(s.idx)}>{w > 22 && <i className="fxt-edge l" data-wedge="l" />}<span className="lab">{s.focus ? '★ ' : ''}{s.text}</span>{w > 22 && <i className="fxt-edge r" data-wedge="r" />}</div>; })}
+                  </div>
+                  <div className="fxt-lane l-audio">
+                    {wavePeaksSeg && (
+                      <svg className="mt-wave" style={{ left: x0, width: tx(dur) - x0 }} viewBox={`0 0 ${wavePeaksSeg.length} 100`} preserveAspectRatio="none" aria-hidden="true">
+                        {wavePeaksSeg.map((p, k) => { const h = Math.max(4, p * 100); return <rect key={k} x={k + 0.15} y={50 - h / 2} width="0.7" height={h} />; })}
+                      </svg>
+                    )}
+                    {beats.map((b, k) => <i key={k} className={`fxt-beat${drop !== null && Math.round((b - drop) * (bpm || 120) / 60) % 4 === 0 ? ' down' : ''}`} style={{ left: tx(b) }} />)}
+                  </div>
+                  {dropView !== null && <div className="fxt-dropline" style={{ left: tx(dropView) }} />}
+                  <div className="fxt-phl" style={{ left: tx(t) }} />
+                  {snapLine !== null && <div className="fxt-snapl" style={{ left: tx(snapLine) }} />}
+                  {place && 'lane' in place && (() => {
+                    const el = laneRefs.current[place.lane]; if (!el) return null;
+                    return <div className={`fxt-place ${place.bad ? 'bad' : place.lane === 'hook' ? 'hk' : place.lane === 'frames' || place.lane === 'subs' ? 'src' : 'st'}`} style={{ left: tx(place.a), width: Math.max(18, tx(place.b) - tx(place.a)), top: el.offsetTop + 6, height: el.offsetHeight - 12 }}>{place.label && <span className="why">{place.label}</span>}</div>;
+                  })()}
+                </div>
+  );
+
+  /* ── телефон (CapCut): шапка, превью, время, таймлайн с линией по центру, панель, шторка ── */
+  const nearestCut = () => { if (!cuts.length) return -1; let k = 0; cuts.forEach((c, i) => { if (Math.abs(c - t) < Math.abs(cuts[k] - t)) k = i; }); return k; };
+  const replaceStyle = (uid: number, label: string) => {
+    remember(); setStyles(styles.map((x) => (x.uid === uid ? { ...x, style: label } : x)));
+    say(`Стиль заменён: ${label}${scopeNote}`);
+  };
+  const sheetAdd = (item: LibItem) => {
+    if (item.kind === 'style' && sel?.type === 'style') return replaceStyle(sel.uid, item.label);
+    if (item.kind === 'trans' && sel?.type === 'cut') { setTransition(sel.i, item.label); say(`Склейка ${sel.i + 1}: ${item.label}${scopeNote}`); return; }
+    addFromLib(item);
+  };
+  const nudgeWord = (i: number, d: number) => {
+    const w = subs[i]; if (!w) return;
+    const words = asr.words; const cur = words[w.idx]; if (!cur) return;
+    const len = cur.tEnd - cur.tStart;
+    const lo = words[w.idx - 1] ? words[w.idx - 1].tEnd + 0.02 : start;
+    const hi = (words[w.idx + 1] ? words[w.idx + 1].tStart - 0.02 : start + dur) - len;
+    const a = clamp(cur.tStart + d, lo, Math.max(lo, hi));
+    setAsrWord(w.idx, { tStart: Math.round(a * 1000) / 1000, tEnd: Math.round((a + len) * 1000) / 1000 });
+  };
+  const hookToBeat = (right: boolean) => {
+    if (drop === null) return;
+    const beat = right ? beats.find((b) => b > drop + 0.01) : [...beats].reverse().find((b) => b < drop - 0.01);
+    commitDrop(beat ?? drop + (right ? 1 : -1) / FPS);
+  };
+  const tool = (key: string, icon: string, label: string, run: () => void, opts: { disabled?: boolean; danger?: boolean } = {}) => (
+    <button key={key} type="button" className={`mm-tool${opts.danger ? ' danger' : ''}`} disabled={opts.disabled} onClick={run}>
+      <Glyph name={icon} size={22} /><span className="tx">{label}</span>
+    </button>
+  );
+  const tools = (() => {
+    if (!sel) {
+      return [
+        tool('src', 'reroll', 'Кадр', () => { if (!sbVideo) { say('Кадры этого ролика подберутся при генерации'); return; } setSel({ type: 'frame', i: fNow }); askDock('edit'); }, { disabled: !sbVideo }),
+        tool('trans', 't_snap', 'Переход', () => { const k = nearestCut(); if (k < 0) { say('В ролике нет склеек'); return; } setSel({ type: 'cut', i: k }); setSheet('trans'); }, { disabled: staticColor }),
+        tool('style', 'crystal', 'Стиль', () => setSheet('style')),
+        tool('hook', 'effects', 'Хук', () => setSheet('hook'), { disabled: !combo.hookAllowed }),
+        tool('text', 'text', 'Текст', () => setSheet('text')),
+        tool('frame', 'frames', 'Рамка', () => setSheet('frame'), { disabled: !combo.vertical }),
+        tool('pace', 'audio', 'Темп', () => setSheet('pace')),
+        tool('grid', 'grid', 'Все ролики', () => { setView('grid'); setSel(null); })
+      ];
+    }
+    const back = <button key="back" type="button" className="mm-tool mm-back" aria-label="Снять выделение" onClick={() => setSel(null)}><Glyph name="back" size={22} /></button>;
+    if (sel.type === 'frame') {
+      const i = sel.i;
+      return [back,
+        tool('re', 'reroll', 'Заменить', () => askDock('edit'), { disabled: !sbVideo }),
+        tool('mix', 'chain', 'Перемешать', () => askDock('shuffle'), { disabled: !sbVideo }),
+        ...(srcPins[i] ? [tool('unpin', 'lock', 'Открепить', () => { unpin(i); say(`Кадр ${i + 1} откреплён`); })] : []),
+        ...(i < shots - 1 && !staticColor ? [tool('tr', 't_snap', 'Переход', () => { setSel({ type: 'cut', i }); setSheet('trans'); })] : []),
+        tool('st', 'crystal', 'Стиль', () => setSheet('style'))];
+    }
+    if (sel.type === 'cut') {
+      const i = sel.i;
+      return [back,
+        tool('tr', 't_snap', 'Переход', () => setSheet('trans')),
+        tool('all', 'chain', 'Ко всем', () => setTransitionAll(transitionAt(i))),
+        tool('off', 't_none', 'Убрать', () => { setTransition(i, NO_GLUE); say(`Склейка ${i + 1}: без перехода`); }, { disabled: transitionAt(i) === NO_GLUE })];
+    }
+    if (sel.type === 'style') {
+      return [back, tool('re', 'crystal', 'Заменить', () => setSheet('style')), tool('del', 'trash', 'Удалить', del, { danger: true })];
+    }
+    if (sel.type === 'hook') {
+      const slow = kind === 'effects' && config.effectHook === 'Слоу-шаттер';
+      const ext = (config.effectHookExtend ?? '') as SlowExtend;
+      const nextExt = SLOW_EXTENDS[(SLOW_EXTENDS.findIndex(([o]) => o === ext) + 1) % SLOW_EXTENDS.length];
+      return [back,
+        tool('l', 'back', 'Бит назад', () => hookToBeat(false), { disabled: drop === null }),
+        tool('r', 'fwd', 'Бит вперёд', () => hookToBeat(true), { disabled: drop === null }),
+        tool('re', 'effects', 'Сменить', () => setSheet('hook')),
+        ...(slow ? [tool('ext', 'slowshutter', nextExt[1], () => setHooks({ config: { effectHookExtend: nextExt[0] } }))] : []),
+        tool('del', 'trash', 'Удалить', del, { danger: true, disabled: kind === 'none' })];
+    }
+    const i = sel.i; const w = subs[i];
+    return [back,
+      tool('focus', 'check', w?.focus ? 'Снять фокус' : 'Фокус', () => { if (w) toggleAsrFocus(w.idx); }),
+      tool('l', 'back', '−0,05 с', () => nudgeWord(i, -0.05)),
+      tool('r', 'fwd', '+0,05 с', () => nudgeWord(i, 0.05)),
+      tool('text', 'text', 'Стиль текста', () => setSheet('text'))];
+  })();
+  const sheetTitle = sheet === 'trans' ? (sel?.type === 'cut' ? `Переход · склейка ${sel.i + 1}` : 'Переход')
+    : sheet === 'style' ? (sel?.type === 'style' ? 'Заменить стиль' : `Стиль на кадр ${(sel?.type === 'frame' ? sel.i : fNow) + 1}`)
+      : sheet === 'hook' ? 'Хук на дроп' : sheet === 'text' ? 'Текст' : sheet === 'frame' ? 'Рамка' : 'Темп нарезки';
+  const mobileHeader = (
+    <header className="mm-top">
+      <button type="button" className="mm-ic" aria-label={view === 'grid' ? 'Назад к ролику' : 'К «Пулу» — правки сохраняются'} onClick={view === 'grid' ? () => setView('table') : onClose}>
+        <Glyph name={view === 'grid' ? 'back' : 'close'} size={20} />
+      </button>
+      <button type="button" className="mm-vid" aria-haspopup="listbox" aria-expanded={switchOpen} onClick={() => setSwitchOpen((o) => !o)}>
+        <span className="num tx">{index + 1}<span className="of">/{total}</span></span>
+        <span className="lb tx">{videoLabel(combo)}</span>
+        {isEdited(combo) && <i className="mt-dot" />}
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><path d="m3.5 6 4.5 4 4.5-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </button>
+      <button type="button" className="mm-gen" onClick={() => { const blocked = onGenerate(); if (blocked) say(blocked); }}><span className="tx">Готово · {total}</span></button>
+      {switchOpen && (
+        <div className="fxt-vsw-menu mt-vmenu mm-vmenu" role="listbox" aria-label="Ролики батча">
+          {combos.map((c) => (
+            <button key={c.index} type="button" role="option" aria-selected={c.index === index} className="fxt-vsw-item" onClick={() => { onIndex(c.index); setSwitchOpen(false); setView('table'); setSel(null); }}>
+              <span className="mt-vthumb"><FrameView frame={clipsOf(c)[0]} thumb /></span>
+              <span className="mt-vn num tx">{c.index + 1}</span>
+              <span className="lb tx">{videoLabel(c)}</span>
+              {isEdited(c) && <span className="mt-edited tx">изменён</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </header>
+  );
+  const mobileMain = (
+    <main ref={mainRef} className="mm-main">
+      <section ref={pvRef} className="mm-pv" aria-label="Превью">
+        <Stage frames={clips} bounds={bounds} t={t} playing={playing} fx={{ transitionAt, styles, hookKind: kind, hookLabel: activeHookLabel, hookRange, frameUrl: frameUrlOf(vfx.frame) }} sub={subFor(combo)} w={stageSize.w} h={stageSize.h}>
+          {sbVideo && clips.length === shots && (
+            <FrameDock combo={combo} video={sbVideo} frames={clips} bounds={bounds} k={editK ?? (sel?.type === 'frame' ? sel.i : fNow)} drop={drop} compact request={dockReq} slot={replaceSlot}
+              onSeek={(k) => { seek(bounds[k] + 0.001); setSel({ type: 'frame', i: k }); }}
+              onEdit={setEditK} onChanged={markEdited} onError={say} />
+          )}
+        </Stage>
+      </section>
+      <div className="mm-transport">
+        <span className="mm-time num"><b>{tc(t)}</b><span>&nbsp;/ {tc(dur)}</span></span>
+        <button type="button" className="mm-play" aria-label={playing ? 'Пауза' : 'Воспроизвести'} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}><Glyph name={playing ? 'pause' : 'play'} size={22} /></button>
+        <div className="mm-hist">
+          <button type="button" className="mm-ic" aria-label="Отменить" disabled={!past.current.length} onClick={undo}><Glyph name="undo" size={20} /></button>
+          <button type="button" className="mm-ic" aria-label="Вернуть" disabled={!future.current.length} onClick={redo}><Glyph name="redo" size={20} /></button>
+        </div>
+      </div>
+      <section ref={tlRef} className="mm-tl" aria-label="Таймлайн">
+        <div ref={scrollRef} className="fxt-scroll mm-scroll" onScroll={onPhoneScroll}>{canvas}</div>
+        <i className="mm-playhead" aria-hidden="true" />
+      </section>
+      {editK !== null
+        ? <div ref={setReplaceSlot} className="mm-bar mm-replace-slot" />
+        : <nav className="mm-bar" aria-label="Инструменты">{tools}</nav>}
+      {sheet && (
+        <div className="mm-sheet" role="dialog" aria-label={sheetTitle}>
+          <div className="mm-sheet-h">
+            <b className="tx">{sheetTitle}</b>
+            <button type="button" className="mm-ic" aria-label="Готово" onClick={() => setSheet(null)}><Glyph name="check" size={20} sw={2} /></button>
+          </div>
+          <div className="mm-sheet-b">
+            {sheet === 'pace' ? (
+              <div className="mm-pace">
+                <div className="fxt-seg" role="group" aria-label="Частота склеек">
+                  {PACES.map((pace, k) => (
+                    <button key={pace} type="button" aria-pressed={recipe.pace === pace} onClick={() => { if (recipe.pace !== pace) { recipe.setPace(pace); setSel(null); } }}>
+                      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true" dangerouslySetInnerHTML={{ __html: paceGlyph(k) }} />
+                      <b className="tx">{{ sparse: 'Реже', auto: 'Авто', dense: 'Чаще' }[pace]}</b>
+                      {recipe.data && <small className="tx">{recipe.data.cuts[pace].length + 1} {kadr(recipe.data.cuts[pace].length + 1)}</small>}
+                    </button>
+                  ))}
+                </div>
+                <p className="mm-note tx">Темп меняет склейки во всех роликах батча. «Авто» — как посчитает рендер по темпу трека.</p>
+                <button type="button" className="fxt-pill" aria-pressed={snap} onClick={() => setSnap((v) => !v)}><Glyph name="magnet" size={16} /><span className="tx">{snap ? 'Прилипание к битам включено' : 'Прилипание к битам выключено'}</span></button>
+              </div>
+            ) : (
+              <>
+                {sheet === 'trans' && sel?.type === 'cut' && cuts.length > 1 && (
+                  <button type="button" className="fxt-pill mm-allcuts" onClick={() => setTransitionAll(transitionAt(sel.i))}><span className="tx">«{transitionAt(sel.i)}» — на все склейки</span></button>
+                )}
+                <Library tab={sheet} setTab={(k) => setSheet(k === 'src' ? null : k)} open={open} setOpen={toggleOpen} used={used} activeHookKind={kind}
+                  subStyle={vfx.sub} subPreviews={subPreviews} onPickSub={setSub} textCfg={<SubtitleTextCustomization guideTargetRef={cfgRef} />}
+                  onAdd={sheetAdd} onDragStart={() => undefined} tapAdd
+                  previewOf={previewOf}
+                  frames={frameCatalog} frameId={vfx.frame} onPickFrame={pickFrame}
+                  frameNote={combo.vertical ? undefined : 'Это видео 16:9 — рамка нарисована под вертикальный кадр и на нём не ставится'}
+                  frameBase={clips[0] ? <FrameView frame={clips[0]} thumb /> : null}
+                  frameAll={vfx.frame ? allPill(() => toAll((v) => ({ ...v, frame: vfx.frame ?? null }), `Рамка: ${frameLabel(vfx.frame ?? null)}`, verticalIdx), verticalIdx.length) : null} />
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </main>
+  );
+
   return createPortal(
-    <div ref={rootRef} className="fxt mt" data-format="9:16" role="dialog" aria-label="Монтажный стол">
-      <header className="fxt-top mt-top">
+    <div ref={rootRef} className={`fxt mt${phone ? ' mob' : ''}`} data-format="9:16" role="dialog" aria-label="Монтажный стол">
+      {phone ? mobileHeader : <header className="fxt-top mt-top">
         <div className="mt-top-l">
           <button type="button" className="fxt-back" onClick={onClose} data-tip="К «Пулу» — правки сохраняются · Esc"><Glyph name="back" size={18} /><span className="tx">Пул</span></button>
           <div className="fxt-proj"><b className="tx">{track?.filename ?? 'Трек'}</b><span className="tx num">{timingFrom} – {timingTo}</span></div>
@@ -1291,9 +1657,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
           <button type="button" className="fxt-icon" aria-label="Горячие клавиши" data-tip="Горячие клавиши" onClick={() => setKeysOpen((v) => !v)}><Glyph name="keys" size={20} /></button>
           <button type="button" className="fxt-primary" onClick={() => { const blocked = onGenerate(); if (blocked) say(blocked); }}><span className="tx">Сгенерировать {total}</span></button>
         </div>
-      </header>
+      </header>}
 
-      {view === 'grid' ? (
+      {phone && view !== 'grid' ? mobileMain : view === 'grid' ? (
         <main ref={mainRef} className="fxt-main mt-gridmain">
           <div className="mt-grid" style={{ gridTemplateColumns: `repeat(${gridCell.cols}, ${gridCell.w}px)` }}>
             {combos.map((c) => (
@@ -1372,76 +1738,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
                 {laneHead('h-audio', 'audio', 'trans', 'Биты')}
               </div>
               <div ref={scrollRef} className="fxt-scroll" onWheel={(e) => { if (e.ctrlKey || e.metaKey) { setZoom((z) => clamp(z * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 1, 6)); } else if (zoom > 1 && Math.abs(e.deltaY) > Math.abs(e.deltaX) && scrollRef.current) scrollRef.current.scrollLeft += e.deltaY; }}>
-                <div ref={cvRef} className="fxt-cv" style={{ width: canvasW }} onPointerDown={onCanvasDown}>
-                  <div className="fxt-ruler">
-                    {ticks.map(({ v, maj }) => <span key={v}><i className={`fxt-tick${maj ? ' maj' : ''}`} style={{ left: tx(v) }} />{maj && <span className="fxt-tlab num" style={{ left: tx(v) }}>{pad(Math.floor((start + v) / 60))}:{pad(Math.round(start + v) % 60)}</span>}</span>)}
-                    {dropView !== null && <div className="fxt-dropflag num" style={{ left: tx(dropView) }}><span>Дроп {tc(start + dropView)}</span></div>}
-                  </div>
-                  <div ref={(el) => { laneRefs.current.frames = el; }} className={`fxt-lane l-frames mt-l-src${place && 'lane' in place && place.lane === 'frames' ? ' over' : ''}`}>
-                    {recipe.loading && <span className="fxt-hint" style={{ left: X0 + 8 }}>Считаем склейки по темпу трека…</span>}
-                    {!recipe.loading && Array.from({ length: shots }, (_, i) => {
-                      const x = tx(bounds[i]); const w = tx(bounds[i + 1]) - x; const clip = clips[i]; const pinned = Boolean(srcPins[i]);
-                      return (
-                        <div key={`f${i}`} className={`fxt-clip fr mt-fr${sel?.type === 'frame' && sel.i === i ? ' sel' : ''}${i === fNow ? ' cur' : ''}`} data-frame={i} style={{ left: x + 1, width: w - 2 }}
-                          >
-                          {clip?.url && <span className={`mt-film${clip.fit === 'contain' ? ' wide' : ''}`} style={{ backgroundImage: `url("${clip.url}")` }} />}
-                          {clip?.color && <span className={`mt-film mt-filmc${clip.strobe ? ' strobe' : ''}`} style={{ background: clip.color }} />}
-                          {i > 0 && <i className="fxt-edge l" data-cut={i - 1} />}
-                          <span className="n num">{pad(i + 1)}</span>
-                          {pinned && <span className="mt-pin" data-tip="Закреплён вручную"><Glyph name="lock" size={10} sw={2.2} /></span>}
-                          {w > 86 && <span className="d num">{secs(bounds[i + 1] - bounds[i])}</span>}
-                          {i < shots - 1 && <i className="fxt-edge r" data-cut={i} />}
-                        </div>
-                      );
-                    })}
-                    {!recipe.loading && cuts.map((c, i) => {
-                      const label = transitionAt(i);
-                      return (
-                        <button key={`j${i}`} type="button" className={`fxt-join${label === NO_GLUE ? ' none' : ''}${sel?.type === 'cut' && sel.i === i ? ' sel' : ''}${place && 'join' in place && place.join === i ? ' target' : ''}`} style={{ left: tx(c) }} aria-label={`Склейка ${i + 1}: ${label}`}
-                          onClick={(e) => { setSel({ type: 'cut', i }); popEdited.current = null; seek(Math.max(0, c - 0.5)); const z = zoomScale(); const r = e.currentTarget.getBoundingClientRect(); setPop({ type: 'cut', i, x: (r.left + r.width / 2) / z, y: r.top / z }); }}>
-                          {label === NO_GLUE ? <Glyph name="plus" size={12} sw={2} /> : <Ic kind="trans" label={label} on size={24} />}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div ref={(el) => { laneRefs.current.hook = el; }} className={`fxt-lane l-hook${place && 'lane' in place && place.lane === 'hook' ? ' over' : ''}`}>
-                    {hookRange && activeHookLabel
-                      ? (() => { const x = tx(hookRange[0]); const w = Math.max(18, tx(hookRange[1]) - x); return <><div className={`fxt-clip hk${sel?.type === 'hook' ? ' sel' : ''}${dragDrop !== null ? ' drag' : ''}`} style={{ left: x, width: w }} data-tip="Тяни — сдвинуть дроп (прилипает к битам) · ← → по битам"><Glyph name={GLYPH[activeHookLabel]} size={13} />{w >= 80 && <span className="lab">{activeHookLabel}</span>}{config.effectHook === 'Слоу-шаттер' && kind === 'effects' && <i className="fxt-edge r" data-hookedge="r" data-tip="Тяни: стандарт · 3 кадра · до конца" />}</div>{w < 80 && <span className="fxt-outlab" style={{ left: x + w + 8 }}>{activeHookLabel}</span>}</>; })()
-                      : <span className="fxt-hint" style={{ left: tx(drop ?? 0) + 10 }}>{drop === null ? 'Выбери дроп на шаге FX — хук встанет на него' : 'Без хука — перетащи хук из библиотеки, он встанет на дроп'}</span>}
-                  </div>
-                  {(lane2 ? [0, 1] as const : [0] as const).map((L) => (
-                    <div key={L} ref={(el) => { laneRefs.current[`s${L}`] = el; }} className={`fxt-lane l-s${L}${place && 'lane' in place && place.lane === `s${L}` ? ' over' : ''}`}>
-                      {!styles.some((s) => s.lane === L) && <span className="fxt-hint" style={{ left: X0 + 8 }}>{L ? 'Второй стиль поверх первого — до двух на кадр' : 'Перетащи стиль — он ляжет по границам кадров'}</span>}
-                      {styles.filter((s) => s.lane === L && s.b <= shots).map((s) => {
-                        const x = tx(bounds[s.a]); const w = tx(bounds[s.b]) - x;
-                        return (
-                          <div key={s.uid} className={`fxt-clip st${sel?.type === 'style' && sel.uid === s.uid ? ' sel' : ''}`} data-uid={s.uid} style={{ left: x + 1, width: w - 2 }}>
-                            <i className="fxt-edge l" data-side="l" /><Glyph name={GLYPH[s.style]} size={13} /><span className="lab">{s.style}</span><i className="fxt-edge r" data-side="r" />
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ))}
-                  <div ref={(el) => { laneRefs.current.subs = el; }} className={`fxt-lane l-subs${place && 'lane' in place && place.lane === 'subs' ? ' over' : ''}`}>
-                    {!subs.length && <span className="fxt-hint" style={{ left: X0 + 8 }}>Субтитры появятся после примерки на шаге «Текст»</span>}
-                    {subs.map((s, i) => { const x = tx(Math.max(0, s.a)); const w = tx(Math.min(dur, s.b)) - x; return <div key={`s${i}`} className={`fxt-clip sb mt-word${s.focus ? ' focus' : ''}${sel?.type === 'sub' && sel.i === i ? ' sel' : ''}${t >= s.a && t < s.b ? ' cur' : ''}`} data-sub={i} style={{ left: x + 1, width: Math.max(2, w - 2) }} title={`${s.text}${s.focus ? ' · фокус-слово' : ''} — тяни, края поджимают, двойной клик — фокус`} onDoubleClick={() => toggleAsrFocus(s.idx)}>{w > 22 && <i className="fxt-edge l" data-wedge="l" />}<span className="lab">{s.focus ? '★ ' : ''}{s.text}</span>{w > 22 && <i className="fxt-edge r" data-wedge="r" />}</div>; })}
-                  </div>
-                  <div className="fxt-lane l-audio">
-                    {wavePeaksSeg && (
-                      <svg className="mt-wave" style={{ left: X0, width: tx(dur) - X0 }} viewBox={`0 0 ${wavePeaksSeg.length} 100`} preserveAspectRatio="none" aria-hidden="true">
-                        {wavePeaksSeg.map((p, k) => { const h = Math.max(4, p * 100); return <rect key={k} x={k + 0.15} y={50 - h / 2} width="0.7" height={h} />; })}
-                      </svg>
-                    )}
-                    {beats.map((b, k) => <i key={k} className={`fxt-beat${drop !== null && Math.round((b - drop) * (bpm || 120) / 60) % 4 === 0 ? ' down' : ''}`} style={{ left: tx(b) }} />)}
-                  </div>
-                  {dropView !== null && <div className="fxt-dropline" style={{ left: tx(dropView) }} />}
-                  <div className="fxt-phl" style={{ left: tx(t) }} />
-                  {snapLine !== null && <div className="fxt-snapl" style={{ left: tx(snapLine) }} />}
-                  {place && 'lane' in place && (() => {
-                    const el = laneRefs.current[place.lane]; if (!el) return null;
-                    return <div className={`fxt-place ${place.bad ? 'bad' : place.lane === 'hook' ? 'hk' : place.lane === 'frames' || place.lane === 'subs' ? 'src' : 'st'}`} style={{ left: tx(place.a), width: Math.max(18, tx(place.b) - tx(place.a)), top: el.offsetTop + 6, height: el.offsetHeight - 12 }}>{place.label && <span className="why">{place.label}</span>}</div>;
-                  })()}
-                </div>
+                {canvas}
               </div>
             </div>
           </section>
