@@ -215,13 +215,13 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
   if (compact && edit && slot) {
     return createPortal(
       <div className="mm-replace" role="group" aria-label={`Замена кадра ${edit.k + 1}`}>
-        <button type="button" className="mm-replace-btn" onClick={cancel}><I d={CROSS} size={16} /><span className="tx">Отмена</span></button>
+        <button type="button" className="mm-replace-btn" aria-label="Отмена — вернуть прежний кадр" onClick={cancel}><I d={CROSS} size={18} /></button>
         <div className="mm-replace-var">
           <button type="button" aria-label="Предыдущий вариант" disabled={edit.pos <= 0} onClick={() => variant(-1)}><Arrow dir="l" /></button>
           <span className="cnt num tx">{edit.loading ? 'Подбираем…' : <>{edit.pos + 1}<small> / {edit.candidates.length}</small></>}</span>
           <button type="button" aria-label="Следующий вариант" disabled={edit.loading || edit.pos >= edit.candidates.length - 1} onClick={() => variant(1)}><Arrow dir="r" /></button>
         </div>
-        <button type="button" className="mm-replace-btn pri" onClick={done} disabled={edit.loading}><I d={CHECK} size={16} /><span className="tx">Готово</span></button>
+        <button type="button" className="mm-replace-btn pri" aria-label="Готово — оставить этот кадр" onClick={done} disabled={edit.loading}><I d={CHECK} size={20} /></button>
       </div>,
       slot
     );
