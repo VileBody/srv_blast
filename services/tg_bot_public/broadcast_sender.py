@@ -24,6 +24,7 @@ from aiogram.exceptions import (
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from .credits_db import CreditsDB
+from .warmup_chain import CAMPAIGN as WARMUP_CAMPAIGN
 
 log = logging.getLogger("broadcast_sender")
 
@@ -46,9 +47,14 @@ def _build_keyboard(buttons: List[Dict[str, str]]) -> Optional[InlineKeyboardMar
     for btn in buttons or []:
         text = str(btn.get("text", "")).strip()
         url = str(btn.get("url", "")).strip()
-        if not text or not url:
+        callback_data = str(btn.get("callback_data", "")).strip()
+        if not text or bool(url) == bool(callback_data):
             continue
-        rows.append([InlineKeyboardButton(text=text[:64], url=url)])
+        if url:
+            button = InlineKeyboardButton(text=text[:64], url=url)
+        else:
+            button = InlineKeyboardButton(text=text[:64], callback_data=callback_data[:64])
+        rows.append([button])
     if not rows:
         return None
     return InlineKeyboardMarkup(inline_keyboard=rows)
@@ -230,6 +236,18 @@ class BroadcastWorker:
                         limiter=self._limiter,
                     )
                     await self._db.mark_delivery(bid, tg_id, status, err)
+                    if status == "sent" and bc.get("created_by") == f"warmup:{WARMUP_CAMPAIGN}":
+                        try:
+                            await self._db.advance_warmup_stage(
+                                WARMUP_CAMPAIGN, tg_id, 1, is_test=False,
+                            )
+                        except Exception as exc:
+                            # Delivery is already durably marked as sent, so a
+                            # metrics failure must never duplicate the message.
+                            log.exception(
+                                "warmup progress mark failed broadcast=%s tg_id=%s err=%s",
+                                bid, tg_id, exc,
+                            )
                     if status == "blocked":
                         try:
                             await self._db.log_event(tg_id, "bot_blocked", "broadcast_detected")
