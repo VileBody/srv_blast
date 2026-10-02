@@ -220,3 +220,4 @@ img.mt-fv-cover { object-fit: cover; }
 .mt .mm-gen { display: inline-flex; }
 .mt .fxt-primary:disabled, .mt .mm-gen:disabled { opacity: .6; cursor: wait; filter: none; transform: none; }
 .mt .fxt-primary .spinner, .mt .mm-gen .spinner { width: 14px; height: 14px; }
+.mt-plate-media { position: absolute; inset: 0; }

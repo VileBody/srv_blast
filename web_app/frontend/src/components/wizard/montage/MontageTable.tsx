@@ -260,31 +260,66 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
 }
 
 /** Пример эффекта на своём ролике: окно [at − lead, at − lead + span] крутится по кругу. */
-function LoopStage({ frames, bounds, at, dur, fx, w = 169, h = 300, lead = 0.5, span = 1.5 }: {
+function LoopStage({ frames, bounds, at, dur, fx, w = 169, h = 300, lead = 0.5, span = 1.5, paused = false }: {
   frames: Frame[]; bounds: number[]; at: number; dur: number; fx: StageFx; w?: number; h?: number; lead?: number; span?: number;
+  /** плитка ушла из виду — цикл стоит (кадры не размонтируются и не качаются заново) */
+  paused?: boolean;
 }) {
   const [t, setT] = useState(at - 0.4);
   useEffect(() => {
+    if (paused) return undefined;
     let raf = 0; const t0 = performance.now();
     const tick = (now: number) => { setT(clamp(at - lead + ((now - t0) / 1000) % span, 0, dur - 0.01)); raf = requestAnimationFrame(tick); };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [at, dur, lead, span]);
+  }, [at, dur, lead, span, paused]);
   return <Stage frames={frames} bounds={bounds} t={t} fx={fx} w={w} h={h} className="mt-loop" />;
 }
 
-/** Плитка живёт (видео/цикл), только пока видна в библиотеке: десятки автоплеев не грузят страницу. */
-function useInView<T extends Element>(): [React.RefObject<T>, boolean] {
+/**
+ * Плитка оживает, только когда её видно: десятки автоплеев не грузят страницу. visible — видна
+ * сейчас, ever — уже была видна: медиа монтируется один раз и дальше лишь встаёт на паузу,
+ * иначе возврат к плитке качал бы пример заново.
+ */
+function useInView<T extends Element>(): [React.RefObject<T>, boolean, boolean] {
   const ref = useRef<T>(null);
-  const [seen, setSeen] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const [ever, setEver] = useState(false);
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const io = new IntersectionObserver(([entry]) => setSeen(entry.isIntersecting), { rootMargin: '80px' });
+    const io = new IntersectionObserver(([entry]) => { setVisible(entry.isIntersecting); if (entry.isIntersecting) setEver(true); }, { rootMargin: '80px' });
     io.observe(el);
     return () => io.disconnect();
   }, []);
-  return [ref, seen];
+  return [ref, visible, ever];
+}
+
+/** Пример-видео библиотеки: играет, пока виден; на медленной сети сам не стартует (только по наведению). */
+function LazyVideo({ src, visible, lowData }: { src: string; visible: boolean; lowData: boolean }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+    if (visible && !lowData) void video.play().catch(() => undefined); else video.pause();
+  }, [visible, lowData]);
+  return <video ref={ref} src={src} muted loop playsInline preload={lowData ? 'none' : 'metadata'} draggable={false} />;
+}
+
+/** Пример стиля субтитров на плашке — та же экономия, что у плиток: без постера, пустая до показа. */
+function PlateMedia({ url }: { url: string }) {
+  const [ref, visible, ever] = useInView<HTMLSpanElement>();
+  const lowData = useLowData();
+  const hover = (play: boolean) => () => {
+    const video = ref.current?.querySelector('video');
+    if (!lowData || !video) return;
+    if (play) void video.play().catch(() => undefined); else video.pause();
+  };
+  return (
+    <span ref={ref} className="mt-plate-media" onPointerEnter={hover(true)} onPointerLeave={hover(false)}>
+      {ever && (isVideoUrl(url) ? <LazyVideo src={url} visible={visible} lowData={lowData} /> : <img src={url} alt="" draggable={false} />)}
+    </span>
+  );
 }
 
 /**
@@ -319,10 +354,10 @@ function TileRow({ children }: { children: ReactNode }) {
 }
 
 /** Медиа плитки: настоящий отрендеренный пример из каталога эффектов, иначе эффект на кадрах ролика. */
-export interface LibPreview { url?: string | null; sim?: (size: { w: number; h: number }) => ReactNode; state?: 'loading' | 'error' }
+export interface LibPreview { url?: string | null; sim?: (size: { w: number; h: number }, paused: boolean) => ReactNode; state?: 'loading' | 'error' }
 const TILE = { w: 180, h: 320 };
 function TileMedia({ preview }: { preview: LibPreview }) {
-  const [ref, seen] = useInView<HTMLSpanElement>();
+  const [ref, visible, seen] = useInView<HTMLSpanElement>();
   // медленная сеть / экономия трафика: пример не стартует сам — играет по наведению или тапу
   const lowData = useLowData();
   const hover = (play: boolean) => (e: React.SyntheticEvent<HTMLSpanElement>) => {
@@ -333,8 +368,8 @@ function TileMedia({ preview }: { preview: LibPreview }) {
   return (
     <span ref={ref} className="mt-fxtile-media" onPointerEnter={hover(true)} onPointerLeave={hover(false)}>
       {seen && (preview.url
-        ? <video src={preview.url} autoPlay={!lowData} muted loop playsInline preload={lowData ? 'none' : 'metadata'} />
-        : preview.sim?.(TILE))}
+        ? <LazyVideo src={preview.url} visible={visible} lowData={lowData} />
+        : preview.sim?.(TILE, !visible))}
       {seen && !preview.url && preview.sim && <span className="mt-fxtile-tag">на твоём ролике</span>}
       {preview.state === 'loading' && <span className="mt-fxtile-none"><span className="spinner" aria-hidden="true" /></span>}
       {preview.state === 'error' && <span className="mt-fxtile-none">Примеры не загрузились</span>}
@@ -519,10 +554,8 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
             <div className="mt-plates" role="radiogroup" aria-label="Стиль субтитров ролика">
               {SUB_STYLES.map((s) => (
                 <button key={s.id} type="button" role="radio" aria-checked={subStyle === s.name} aria-label={s.name} className="mt-plate" onClick={() => onPickSub(s.name)} data-tip={s.name}>
-                  {/* на проде пример стиля — видео (как на шаге «Текст»), в моке — svg */}
-                  {subPreviews[s.name] && (isVideoUrl(subPreviews[s.name]!)
-                    ? <video src={subPreviews[s.name]} muted loop playsInline autoPlay preload="metadata" draggable={false} />
-                    : <img src={subPreviews[s.name]} alt="" draggable={false} />)}
+                  {/* на проде пример стиля — видео (как на шаге «Текст»), в моке — svg; живёт только в видимой области */}
+                  {subPreviews[s.name] && <PlateMedia url={subPreviews[s.name]!} />}
                   {subStyle === s.name && <span className="ck"><Glyph name="check" size={14} sw={2.2} /></span>}
                 </button>
               ))}
@@ -813,18 +846,18 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     // симуляция — только там, где стол сам рисует эффект; иначе честно «примера нет»
     if (item.kind === 'trans' && TRANSITION_ANIM[item.label]) {
       const at = cuts[0] ?? Math.min(dur / 2, 1.5);
-      return { sim: ({ w, h }) => <LoopStage frames={clips} bounds={bounds} at={at} dur={dur} w={w} h={h} fx={{ ...none, transitionAt: () => item.label }} /> };
+      return { sim: ({ w, h }, paused) => <LoopStage frames={clips} bounds={bounds} at={at} dur={dur} w={w} h={h} paused={paused} fx={{ ...none, transitionAt: () => item.label }} /> };
     }
     if (item.kind === 'style' && styleFilter([item.label], 0)) {
       const style: TimelineStyleRange = { uid: -1, style: item.label, lane: 0, a: 0, b: Math.max(1, bounds.length - 1) };
-      return { sim: ({ w, h }) => <LoopStage frames={clips} bounds={bounds} at={Math.min(1, dur / 2)} lead={1} span={Math.min(2.5, dur)} dur={dur} w={w} h={h} fx={{ ...none, styles: [style] }} /> };
+      return { sim: ({ w, h }, paused) => <LoopStage frames={clips} bounds={bounds} at={Math.min(1, dur / 2)} lead={1} span={Math.min(2.5, dur)} dur={dur} w={w} h={h} paused={paused} fx={{ ...none, styles: [style] }} /> };
     }
     const cat = HOOK_CATS.find((c) => c.kind === item.hookKind);
     const simHook = cat?.kind === 'motion' || cat?.kind === 'thought' || (cat?.kind === 'effects' && item.label === 'Молния');
     if (item.kind === 'hook' && cat?.key && drop !== null && simHook) {
       const config = { [cat.key]: item.label } as HookConfig;
       const range = hookSpan(cat.kind, config, drop, dur, bpm, bounds);
-      return { sim: ({ w, h }) => <LoopStage frames={clips} bounds={bounds} at={drop} lead={0.8} span={2} dur={dur} w={w} h={h} fx={{ ...none, hookKind: cat.kind, hookLabel: item.label, hookRange: range }} /> };
+      return { sim: ({ w, h }, paused) => <LoopStage frames={clips} bounds={bounds} at={drop} lead={0.8} span={2} dur={dur} w={w} h={h} paused={paused} fx={{ ...none, hookKind: cat.kind, hookLabel: item.label, hookRange: range }} /> };
     }
     return {};
   };
