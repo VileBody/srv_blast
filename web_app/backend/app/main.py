@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -11,6 +12,7 @@ import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -672,19 +674,39 @@ def api_ban_status(request: Request) -> dict[str, Any]:
 
 
 class HandoffPayload(BaseModel):
-    token: str = Field(min_length=16, max_length=128)
+    # Длину схемой не режем: битая или обрезанная ссылка — тот же экран «ссылка
+    # устарела» (410), а не 422 «не получилось открыть» (см. _handoff_token_ok).
+    token: str = Field(default="", max_length=4096)
+    # В браузере открыт другой аккаунт: входим по ссылке только после подтверждения.
+    force: bool = False
+
+
+_HANDOFF_TOKEN_LEN = (16, 128)
+
+
+def _handoff_token_ok(token: str) -> bool:
+    return _HANDOFF_TOKEN_LEN[0] <= len(token) <= _HANDOFF_TOKEN_LEN[1]
 
 
 # Двойной клик или два открытых таба по одной ссылке не должны завести два проекта.
-_HANDOFF_LOCKS: dict[str, asyncio.Lock] = {}
+# Замок живёт в памяти процесса — это держится на том, что API крутится ОДНИМ воркером
+# uvicorn (как и production_monitor). Запись удаляем, когда замок никто не держит и не ждёт,
+# иначе словарь рос бы на каждую открытую ссылку.
+_HANDOFF_LOCKS: dict[str, list[Any]] = {}  # key -> [asyncio.Lock, сколько держат/ждут]
 
 
-def _handoff_lock(token: str) -> asyncio.Lock:
+@contextlib.asynccontextmanager
+async def _handoff_lock(token: str) -> AsyncIterator[None]:
     key = hashlib.sha256(token.encode()).hexdigest()
-    lock = _HANDOFF_LOCKS.get(key)
-    if lock is None:
-        lock = _HANDOFF_LOCKS[key] = asyncio.Lock()
-    return lock
+    entry = _HANDOFF_LOCKS.setdefault(key, [asyncio.Lock(), 0])
+    entry[1] += 1
+    try:
+        async with entry[0]:
+            yield
+    finally:
+        entry[1] -= 1
+        if entry[1] == 0:
+            _HANDOFF_LOCKS.pop(key, None)
 
 
 async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int) -> dict[str, Any]:
@@ -706,6 +728,15 @@ async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int)
         raise HTTPException(status_code=422, detail={"code": "handoff_invalid", "message": "Ссылка без трека."})
 
     billing = _billing_backend()
+    if record["kind"] == "track":
+        # Каждая ссылка на трек — свой токен (напоминание, перевыпуск, /site). Трек
+        # этого человека уже лежит в проекте из прошлой ссылки — ведём туда же.
+        reused = store.bot_track_project(audio_hash)
+        if reused is not None:
+            project, track = reused
+            await billing.set_handoff_result(token, {"projectId": project["id"], "trackId": track["id"]})
+            return {"projectId": project["id"], "track": track, "repeat": True}
+
     from .billing_backend import TrackQuotaExhausted
 
     try:
@@ -745,6 +776,7 @@ async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int)
         playback_url=registered["playback_url"],
         audio_hash=audio_hash,
     )
+    store.mark_bot_track_project(project["id"], audio_hash)
     analytics.track("track_uploaded", store.current_user_id(), {"trackId": track["id"], "source": "bot_handoff"})
     await billing.set_handoff_result(token, {"projectId": project["id"], "trackId": track["id"]})
     return {"projectId": project["id"], "track": track, "repeat": False}
@@ -759,21 +791,43 @@ async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[st
             status_code=503,
             detail={"code": "handoff_unavailable", "message": "Вход по ссылке из бота работает только в проде."},
         )
+    expired = HTTPException(
+        status_code=410,
+        detail={"code": "handoff_expired", "message": "Ссылка устарела. Новую пришлёт бот по команде /site."},
+    )
+    if not _handoff_token_ok(payload.token):
+        raise expired
     async with _handoff_lock(payload.token):
         try:
             record = await _billing_backend().redeem_handoff(payload.token)
         except Exception as exc:
             raise _production_error(exc) from exc
         if record is None:
-            raise HTTPException(
-                status_code=410,
-                detail={"code": "handoff_expired", "message": "Ссылка устарела. Новую пришлёт бот по команде /site."},
-            )
+            raise expired
         tg_id = int(record["tg_id"])
-        user = auth_store.get_user_by_chat(tg_id)
-        created = user is None
-        if user is None:
-            user = auth_store.create_user_from_telegram(tg_id, dict(record["payload"].get("profile") or {}))
+        profile = dict(record["payload"].get("profile") or {})
+        current = auth_store.user_by_id(str(request.session.get("user_id") or ""))
+        owner = auth_store.get_user_by_chat(tg_id)
+        created = False
+        if current is not None and owner is None and not current.get("tgChatId"):
+            # В браузере уже открыт аккаунт без Telegram (вход через Google): это тот же
+            # человек — привязываем chat_id к нему, второй аккаунт не заводим.
+            user = auth_store.link_telegram(current["id"], tg_id, profile)
+        elif current is not None and (owner or {}).get("id") != current["id"] and not payload.force:
+            # Открыт ДРУГОЙ аккаунт: молча переключать нельзя — фронт спросит
+            # «Войти как другой аккаунт?» и повторит запрос с force.
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "handoff_other_account", "message": "В браузере открыт другой аккаунт."},
+            )
+        else:
+            user = owner
+            if user is None:
+                user = auth_store.create_user_from_telegram(tg_id, profile)
+                created = True
+            if current is not None and current["id"] != user["id"]:
+                # Смена аккаунта: ничего из старой сессии не переносим.
+                request.session.clear()
         request.session["user_id"] = user["id"]
         _sync_current_user(user)
         auth_store.set_notify_bot(user["id"], "public")

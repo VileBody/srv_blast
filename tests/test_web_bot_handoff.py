@@ -225,3 +225,74 @@ def test_s3_failure_leaves_no_empty_project(client, monkeypatch) -> None:
     _as_user(main)
     assert [p["id"] for p in main.store.ws().projects] == [body["projectId"]]
     assert billing.consumed == [(CHAT, "a" * 64)]
+
+
+CHAT2 = 777000222
+
+
+def test_new_link_for_the_same_track_reuses_the_project(client, monkeypatch) -> None:
+    """Напоминание, перевыпуск, /site — новый токен на тот же трек. Второй проект не
+    заводим и второй слот не тратим: ведём в проект первой ссылки."""
+    tc, main = client
+    billing, backend = _Billing(_track_record()), _Backend()
+    _production(monkeypatch, main, billing, backend)
+    first = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+    billing.record["result"] = {}  # как будто это другой, свежий токен
+
+    second = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+
+    assert second["projectId"] == first["projectId"] and second["repeat"] is True
+    assert second["track"]["id"] == first["track"]["id"]
+    _as_user(main)
+    assert [p["id"] for p in main.store.ws().projects] == [first["projectId"]]
+    assert len(backend.registered) == 1 and len(billing.consumed) == 1
+    assert billing.results[-1] == {"projectId": first["projectId"], "trackId": first["track"]["id"]}
+    assert main._HANDOFF_LOCKS == {}  # замок не копится после запроса
+
+
+def test_malformed_token_is_the_expired_screen(client, monkeypatch) -> None:
+    tc, main = client
+    _production(monkeypatch, main, _Billing(_track_record()))
+    for token in ("short", ""):
+        r = tc.post("/api/auth/handoff", json={"token": token})
+        assert r.status_code == 410 and r.json()["detail"]["code"] == "handoff_expired"
+
+
+def test_other_account_in_the_browser_needs_confirmation(client, monkeypatch) -> None:
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing)
+    assert tc.post("/api/auth/handoff", json={"token": TOKEN}).status_code == 200
+    first_user = main.auth_store.get_user_by_chat(CHAT)
+    billing.record = {**_track_record(), "tg_id": CHAT2}
+
+    r = tc.post("/api/auth/handoff", json={"token": TOKEN})
+
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "handoff_other_account"
+    assert main.auth_store.get_user_by_chat(CHAT2) is None  # молча ничего не заводим
+    forced = tc.post("/api/auth/handoff", json={"token": TOKEN, "force": True})
+    assert forced.status_code == 200 and forced.json()["created"] is True
+    second_user = main.auth_store.get_user_by_chat(CHAT2)
+    assert second_user["id"] != first_user["id"]
+    # сессия теперь второго аккаунта: та же ссылка без force больше не спрашивает
+    assert tc.post("/api/auth/handoff", json={"token": TOKEN}).status_code == 200
+    billing.record = {**_track_record(), "tg_id": CHAT}
+    assert tc.post("/api/auth/handoff", json={"token": TOKEN}).status_code == 409
+
+
+def test_account_without_telegram_gets_the_chat_linked(client, monkeypatch) -> None:
+    """В браузере аккаунт без Telegram (Google): ссылка из бота привязывает chat_id к
+    нему, а не заводит второй аккаунт."""
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing)
+    tc.post("/api/auth/handoff", json={"token": TOKEN})
+    google_user = main.auth_store.get_user_by_chat(CHAT)
+    google_user["tgChatId"] = None  # как аккаунт, заведённый через Google
+    billing.record = {**_track_record(), "tg_id": CHAT2}
+
+    body = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+
+    assert body["created"] is False
+    linked = main.auth_store.get_user_by_chat(CHAT2)
+    assert linked["id"] == google_user["id"] and linked["tgVerified"] is True
