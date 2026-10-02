@@ -75,9 +75,28 @@ async def sync_job(job: dict) -> None:
             job["failedCreditsRefunded"] = failed
         await run_in_threadpool(persistence.save_job, job["id"])
         if job.get("productionNotifications"):
-            await run_in_threadpool(notifications.queue_job, job)
+            offer = await _unlimited_offer_due(job)
+            await run_in_threadpool(lambda: notifications.queue_job(job, unlimited_offer=offer))
             job["notificationsQueued"] = job.get("status") in {"COMPLETED", "FAILED"}
             await run_in_threadpool(persistence.save_job, job["id"])
+
+
+async def _unlimited_offer_due(job: dict) -> bool:
+    """Кнопка «Оценить и получить безлимит» в «батч готов»: только в итоговом сообщении
+    и только бесплатным без безлимита. Сбой воронки не держит уведомление: пишем в лог
+    и отправляем сообщение без второй кнопки — как с аналитикой выше."""
+    if job.get("status") not in {"COMPLETED", "FAILED"}:
+        return False
+    chat_id = auth_store.chat_id_for_user(job.get("userId") or "")
+    if not chat_id:
+        return False
+    from . import funnel
+
+    try:
+        return await funnel.unlimited_offer_due(int(chat_id))
+    except Exception:
+        log.exception("production_monitor: unlimited offer check failed job=%s", job.get("id"))
+        return False
 
 
 async def _run() -> None:

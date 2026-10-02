@@ -63,7 +63,10 @@ def deliver_pending() -> None:
             log.error("notification_pending event=%s attempt=%s retry_in=%ss", key, attempts + 1, delay)
 
 
-def queue_job(job: dict[str, Any]) -> None:
+def queue_job(job: dict[str, Any], *, unlimited_offer: bool = False) -> None:
+    """`unlimited_offer` — в итоговом сообщении вторая кнопка «Оценить и получить
+    безлимит». Решает вызывающий (production_monitor) по воронке: здесь поток без
+    event loop, а репозиторий воронки асинхронный."""
     from . import auth_store
 
     chat_id = auth_store.chat_id_for_user(job.get("userId") or "")
@@ -81,7 +84,13 @@ def queue_job(job: dict[str, Any]) -> None:
         text = (f"Батч готов: {completed} роликов. Можно открыть их на сайте."
                 if job["status"] == "COMPLETED" else
                 f"Генерация остановилась. Готово {completed} из {len(videos)} роликов. Подробности — на сайте.")
-        enqueue(f"job:{job['id']}:terminal", chat_id=chat_id, text=text, markup=markup, user_route=True)
+        # Частично упавший батч — тоже повод оценить готовые ролики.
+        terminal_markup = (
+            telegram_bot._batch_button(telegram_bot.app_url(), project_id, unlimited_offer=True)
+            if unlimited_offer and completed
+            else markup
+        )
+        enqueue(f"job:{job['id']}:terminal", chat_id=chat_id, text=text, markup=terminal_markup, user_route=True)
         if job["status"] == "FAILED":
             error = next((str(v.get("error")) for v in videos if v.get("error")), "unknown")
             contact = auth_store.telegram_contact_for_user(job.get("userId") or "")
