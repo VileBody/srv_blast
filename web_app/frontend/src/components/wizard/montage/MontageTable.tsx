@@ -347,7 +347,13 @@ type Sel = { type: 'frame'; i: number } | { type: 'cut'; i: number } | { type: '
 type LibKind = 'src' | 'text' | 'hook' | 'trans' | 'style' | 'frame';
 interface LibItem { kind: LibKind; label: string; hookKind?: HookCatalogKind; url?: string | null }
 type PlaceTarget = { lane: string; a: number; b: number; bad?: boolean; label?: string } | { join: number };
-interface Snapshot { transitions: Record<number, string>; styles: TimelineStyleRange[] }
+/**
+ * Шаг истории стола: прежнее состояние затронутых роликов (null — записи ещё не было) и, если
+ * правка общая для батча, — склеек и дропа. Отмена возвращает ровно это и не трогает остальное.
+ */
+interface Snapshot { videos: Record<number, MontageVideo | null>; timeline?: Pick<TimelineRecipe, 'key' | 'pace' | 'cuts' | 'edited'>; dropTime?: string }
+/** Поля самого хука: «Во все N» у хука переносит только их — склейка и стили ролика остаются его. */
+const HOOK_FIELDS: readonly (keyof HookConfig)[] = ['object', 'effectHook', 'effectHookExtend', 'motion', 'thought', 'warmupKind', 'sound', 'soundUrl', 'soundPlaybackUrl', 'soundDuration', 'videoUrl', 'videoWidth', 'videoHeight', 'videoDuration', 'videoHasAudio'];
 
 /* ── тултипы ── */
 function useTooltips(root: React.RefObject<HTMLElement | null>) {
@@ -650,8 +656,11 @@ function PickPopover({ title, options, current, left, bottom, preview, onApply, 
 }
 
 
-/** onGenerate возвращает причину, если генерировать ещё нельзя: «Пул» с её подсказкой скрыт под столом. */
-export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: number; onIndex: (i: number) => void; onClose: () => void; onGenerate: () => string | null }) {
+/**
+ * onGenerate возвращает причину, если генерировать ещё нельзя: «Пул» с её подсказкой скрыт под столом.
+ * busy — генерация уже уходит: кнопки генерации ждут со спиннером, второй батч не запустить.
+ */
+export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false }: { index: number; onIndex: (i: number) => void; onClose: () => void; onGenerate: () => string | null; busy?: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null);
   useTooltips(rootRef);
   const track = useWizardStore((s) => s.track);
@@ -666,11 +675,10 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const total = combos.length;
   const combo = combos[Math.min(index, total - 1)];
   const [view, setView] = useState<'table' | 'grid'>('table');
-  const chain = false;
   const montage = useWizardStore((s) => s.montage);
   const fxAll = montage.videos;
-  const patchFx = useWizardStore((s) => s.patchMontageVideos);
   const setMontage = useWizardStore((s) => s.setMontage);
+  const strobe = useWizardStore((s) => Boolean(s.background.strobe));
 
   /* ── время: всё в секундах от начала отрывка ── */
   const start = recipe.window?.start ?? 0;
@@ -721,8 +729,31 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   }, [ready, combos, fxAll, defaultsFor, setMontage, shots]);
   const fxOf = (i: number) => (fxAll[i]?.sig === combos[i]?.sig ? fxAll[i] : undefined) ?? defaultsFor(combos[i]);
   const vfx = fxOf(combo.index);
-  const scopeIdx = [combo.index];
   const allIdx = combos.map((c) => c.index);
+  /*
+   * Правка роликов. Запись ролика стол засевает сам, только когда склейки готовы и кадров
+   * больше одного, — правка до этого раньше молча пропадала (под тостом «готово»). Поэтому
+   * запись засевается здесь же из варианта ролика; стор читается свежим, а не из рендера.
+   */
+  const editVideos = (indices: number[], fn: (v: VideoFx) => VideoFx) => {
+    const cur = useWizardStore.getState().montage.videos;
+    const videos = { ...cur };
+    for (const i of indices) {
+      const c = combos[i];
+      if (!c) continue;
+      videos[i] = { ...fn(cur[i]?.sig === c.sig ? cur[i] : defaultsFor(c)), edited: true };
+    }
+    setMontage({ videos });
+  };
+  /** Зеркало проверок montage.py: что бэк отвергнет при генерации (422), «Во все N» туда не ставит. */
+  const rejects = (c: Combo, v: VideoFx) => {
+    if (v.kind !== 'none' && (!c.hookAllowed || drop === null)) return true;
+    const labels = cuts.map((_, i) => v.transitions[i] ?? v.config.effectGlue ?? NO_GLUE);
+    // своё видео — один переход на весь ролик; статичный цвет склеек не имеет вовсе
+    if (c.bgKey?.startsWith('upload:') && new Set(labels).size > 1) return true;
+    if (c.bgKey === '__color__' && !strobe && labels.some((l) => l !== NO_GLUE)) return true;
+    return false;
+  };
 
   const kind = vfx.kind;
   const config = vfx.config;
@@ -741,11 +772,13 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     if (drop === null) return;
     const v = Math.round(clamp(next, DROP_EDGE, dur - DROP_EDGE) * 100) / 100;
     if (Math.abs(v - drop) < 0.005) return;
+    // дроп общий для батча и двигает склейки — в историю идут все ролики, склейки и сам дроп
+    remember(allIdx, { timeline: true, drop: true });
     setWizardHooks({ dropTime: secondsToDropTime(start + v) });
     say(`Дроп ${tc(start + drop)} → ${tc(start + v)} — хук и склейки для всех роликов`);
   };
   const hookRange = hookRangeFor(vfx);
-  const fxEdit = (fn: (v: VideoFx) => VideoFx) => patchFx(scopeIdx, (v) => ({ ...fn(v), edited: true }));
+  const fxEdit = (fn: (v: VideoFx) => VideoFx) => editVideos([combo.index], fn);
   const setHooks = (patch: { kind?: HookKind; config?: Partial<HookConfig> }) => fxEdit((v) => ({
     ...v, kind: patch.kind ?? v.kind,
     config: patch.kind && patch.kind !== v.kind ? { ...(patch.config ?? {}) } as HookConfig : { ...v.config, ...patch.config }
@@ -796,7 +829,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     return {};
   };
   const unpin = (k: number) => { if (!sbVideo) return; const { [k]: _gone, ...pins } = sbVideo.pins; setStoryboardVideo({ ...sbVideo, pins }); };
-  const markEdited = () => patchFx([combo.index], (v) => ({ ...v, edited: true }));
+  const markEdited = () => editVideos([combo.index], (v) => v);
 
   /* ── субтитры: слова примерки ── */
   const subs = useMemo(() => {
@@ -825,6 +858,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const frameCatalog = framesQuery.data?.frames ?? [];
   const frameUrlOf = (id?: string | null) => (id ? frameCatalog.find((f) => f.id === id)?.previewUrl ?? null : null);
   const pickSub = (name: string) => {
+    remember();
     fxEdit((v) => ({ ...v, sub: name }));
     setSubtitles({ pool: subtitles.pool.includes(name) ? subtitles.pool : [...subtitles.pool, name], textTab: name });
   };
@@ -894,7 +928,6 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const cfgRef = useRef<HTMLDivElement>(null);
   const toastTimer = useRef(0);
   const say = useCallback((msg: string) => { setToast(msg); window.clearTimeout(toastTimer.current); toastTimer.current = window.setTimeout(() => setToast(null), 2400); }, []);
-  const scopeNote = '';
   const seek = useCallback((v: number) => {
     const x = clamp(v, 0, dur - 1 / FPS); tRef.current = x; setT(x);
     const audio = audioRef.current;
@@ -902,15 +935,58 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   }, [dur, start]);
   // Другой ролик — выбор и окна относятся к прошлому; время и игра сохраняются.
   useEffect(() => { setSel(null); setPop(null); }, [index]);
+  // Темп или склейки сменились — окно и выбор склейки указывали на старый индекс (за последней
+  // склейкой превью было NaN, а переход ложился на несуществующий стык).
+  const cutCount = cuts.length;
+  useEffect(() => { setPop(null); }, [recipe.pace, cutCount]);
+  useEffect(() => {
+    if ((sel?.type === 'cut' && sel.i >= cutCount) || (sel?.type === 'frame' && sel.i >= shots)) setSel(null);
+  }, [sel, cutCount, shots]);
 
-  /* ── история ── */
-  const past = useRef<Snapshot[]>([]);
-  const future = useRef<Snapshot[]>([]);
+  /*
+   * ── история: своя у каждого ролика ──
+   * Раньше одна история на весь батч: правка ролика 1, «]», Ctrl+Z — и переходы ролика 1
+   * записывались в ролик 2. Теперь шаг помнит, какие ролики он менял, и возвращает только их;
+   * общие правки (дроп, темп, «Во все N») лежат в истории ролика, где их сделали.
+   */
+  const hist = useRef<Record<number, { past: Snapshot[]; future: Snapshot[] }>>({});
   const [, bump] = useState(0);
-  const snapshot = (): Snapshot => ({ transitions: { ...vfx.transitions }, styles: vfx.styles.map((s) => ({ ...s })) });
-  const remember = () => { past.current.push(snapshot()); if (past.current.length > 80) past.current.shift(); future.current = []; bump((n) => n + 1); };
-  const undo = () => { const prev = past.current.pop(); if (!prev) return; future.current.push(snapshot()); setTimeline(prev); setSel(null); bump((n) => n + 1); };
-  const redo = () => { const next = future.current.pop(); if (!next) return; past.current.push(snapshot()); setTimeline(next); setSel(null); bump((n) => n + 1); };
+  const stackOf = (i: number) => (hist.current[i] ??= { past: [], future: [] });
+  const capture = (indices: number[], opts: { timeline?: boolean; drop?: boolean } = {}): Snapshot => {
+    const st = useWizardStore.getState();
+    const { key, pace, cuts: tlCuts, edited } = st.timeline;
+    return {
+      videos: Object.fromEntries(indices.map((i) => [i, st.montage.videos[i] ?? null])),
+      ...(opts.timeline ? { timeline: { key, pace, cuts: tlCuts, edited } } : {}),
+      ...(opts.drop ? { dropTime: st.hooks.dropTime } : {})
+    };
+  };
+  const pushHistory = (snap: Snapshot) => {
+    const h = stackOf(combo.index);
+    h.past.push(snap);
+    if (h.past.length > 80) h.past.shift();
+    h.future = [];
+    bump((n) => n + 1);
+  };
+  const remember = (indices: number[] = [combo.index], opts: { timeline?: boolean; drop?: boolean } = {}) => pushHistory(capture(indices, opts));
+  const restore = (snap: Snapshot) => {
+    const videos = { ...useWizardStore.getState().montage.videos };
+    for (const [k, v] of Object.entries(snap.videos)) { if (v) videos[Number(k)] = v; else delete videos[Number(k)]; }
+    setMontage({ videos });
+    // дроп раньше склеек: склейки сверяются с ключом рецепта, а он считается от дропа
+    if (snap.dropTime !== undefined) setWizardHooks({ dropTime: snap.dropTime });
+    if (snap.timeline) setWTimeline(snap.timeline);
+  };
+  const flip = (from: Snapshot[], to: Snapshot[]) => {
+    const snap = from.pop();
+    if (!snap) return;
+    to.push(capture(Object.keys(snap.videos).map(Number), { timeline: Boolean(snap.timeline), drop: snap.dropTime !== undefined }));
+    restore(snap); setSel(null); setPop(null); bump((n) => n + 1);
+  };
+  const undo = () => { const h = stackOf(combo.index); flip(h.past, h.future); };
+  const redo = () => { const h = stackOf(combo.index); flip(h.future, h.past); };
+  const canUndo = (hist.current[combo.index]?.past.length ?? 0) > 0;
+  const canRedo = (hist.current[combo.index]?.future.length ?? 0) > 0;
 
   /* ── звук отрывка ── */
   const audioUrl = usePlaybackUrl(track);
@@ -936,9 +1012,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const [buffering, setBuffering] = useState(false);
   const bufRef = useRef(false);
 
-  /* ── транспорт: «Подряд» — в конце ролика играет следующий, весь батч без кликов ── */
-  const indexRef = useRef(index);
-  indexRef.current = index;
+  /* ── транспорт: в конце отрывка — снова с начала ── */
   useEffect(() => {
     if (!playing) return undefined;
     let raf = 0; let last = 0;
@@ -954,10 +1028,6 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
       if (next >= dur) {
         next = 0;
         if (audio) audio.currentTime = start;
-        if (chain && view === 'table') {
-          if (indexRef.current < total - 1) onIndex(indexRef.current + 1);
-          else { onIndex(0); setPlaying(false); tRef.current = 0; setT(0); say(`Батч просмотрен: ${total} ${rolik(total)}. Можно отправлять в рендер`); return; }
-        }
       }
       tRef.current = next;
       setT(next);
@@ -965,7 +1035,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     };
     raf = requestAnimationFrame(tick);
     return () => { cancelAnimationFrame(raf); if (bufRef.current) { bufRef.current = false; setBuffering(false); } };
-  }, [playing, dur, start, chain, view, total, onIndex, say]);
+  }, [playing, dur, start]);
 
   /* ── геометрия ── */
   const mainRef = useRef<HTMLElement>(null);
@@ -1048,7 +1118,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         const uid = Math.max(0, ...styles.map((s) => s.uid)) + 1;
         setStyles([...styles, { uid, style: label, lane, a: frame, b: frame + 1 }]);
         setSel({ type: 'style', uid });
-        say(`${label} — кадр ${frame + 1}${scopeNote}. Тяни края, чтобы растянуть`);
+        say(`${label} — кадр ${frame + 1}. Тяни края, чтобы растянуть`);
         return;
       }
     }
@@ -1067,20 +1137,33 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     remember();
     setTimeline({ transitions: Object.fromEntries(cuts.map((_, i) => [i, label])) });
     setHooks({ config: { effectGlue: label } });
-    say(`${label} — на всех склейках${scopeNote}`);
+    say(`${label} — на всех склейках`);
   };
   const setSub = (name: string) => { pickSub(name); say(`Субтитры ролика: ${name}`); };
   const frameLabel = (id: string | null) => (id ? frameCatalog.find((f) => f.id === id)?.label ?? id : 'без рамки');
   const pickFrame = (id: string | null) => {
     if (id && !combo.vertical) { say('Рамка ставится только на вертикальное видео — на 16:9 её обрезало бы'); return; }
+    remember();
     fxEdit((v) => ({ ...v, frame: id }));
     say(`Рамка ролика: ${frameLabel(id)}`);
   };
+  // «Во все N»: только туда, где бэк правку примет, — и честно сколько из батча её получили
   const toAll = (fn: (v: VideoFx) => VideoFx, msg: string, only?: number[]) => {
-    const idx = only ?? allIdx;
-    if (!idx.length) { say('Нет роликов, куда это можно поставить'); return; }
-    patchFx(idx, (v) => ({ ...fn(v), edited: true }));
-    say(`${msg} — во всех ${idx.length} ${rolik(idx.length)}`);
+    const cur = useWizardStore.getState().montage.videos;
+    const ok = (only ?? allIdx).filter((i) => {
+      const c = combos[i];
+      return c && !rejects(c, fn(cur[i]?.sig === c.sig ? cur[i] : defaultsFor(c)));
+    });
+    if (!ok.length) { say('Ни в один ролик батча это не встанет'); return; }
+    remember(ok);
+    editVideos(ok, fn);
+    say(ok.length === total ? `${msg} — во всех ${total} ${rolik(total)}` : `${msg} — применено к ${ok.length} из ${total}`);
+  };
+  /** Хук ролика целиком (тип и его поля) поверх ролика v — склейка и стили v остаются его. */
+  const withHookOf = (src: VideoFx) => (v: VideoFx): VideoFx => {
+    const own = Object.fromEntries(Object.entries(v.config).filter(([k]) => !HOOK_FIELDS.includes(k as keyof HookConfig)));
+    const hook = Object.fromEntries(HOOK_FIELDS.filter((k) => src.config[k] !== undefined).map((k) => [k, src.config[k]]));
+    return { ...v, kind: src.kind, config: { ...own, ...hook } as HookConfig };
   };
   // Хук рендер собирает только на вертикальном видео: фото, цвет и 16:9 его не принимают
   const hookIdx = combos.filter((c) => c.hookAllowed).map((c) => c.index);
@@ -1094,20 +1177,21 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     if (!combo.hookAllowed) { say('Хук ставится только на вертикальное видео — на фото, цвете и 16:9 его не будет'); return; }
     const prev = activeHookLabel && activeHookLabel !== item.label ? activeHookLabel : null;
     const carry: Partial<HookConfig> = kind === cat.kind ? {} : { effectGlue: config.effectGlue, effectStyle: config.effectStyle, effectStyles: config.effectStyles };
+    remember();
     setHooks({ kind: cat.kind, config: { ...carry, [cat.key]: item.label } as Partial<HookConfig> });
     setSel({ type: 'hook' });
-    say(prev ? `Хук заменён: ${prev} → ${item.label}${scopeNote}` : `${item.label} встал на дроп ${tc(drop)}${scopeNote}`);
+    say(prev ? `Хук заменён: ${prev} → ${item.label}` : `${item.label} встал на дроп ${tc(drop)}`);
   };
   const targetFrame = () => (sel?.type === 'frame' ? sel.i : frameAt(tRef.current));
   const addFromLib = (item: LibItem) => {
     if (item.kind === 'text') return setSub(item.label);
     if (item.kind === 'hook') return addHook(item);
     if (item.kind === 'style') return addStyle(item.label, targetFrame());
-    if (sel?.type === 'cut') { setTransition(sel.i, item.label); say(`Склейка ${sel.i + 1}: ${item.label}${scopeNote}`); } else setTransitionAll(item.label);
+    if (sel?.type === 'cut') { setTransition(sel.i, item.label); say(`Склейка ${sel.i + 1}: ${item.label}`); } else setTransitionAll(item.label);
   };
   const del = () => {
     if (!sel) return;
-    if (sel.type === 'hook' && kind !== 'none') { setHooks({ kind: 'none', config: { effectGlue: config.effectGlue, effectStyles: config.effectStyles, effectStyle: config.effectStyle } }); say(`Хук снят${scopeNote} — переходы и стили остались`); }
+    if (sel.type === 'hook' && kind !== 'none') { remember(); setHooks({ kind: 'none', config: { effectGlue: config.effectGlue, effectStyles: config.effectStyles, effectStyle: config.effectStyle } }); say('Хук снят — переходы и стили остались'); }
     else if (sel.type === 'style') { remember(); setStyles(styles.filter((s) => s.uid !== sel.uid)); }
     else if (sel.type === 'cut') setTransition(sel.i, NO_GLUE);
     else if (sel.type === 'frame' && sbVideo?.pins[sel.i]) { unpin(sel.i); say(`Кадр ${sel.i + 1} откреплён`); return; }
@@ -1118,7 +1202,11 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   /* ── drag: склейки, стили, библиотека ── */
   const cvRef = useRef<HTMLDivElement>(null);
   const laneRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const drag = useRef<null | { kind: 'scrub' } | { kind: 'cut'; i: number; cuts: number[] } | { kind: 'sedge'; uid: number; side: 'l' | 'r' } | { kind: 'smove'; uid: number; grab: number } | { kind: 'hookbody'; x0: number; moved: boolean } | { kind: 'hookedge' } | { kind: 'lib'; item: LibItem; x0: number; y0: number; live: boolean } | { kind: 'word'; i: number; mode: 'move' | 'l' | 'r'; grab: number; a0: number; b0: number }>(null);
+  // snap — состояние до перетаскивания: в историю оно ложится на первом реальном сдвиге,
+  // а простой клик-выбор историю не трогает и «Вернуть» не сбрасывает
+  type Undoable = { snap: Snapshot; saved: boolean };
+  const drag = useRef<null | { kind: 'scrub' } | ({ kind: 'cut'; i: number; cuts: number[] } & Undoable) | ({ kind: 'sedge'; uid: number; side: 'l' | 'r' } & Undoable) | ({ kind: 'smove'; uid: number; grab: number } & Undoable) | { kind: 'hookbody'; x0: number; moved: boolean } | ({ kind: 'hookedge' } & Undoable) | { kind: 'lib'; item: LibItem; x0: number; y0: number; live: boolean } | { kind: 'word'; i: number; mode: 'move' | 'l' | 'r'; grab: number; a0: number; b0: number }>(null);
+  const saveOnce = (d: Undoable) => { if (!d.saved) { d.saved = true; pushHistory(d.snap); } };
   const [ghost, setGhost] = useState<{ item: LibItem; x: number; y: number } | null>(null);
   const [place, setPlace] = useState<PlaceTarget | null>(null);
   const [snapLine, setSnapLine] = useState<number | null>(null);
@@ -1169,7 +1257,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
       if (d.kind === 'cut') {
         const b = [0, ...d.cuts, dur]; const lo = b[d.i] + 0.4; const hi = b[d.i + 2] - 0.4;
         const r = snapT(xt(cvX(e.clientX))); const v = clamp(r.v, lo, hi);
-        const next = [...d.cuts]; next[d.i] = Math.round(v * 1000) / 1000; d.cuts = next; setDragCuts(next);
+        const next = [...d.cuts]; next[d.i] = Math.round(v * 1000) / 1000;
+        if (next[d.i] !== d.cuts[d.i]) saveOnce(d);
+        d.cuts = next; setDragCuts(next);
         setSnapLine(r.snapped && v > lo && v < hi ? v : null); return;
       }
       if (d.kind === 'hookedge') {
@@ -1177,7 +1267,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         const v = xt(cvX(e.clientX));
         let best: SlowExtend = '';
         for (const [opt] of SLOW_EXTENDS) if (Math.abs(slowShutterEnd(opt, drop, dur, bounds) - v) < Math.abs(slowShutterEnd(best, drop, dur, bounds) - v)) best = opt;
-        if (best !== (config.effectHookExtend ?? '')) setHooks({ config: { effectHookExtend: best } });
+        if (best !== (config.effectHookExtend ?? '')) { saveOnce(d); setHooks({ config: { effectHookExtend: best } }); }
         return;
       }
       if (d.kind === 'hookbody') {
@@ -1192,15 +1282,15 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
       if (d.kind === 'sedge') {
         const s = styles.find((x) => x.uid === d.uid); if (!s) return;
         const v = xt(cvX(e.clientX)); let k = 0; bounds.forEach((x, i) => { if (Math.abs(x - v) < Math.abs(bounds[k] - v)) k = i; });
-        if (d.side === 'l') { const a = clamp(k, 0, s.b - 1); if (a !== s.a && styleFree(s.lane, a, s.b, s.uid)) setStyles(styles.map((x) => x.uid === s.uid ? { ...x, a } : x)); }
-        else { const bb = clamp(k, s.a + 1, shots); if (bb !== s.b && styleFree(s.lane, s.a, bb, s.uid)) setStyles(styles.map((x) => x.uid === s.uid ? { ...x, b: bb } : x)); }
+        if (d.side === 'l') { const a = clamp(k, 0, s.b - 1); if (a !== s.a && styleFree(s.lane, a, s.b, s.uid)) { saveOnce(d); setStyles(styles.map((x) => x.uid === s.uid ? { ...x, a } : x)); } }
+        else { const bb = clamp(k, s.a + 1, shots); if (bb !== s.b && styleFree(s.lane, s.a, bb, s.uid)) { saveOnce(d); setStyles(styles.map((x) => x.uid === s.uid ? { ...x, b: bb } : x)); } }
         return;
       }
       if (d.kind === 'smove') {
         const s = styles.find((x) => x.uid === d.uid); if (!s) return;
         const span = s.b - s.a; const a = clamp(frameAt(xt(cvX(e.clientX))) - d.grab, 0, shots - span);
         const ln = laneAt(e.clientX, e.clientY); const lane: 0 | 1 = ln === 's1' ? 1 : ln === 's0' ? 0 : s.lane;
-        if ((a !== s.a || lane !== s.lane) && styleFree(lane, a, a + span, s.uid)) setStyles(styles.map((x) => x.uid === s.uid ? { ...x, a, b: a + span, lane } : x));
+        if ((a !== s.a || lane !== s.lane) && styleFree(lane, a, a + span, s.uid)) { saveOnce(d); setStyles(styles.map((x) => x.uid === s.uid ? { ...x, a, b: a + span, lane } : x)); }
         return;
       }
       if (d.kind === 'lib') {
@@ -1212,14 +1302,15 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     const up = (e: PointerEvent) => {
       const d = drag.current; drag.current = null; setSnapLine(null);
       if (!d) return;
-      if (d.kind === 'cut') { setDragCuts(null); setTimeline({ cuts: d.cuts.map((c) => c + start), edited: true }); return; }
+      // склейку не сдвинули (просто клик по краю) — рецепт не трогаем и «ручными» не помечаем
+      if (d.kind === 'cut') { setDragCuts(null); if (d.saved) setTimeline({ cuts: d.cuts.map((c) => c + start), edited: true }); return; }
       if (d.kind === 'hookedge') { document.body.style.cursor = ''; return; }
       if (d.kind === 'hookbody') { document.body.style.cursor = ''; if (d.moved && dragDrop !== null) commitDrop(dragDrop); setDragDrop(null); return; }
       if (d.kind === 'lib') {
         document.body.style.cursor = ''; setGhost(null); setPlace(null);
         if (!d.live) return;
         const target = libTarget(d.item, e.clientX, e.clientY); if (!target) return;
-        if ('join' in target) { setTransition(target.join, d.item.label); setSel({ type: 'cut', i: target.join }); say(`Склейка ${target.join + 1}: ${d.item.label}${scopeNote}`); return; }
+        if ('join' in target) { setTransition(target.join, d.item.label); setSel({ type: 'cut', i: target.join }); say(`Склейка ${target.join + 1}: ${d.item.label}`); return; }
         if (target.bad) return;
         if (d.item.kind === 'text') setSub(d.item.label);
         else if (d.item.kind === 'hook') addHook(d.item);
@@ -1262,14 +1353,15 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     if (target.closest('.fxt-ruler')) { drag.current = { kind: 'scrub' }; seek(xt(cvX(e.clientX))); return; }
     const edge = target.closest<HTMLElement>('.fxt-edge');
     const st = target.closest<HTMLElement>('.fxt-clip.st');
-    if (edge?.dataset.cut) { remember(); drag.current = { kind: 'cut', i: Number(edge.dataset.cut), cuts: [...cuts] }; e.preventDefault(); return; }
+    if (edge?.dataset.cut) { drag.current = { kind: 'cut', i: Number(edge.dataset.cut), cuts: [...cuts], snap: capture([combo.index], { timeline: true }), saved: false }; e.preventDefault(); return; }
     if (st) {
-      const uid = Number(st.dataset.uid); setSel({ type: 'style', uid }); remember();
+      const uid = Number(st.dataset.uid); setSel({ type: 'style', uid });
       const s = styles.find((x) => x.uid === uid);
-      drag.current = edge ? { kind: 'sedge', uid, side: edge.dataset.side === 'l' ? 'l' : 'r' } : { kind: 'smove', uid, grab: frameAt(xt(cvX(e.clientX))) - (s?.a ?? 0) };
+      const undoable = { snap: capture([combo.index]), saved: false };
+      drag.current = edge ? { kind: 'sedge', uid, side: edge.dataset.side === 'l' ? 'l' : 'r', ...undoable } : { kind: 'smove', uid, grab: frameAt(xt(cvX(e.clientX))) - (s?.a ?? 0), ...undoable };
       e.preventDefault(); return;
     }
-    if (target.closest('[data-hookedge]')) { setSel({ type: 'hook' }); drag.current = { kind: 'hookedge' }; document.body.style.cursor = 'ew-resize'; e.preventDefault(); return; }
+    if (target.closest('[data-hookedge]')) { setSel({ type: 'hook' }); drag.current = { kind: 'hookedge', snap: capture([combo.index]), saved: false }; document.body.style.cursor = 'ew-resize'; e.preventDefault(); return; }
     if (target.closest('.fxt-clip.hk')) { setSel({ type: 'hook' }); drag.current = { kind: 'hookbody', x0: e.clientX, moved: false }; return; }
     const sb = target.closest<HTMLElement>('.fxt-clip.sb');
     if (sb) {
@@ -1288,14 +1380,28 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const goVideo = (d: number) => { onIndex((index + d + total) % total); };
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).matches?.('input, textarea')) return;
+      const target = e.target as HTMLElement;
+      if (target.matches?.('input, textarea, select, [contenteditable="true"]')) return;
+      // Esc закрывает сначала то, что открыто поверх: подсказку клавиш, меню роликов, шторку,
+      // окно склейки, выбор — и только когда открытого ничего нет, сам стол
+      if (e.key === 'Escape') {
+        if (editK !== null) return; // замену кадра отменяет её док
+        if (keysOpen) setKeysOpen(false);
+        else if (switchOpen) setSwitchOpen(false);
+        else if (sheet) setSheet(null);
+        else if (pop) setPop(null);
+        else if (sel) setSel(null);
+        else onClose();
+        return;
+      }
       if ((e.key === 'f' || e.key === 'F' || e.key === 'а' || e.key === 'А') && sel?.type === 'sub') { e.preventDefault(); toggleAsrFocus(subs[sel.i].idx); return; }
-      if (e.code === 'Space') { e.preventDefault(); if (document.activeElement instanceof HTMLButtonElement) document.activeElement.blur(); setPlaying((p) => !p); return; }
+      // пробел на кнопке/вкладке нажимает её саму — играть/пауза только вне контролов
+      if (e.code === 'Space') { if (target.closest?.('button, a, [role="button"], [role="tab"], [role="radio"], [role="option"], [role="switch"]')) return; e.preventDefault(); setPlaying((p) => !p); return; }
       if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
       if (e.key === '[' || e.key === ']') { e.preventDefault(); goVideo(e.key === ']' ? 1 : -1); return; }
-      if (e.key === 'Delete' || e.key === 'Backspace') { del(); return; }
-      if (e.key === 'Escape') { if (pop) setPop(null); else if (switchOpen) setSwitchOpen(false); else if (sel) setSel(null); else onClose(); return; }
+      // в «Все ролики» выделение спрятано — удалять по нему нельзя
       if (view === 'grid') return;
+      if (e.key === 'Delete' || e.key === 'Backspace') { del(); return; }
       if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && sel?.type === 'hook' && drop !== null) {
         e.preventDefault();
         const right = e.key === 'ArrowRight';
@@ -1319,13 +1425,28 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         
         {pinned && <button type="button" className="fxt-pill" data-tip="Заменён вручную — при пересборке «Пула» не поменяется. Нажми, чтобы открепить" onClick={() => unpin(sel.i)}><Glyph name="lock" size={13} /><span className="tx">Закреплён ×</span></button>}</>;
     }
-    if (sel.type === 'cut') { const label = transitionAt(sel.i); return <><Ic kind="trans" label={label} size={24} /><span className="nm">Склейка {sel.i + 1} → {sel.i + 2}</span><span className="meta">{label}</span><button type="button" className="fxt-pill" onClick={() => setTransitionAll(label)}><span className="tx">Ко всем склейкам</span></button>{allPill(() => toAll((v) => ({ ...v, transitions: { ...v.transitions, [sel.i]: label } }), `Склейка ${sel.i + 1}: ${label}`))}</>; }
-    if (sel.type === 'hook' && hookRange && activeHookLabel) return <><Ic kind="hook" label={activeHookLabel} size={24} /><span className="nm">{activeHookLabel}</span><span className="meta num">{hookRange[1] <= (dropView ?? 0) + 1e-3 ? 'заканчивается на дропе' : 'стартует с дропа'} {tc(start + (dropView ?? 0))} · {secs(hookRange[1] - hookRange[0])} · тяни или ← → по битам</span>{kind === 'effects' && config.effectHook === 'Слоу-шаттер' && <div className="fxt-seg" role="group" aria-label="Длина слоу-шаттера">{SLOW_EXTENDS.map(([opt, lab]) => <button key={opt || 'std'} type="button" aria-pressed={(config.effectHookExtend ?? '') === opt} onClick={() => setHooks({ config: { effectHookExtend: opt } })}><span className="tx">{lab}</span></button>)}</div>}{allPill(() => toAll((v) => ({ ...v, kind, config: { ...v.config, ...config } }), activeHookLabel, hookIdx), hookIdx.length)}<button type="button" className="fxt-icon" aria-label="Снять хук" data-tip="Снять хук · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>;
-    if (sel.type === 'style') { const s = styles.find((x) => x.uid === sel.uid); if (!s) return null; return <><Ic kind="style" label={s.style} size={24} /><span className="nm">{s.style}</span><span className="meta num">{s.b - s.a > 1 ? `кадры ${s.a + 1}–${s.b}` : `кадр ${s.a + 1}`} · {secs(bounds[s.b] - bounds[s.a])}</span><button type="button" className="fxt-pill" onClick={() => { if (styleFree(s.lane, 0, shots, s.uid)) { remember(); setStyles(styles.map((x) => x.uid === s.uid ? { ...x, a: 0, b: shots } : x)); } else say('На этой дорожке мешает другой стиль — перенеси его на «Стиль 2»'); }}><span className="tx">На весь отрывок</span></button>{allPill(() => toAll((v) => ({ ...v, styles: [...v.styles.filter((o) => o.lane !== s.lane || o.b <= s.a || o.a >= s.b), { ...s, uid: Math.max(0, ...v.styles.map((o) => o.uid)) + 1 }] }), s.style))}<button type="button" className="fxt-icon" aria-label="Удалить" data-tip="Удалить · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>; }
+    if (sel.type === 'cut') { const label = transitionAt(sel.i); return <><Ic kind="trans" label={label} size={24} /><span className="nm">Склейка {sel.i + 1} → {sel.i + 2}</span><span className="meta">{label}</span><button type="button" className="fxt-pill" onClick={() => setTransitionAll(label)}><span className="tx">Ко всем склейкам</span></button>{allPill(() => cutToAll(sel.i))}</>; }
+    if (sel.type === 'hook' && hookRange && activeHookLabel) return <><Ic kind="hook" label={activeHookLabel} size={24} /><span className="nm">{activeHookLabel}</span><span className="meta num">{hookRange[1] <= (dropView ?? 0) + 1e-3 ? 'заканчивается на дропе' : 'стартует с дропа'} {tc(start + (dropView ?? 0))} · {secs(hookRange[1] - hookRange[0])} · тяни или ← → по битам</span>{kind === 'effects' && config.effectHook === 'Слоу-шаттер' && <div className="fxt-seg" role="group" aria-label="Длина слоу-шаттера">{SLOW_EXTENDS.map(([opt, lab]) => <button key={opt || 'std'} type="button" aria-pressed={(config.effectHookExtend ?? '') === opt} onClick={() => setSlowExtend(opt)}><span className="tx">{lab}</span></button>)}</div>}{allPill(hookToAll, hookIdx.length)}<button type="button" className="fxt-icon" aria-label="Снять хук" data-tip="Снять хук · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>;
+    if (sel.type === 'style') { const s = styles.find((x) => x.uid === sel.uid); if (!s) return null; return <><Ic kind="style" label={s.style} size={24} /><span className="nm">{s.style}</span><span className="meta num">{s.b - s.a > 1 ? `кадры ${s.a + 1}–${s.b}` : `кадр ${s.a + 1}`} · {secs(bounds[s.b] - bounds[s.a])}</span><button type="button" className="fxt-pill" onClick={() => styleWhole(s)}><span className="tx">На весь отрывок</span></button>{allPill(() => styleToAll(s))}<button type="button" className="fxt-icon" aria-label="Удалить" data-tip="Удалить · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>; }
     if (sel.type === 'sub') { const s = subs[sel.i]; return s ? <><Ic kind="trans" label="text" size={24} /><span className="nm">«{s.text}»</span><span className="meta num">{tc(s.a)} → {tc(s.b)} · {secs(s.b - s.a)}{s.focus ? ' · фокус-слово' : ''}</span><button type="button" className="fxt-pill" data-tip="Двойной клик по слову делает то же · F" onClick={() => toggleAsrFocus(s.idx)}><span className="tx">{s.focus ? 'Снять фокус' : 'Фокус-слово'}</span></button></> : null; }
     return null;
   };
 
+  /* общие действия выделения — десктопная строка и телефонная панель зовут одни и те же */
+  const setSlowExtend = (opt: SlowExtend) => { if ((config.effectHookExtend ?? '') === opt) return; remember(); setHooks({ config: { effectHookExtend: opt } }); };
+  const hookToAll = () => { if (activeHookLabel) toAll(withHookOf(vfx), activeHookLabel, hookIdx); };
+  const cutToAll = (i: number) => { const label = transitionAt(i); toAll((v) => ({ ...v, transitions: { ...v.transitions, [i]: label } }), `Склейка ${i + 1}: ${label}`); };
+  const styleWhole = (s: TimelineStyleRange) => {
+    if (!styleFree(s.lane, 0, shots, s.uid)) { say('На этой дорожке мешает другой стиль — перенеси его на «Стиль 2»'); return; }
+    remember(); setStyles(styles.map((x) => x.uid === s.uid ? { ...x, a: 0, b: shots } : x));
+  };
+  const styleToAll = (s: TimelineStyleRange) => toAll((v) => ({ ...v, styles: [...v.styles.filter((o) => o.lane !== s.lane || o.b <= s.a || o.a >= s.b), { ...s, uid: Math.max(0, ...v.styles.map((o) => o.uid)) + 1 }] }), s.style);
+  // темп общий для батча и пересобирает кадры всех роликов — в историю идут все и склейки
+  const changePace = (pace: TimelinePace) => {
+    if (recipe.pace === pace) return;
+    remember(allIdx, { timeline: true });
+    recipe.setPace(pace); setSel(null); setPop(null);
+  };
   const paceGlyph = (k: number) => { const n = [3, 5, 7][k]; let d = ''; for (let j = 1; j < n; j++) d += `M${(2 + j * 20 / n).toFixed(1)} 8v8`; return `<rect x="2" y="7" width="20" height="10" rx="2.5"/><path d="${d}"/>`; };
   const paceTip = (pace: TimelinePace) => { const n = recipe.data?.cuts[pace].length; const label = { sparse: 'Реже', auto: 'Авто — как посчитал рендер по темпу', dense: 'Чаще' }[pace]; return n !== undefined ? `${label} · ${n + 1} ${kadr(n + 1)} · для всех роликов` : label; };
   const used = useCallback((item: LibItem) => item.kind === 'src' ? clips.some((c) => c.id === item.label)
@@ -1403,7 +1524,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
                     {dropView !== null && <div className="fxt-dropflag num" style={{ left: tx(dropView) }}><span>Дроп {tc(start + dropView)}</span></div>}
                   </div>
                   <div ref={(el) => { laneRefs.current.frames = el; }} className={`fxt-lane l-frames mt-l-src${place && 'lane' in place && place.lane === 'frames' ? ' over' : ''}`}>
-                    {recipe.loading && <span className="fxt-hint" style={{ left: x0 + 8 }}>Считаем склейки по темпу трека…</span>}
+                    {!phone && recipe.loading && <span className="fxt-hint" style={{ left: x0 + 8 }}>Считаем склейки по темпу трека…</span>}
+                    {!phone && recipe.error && !recipe.loading && <span className="mt-lanemsg" role="alert" style={{ left: x0 + 8 }}><span className="tx">Не удалось посчитать склейки</span><button type="button" className="fxt-pill" onClick={recipe.retry}><span className="tx">Повторить</span></button></span>}
                     {!recipe.loading && Array.from({ length: shots }, (_, i) => {
                       const x = tx(bounds[i]); const w = tx(bounds[i + 1]) - x; const clip = clips[i]; const pinned = Boolean(srcPins[i]);
                       return (
@@ -1473,11 +1595,11 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const nearestCut = () => { if (!cuts.length) return -1; let k = 0; cuts.forEach((c, i) => { if (Math.abs(c - t) < Math.abs(cuts[k] - t)) k = i; }); return k; };
   const replaceStyle = (uid: number, label: string) => {
     remember(); setStyles(styles.map((x) => (x.uid === uid ? { ...x, style: label } : x)));
-    say(`Стиль заменён: ${label}${scopeNote}`);
+    say(`Стиль заменён: ${label}`);
   };
   const sheetAdd = (item: LibItem) => {
     if (item.kind === 'style' && sel?.type === 'style') return replaceStyle(sel.uid, item.label);
-    if (item.kind === 'trans' && sel?.type === 'cut') { setTransition(sel.i, item.label); say(`Склейка ${sel.i + 1}: ${item.label}${scopeNote}`); return; }
+    if (item.kind === 'trans' && sel?.type === 'cut') { setTransition(sel.i, item.label); say(`Склейка ${sel.i + 1}: ${item.label}`); return; }
     addFromLib(item);
   };
   const nudgeWord = (i: number, d: number) => {
@@ -1540,7 +1662,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         tool('l', 'back', 'Бит назад', () => hookToBeat(false), { disabled: drop === null }),
         tool('r', 'fwd', 'Бит вперёд', () => hookToBeat(true), { disabled: drop === null }),
         tool('re', 'effects', 'Сменить', () => setSheet('hook')),
-        ...(slow ? [tool('ext', 'slowshutter', nextExt[1], () => setHooks({ config: { effectHookExtend: nextExt[0] } }))] : []),
+        ...(slow ? [tool('ext', 'slowshutter', nextExt[1], () => setSlowExtend(nextExt[0]))] : []),
         tool('del', 'trash', 'Удалить', del, { danger: true, disabled: kind === 'none' })];
     }
     const i = sel.i; const w = subs[i];
@@ -1564,7 +1686,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         {isEdited(combo) && <i className="mt-dot" />}
         <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><path d="m3.5 6 4.5 4 4.5-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
-      <button type="button" className="mm-gen" onClick={() => { const blocked = onGenerate(); if (blocked) say(blocked); }}><span className="tx">Готово · {total}</span></button>
+      <button type="button" className="mm-gen" disabled={busy} aria-busy={busy || undefined} onClick={() => { const blocked = onGenerate(); if (blocked) say(blocked); }}>{busy && <span className="spinner" aria-hidden="true" />}<span className="tx">Готово · {total}</span></button>
       {switchOpen && (
         <div className="fxt-vsw-menu mt-vmenu mm-vmenu" role="listbox" aria-label="Ролики батча">
           {combos.map((c) => (
@@ -1594,8 +1716,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         <span className="mm-time num"><b>{tc(t)}</b><span>&nbsp;/ {tc(dur)}</span></span>
         <button type="button" className="mm-play" aria-label={buffering ? 'Загружается' : playing ? 'Пауза' : 'Воспроизвести'} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>{buffering ? <span className="spinner" aria-hidden="true" /> : <Glyph name={playing ? 'pause' : 'play'} size={22} />}</button>
         <div className="mm-hist">
-          <button type="button" className="mm-ic" aria-label="Отменить" disabled={!past.current.length} onClick={undo}><Glyph name="undo" size={20} /></button>
-          <button type="button" className="mm-ic" aria-label="Вернуть" disabled={!future.current.length} onClick={redo}><Glyph name="redo" size={20} /></button>
+          <button type="button" className="mm-ic" aria-label="Отменить" disabled={!canUndo} onClick={undo}><Glyph name="undo" size={20} /></button>
+          <button type="button" className="mm-ic" aria-label="Вернуть" disabled={!canRedo} onClick={redo}><Glyph name="redo" size={20} /></button>
         </div>
       </div>
       <section ref={tlRef} className="mm-tl" aria-label="Таймлайн">
@@ -1626,7 +1748,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
               <div className="mm-pace">
                 <div className="fxt-seg" role="group" aria-label="Частота склеек">
                   {PACES.map((pace, k) => (
-                    <button key={pace} type="button" aria-pressed={recipe.pace === pace} onClick={() => { if (recipe.pace !== pace) { recipe.setPace(pace); setSel(null); } }}>
+                    <button key={pace} type="button" aria-pressed={recipe.pace === pace} onClick={() => changePace(pace)}>
                       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true" dangerouslySetInnerHTML={{ __html: paceGlyph(k) }} />
                       <b className="tx">{{ sparse: 'Реже', auto: 'Авто', dense: 'Чаще' }[pace]}</b>
                       {recipe.data && <small className="tx">{recipe.data.cuts[pace].length + 1} {kadr(recipe.data.cuts[pace].length + 1)}</small>}
@@ -1693,10 +1815,10 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         <div className="mt-top-r">
           <div className="fxt-seg" role="group" aria-label="Вид">
             <button type="button" aria-pressed={view === 'table'} onClick={() => setView('table')}><Glyph name="table" size={16} /><span className="tx">Ролик</span></button>
-            <button type="button" aria-pressed={view === 'grid'} onClick={() => { setView('grid'); setPop(null); }}><Glyph name="grid" size={16} /><span className="tx">Все ролики</span></button>
+            <button type="button" aria-pressed={view === 'grid'} onClick={() => { setView('grid'); setPop(null); setSel(null); }}><Glyph name="grid" size={16} /><span className="tx">Все ролики</span></button>
           </div>
           <button type="button" className="fxt-icon" aria-label="Горячие клавиши" data-tip="Горячие клавиши" onClick={() => setKeysOpen((v) => !v)}><Glyph name="keys" size={20} /></button>
-          <button type="button" className="fxt-primary" onClick={() => { const blocked = onGenerate(); if (blocked) say(blocked); }}><span className="tx">Сгенерировать {total}</span></button>
+          <button type="button" className="fxt-primary" disabled={busy} aria-busy={busy || undefined} onClick={() => { const blocked = onGenerate(); if (blocked) say(blocked); }}>{busy && <span className="spinner" aria-hidden="true" />}<span className="tx">Сгенерировать {total}</span></button>
         </div>
       </header>}
 
@@ -1741,21 +1863,21 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
               {!sbVideo && combo.bgKey && !combo.bgKey.startsWith('footage:') && combo.bgKey !== '__color__' && (
                 <div className="mt-srcnote"><span className="tx">{combo.bgKey.startsWith('photo:') ? 'Фото подберутся при генерации' : 'Своё видео пойдёт клипами встык'}</span></div>
               )}
-              {chain && playing && <div className="mt-next"><span className="tx">Дальше ролик {(index + 1) % total + 1}</span><i style={{ transform: `scaleX(${t / dur})` }} /></div>}
+
             </Stage>
           </section>
 
           <section ref={tlRef} className="fxt-panel fxt-tl" aria-label="Таймлайн">
             <div className="fxt-bar">
-              <button type="button" className="fxt-icon" aria-label="Отменить" data-tip="Отменить · Ctrl+Z" disabled={!past.current.length} onClick={undo}><Glyph name="undo" size={18} /></button>
-              <button type="button" className="fxt-icon" aria-label="Вернуть" data-tip="Вернуть · Ctrl+Shift+Z" disabled={!future.current.length} onClick={redo}><Glyph name="redo" size={18} /></button>
+              <button type="button" className="fxt-icon" aria-label="Отменить" data-tip="Отменить · Ctrl+Z" disabled={!canUndo} onClick={undo}><Glyph name="undo" size={18} /></button>
+              <button type="button" className="fxt-icon" aria-label="Вернуть" data-tip="Вернуть · Ctrl+Shift+Z" disabled={!canRedo} onClick={redo}><Glyph name="redo" size={18} /></button>
               <span className="fxt-sep" />
               <div className="fxt-sel">{selInfo()}</div>
               <span className="fxt-sep" />
               <div className="fxt-pace">
                 <div className="fxt-seg" role="group" aria-label="Частота склеек">
                   {PACES.map((pace, k) => (
-                    <button key={pace} type="button" aria-pressed={recipe.pace === pace} aria-label={paceTip(pace)} data-tip={paceTip(pace)} onClick={() => { if (recipe.pace !== pace) { recipe.setPace(pace); setSel(null); } }}>
+                    <button key={pace} type="button" aria-pressed={recipe.pace === pace} aria-label={paceTip(pace)} data-tip={paceTip(pace)} onClick={() => changePace(pace)}>
                       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true" dangerouslySetInnerHTML={{ __html: paceGlyph(k) }} />
                     </button>
                   ))}
@@ -1791,7 +1913,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
 
       {ghost && <div className="fxt-ghost" style={{ left: ghost.x, top: ghost.y }}>{ghost.item.kind === 'src' ? <Thumb url={ghost.item.url} size={28} /> : <Ic kind={ghost.item.kind === 'text' ? 'trans' : ghost.item.kind as 'hook'} label={ghost.item.kind === 'text' ? 'text' : ghost.item.label} on size={26} />}<span className="tx">{ghost.item.kind === 'src' ? clipTitle(ghost.item.label) : ghost.item.label}</span></div>}
 
-      {pop && view === 'table' && (() => {
+      {pop && view === 'table' && pop.i < cuts.length && (() => {
         const vw = window.innerWidth / zoomScale();
         const left = clamp(pop.x - 132, 8, vw - 272); const bottom = Math.max(8, window.innerHeight / zoomScale() - pop.y + 10);
         if (pop.type === 'cut') {
