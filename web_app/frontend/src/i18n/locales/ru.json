@@ -736,7 +736,8 @@
       "visPick": "выбор — в ленте ниже",
       "copyVariant": "Копия текущего варианта",
       "removedVariant": "Удалён: {{label}}",
-      "undoRemove": "Вернуть"
+      "undoRemove": "Вернуть",
+      "guideDone": "Готово"
     },
     "pool": {
       "total": "Всего видео:",

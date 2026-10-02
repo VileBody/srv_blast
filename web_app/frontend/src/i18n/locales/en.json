@@ -733,7 +733,8 @@
       "visPick": "pick in the strip below",
       "copyVariant": "Copy the current variant",
       "removedVariant": "Removed: {{label}}",
-      "undoRemove": "Undo"
+      "undoRemove": "Undo",
+      "guideDone": "Done"
     },
     "pool": {
       "total": "Total videos:",
