@@ -1002,7 +1002,7 @@
     "noLimit": "No limit",
     "of": "{{used}} of {{total}}",
     "out": "used up",
-    "blastNudge": "Blast subscription: 100 videos and 4 tracks a month for 1 990 ₽"
+    "blastNudge": "Blast subscription: 100 videos and 4 tracks a month for 1 990 ₽"
   },
   "auth": {
     "registerTitle": "Sign up",
@@ -1473,12 +1473,73 @@
       "freeTitle": "Unlimited on one track",
       "freeText": "Up to {{cap}} videos per batch, {{hours}} hours between batches.",
       "freePrice": "Free",
-      "tripwireTitle": "Same track, no limits",
+      "tripwireTitle": "Any track, no limits",
       "tripwireText": "Up to {{cap}} videos per batch, no waiting. One-time payment.",
       "tripwirePrice": "{{price}} ₽",
       "blastTitle": "Blast subscription",
       "blastText": "4 tracks and 100 videos a month, every effect.",
-      "blastPrice": "1 990 ₽/mo"
+      "blastPrice": "1 990 ₽/mo",
+      "more": "Learn more",
+      "notNow": "Not now? Tell us why",
+      "allPlans": "All plans",
+      "buyBlast": "Get Blast",
+      "lead": {
+        "title": "This is just one video",
+        "description": "Picture a stream: 3–4 videos like this every day, all month, for your tracks. No shoots, no editing: drop a track and Blast builds it.",
+        "points": {
+          "p1": "15 times more content for the same money",
+          "p2": "Regular and fresh: different styles, transitions and hooks",
+          "p3": "No shoots, no producers, edits right on the timeline"
+        },
+        "compareTitle": "Videos a month for 1 990 ₽",
+        "blast": "Blast",
+        "blastCount": "100 videos",
+        "editor": "Editor, from 300 ₽ per video",
+        "editorCount": "about 7 videos"
+      },
+      "personal": {
+        "timeSpent": "Right now one video takes you {{spent}}. Blast builds it in minutes and leaves the time for music.",
+        "moneySpent": "Right now editing costs you {{spent}} a month. For 1 990 ₽ Blast gives 100 videos: less than 7 videos from an editor.",
+        "time": "Artists growing on streaming post 1–2 videos a day. Not because they sit in editing for hours, but because they found a fast way.",
+        "money": "Artists growing on streaming post 1–2 videos a day. Not because they pay editors tens of thousands, but because they found a cheap way.",
+        "ideas": "No need to hunt for ideas: one track turns into dozens of different videos, and the stats show which one lands.",
+        "meaning": "The point shows up not after one video but when there are many and the algorithm has stats to work with.",
+        "noEdit": "You don't make videos yet, and that's fine: Blast handles editing end to end, from shots to subtitles.",
+        "default": "Social platforms promote people who post often and steadily. Blast gets you into that rhythm without burning out."
+      },
+      "details": {
+        "title": "What Blast gives you",
+        "description": "Subscription for 1 990 ₽ a month. Cancel anytime.",
+        "nowTitle": "This month",
+        "now": {
+          "p1": "100 videos in different styles",
+          "p2": "Up to 4 tracks",
+          "p3": "Video batches and every site effect"
+        },
+        "laterTitle": "Later on",
+        "later": {
+          "p1": "Track limit grows by 1 every month",
+          "p2": "Every third month: unlimited videos",
+          "p3": "Your own footage, TikTok publishing and analytics"
+        }
+      },
+      "whyNot": {
+        "title": "Why not now?",
+        "description": "An honest answer helps us. Free unlimited on the track isn't going anywhere.",
+        "reason": {
+          "noRelease": "No release yet",
+          "noMoney": "No budget",
+          "quality": "Quality fell short",
+          "doubt": "Not sure it works"
+        },
+        "answer": {
+          "later": "Got it. We'll remind you about Blast later; meanwhile build videos for free.",
+          "laterTail": "Unlimited on “{{track}}” unlocks in two steps in Telegram.",
+          "cases": "Our key cases are TikTok hits of 2024 and 2025. We produced content from scratch, bought creators and studied trends, and now bring that experience into the product.",
+          "casesTail": "The best test: post the videos and check the stats. Unlimited on “{{track}}” is free."
+        },
+        "casesLink": "Cases on the channel"
+      }
     },
     "actions": {
       "title": "Two steps to unlimited",

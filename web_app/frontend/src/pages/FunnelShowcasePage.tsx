@@ -3,6 +3,8 @@ import type { FunnelQuestion, FunnelQuota, FunnelRules, VideoVersion } from '../
 import { LimitsPopoutCard, TrackLimitBar } from '../components/funnel/LimitsPopout';
 import { QuizPanel, UnlimitedPanel, type UnlimitedHandlers, type UnlimitedStep, type UnlimitedView } from '../components/funnel/panels';
 import { VideoRatingRow } from '../components/funnel/parts';
+import { PitchFlow, type PitchReason, type PitchScreen } from '../components/funnel/PitchFlow';
+import type { FunnelState } from '../lib/types';
 
 /*
  * Витрина воронки после генерации (docs/BOT_TO_WEB_FLOW.md, разделы 4–5): каждая модалка
@@ -100,6 +102,33 @@ function PopoutStage({ children }: { children: ReactNode }) {
   return <div className="flex justify-end rounded-r25 bg-card-2 p-[24px]">{children}</div>;
 }
 
+function survey(answers: Record<string, [string, string]>, branch = ''): FunnelState['survey'] {
+  return {
+    answers: Object.fromEntries(Object.entries(answers).map(([q, [id, label]]) => [q, { id, label }])),
+    completed: true,
+    branch,
+    bridge: null
+  };
+}
+
+function Pitch({ screen = 'lead', reason = null, s }: { screen?: PitchScreen; reason?: PitchReason | null; s?: FunnelState['survey'] }) {
+  return (
+    <PitchFlow
+      screen={screen}
+      reason={reason}
+      survey={s}
+      rules={RULES}
+      trackTitle="Нет любви"
+      progress={{ total: 5, current: 3 }}
+      channelLink="#"
+      onScreen={noop}
+      onReason={noop}
+      onUnlock={noop}
+      onClose={noop}
+    />
+  );
+}
+
 export function FunnelShowcasePage() {
   return (
     <main className="min-h-dvh bg-bg px-[16px] py-[48px] text-text">
@@ -152,9 +181,6 @@ export function FunnelShowcasePage() {
           <State label="Методичка">
             <UnlimitedPanel view={view('methodology', { bridge: BRIDGE, methodology: 'idle' })} on={ON} />
           </State>
-          <State label="Питч: лестница бесплатно, 399 ₽, подписка">
-            <UnlimitedPanel view={view('pitch')} on={ON} />
-          </State>
           <State label="Два шага: ничего не сделано">
             <UnlimitedPanel view={view('actions', { channel: 'todo', manager: 'todo' })} on={ON} />
           </State>
@@ -169,6 +195,36 @@ export function FunnelShowcasePage() {
           </State>
           <State label="Безлимит уже на другом треке">
             <UnlimitedPanel view={view('otherTrack', { otherTrackTitle: 'Последний танец' })} on={ON} />
+          </State>
+        </Group>
+
+        <Group title="Питч в модалке B" note="Перенос веток питча из бота. Главный довод зависит от ответа на Q3, собственные цифры человека подставляются из Q2a (время) и Q2b (деньги). Выход из питча: бесплатный безлимит, а не приглашение друга.">
+          <State label="Q3 «Не хватает времени», Q2a «1–3 часа»">
+            <Pitch s={survey({ q2: ['self', 'Сам'], q2a: ['1_3h', '1–3 часа'], q3: ['time', 'Не хватает времени'] }, 'time')} />
+          </State>
+          <State label="Q3 «Не хватает денег», Q2b «5 000–10 000₽»">
+            <Pitch s={survey({ q2: ['helper', 'С помощью монтажёра/сервиса'], q2b: ['5_10k', '5 000–10 000₽'], q3: ['money', 'Не хватает денег на монтаж'] }, 'money')} />
+          </State>
+          <State label="Q3 «Не хватает идей»">
+            <Pitch s={survey({ q3: ['ideas', 'Не хватает идей/вариантов подачи'] }, 'ideas')} />
+          </State>
+          <State label="Q3 «Не вижу смысла»">
+            <Pitch s={survey({ q3: ['meaning', 'В целом не вижу смысла'] }, 'meaning')} />
+          </State>
+          <State label="Квиз пропущен: общий довод">
+            <Pitch />
+          </State>
+          <State label="«Подробнее»: что даёт Бласт">
+            <Pitch screen="details" />
+          </State>
+          <State label="«Не сейчас»: почему?">
+            <Pitch screen="whyNot" />
+          </State>
+          <State label="Ответ на «Нет релиза» / «Нет денег»">
+            <Pitch screen="reason" reason="noRelease" />
+          </State>
+          <State label="Ответ на «Качество» / «Сомневаюсь»: кейсы">
+            <Pitch screen="reason" reason="doubt" />
           </State>
         </Group>
 

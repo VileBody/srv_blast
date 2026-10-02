@@ -10,6 +10,7 @@ import { startNextBatch } from '../../stores/wizardStore';
 import { FunnelDialog } from './FunnelSheet';
 import { QuizPanel, UnlimitedPanel, quizPath, type QuizView, type UnlimitedStep } from './panels';
 import { VideoRatingRow, type ActionStatus, type MethodologyState } from './parts';
+import type { PitchReason, PitchScreen } from './PitchFlow';
 import { useFunnelState } from './useFunnel';
 
 /*
@@ -118,6 +119,8 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
   const [channel, setChannel] = useState<ActionStatus>('todo');
   const [manager, setManager] = useState<ActionStatus>('todo');
   const [unlockPending, setUnlockPending] = useState(false);
+  const [pitchScreen, setPitchScreen] = useState<PitchScreen>('lead');
+  const [pitchReason, setPitchReason] = useState<PitchReason | null>(null);
   const [index, setIndex] = useState(0);
   const quiz = useQuiz(funnel, (b) => { setBridge(b); setIndex((i) => i + 1); });
 
@@ -187,7 +190,10 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
           managerCode: funnel.links.managerCode,
           unlockPending,
           quota: funnel.unlimited?.quota ?? null,
-          otherTrackTitle: funnel.unlimited?.trackTitle
+          otherTrackTitle: funnel.unlimited?.trackTitle,
+          pitchScreen,
+          pitchReason,
+          survey: funnel.survey
         }}
         on={{
           onRate: (videoId, score) => {
@@ -227,7 +233,13 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
             onClose();
             navigate(ctx.projectId ? startNextBatch(ctx.projectId) : '/app/generate');
           },
-          onClose
+          onClose,
+          onPitchScreen: setPitchScreen,
+          onPitchReason: (reason) => {
+            setPitchReason(reason);
+            setPitchScreen('reason');
+            void api.trackEvent('pitch_objection', { reason }).catch(() => {});
+          }
         }}
       />
     </FunnelDialog>

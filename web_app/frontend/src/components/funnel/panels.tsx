@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next';
-import type { FunnelQuestion, FunnelQuota, FunnelRules, RatingReason, VideoVersion } from '../../lib/types';
+import type { FunnelQuestion, FunnelQuota, FunnelRules, FunnelState, RatingReason, VideoVersion } from '../../lib/types';
 import { Button, ButtonLink, GLYPH, Icon } from '../ui/kit';
 import { FunnelSheet } from './FunnelSheet';
+import { PitchFlow, type PitchReason, type PitchScreen } from './PitchFlow';
 import {
   FN_GLYPH,
   MethodologyCard,
@@ -118,6 +119,10 @@ export interface UnlimitedView {
   /* done */
   quota?: FunnelQuota | null;
   otherTrackTitle?: string | null;
+  /* pitch: экран питча и ответы квиза для персонального довода */
+  pitchScreen?: PitchScreen;
+  pitchReason?: PitchReason | null;
+  survey?: FunnelState['survey'];
 }
 
 export interface UnlimitedHandlers {
@@ -132,6 +137,8 @@ export interface UnlimitedHandlers {
   onUnlock: () => void;
   onGenerate: () => void;
   onClose: () => void;
+  onPitchScreen?: (screen: PitchScreen) => void;
+  onPitchReason?: (reason: PitchReason) => void;
 }
 
 export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on: UnlimitedHandlers; titleId?: string }) {
@@ -200,19 +207,20 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
       );
     case 'pitch':
       return (
-        <FunnelSheet
-          {...common}
-          title={t('funnel.pitch.title', { track: view.trackTitle })}
-          description={t('funnel.pitch.description')}
-          actions={
-            <>
-              <ButtonLink variant="ghost" href="/app/pricing">{t('funnel.popout.plans')}</ButtonLink>
-              <Button variant="primary" onClick={on.onNext}>{t('funnel.pitch.cta')}</Button>
-            </>
-          }
-        >
-          <PitchLadder rules={view.rules} />
-        </FunnelSheet>
+        <PitchFlow
+          titleId={titleId}
+          progress={progress}
+          screen={view.pitchScreen ?? 'lead'}
+          reason={view.pitchReason}
+          survey={view.survey}
+          rules={view.rules}
+          trackTitle={view.trackTitle}
+          channelLink={view.channelLink}
+          onScreen={on.onPitchScreen ?? (() => {})}
+          onReason={on.onPitchReason ?? (() => {})}
+          onUnlock={on.onNext}
+          onClose={on.onClose}
+        />
       );
     case 'actions': {
       const both = view.channel === 'done' && view.manager === 'done';
