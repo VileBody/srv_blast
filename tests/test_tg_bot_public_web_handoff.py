@@ -354,3 +354,82 @@ def test_after_pitch_and_low_rating_the_bot_leads_to_the_site_not_to_a_friend_in
     _run(app._handle_rate_video(low, ChatState(chat_id=CHAT)))
     assert low.answers[-1][0] == mt.SITE_CTA_AFTER_LOW
     assert app.credits_db.handoffs[-1]["kind"] == "site"  # трек неизвестен — просто в аккаунт
+
+
+class _Callback:
+    def __init__(self):
+        self.message = _Msg()
+        self.answers: list[str | None] = []
+
+    async def answer(self, text=None, **kw):
+        self.answers.append(text)
+        await asyncio.sleep(0)  # отдаём управление: второе нажатие приходит «посреди» первого
+
+
+def test_double_tap_build_in_bot_runs_the_flow_once(tmp_path):
+    """Два нажатия «Собрать в боте» подряд: флоу бота запускается один раз."""
+    app = _make_app()
+    _run(app._offer_web_fork(_Msg(), _state_with_track(tmp_path)))
+    first, second = _Callback(), _Callback()
+
+    async def both():
+        await asyncio.gather(app._handle_web_fork_bot_callback(first), app._handle_web_fork_bot_callback(second))
+
+    _run(both())
+
+    assert [e for e in app.credits_db.events if e[1] == "web_fork_bot"] == [(CHAT, "web_fork_bot")]
+    assert "Уже выбрано." in first.answers + second.answers
+    assert app.store.by_id[CHAT].stage == STAGE_WAIT_TIMING_INPUT
+
+
+def test_refreshed_fork_link_does_not_restart_reminders(tmp_path, monkeypatch):
+    """Ссылка развилки помечена `fork`, перевыпуск протухшей — `refresh`."""
+    app = _make_app()
+    _run(app._offer_web_fork(_Msg(), _state_with_track(tmp_path)))
+    st = app.store.by_id[CHAT]
+    st.web_handoff_expires_at = 0  # ссылка протухла
+    _run(app._handle_wait_web_fork(_Msg(text="ау"), st))
+    assert [h["payload"]["source"] for h in app.credits_db.handoffs] == ["fork", "refresh"]
+
+
+class _RecordingConn:
+    def __init__(self):
+        self.sql: list[str] = []
+
+    async def fetch(self, sql, *args):
+        self.sql.append(sql)
+        return []
+
+
+class _RecordingPool:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def acquire(self):
+        conn = self.conn
+
+        class _Ctx:
+            async def __aenter__(self):
+                return conn
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _Ctx()
+
+
+def test_reminder_rows_anchor_on_the_fork_token_and_compare_in_one_timezone():
+    """Выборка держит цепочку на токене развилки: токены напоминаний (source=reminder)
+    её не перезапускают, а «открыл» — любой погашенный track-токен того же трека."""
+    conn = _RecordingConn()
+    db = CreditsDB.__new__(CreditsDB)
+    db._pool_or_fail = lambda: _RecordingPool(conn)
+    _run(db.site_handoff_reminder_rows())
+    _run(db.idle_generation_rows())
+    reminders, idle = conn.sql
+    assert "COALESCE(t.payload->>'source', 'fork') = 'fork'" in reminders
+    assert "SUM(r.redeem_count)" in reminders and "r.payload->>'audioHash'" in reminders
+    # web_activity_log — наивное UTC, activity_log — время сессии: обе к TIMESTAMPTZ
+    assert "w.created_at AT TIME ZONE 'UTC'" in reminders
+    assert "created_at AT TIME ZONE 'UTC' AS created_at FROM web_activity_log" in idle
+    assert "created_at::timestamptz AS created_at FROM activity_log" in idle

@@ -3517,14 +3517,7 @@ class BlastBotApp:
 
         @self.router.callback_query(lambda c: c.data == WEB_FORK_CALLBACK_BOT)
         async def _on_web_fork_bot(callback: CallbackQuery) -> None:
-            if callback.message is None or callback.message.chat is None:
-                return
-            st = await self.store.get(int(callback.message.chat.id))
-            if st.stage != STAGE_WAIT_WEB_FORK:
-                await callback.answer("Уже выбрано.")
-                return
-            await callback.answer()
-            await self._choose_bot_at_fork(callback.message, st)
+            await self._handle_web_fork_bot_callback(callback)
 
         @self.router.message(Command("sendtrack"))
         async def _on_sendtrack(message: Message) -> None:
@@ -6783,8 +6776,12 @@ class BlastBotApp:
             return None
         return st.web_handoff_audio_s3_url, st.web_handoff_audio_hash
 
-    async def _mint_track_handoff(self, message: Message, st: ChatState) -> None:
-        """Свежая ссылка «на сайт» для трека, уже залитого на развилке."""
+    async def _mint_track_handoff(self, message: Message, st: ChatState, *, source: str = "fork") -> None:
+        """Свежая ссылка «на сайт» для трека, уже залитого на развилке.
+
+        `source` — откуда ссылка: `fork` начинает цепочку напоминаний «ссылку не
+        открыл», `refresh` (протухшую ссылку развилки выпустили заново) её не
+        перезапускает (credits_db.site_handoff_reminder_rows)."""
         token = await self.credits_db.create_web_handoff(
             int(st.chat_id),
             "track",
@@ -6793,6 +6790,7 @@ class BlastBotApp:
                 "audioHash": st.web_handoff_audio_hash,
                 "filename": str(st.pending_audio_filename or Path(st.web_handoff_prepared_path).name),
                 "profile": self._web_handoff_profile(message),
+                "source": source,
             },
             ttl_seconds=self.settings.web_handoff_ttl_s,
         )
@@ -6846,6 +6844,30 @@ class BlastBotApp:
     async def _send_web_fork(self, message: Message, st: ChatState, *, text: str = WEB_FORK_TEXT) -> None:
         await message.answer(text, reply_markup=self._web_fork_kb(st.web_handoff_url))
 
+    async def _handle_web_fork_bot_callback(self, callback: CallbackQuery) -> None:
+        """«Собрать в боте» на развилке. Двойной тап не должен дважды запускать флоу.
+
+        Чат занимаем синхронно, до первого await: проверка стадии сама по себе не
+        спасает — оба нажатия успевали прочитать WAIT_WEB_FORK до того, как первое
+        её сменит. Набор живёт в процессе: обработчик апдейтов у бота один."""
+        if callback.message is None or callback.message.chat is None:
+            return
+        chat_id = int(callback.message.chat.id)
+        busy = self.__dict__.setdefault("_web_fork_choosing", set())
+        if chat_id in busy:
+            await callback.answer("Уже выбрано.")
+            return
+        busy.add(chat_id)
+        try:
+            st = await self.store.get(chat_id)
+            if st.stage != STAGE_WAIT_WEB_FORK:
+                await callback.answer("Уже выбрано.")
+                return
+            await callback.answer()
+            await self._choose_bot_at_fork(callback.message, st)
+        finally:
+            busy.discard(chat_id)
+
     async def _choose_bot_at_fork(self, message: Message, st: ChatState) -> None:
         await self.credits_db.log_event(int(st.chat_id), "web_fork_bot")
         await self._ask_timing_choice(message, st, prefix=WEB_FORK_BOT_PREFIX)
@@ -6860,7 +6882,7 @@ class BlastBotApp:
             return
         # Развилка может ждать днями: протухшую ссылку не повторяем, выпускаем новую.
         if time.time() > st.web_handoff_expires_at - 600:
-            await self._mint_track_handoff(message, st)
+            await self._mint_track_handoff(message, st, source="refresh")
             await self.store.set(st)
         await self._send_web_fork(message, st, text=WEB_FORK_REMINDER)
 
@@ -6889,7 +6911,9 @@ class BlastBotApp:
         if source is None:
             return
         try:
-            audio_hash = await asyncio.to_thread(self._sha256_file, Path(source["prepared"]))
+            # Тот же файл, что залит на развилке, второй раз не хэшируем.
+            fork = self._fork_upload_for(st, Path(source["prepared"]))
+            audio_hash = fork[1] if fork else await asyncio.to_thread(self._sha256_file, Path(source["prepared"]))
             payload = {
                 "audioS3Url": source["audioS3Url"],
                 "audioHash": audio_hash,
@@ -9946,7 +9970,12 @@ class BlastBotApp:
             if step is None:
                 continue
             ref = f"{str(row['token_hash'])[:16]}:{step}"
-            payload = row["payload"] if link_kind == "track" else {"profile": row["payload"].get("profile") or {}}
+            # Ссылка из напоминания — тот же трек, но цепочку она не перезапускает.
+            payload = (
+                {**row["payload"], "source": "reminder"}
+                if link_kind == "track"
+                else {"profile": row["payload"].get("profile") or {}}
+            )
             sent += await self._send_site_reminder(
                 now, tg_id, kind=kind, ref=ref, text=text, button=button, link_kind=link_kind, payload=payload
             )
