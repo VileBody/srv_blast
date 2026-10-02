@@ -96,13 +96,17 @@ const secs = (t: number) => `${t.toFixed(1).replace('.', ',')} с`;
  * кадра — клипы того же вайба без занятых в батче, «Готово» закрепляет выбор в плане
  * (он и уйдёт в рендер), «Отмена» возвращает прежний, кубик перемешивает незакреплённые.
  */
-export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, drop, dockRef, onChanged, onError }: {
+export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, drop, dockRef, onChanged, onError, request, compact }: {
   combo: Combo; video: StoryboardVideo; frames: Frame[]; bounds: number[]; k: number; onSeek: (k: number) => void;
   /** замена идёт — превью крутит этот кадр по кругу; null — снова играет ролик */
   onEdit: (k: number | null) => void;
   drop: number | null; dockRef?: Ref<HTMLDivElement>; onChanged?: () => void;
   /** запрос замены/перемешивания упал — показать причину (строка статуса стола) */
   onError?: (message: string) => void;
+  /** телефон: замену и перемешивание запускает нижняя панель стола (n — счётчик нажатий) */
+  request?: { kind: 'edit' | 'shuffle'; n: number } | null;
+  /** телефон: полоса кадров уже есть на таймлайне — док виден только пока идёт замена */
+  compact?: boolean;
 }) {
   const shots = Math.max(1, bounds.length - 1);
   const timingFrom = useWizardStore((s) => s.timingFrom);
@@ -174,6 +178,12 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
     } finally { if (id === reqId.current) setBusy(false); }
   };
   const step = (d: number) => { if (!edit) onSeek((k + d + shots) % shots); };
+  const lastRequest = useRef(request?.n ?? 0);
+  useEffect(() => {
+    if (!request || request.n === lastRequest.current) return;
+    lastRequest.current = request.n;
+    if (request.kind === 'edit') void startEdit(); else void shuffle();
+  }, [request]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // в замене стрелки листают варианты, Enter/Esc — готово/отмена (таймлайн их не получает)
   useEffect(() => {
@@ -193,9 +203,10 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
   const pinned = Object.keys(video.pins).length;
   const atDrop = drop !== null && Math.abs((bounds[k] ?? -1) - drop) < 0.02;
   const strip = useStripFollow(edit?.k ?? k, frames.length);
+  if (compact && !edit) return null;
   return (
     <>
-      {shots > 1 && !edit && (
+      {shots > 1 && !edit && !compact && (
         <>
           <button type="button" className="psb-arrow psb-glass l" aria-label="Предыдущий кадр" onClick={() => step(-1)}><Arrow dir="l" /></button>
           <button type="button" className="psb-arrow psb-glass r" aria-label="Следующий кадр" onClick={() => step(1)}><Arrow dir="r" /></button>
@@ -227,7 +238,7 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
             <button type="button" className="psb-btn pri" onClick={() => void startEdit()}><I d={REROLL} /><span className="tx">Заменить кадр</span></button>
           </div>
         )}
-        <div ref={strip.ref} className={`psb-strip${edit ? ' editing' : ''}`} data-fade-l={strip.fadeLeft || undefined} data-fade-r={strip.fadeRight || undefined}>
+        {!compact && <div ref={strip.ref} className={`psb-strip${edit ? ' editing' : ''}`} data-fade-l={strip.fadeLeft || undefined} data-fade-r={strip.fadeRight || undefined}>
           {frames.map((f, i) => (
             <button key={`${f.id}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === k ? ' cur mt-cur' : ''}`} style={{ flexGrow: (bounds[i + 1] ?? 0) - (bounds[i] ?? 0) }} aria-label={`Кадр ${i + 1}`} onClick={() => { if (!edit) onSeek(i); }}>
               <FrameView frame={f} thumb />
@@ -236,7 +247,7 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
               {video.repeats.includes(i) && <i className="rp" />}
             </button>
           ))}
-        </div>
+        </div>}
       </div>
     </>
   );
