@@ -469,6 +469,14 @@ export function WizardPage() {
     }
   };
 
+  // Табы этапов сохраняют черновик, как «Продолжить», — иначе серверная копия отставала бы.
+  // Переход не ждёт записи: сбой записи — тост, как у «Продолжить».
+  const goToStage = (target: number) => {
+    if (target === stage) return;
+    setStage(target);
+    persistDraft(target).catch(() => push({ variant: 'error', title: t('wizard.page.saveFail'), text: t('wizard.page.saveFailText') }));
+  };
+
   // «Пул» и монтажный стол смотрят на одно видео батча: листалка «Комбинаций» и
   // переключатель стола двигают один номер.
   const [poolIndex, setPoolIndex] = useState(0);
@@ -545,6 +553,7 @@ export function WizardPage() {
         <WizardHeaderCard
           title={headerTitle}
           artist={artist}
+          onStageSelect={goToStage}
           onRename={projectId ? (value) => {
             const name = value.trim();
             if (name && name !== currentProject?.name) renameProjectMutation.mutate(name);
