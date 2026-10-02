@@ -483,17 +483,25 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
   /** телефон: тап по плитке ставит её (CapCut) — перетаскивать на дорожку пальцем неудобно */
   tapAdd?: boolean;
 }) {
+  /*
+   * Плитка — группа, а не фокусируемый div вокруг кнопки (вложенные интерактивы скринридер
+   * читал кашей): с клавиатуры и скринридера ставит одна кнопка «+» (у стоящего — «✓»,
+   * aria-pressed, жмётся так же), мышь тянет плитку, на телефоне тап по плитке.
+   */
+  const actBtn = (item: LibItem, on: boolean) => (
+    <button type="button" data-act className={`${on ? 'mt-on' : 'fxt-mini'} act`} aria-pressed={on} aria-label={`Добавить «${item.label}»`} onClick={() => onAdd(item)}>
+      <Glyph name={on ? 'check' : 'plus'} size={14} sw={on ? 2 : 1.8} />
+    </button>
+  );
   const tile = (item: LibItem) => {
     const on = used(item);
     return (
-      <div key={`${item.kind}:${item.label}`} className={`mt-fxtile${on ? ' on' : ''}`} tabIndex={0} data-tip={META[item.label] || undefined}
+      <div key={`${item.kind}:${item.label}`} role="group" aria-label={item.label} className={`mt-fxtile${on ? ' on' : ''}`} data-tip={META[item.label] || undefined}
         onPointerDown={(e) => { if (!tapAdd && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
-        onClick={tapAdd ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}
-        onKeyDown={(e) => { if (e.key === 'Enter') onAdd(item); }}>
+        onClick={tapAdd ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}>
         <TileMedia preview={previewOf(item)} />
         <span className="nm"><b>{item.label}</b></span>
-        {on ? <span className="mt-on act"><Glyph name="check" size={14} sw={2} /></span>
-          : <button type="button" data-act className="fxt-mini act" aria-label={`Добавить «${item.label}»`} onClick={() => onAdd(item)}><Glyph name="plus" size={14} sw={1.8} /></button>}
+        {actBtn(item, on)}
       </div>
     );
   };
@@ -501,18 +509,12 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
   const row = (item: LibItem, lead: ReactNode, meta?: string, disabled = false) => {
     const on = used(item);
     return (
-      <div key={`${item.kind}:${item.label}`} className={`fxt-item${on ? ' on' : ''}${disabled ? ' off' : ''}`} tabIndex={0}
+      <div key={`${item.kind}:${item.label}`} role="group" aria-label={item.label} aria-disabled={disabled || undefined} className={`fxt-item${on ? ' on' : ''}${disabled ? ' off' : ''}`}
         onPointerDown={(e) => { if (!tapAdd && !disabled && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
-        onClick={tapAdd && !disabled ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}
-        onKeyDown={(e) => { if (e.key === 'Enter' && !disabled) onAdd(item); }}>
+        onClick={tapAdd && !disabled ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}>
         {lead}
         <span className="nm"><b>{item.label}</b><small>{meta ?? META[item.label] ?? ''}</small></span>
-        {!disabled && (
-          <span className="acts">
-            {on ? <span className="mt-on"><Glyph name="check" size={14} sw={2} /></span>
-              : <button type="button" data-act className="fxt-mini" aria-label={`Добавить «${item.label}»`} onClick={() => onAdd(item)}><Glyph name="plus" size={14} sw={1.8} /></button>}
-          </span>
-        )}
+        {!disabled && <span className="acts">{actBtn(item, on)}</span>}
       </div>
     );
   };
@@ -696,6 +698,12 @@ function PickPopover({ title, options, current, left, bottom, preview, onApply, 
 export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false }: { index: number; onIndex: (i: number) => void; onClose: () => void; onGenerate: () => string | null; busy?: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null);
   useTooltips(rootRef);
+  // модальный стол: фокус — внутрь при открытии и обратно на кнопку, что его открыла, при закрытии
+  useEffect(() => {
+    const back = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    rootRef.current?.focus({ preventScroll: true });
+    return () => { if (back?.isConnected) back.focus({ preventScroll: true }); };
+  }, []);
   const track = useWizardStore((s) => s.track);
   const timingFrom = useWizardStore((s) => s.timingFrom);
   const timingTo = useWizardStore((s) => s.timingTo);
@@ -1849,7 +1857,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   );
 
   return createPortal(
-    <div ref={rootRef} className={`fxt mt${phone ? ' mob' : ''}`} data-format="9:16" role="dialog" aria-label="Монтажный стол">
+    <div ref={rootRef} className={`fxt mt${phone ? ' mob' : ''}`} data-format="9:16" role="dialog" aria-modal="true" aria-label="Монтажный стол" tabIndex={-1}>
       {phone ? mobileHeader : <header className="fxt-top mt-top">
         <div className="mt-top-l">
           <button type="button" className="fxt-back" onClick={onClose} data-tip="К «Пулу» — правки сохраняются · Esc"><Glyph name="back" size={18} /><span className="tx">Пул</span></button>
@@ -1977,7 +1985,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
         </main>
       )}
 
-      <div className={`fxt-toast mt-toast${toast ? ' show' : ''}`}><span className="tx">{toast}</span></div>
+      <div className={`fxt-toast mt-toast${toast ? ' show' : ''}`} role="status" aria-live="polite" aria-atomic="true"><span className="tx">{toast}</span></div>
       {editedCount > 0 && view === 'grid' && <div className="mt-gridnote"><span className="tx">С ручными правками: {editedCount} из {total}. На «Пуле» их не пересоберёт смена распределения — только предупредит</span></div>}
 
       {ghost && <div className="fxt-ghost" style={{ left: ghost.x, top: ghost.y }}>{ghost.item.kind === 'src' ? <Thumb url={ghost.item.url} size={28} /> : <Ic kind={ghost.item.kind === 'text' ? 'trans' : ghost.item.kind as 'hook'} label={ghost.item.kind === 'text' ? 'text' : ghost.item.label} on size={26} />}<span className="tx">{ghost.item.kind === 'src' ? clipTitle(ghost.item.label) : ghost.item.label}</span></div>}

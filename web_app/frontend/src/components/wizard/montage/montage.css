@@ -221,3 +221,7 @@ img.mt-fv-cover { object-fit: cover; }
 .mt .fxt-primary:disabled, .mt .mm-gen:disabled { opacity: .6; cursor: wait; filter: none; transform: none; }
 .mt .fxt-primary .spinner, .mt .mm-gen .spinner { width: 14px; height: 14px; }
 .mt-plate-media { position: absolute; inset: 0; }
+/* корень стола получает фокус при открытии (модалка) — без рамки вокруг всего экрана */
+.fxt.mt:focus { outline: none; }
+/* «✓» у стоящего эффекта — тоже кнопка (ставит ещё раз / на выбранную склейку) */
+.mt-on.act { cursor: pointer; }

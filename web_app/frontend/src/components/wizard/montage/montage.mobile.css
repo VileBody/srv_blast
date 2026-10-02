@@ -111,7 +111,10 @@
 .mm-sheet .mt-fxtile { flex: none; min-width: 0; gap: 4px; cursor: pointer; }
 .mm-sheet .mt-fxtile-media { border-radius: var(--r10); }
 .mm-sheet .mt-fxtile .nm { font-size: 11px; line-height: 14px; padding-right: 0; text-align: center; } /* ui-allow: подпись плитки в сетке шторки, как в CapCut */
-.mm-sheet .mt-fxtile .fxt-mini.act, .mm-sheet .mt-fxtile-tag { display: none; }
+.mm-sheet .mt-fxtile-tag { display: none; }
+/* «+» в сетке шторки — невидимая кнопка на всю плитку: тап ставит, а скринридер видит кнопку */
+.mm-sheet .mt-fxtile .fxt-mini.act { inset: 0; width: auto; height: auto; border-radius: var(--r10); opacity: 0; }
+.mm-sheet .mt-fxtile .fxt-mini.act:focus-visible { opacity: 1; background: none; box-shadow: inset 0 0 0 2px var(--accent-light); }
 .mm-sheet .mt-fxtile .mt-on.act { right: 4px; top: 4px; }
 .mm-sheet .mt-fxtile-none { padding: 6px; font-size: 10px; line-height: 13px; } /* ui-allow: заглушка «нет примера» в мелкой плитке */
 .mob .mt-gridnote { top: 56px; left: 12px; right: 12px; width: auto; max-width: none; transform: none; white-space: normal; text-align: center; }
