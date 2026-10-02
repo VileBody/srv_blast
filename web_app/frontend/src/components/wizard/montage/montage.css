@@ -202,7 +202,7 @@ img.mt-fv-cover { object-fit: cover; }
 
 /* волна отрывка под точками битов: та же музыка, что звучит, — склейки и хук ставятся по ней */
 .mt .fxt-lane.l-audio .mt-wave { position: absolute; top: 10px; height: calc(100% - 14px); pointer-events: none; }
-.mt .fxt-lane.l-audio .mt-wave rect { fill: var(--fxt-t20); }
+.mt .fxt-lane.l-audio .mt-wave rect { fill: var(--fxt-t40); }
 .mt .fxt-lane.l-audio .fxt-beat { z-index: 1; }
 
 /* хук двигает дроп: за него можно взяться */
