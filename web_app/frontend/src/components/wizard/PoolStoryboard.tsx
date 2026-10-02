@@ -69,6 +69,9 @@ const Svg = ({ d, size = 15, fill = false }: { d: string; size?: number; fill?: 
 const REROLL = 'M20 11a8 8 0 0 0-14.3-4.9L4 8M4 4v4h4M4 13a8 8 0 0 0 14.3 4.9L20 16M20 20v-4h-4';
 const DICE = 'M7.5 4h9A3.5 3.5 0 0 1 20 7.5v9a3.5 3.5 0 0 1-3.5 3.5h-9A3.5 3.5 0 0 1 4 16.5v-9A3.5 3.5 0 0 1 7.5 4zM9 9h.01M15 15h.01M15 9h.01M9 15h.01';
 const LOCK = 'M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6z';
+// подписи «Отмена/Готово» не помещались в кнопки дока рядом со счётчиком — знаки вместо слов
+const CROSS = 'M7 7l10 10M17 7L7 17';
+const CHECK = 'M5.5 12.5l4.2 4.2L18.5 7.8';
 
 /** edited — у видео есть ручные правки с таймлайна: пилюля «Изменён» закреплена слева над чипами. */
 export function PoolStoryboard({ slots, current, chips, edited }: { slots: StoryboardSlot[]; current: number; chips: StoryboardChip[]; edited?: boolean }) {
@@ -378,13 +381,13 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
             <div ref={dockGuideRef} className="psb-dock psb-glass">
               {edit ? (
                 <div className="psb-dhead edit">
-                  <button type="button" className="psb-btn" onClick={cancelEdit} title="Вернуть прежний клип · Esc"><span className="tx">Отмена</span></button>
+                  <button type="button" className="psb-btn ico" onClick={cancelEdit} aria-label="Отмена" title="Отмена — вернуть прежний клип · Esc"><Svg d={CROSS} size={14} /></button>
                   <span className="psb-var">
                     <button type="button" aria-label="Предыдущий вариант" disabled={edit.pos <= 0} onClick={() => variant(-1)}><Arrow dir="l" /></button>
                     <span className="cnt tx">{edit.loading ? '…' : <>{edit.pos + 1} <small>/ {edit.candidates.length}</small></>}</span>
                     <button type="button" aria-label="Следующий вариант" disabled={edit.loading || edit.pos >= edit.candidates.length - 1} onClick={() => variant(1)}><Arrow dir="r" /></button>
                   </span>
-                  <button type="button" className="psb-btn pri" onClick={doneEdit} disabled={edit.loading} title="Оставить этот клип и закрепить"><Svg d={LOCK} size={14} /><span className="tx">Готово</span></button>
+                  <button type="button" className="psb-btn pri ico" onClick={doneEdit} disabled={edit.loading} aria-label="Готово" title="Готово — оставить этот клип и закрепить"><Svg d={CHECK} size={15} /></button>
                 </div>
               ) : (
                 <div className="psb-dhead">

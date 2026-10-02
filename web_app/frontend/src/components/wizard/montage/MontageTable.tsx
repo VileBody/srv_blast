@@ -8,7 +8,8 @@ import { HookConfig, HookKind, MontageVideo, TimelinePace, TimelineRecipe, Timel
 import { KANT_STYLES, styleIdOf } from '../../../lib/subtitleText';
 import { EFFECT_HOOKS, MOTIONS, NO_GLUE, OBJECTS, THOUGHTS, previewIdFor } from '../hookCatalog';
 import { PACES, useRecipeCuts } from '../storyboardData';
-import { usePlaybackUrl } from '../useFragmentAudio';
+import { secondsToDropTime, usePlaybackUrl, useWaveSourceUrl } from '../useFragmentAudio';
+import { useSegmentWave } from './segmentWave';
 import { SubtitleTextCustomization } from '../SubtitlesPanel';
 import { SubtitleCanvas, type SubtitleCanvasProps } from '../SubtitleCanvas';
 import { StoryboardReplaceGuideVisual, TimelineEntryGuideVisual } from '../timelineGuides';
@@ -658,6 +659,11 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const start = recipe.window?.start ?? 0;
   const dur = recipe.window ? recipe.window.end - recipe.window.start : 15;
   const drop = recipe.window?.drop != null ? recipe.window.drop - start : null;
+  // Хук тянется мышью — пока тянут, дроп живёт здесь (от начала отрывка); в стор он уходит
+  // на отпускании, иначе склейки пересчитывались бы на каждый пиксель.
+  const [dragDrop, setDragDrop] = useState<number | null>(null);
+  const dropView = dragDrop ?? drop;
+  const setWizardHooks = useWizardStore((s) => s.setHooks);
   const bpm = recipe.data?.bpm ?? 0;
   const [dragCuts, setDragCuts] = useState<number[] | null>(null);
   const cuts = useMemo(() => dragCuts ?? (recipe.cuts ?? []).map((c) => c - start), [dragCuts, recipe.cuts, start]);
@@ -707,7 +713,20 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const defaultGlue = config.effectGlue ?? NO_GLUE;
   const transitionAtFor = (v: VideoFx) => (i: number) => v.transitions[i] ?? v.config.effectGlue ?? NO_GLUE;
   const transitionAt = transitionAtFor(vfx);
-  const hookRangeFor = (v: VideoFx) => { const l = hookLabel(v.kind, v.config); return v.kind !== 'none' && drop !== null && l ? hookSpan(v.kind, v.config, drop, dur, bpm, bounds) : null; };
+  const hookRangeFor = (v: VideoFx) => { const l = hookLabel(v.kind, v.config); return v.kind !== 'none' && dropView !== null && l ? hookSpan(v.kind, v.config, dropView, dur, bpm, bounds) : null; };
+  /*
+   * Тайминг хука = дроп: все хук-эффекты в рендере считаются от него (`user_drop_t`). Поэтому
+   * хук на столе двигает сам дроп — общий для батча, как и на шаге FX; склейки под новый дроп
+   * пересчитываются. Края — по полсекунды от краёв отрывка: рендер требует дроп внутри него.
+   */
+  const DROP_EDGE = 0.5;
+  const commitDrop = (next: number) => {
+    if (drop === null) return;
+    const v = Math.round(clamp(next, DROP_EDGE, dur - DROP_EDGE) * 100) / 100;
+    if (Math.abs(v - drop) < 0.005) return;
+    setWizardHooks({ dropTime: secondsToDropTime(start + v) });
+    say(`Дроп ${tc(start + drop)} → ${tc(start + v)} — хук и склейки для всех роликов`);
+  };
   const hookRange = hookRangeFor(vfx);
   const fxEdit = (fn: (v: VideoFx) => VideoFx) => patchFx(scopeIdx, (v) => ({ ...fn(v), edited: true }));
   const setHooks = (patch: { kind?: HookKind; config?: Partial<HookConfig> }) => fxEdit((v) => ({
@@ -845,6 +864,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
 
   /* ── звук отрывка ── */
   const audioUrl = usePlaybackUrl(track);
+  // волна отрывка на дорожке «Биты»: ~24 столбика в секунду, при зуме они растягиваются
+  const wavePeaksSeg = useSegmentWave(useWaveSourceUrl(track), start, start + dur, Math.max(32, Math.round(dur * 24)));
   const audioRef = useRef<HTMLAudioElement | null>(null);
   useEffect(() => {
     if (!audioUrl) return undefined;
@@ -994,7 +1015,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   /* ── drag: склейки, стили, библиотека ── */
   const cvRef = useRef<HTMLDivElement>(null);
   const laneRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const drag = useRef<null | { kind: 'scrub' } | { kind: 'cut'; i: number; cuts: number[] } | { kind: 'sedge'; uid: number; side: 'l' | 'r' } | { kind: 'smove'; uid: number; grab: number } | { kind: 'hookbody'; x0: number; warned: boolean } | { kind: 'hookedge' } | { kind: 'lib'; item: LibItem; x0: number; y0: number; live: boolean } | { kind: 'word'; i: number; mode: 'move' | 'l' | 'r'; grab: number; a0: number; b0: number }>(null);
+  const drag = useRef<null | { kind: 'scrub' } | { kind: 'cut'; i: number; cuts: number[] } | { kind: 'sedge'; uid: number; side: 'l' | 'r' } | { kind: 'smove'; uid: number; grab: number } | { kind: 'hookbody'; x0: number; moved: boolean } | { kind: 'hookedge' } | { kind: 'lib'; item: LibItem; x0: number; y0: number; live: boolean } | { kind: 'word'; i: number; mode: 'move' | 'l' | 'r'; grab: number; a0: number; b0: number }>(null);
   const [ghost, setGhost] = useState<{ item: LibItem; x: number; y: number } | null>(null);
   const [place, setPlace] = useState<PlaceTarget | null>(null);
   const [snapLine, setSnapLine] = useState<number | null>(null);
@@ -1056,7 +1077,15 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         if (best !== (config.effectHookExtend ?? '')) setHooks({ config: { effectHookExtend: best } });
         return;
       }
-      if (d.kind === 'hookbody') { if (!d.warned && Math.abs(e.clientX - d.x0) > 6) { d.warned = true; say('Хук привязан к дропу — сдвинуть его нельзя. Дроп выбирается на шаге FX'); } return; }
+      if (d.kind === 'hookbody') {
+        if (drop === null) return;
+        if (!d.moved && Math.abs(e.clientX - d.x0) < 4) return;
+        d.moved = true; document.body.style.cursor = 'grabbing';
+        const r = snapT(drop + (cvX(e.clientX) - cvX(d.x0)) / pps);
+        const v = clamp(r.v, DROP_EDGE, dur - DROP_EDGE);
+        setDragDrop(v); setSnapLine(r.snapped && v === r.v ? v : null);
+        return;
+      }
       if (d.kind === 'sedge') {
         const s = styles.find((x) => x.uid === d.uid); if (!s) return;
         const v = xt(cvX(e.clientX)); let k = 0; bounds.forEach((x, i) => { if (Math.abs(x - v) < Math.abs(bounds[k] - v)) k = i; });
@@ -1082,6 +1111,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
       if (!d) return;
       if (d.kind === 'cut') { setDragCuts(null); setTimeline({ cuts: d.cuts.map((c) => c + start), edited: true }); return; }
       if (d.kind === 'hookedge') { document.body.style.cursor = ''; return; }
+      if (d.kind === 'hookbody') { document.body.style.cursor = ''; if (d.moved && dragDrop !== null) commitDrop(dragDrop); setDragDrop(null); return; }
       if (d.kind === 'lib') {
         document.body.style.cursor = ''; setGhost(null); setPlace(null);
         if (!d.live) return;
@@ -1115,7 +1145,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
       e.preventDefault(); return;
     }
     if (target.closest('[data-hookedge]')) { setSel({ type: 'hook' }); drag.current = { kind: 'hookedge' }; document.body.style.cursor = 'ew-resize'; e.preventDefault(); return; }
-    if (target.closest('.fxt-clip.hk')) { setSel({ type: 'hook' }); drag.current = { kind: 'hookbody', x0: e.clientX, warned: false }; return; }
+    if (target.closest('.fxt-clip.hk')) { setSel({ type: 'hook' }); drag.current = { kind: 'hookbody', x0: e.clientX, moved: false }; return; }
     const sb = target.closest<HTMLElement>('.fxt-clip.sb');
     if (sb) {
       const i = Number(sb.dataset.sub); const w = subs[i];
@@ -1141,6 +1171,13 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
       if (e.key === 'Delete' || e.key === 'Backspace') { del(); return; }
       if (e.key === 'Escape') { if (pop) setPop(null); else if (switchOpen) setSwitchOpen(false); else if (sel) setSel(null); else onClose(); return; }
       if (view === 'grid') return;
+      if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && sel?.type === 'hook' && drop !== null) {
+        e.preventDefault();
+        const right = e.key === 'ArrowRight';
+        const beat = right ? beats.find((b) => b > drop + 0.01) : [...beats].reverse().find((b) => b < drop - 0.01);
+        commitDrop(beat ?? drop + (right ? 1 : -1) / FPS);
+        return;
+      }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); seek(tRef.current + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 1 : 1 / FPS)); return; }
       if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); const next = e.key === 'ArrowDown' ? bounds.find((x) => x > tRef.current + 0.01) : [...bounds].reverse().find((x) => x < tRef.current - 0.01); if (next !== undefined) seek(next); }
     };
@@ -1158,7 +1195,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         {pinned && <button type="button" className="fxt-pill" data-tip="Заменён вручную — при пересборке «Пула» не поменяется. Нажми, чтобы открепить" onClick={() => unpin(sel.i)}><Glyph name="lock" size={13} /><span className="tx">Закреплён ×</span></button>}</>;
     }
     if (sel.type === 'cut') { const label = transitionAt(sel.i); return <><Ic kind="trans" label={label} size={24} /><span className="nm">Склейка {sel.i + 1} → {sel.i + 2}</span><span className="meta">{label}</span><button type="button" className="fxt-pill" onClick={() => setTransitionAll(label)}><span className="tx">Ко всем склейкам</span></button>{allPill(() => toAll((v) => ({ ...v, transitions: { ...v.transitions, [sel.i]: label } }), `Склейка ${sel.i + 1}: ${label}`))}</>; }
-    if (sel.type === 'hook' && hookRange && activeHookLabel) return <><Ic kind="hook" label={activeHookLabel} size={24} /><span className="nm">{activeHookLabel}</span><span className="meta num">{hookRange[1] <= (drop ?? 0) + 1e-3 ? 'заканчивается на дропе' : 'стартует с дропа'} · {secs(hookRange[1] - hookRange[0])}</span>{kind === 'effects' && config.effectHook === 'Слоу-шаттер' && <div className="fxt-seg" role="group" aria-label="Длина слоу-шаттера">{SLOW_EXTENDS.map(([opt, lab]) => <button key={opt || 'std'} type="button" aria-pressed={(config.effectHookExtend ?? '') === opt} onClick={() => setHooks({ config: { effectHookExtend: opt } })}><span className="tx">{lab}</span></button>)}</div>}{allPill(() => toAll((v) => ({ ...v, kind, config: { ...v.config, ...config } }), activeHookLabel, hookIdx), hookIdx.length)}<button type="button" className="fxt-icon" aria-label="Снять хук" data-tip="Снять хук · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>;
+    if (sel.type === 'hook' && hookRange && activeHookLabel) return <><Ic kind="hook" label={activeHookLabel} size={24} /><span className="nm">{activeHookLabel}</span><span className="meta num">{hookRange[1] <= (dropView ?? 0) + 1e-3 ? 'заканчивается на дропе' : 'стартует с дропа'} {tc(start + (dropView ?? 0))} · {secs(hookRange[1] - hookRange[0])} · тяни или ← → по битам</span>{kind === 'effects' && config.effectHook === 'Слоу-шаттер' && <div className="fxt-seg" role="group" aria-label="Длина слоу-шаттера">{SLOW_EXTENDS.map(([opt, lab]) => <button key={opt || 'std'} type="button" aria-pressed={(config.effectHookExtend ?? '') === opt} onClick={() => setHooks({ config: { effectHookExtend: opt } })}><span className="tx">{lab}</span></button>)}</div>}{allPill(() => toAll((v) => ({ ...v, kind, config: { ...v.config, ...config } }), activeHookLabel, hookIdx), hookIdx.length)}<button type="button" className="fxt-icon" aria-label="Снять хук" data-tip="Снять хук · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>;
     if (sel.type === 'style') { const s = styles.find((x) => x.uid === sel.uid); if (!s) return null; return <><Ic kind="style" label={s.style} size={24} /><span className="nm">{s.style}</span><span className="meta num">{s.b - s.a > 1 ? `кадры ${s.a + 1}–${s.b}` : `кадр ${s.a + 1}`} · {secs(bounds[s.b] - bounds[s.a])}</span><button type="button" className="fxt-pill" onClick={() => { if (styleFree(s.lane, 0, shots, s.uid)) { remember(); setStyles(styles.map((x) => x.uid === s.uid ? { ...x, a: 0, b: shots } : x)); } else say('На этой дорожке мешает другой стиль — перенеси его на «Стиль 2»'); }}><span className="tx">На весь отрывок</span></button>{allPill(() => toAll((v) => ({ ...v, styles: [...v.styles.filter((o) => o.lane !== s.lane || o.b <= s.a || o.a >= s.b), { ...s, uid: Math.max(0, ...v.styles.map((o) => o.uid)) + 1 }] }), s.style))}<button type="button" className="fxt-icon" aria-label="Удалить" data-tip="Удалить · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>; }
     if (sel.type === 'sub') { const s = subs[sel.i]; return s ? <><Ic kind="trans" label="text" size={24} /><span className="nm">«{s.text}»</span><span className="meta num">{tc(s.a)} → {tc(s.b)} · {secs(s.b - s.a)}{s.focus ? ' · фокус-слово' : ''}</span><button type="button" className="fxt-pill" data-tip="Двойной клик по слову делает то же · F" onClick={() => toggleAsrFocus(s.idx)}><span className="tx">{s.focus ? 'Снять фокус' : 'Фокус-слово'}</span></button></> : null; }
     return null;
@@ -1338,7 +1375,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
                 <div ref={cvRef} className="fxt-cv" style={{ width: canvasW }} onPointerDown={onCanvasDown}>
                   <div className="fxt-ruler">
                     {ticks.map(({ v, maj }) => <span key={v}><i className={`fxt-tick${maj ? ' maj' : ''}`} style={{ left: tx(v) }} />{maj && <span className="fxt-tlab num" style={{ left: tx(v) }}>{pad(Math.floor((start + v) / 60))}:{pad(Math.round(start + v) % 60)}</span>}</span>)}
-                    {drop !== null && <div className="fxt-dropflag num" style={{ left: tx(drop) }}><Glyph name="lock" size={10} sw={2} /><span>Дроп {tc(start + drop)}</span></div>}
+                    {dropView !== null && <div className="fxt-dropflag num" style={{ left: tx(dropView) }}><span>Дроп {tc(start + dropView)}</span></div>}
                   </div>
                   <div ref={(el) => { laneRefs.current.frames = el; }} className={`fxt-lane l-frames mt-l-src${place && 'lane' in place && place.lane === 'frames' ? ' over' : ''}`}>
                     {recipe.loading && <span className="fxt-hint" style={{ left: X0 + 8 }}>Считаем склейки по темпу трека…</span>}
@@ -1369,7 +1406,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
                   </div>
                   <div ref={(el) => { laneRefs.current.hook = el; }} className={`fxt-lane l-hook${place && 'lane' in place && place.lane === 'hook' ? ' over' : ''}`}>
                     {hookRange && activeHookLabel
-                      ? (() => { const x = tx(hookRange[0]); const w = Math.max(18, tx(hookRange[1]) - x); return <><div className={`fxt-clip hk${sel?.type === 'hook' ? ' sel' : ''}`} style={{ left: x, width: w }}><Glyph name="lock" size={11} sw={2} /><Glyph name={GLYPH[activeHookLabel]} size={13} />{w >= 80 && <span className="lab">{activeHookLabel}</span>}{config.effectHook === 'Слоу-шаттер' && kind === 'effects' && <i className="fxt-edge r" data-hookedge="r" data-tip="Тяни: стандарт · 3 кадра · до конца" />}</div>{w < 80 && <span className="fxt-outlab" style={{ left: x + w + 8 }}>{activeHookLabel}</span>}</>; })()
+                      ? (() => { const x = tx(hookRange[0]); const w = Math.max(18, tx(hookRange[1]) - x); return <><div className={`fxt-clip hk${sel?.type === 'hook' ? ' sel' : ''}${dragDrop !== null ? ' drag' : ''}`} style={{ left: x, width: w }} data-tip="Тяни — сдвинуть дроп (прилипает к битам) · ← → по битам"><Glyph name={GLYPH[activeHookLabel]} size={13} />{w >= 80 && <span className="lab">{activeHookLabel}</span>}{config.effectHook === 'Слоу-шаттер' && kind === 'effects' && <i className="fxt-edge r" data-hookedge="r" data-tip="Тяни: стандарт · 3 кадра · до конца" />}</div>{w < 80 && <span className="fxt-outlab" style={{ left: x + w + 8 }}>{activeHookLabel}</span>}</>; })()
                       : <span className="fxt-hint" style={{ left: tx(drop ?? 0) + 10 }}>{drop === null ? 'Выбери дроп на шаге FX — хук встанет на него' : 'Без хука — перетащи хук из библиотеки, он встанет на дроп'}</span>}
                   </div>
                   {(lane2 ? [0, 1] as const : [0] as const).map((L) => (
@@ -1390,9 +1427,14 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
                     {subs.map((s, i) => { const x = tx(Math.max(0, s.a)); const w = tx(Math.min(dur, s.b)) - x; return <div key={`s${i}`} className={`fxt-clip sb mt-word${s.focus ? ' focus' : ''}${sel?.type === 'sub' && sel.i === i ? ' sel' : ''}${t >= s.a && t < s.b ? ' cur' : ''}`} data-sub={i} style={{ left: x + 1, width: Math.max(2, w - 2) }} title={`${s.text}${s.focus ? ' · фокус-слово' : ''} — тяни, края поджимают, двойной клик — фокус`} onDoubleClick={() => toggleAsrFocus(s.idx)}>{w > 22 && <i className="fxt-edge l" data-wedge="l" />}<span className="lab">{s.focus ? '★ ' : ''}{s.text}</span>{w > 22 && <i className="fxt-edge r" data-wedge="r" />}</div>; })}
                   </div>
                   <div className="fxt-lane l-audio">
+                    {wavePeaksSeg && (
+                      <svg className="mt-wave" style={{ left: X0, width: tx(dur) - X0 }} viewBox={`0 0 ${wavePeaksSeg.length} 100`} preserveAspectRatio="none" aria-hidden="true">
+                        {wavePeaksSeg.map((p, k) => { const h = Math.max(4, p * 100); return <rect key={k} x={k + 0.15} y={50 - h / 2} width="0.7" height={h} />; })}
+                      </svg>
+                    )}
                     {beats.map((b, k) => <i key={k} className={`fxt-beat${drop !== null && Math.round((b - drop) * (bpm || 120) / 60) % 4 === 0 ? ' down' : ''}`} style={{ left: tx(b) }} />)}
                   </div>
-                  {drop !== null && <div className="fxt-dropline" style={{ left: tx(drop) }} />}
+                  {dropView !== null && <div className="fxt-dropline" style={{ left: tx(dropView) }} />}
                   <div className="fxt-phl" style={{ left: tx(t) }} />
                   {snapLine !== null && <div className="fxt-snapl" style={{ left: tx(snapLine) }} />}
                   {place && 'lane' in place && (() => {
