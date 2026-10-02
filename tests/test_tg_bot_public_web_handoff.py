@@ -354,3 +354,38 @@ def test_after_pitch_and_low_rating_the_bot_leads_to_the_site_not_to_a_friend_in
     _run(app._handle_rate_video(low, ChatState(chat_id=CHAT)))
     assert low.answers[-1][0] == mt.SITE_CTA_AFTER_LOW
     assert app.credits_db.handoffs[-1]["kind"] == "site"  # трек неизвестен — просто в аккаунт
+
+
+def test_remix_link_carries_batch_jobs_and_settings_snapshot(tmp_path):
+    """«Докрутить на сайте»: ссылка несёт ролики батча (сайт откроет их монтаж на столе)
+    и снимок выбора в боте — снят ДО сброса состояния батча."""
+    app = _make_app()
+    st = _state_with_track(tmp_path)
+    st.batch_audio_s3_url = "s3://raw-audio/raw_audio/7/x.mp3"
+    st.user_clip_start_sec, st.user_clip_end_sec, st.target_fragment = 41.5, 56.25, "строка"
+    st.job_order, st.master_job_id = ["job-a", "job-b"], "job-a"
+    st.subtitles_mode, st.visual_transition, st.visual_style = "brat_5th", "minimax", "xerox"
+    st.hook_enabled, st.hook_category, st.f2_shape, st.hook_drop_t = True, "object", "rhomb", 50.0
+    st.frame_id, st.vibe_selected_ids, st.accent_color_hex = "rounded", ["visual:night"], "#ff0000"
+
+    source = app._site_remix_source(st)
+    app._reset_processing_state(st)  # как в боевом пути: сброс сразу после снимка
+    sent: list = []
+    bot = SimpleNamespace(send_message=lambda *a, **kw: _async_append(sent, (a, kw)))
+    _run(app._offer_site_remix_best_effort(bot=bot, st=st, source=source))
+
+    payload = app.credits_db.handoffs[-1]["payload"]
+    assert app.credits_db.handoffs[-1]["kind"] == "remix"
+    assert payload["jobIds"] == ["job-a", "job-b"] and payload["masterJobId"] == "job-a"
+    snap = payload["settings"]
+    assert snap["subtitlesMode"] == "brat_5th" and snap["visualTransition"] == "minimax"
+    assert snap["hookCategory"] == "object" and snap["f2Shape"] == "rhomb" and snap["hookDropT"] == 50.0
+    assert snap["frameId"] == "rounded" and snap["vibeSelectedIds"] == ["visual:night"]
+    assert payload["draft"] == {"clipStart": 41.5, "clipEnd": 56.25, "lyrics": "строка"}
+    # та же ссылка переиспользуется после оценки ролика
+    assert st.web_remix_payload["jobIds"] == ["job-a", "job-b"]
+    assert sent
+
+
+async def _async_append(bucket, item):
+    bucket.append(item)

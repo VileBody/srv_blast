@@ -6883,6 +6883,36 @@ class BlastBotApp:
             "clipStart": float(st.user_clip_start_sec or 0.0),
             "clipEnd": float(st.user_clip_end_sec or 0.0),
             "lyrics": str(st.target_fragment or ""),
+            # Ролики батча: по ним сайт берёт у оркестратора склейки, клипы и слова
+            # (`/jobs/{id}/edit_state`) и открывает монтажный стол с тем же монтажом.
+            "jobIds": [str(j) for j in (st.job_order or []) if str(j or "").strip()],
+            "masterJobId": str(st.master_job_id or ""),
+            "settings": self._site_remix_settings(st),
+        }
+
+    @staticmethod
+    def _site_remix_settings(st: ChatState) -> Dict[str, Any]:
+        """Снимок выбора в боте: запасной источник для сайта, если запрос джобы уже
+        вычищен из стора оркестратора (склейки и слова живут дольше — в runtime БД)."""
+        return {
+            "subtitlesMode": str(st.subtitles_mode or ""),
+            "visualTransition": str(st.visual_transition or ""),
+            "visualStyle": str(st.visual_style or ""),
+            "hookEnabled": bool(st.hook_enabled),
+            "hookCategory": str(st.hook_category or ""),
+            "hookDevice": str(st.hook_device or ""),
+            "effectHook": str(st.effect_hook or ""),
+            "effectHookExtend": str(st.effect_hook_extend or ""),
+            "f2Shape": str(st.f2_shape or ""),
+            "warmupKind": str(st.warmup_kind or ""),
+            "frameId": str(st.frame_id or ""),
+            "vibeSelectedIds": [str(v) for v in (st.vibe_selected_ids or [])],
+            "footageKind": str(st.footage_kind or ""),
+            "bgMode": str(st.bg_mode or ""),
+            "bgSolidColor": str(st.bg_solid_color or ""),
+            "subtitleColorHex": str(st.subtitle_color_hex or ""),
+            "accentColorHex": str(st.accent_color_hex or ""),
+            "hookDropT": (float(st.hook_drop_t) if st.hook_drop_t is not None else None),
         }
 
     async def _offer_site_remix_best_effort(self, *, bot: Bot, st: ChatState, source: Optional[Dict[str, Any]]) -> None:
@@ -6903,6 +6933,9 @@ class BlastBotApp:
                     "clipEnd": source["clipEnd"],
                     "lyrics": source["lyrics"],
                 },
+                "jobIds": list(source.get("jobIds") or []),
+                "masterJobId": str(source.get("masterJobId") or ""),
+                "settings": dict(source.get("settings") or {}),
                 "profile": {"username": str(st.chat_username or "")},
             }
             # Тот же трек понадобится и после оценки ролика (ссылка на сайт вместо
