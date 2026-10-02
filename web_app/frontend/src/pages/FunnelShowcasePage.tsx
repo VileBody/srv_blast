@@ -117,7 +117,6 @@ function Pitch({ screen = 'lead', reason = null, s }: { screen?: PitchScreen; re
       screen={screen}
       reason={reason}
       survey={s}
-      rules={RULES}
       trackTitle="Нет любви"
       progress={{ total: 5, current: 3 }}
       channelLink="#"
@@ -213,9 +212,6 @@ export function FunnelShowcasePage() {
           </State>
           <State label="Квиз пропущен: общий довод">
             <Pitch />
-          </State>
-          <State label="«Подробнее»: что даёт Бласт">
-            <Pitch screen="details" />
           </State>
           <State label="«Не сейчас»: почему?">
             <Pitch screen="whyNot" />

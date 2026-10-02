@@ -213,7 +213,6 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
           screen={view.pitchScreen ?? 'lead'}
           reason={view.pitchReason}
           survey={view.survey}
-          rules={view.rules}
           trackTitle={view.trackTitle}
           channelLink={view.channelLink}
           onScreen={on.onPitchScreen ?? (() => {})}
