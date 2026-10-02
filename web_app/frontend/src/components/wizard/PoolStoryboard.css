@@ -37,6 +37,7 @@
 .psb-btn:active { transform: scale(.95); }
 .psb-btn.pri { background: var(--accent); color: #fff; }
 .psb-btn:disabled { opacity: .3; pointer-events: none; }
+.psb-btn.ico { width: 30px; padding: 0; }
 .psb-var { display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 3px; border-radius: 9px; background: rgba(246, 245, 253, .08); }
 .psb-var .cnt { min-width: 58px; text-align: center; font-size: 13px; color: var(--text); line-height: 1; }
 .psb-var .cnt small { color: rgba(246, 245, 253, .4); font-size: 12px; }
