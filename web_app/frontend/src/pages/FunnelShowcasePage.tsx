@@ -3,7 +3,9 @@ import type { FunnelQuestion, FunnelQuota, FunnelRules, VideoVersion } from '../
 import { LimitsPopoutCard, TrackLimitBar } from '../components/funnel/LimitsPopout';
 import { QuizPanel, UnlimitedPanel, type UnlimitedHandlers, type UnlimitedStep, type UnlimitedView } from '../components/funnel/panels';
 import { VideoRatingRow } from '../components/funnel/parts';
-import { PitchFlow, type PitchReason, type PitchScreen } from '../components/funnel/PitchFlow';
+import { PitchFlow } from '../components/funnel/PitchFlow';
+import { quizPath } from '../components/funnel/panels';
+import { useFunnelState } from '../components/funnel/useFunnel';
 import type { FunnelState } from '../lib/types';
 
 /*
@@ -17,28 +19,66 @@ const IN = (minutes: number) => new Date(NOW + minutes * 60_000).toISOString();
 
 const RULES: FunnelRules = { batchCap: 5, cooldownHours: 4, firstDayBatches: 2, dailyVideos: 5, tripwirePriceRub: 399, tripwireBatchCap: 25 };
 
-const Q1: FunnelQuestion = {
-  id: 'q1',
-  text: 'Сколько роликов в месяц у тебя выходит в TikTok?',
-  options: [
-    { id: 'none', label: 'Не выкладываю совсем' },
-    { id: '1_10', label: '1–10' },
-    { id: '10_30', label: '10–30' },
-    { id: '30_plus', label: '30+' }
-  ],
-  next: { none: 'q2', '1_10': 'q2', '10_30': 'q2', '30_plus': 'q2' }
-};
-const Q2: FunnelQuestion = {
-  id: 'q2',
-  text: 'Монтируешь как — сам, с чьей-то помощью, или пока вообще не монтируешь?',
-  options: [
-    { id: 'self', label: 'Сам' },
-    { id: 'helper', label: 'С помощью монтажёра/сервиса' },
-    { id: 'no_edit', label: 'Не монтирую — ролики не делаю' }
-  ],
-  next: { self: 'q2a', helper: 'q2b', no_edit: 'q3' }
-};
-const BRIDGE = 'Артисты, которые сейчас растут в стримах, выкладывают 1–2 ролика в день. Не потому что сидят в монтаже часами — а потому что нашли способ делать это быстро. Держи — как это устроено.';
+/* Вопросы квиза — с бэка, если он поднят (тексты сайта); иначе — копия для витрины. */
+const QUESTIONS: FunnelQuestion[] = [
+  {
+    id: 'q1',
+    text: 'Сколько роликов в месяц у тебя выходит в TikTok?',
+    options: [
+      { id: 'none', label: 'Не выкладываю совсем' },
+      { id: '1_10', label: '1–10' },
+      { id: '10_30', label: '10–30' },
+      { id: '30_plus', label: '30+' }
+    ],
+    next: { none: 'q2', '1_10': 'q2', '10_30': 'q2', '30_plus': 'q2' }
+  },
+  {
+    id: 'q2',
+    text: 'Как ты монтируешь ролики?',
+    options: [
+      { id: 'self', label: 'Сам' },
+      { id: 'helper', label: 'С монтажёром или сервисом' },
+      { id: 'no_edit', label: 'Не монтирую' }
+    ],
+    next: { self: 'q2a', helper: 'q2b', no_edit: 'q3' }
+  },
+  {
+    id: 'q2a',
+    text: 'Сколько времени уходит на один ролик?',
+    options: [
+      { id: 'lt_hour', label: 'Меньше часа' },
+      { id: '1_3h', label: '1–3 часа' },
+      { id: 'half_day', label: 'Полдня и больше' },
+      { id: 'a_lot', label: 'Не считал, но точно много' }
+    ],
+    next: { lt_hour: 'q3', '1_3h': 'q3', half_day: 'q3', a_lot: 'q3' }
+  },
+  {
+    id: 'q2b',
+    text: 'Сколько в месяц уходит на монтаж?',
+    options: [
+      { id: 'zero', label: 'Ничего не трачу' },
+      { id: '2_5k', label: '2 000–5 000₽' },
+      { id: '5_10k', label: '5 000–10 000₽' },
+      { id: '10k_plus', label: '10 000₽+' }
+    ],
+    next: { zero: 'q3', '2_5k': 'q3', '5_10k': 'q3', '10k_plus': 'q3' }
+  },
+  {
+    id: 'q3',
+    text: 'Что мешает выкладывать чаще?',
+    options: [
+      { id: 'time', label: 'Не хватает времени' },
+      { id: 'money', label: 'Не хватает денег на монтаж' },
+      { id: 'ideas', label: 'Не хватает идей' },
+      { id: 'meaning', label: 'В целом не вижу смысла' }
+    ],
+    next: { time: '', money: '', ideas: '', meaning: '' }
+  }
+];
+/** Ответы, по которым витрина показывает путь: «Сам» → вопрос про время. */
+const PATH_ANSWERS: Record<string, { id: string }> = { q2: { id: 'self' } };
+const BRIDGE = 'Растут те, кто выкладывает 1–2 ролика в день. Рассказываем, как успевать без часов в монтаже.';
 
 const VIDEOS: VideoVersion[] = [1, 2, 3].map((index) => ({
   id: `v${index}`,
@@ -111,24 +151,16 @@ function survey(answers: Record<string, [string, string]>, branch = ''): FunnelS
   };
 }
 
-function Pitch({ screen = 'lead', reason = null, s }: { screen?: PitchScreen; reason?: PitchReason | null; s?: FunnelState['survey'] }) {
-  return (
-    <PitchFlow
-      screen={screen}
-      reason={reason}
-      survey={s}
-      trackTitle="Нет любви"
-      progress={{ total: 5, current: 3 }}
-      channelLink="#"
-      onScreen={noop}
-      onReason={noop}
-      onUnlock={noop}
-      onClose={noop}
-    />
-  );
+function Pitch({ s }: { s?: FunnelState['survey'] }) {
+  return <PitchFlow survey={s} progress={{ total: 5, current: 3 }} onNext={noop} onClose={noop} />;
 }
 
 export function FunnelShowcasePage() {
+  const live = useFunnelState().data?.questions;
+  const questions = live?.length ? live : QUESTIONS;
+  const path = quizPath(questions, PATH_ANSWERS);
+  const ordered = [...path, ...questions.map((q) => q.id).filter((id) => !path.includes(id))];
+  const q1 = questions[0];
   return (
     <main className="min-h-dvh bg-bg px-[16px] py-[48px] text-text">
       <div className="mx-auto max-w-[1220px]">
@@ -138,17 +170,23 @@ export function FunnelShowcasePage() {
         </p>
 
         <Group title="Модалка A: как делаешь контент" note="Через 2,5 с после запуска генерации, один раз на батч, только бесплатным и пока квиз не пройден. Ответ одним нажатием, вопрос меняется сам.">
-          <State label="Вопрос 1 из 4">
-            <QuizPanel view={{ kind: 'question', question: Q1, index: 0, total: 4 }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
+          {ordered.map((id) => {
+            const question = questions.find((q) => q.id === id) as FunnelQuestion;
+            const index = path.includes(id) ? path.indexOf(id) : path.indexOf('q2a');
+            return (
+              <State key={id} label={`Вопрос ${id}${id === 'q2b' ? ' (ветка «С монтажёром», вместо q2a)' : ''}`}>
+                <QuizPanel view={{ kind: 'question', question, index, total: path.length }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
+              </State>
+            );
+          })}
+          <State label="Ответ отправляется">
+            <QuizPanel view={{ kind: 'question', question: questions[1] ?? q1, index: 1, total: path.length, pendingId: 'self' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
           </State>
-          <State label="Вопрос 2, ответ отправляется">
-            <QuizPanel view={{ kind: 'question', question: Q2, index: 1, total: 4, pendingId: 'self' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
-          </State>
-          <State label="Финал: мостик по ветке и методичка">
+          <State label="Финал: мостик по ветке, одна кнопка «Получить» (после отправки окно закрывается, тост)">
             <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'idle' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
           </State>
-          <State label="Методичка отправлена в Telegram">
-            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'sent' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
+          <State label="Методичка отправляется">
+            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'sending' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
           </State>
           <State label="Бот не запущен: просим открыть бота">
             <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'needBot', botLink: '#' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
@@ -163,7 +201,7 @@ export function FunnelShowcasePage() {
             <div className="rounded-r15 bg-panel"><VideoRatingRow score={8} reasons={[]} onRate={noop} onReasons={noop} /></div>
           </State>
           <State label="Низкая оценка: причины и путь к правке">
-            <div className="rounded-r15 bg-panel"><VideoRatingRow score={4} reasons={['transitions']} onRate={noop} onReasons={noop} fixHref="#" /></div>
+            <div className="rounded-r15 bg-panel"><VideoRatingRow score={4} reasons={['transitions']} onRate={noop} onReasons={noop} onFix={noop} /></div>
           </State>
         </Group>
 
@@ -172,10 +210,10 @@ export function FunnelShowcasePage() {
             <UnlimitedPanel view={view('rate', { ratings: { v1: { score: 8, reasons: [] } } })} on={ON} />
           </State>
           <State label="Низкая ветка: что докрутить">
-            <UnlimitedPanel view={view('improve', { reasons: ['footage'], fixHref: '#' })} on={ON} />
+            <UnlimitedPanel view={view('improve', { reasons: ['footage'], canFix: true })} on={{ ...ON, onFix: noop }} />
           </State>
           <State label="Квиз внутри (если модалку A пропустили)">
-            <UnlimitedPanel view={view('quiz', { quiz: { kind: 'question', question: Q1, index: 0, total: 4 } })} on={ON} />
+            <UnlimitedPanel view={view('quiz', { quiz: { kind: 'question', question: q1, index: 0, total: path.length } })} on={ON} />
           </State>
           <State label="Методичка">
             <UnlimitedPanel view={view('methodology', { bridge: BRIDGE, methodology: 'idle' })} on={ON} />
@@ -195,35 +233,32 @@ export function FunnelShowcasePage() {
           <State label="Безлимит открыт, лимит на сейчас исчерпан">
             <UnlimitedPanel view={view('done', { quota: QUOTA_COOLDOWN })} on={ON} />
           </State>
-          <State label="Безлимит уже на другом треке">
+          <State label="Безлимит уже на другом треке: ничего не выбрано">
             <UnlimitedPanel view={view('otherTrack', { otherTrackTitle: 'Последний танец' })} on={ON} />
+          </State>
+          <State label="Выбран «Любой трек без лимитов»: кнопка «Купить»">
+            <UnlimitedPanel view={view('otherTrack', { otherTrackTitle: 'Последний танец', tier: 'tripwire' })} on={ON} />
+          </State>
+          <State label="Выбран бесплатный безлимит: «Генерировать дальше»">
+            <UnlimitedPanel view={view('otherTrack', { otherTrackTitle: 'Последний танец', tier: 'free' })} on={ON} />
           </State>
         </Group>
 
-        <Group title="Питч в модалке B" note="Перенос веток питча из бота. Главный довод зависит от ответа на Q3, собственные цифры человека подставляются из Q2a (время) и Q2b (деньги). Выход из питча: бесплатный безлимит, а не приглашение друга.">
+        <Group title="Питч в модалке B" note="Задача шага: продать Бласт. Довод по ответу на Q3, цифры человека из Q2a (время) и Q2b (деньги). Внизу «Изучить тариф» и стрелка к бесплатному безлимиту.">
           <State label="Q3 «Не хватает времени», Q2a «1–3 часа»">
             <Pitch s={survey({ q2: ['self', 'Сам'], q2a: ['1_3h', '1–3 часа'], q3: ['time', 'Не хватает времени'] }, 'time')} />
           </State>
           <State label="Q3 «Не хватает денег», Q2b «5 000–10 000₽»">
-            <Pitch s={survey({ q2: ['helper', 'С помощью монтажёра/сервиса'], q2b: ['5_10k', '5 000–10 000₽'], q3: ['money', 'Не хватает денег на монтаж'] }, 'money')} />
+            <Pitch s={survey({ q2: ['helper', 'С монтажёром или сервисом'], q2b: ['5_10k', '5 000–10 000₽'], q3: ['money', 'Не хватает денег на монтаж'] }, 'money')} />
           </State>
           <State label="Q3 «Не хватает идей»">
-            <Pitch s={survey({ q3: ['ideas', 'Не хватает идей/вариантов подачи'] }, 'ideas')} />
+            <Pitch s={survey({ q3: ['ideas', 'Не хватает идей'] }, 'ideas')} />
           </State>
           <State label="Q3 «Не вижу смысла»">
             <Pitch s={survey({ q3: ['meaning', 'В целом не вижу смысла'] }, 'meaning')} />
           </State>
           <State label="Квиз пропущен: общий довод">
             <Pitch />
-          </State>
-          <State label="«Не сейчас»: почему?">
-            <Pitch screen="whyNot" />
-          </State>
-          <State label="Ответ на «Нет релиза» / «Нет денег»">
-            <Pitch screen="reason" reason="noRelease" />
-          </State>
-          <State label="Ответ на «Качество» / «Сомневаюсь»: кейсы">
-            <Pitch screen="reason" reason="doubt" />
           </State>
         </Group>
 

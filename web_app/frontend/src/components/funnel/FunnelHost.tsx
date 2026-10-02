@@ -9,10 +9,9 @@ import { funnelSeen, markFunnelSeen, useFunnelUi, type UnlimitedContext } from '
 import { startNextBatch } from '../../stores/wizardStore';
 import { FunnelDialog } from './FunnelSheet';
 import { QuizPanel, UnlimitedPanel, quizPath, type QuizView, type UnlimitedStep } from './panels';
-import { FN_GLYPH, VideoRatingRow, type ActionStatus, type MethodologyState } from './parts';
-import type { PitchReason, PitchScreen } from './PitchFlow';
+import { FN_GLYPH, VideoRatingRow, type ActionStatus, type LadderTier, type MethodologyState } from './parts';
 import { Icon } from '../ui/kit';
-import { apiErrorCode, isUnlimitedTrack, trackTitleOf, useFunnelState } from './useFunnel';
+import { apiErrorCode, isUnlimitedTrack, trackTitleOf, useFunnelState, useTripwirePurchase } from './useFunnel';
 
 /*
  * Хост модалок воронки (docs/BOT_TO_WEB_FLOW.md, раздел 4). Живёт в AppShell, поэтому
@@ -47,20 +46,31 @@ function useFunnelErrorToast() {
 
 /* ------------------------------------------------------------------ квиз */
 
-function useMethodology() {
+/**
+ * Методичка одной кнопкой: отправили в Telegram — окно само идёт дальше (`onSent`),
+ * а где она, говорит тост. Ссылка на файл и «открой бота» — та же кнопка в другом виде.
+ */
+function useMethodology(onSent: () => void) {
+  const { t } = useTranslation();
+  const { push } = useToast();
   const [state, setState] = useState<MethodologyState>('idle');
   const [url, setUrl] = useState<string | null>(null);
   const [botLink, setBotLink] = useState<string | undefined>();
+  const sentRef = useRef(onSent);
+  sentRef.current = onSent;
   const get = useCallback(() => {
     setState('sending');
     api.funnelMethodology()
       .then((res) => {
         if (res.url) { setUrl(res.url); setState('link'); }
-        else if (res.sent) setState('sent');
-        else { setBotLink(res.botLink); setState('needBot'); }
+        else if (res.sent) {
+          setState('sent');
+          push({ variant: 'success', title: t('funnel.methodology.sentToast') });
+          sentRef.current();
+        } else { setBotLink(res.botLink); setState('needBot'); }
       })
       .catch(() => setState('error'));
-  }, []);
+  }, [push, t]);
   return { state, url, botLink, get };
 }
 
@@ -99,7 +109,7 @@ function useQuiz(funnel: FunnelState | undefined, onDone: (bridge: string | null
 function QuizModal({ jobId, onClose }: { jobId?: string; onClose: () => void }) {
   const titleId = useId();
   const funnel = useFunnelState();
-  const methodology = useMethodology();
+  const methodology = useMethodology(onClose);
   const [bridge, setBridge] = useState<string | null | undefined>(undefined);
   const quiz = useQuiz(funnel.data, (b) => setBridge(b));
   useEffect(() => { if (jobId) markFunnelSeen(`quiz:${jobId}`); }, [jobId]);
@@ -130,16 +140,17 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
     queryFn: () => api.funnelRatings(ctx.jobId ?? ''),
     enabled: Boolean(ctx.jobId)
   });
-  const methodology = useMethodology();
+  const [index, setIndex] = useState(0);
+  const methodology = useMethodology(() => setIndex((i) => i + 1));
   const failed = useFunnelErrorToast();
+  const tripwire = useTripwirePurchase();
+  const openTable = useOpenJobOnTable();
   const [ratings, setRatings] = useState<Record<string, VideoRating>>({});
   const [bridge, setBridge] = useState<string | null>(null);
   const [channel, setChannel] = useState<ActionStatus>('todo');
   const [manager, setManager] = useState<ActionStatus>('todo');
   const [unlockPending, setUnlockPending] = useState(false);
-  const [pitchScreen, setPitchScreen] = useState<PitchScreen>('lead');
-  const [pitchReason, setPitchReason] = useState<PitchReason | null>(null);
-  const [index, setIndex] = useState(0);
+  const [tier, setTier] = useState<LadderTier | null>(null);
   const quiz = useQuiz(funnel, (b) => { setBridge(b); setIndex((i) => i + 1); });
 
   const allRatings = { ...(ratingsQuery.data?.ratings ?? {}), ...ratings };
@@ -207,7 +218,7 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
           videos,
           ratings: allRatings,
           reasons,
-          fixHref: ctx.projectId ? startNextBatchHref(ctx.projectId) : undefined,
+          canFix: Boolean(ctx.projectId),
           quiz: quiz.view ?? undefined,
           bridge: bridge ?? funnel.survey.bridge,
           methodology: methodology.state,
@@ -221,8 +232,8 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
           unlockPending,
           quota: funnel.unlimited?.quota ?? null,
           otherTrackTitle: funnel.unlimited?.trackTitle,
-          pitchScreen,
-          pitchReason,
+          tier,
+          buyPending: tripwire.isPending,
           survey: funnel.survey
         }}
         on={{
@@ -267,11 +278,17 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
             navigate(ctx.projectId ? startNextBatch(ctx.projectId) : '/app/generate');
           },
           onClose,
-          onPitchScreen: setPitchScreen,
-          onPitchReason: (reason) => {
-            setPitchReason(reason);
-            setPitchScreen('reason');
-            void api.trackEvent('pitch_objection', { reason }).catch(() => {});
+          onFix: () => {
+            onClose();
+            openTable(ctx.projectId, ctx.jobId);
+          },
+          onTier: setTier,
+          onBuyTripwire: () => {
+            if (!ctx.trackId) {
+              push({ variant: 'error', title: t('funnel.errors.noTrack') });
+              return;
+            }
+            tripwire.mutate(ctx.trackId, { onError: () => push({ variant: 'error', title: t('funnel.errors.save') }) });
           }
         }}
       />
@@ -279,8 +296,26 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
   );
 }
 
-function startNextBatchHref(projectId: string): string {
-  return `/app/generate?project=${encodeURIComponent(projectId)}`;
+/**
+ * «Открыть таймлайн»: этот батч на монтажном столе с его настройками (stores/reopenJob).
+ * Переход — через navigate, без перезагрузки: флаг «открыть стол» в localStorage не живёт.
+ * Батч не загрузился — говорим об этом, а не открываем молча пустой визард.
+ */
+function useOpenJobOnTable() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const { push } = useToast();
+  return useCallback((projectId?: string, jobId?: string) => {
+    if (!projectId) return;
+    if (!jobId) {
+      navigate(startNextBatch(projectId));
+      return;
+    }
+    // модуль тянет раскладку «Пула» — грузим по требованию, как импорт из бота
+    Promise.all([api.job(jobId), import('../../stores/reopenJob')])
+      .then(([{ job }, { openJobOnTable }]) => navigate(openJobOnTable(job)))
+      .catch(() => push({ variant: 'error', title: t('funnel.errors.reopen') }));
+  }, [navigate, push, t]);
 }
 
 /* ------------------------------------------------------------------ хост */
@@ -344,6 +379,7 @@ export function useQuizOnGeneration(job: GenerationJob | undefined) {
  * сразу; если 7+ так и не было — открываем, когда готов последний ролик.
  */
 export function useVideoRatings(job: GenerationJob | undefined, projectId: string | undefined) {
+  const openTable = useOpenJobOnTable();
   const queryClient = useQueryClient();
   const funnel = useFunnelState();
   const failed = useFunnelErrorToast();
@@ -410,7 +446,7 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
           if (score >= 7) offer((current?.score ?? 0) < 7);
         }}
         onReasons={(next) => save(video, current?.score ?? 1, next)}
-        fixHref={projectId ? startNextBatchHref(projectId) : undefined}
+        onFix={projectId ? () => openTable(projectId, job?.id) : undefined}
       />
     );
   };

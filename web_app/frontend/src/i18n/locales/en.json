@@ -1440,23 +1440,17 @@
       }
     },
     "quiz": {
-      "title": "How do you make content now?",
-      "description": "Three quick questions while your videos render. It makes our tips sharper.",
+      "description": "Answer a few questions and get the TikTok posting guide.",
       "skip": "Skip",
-      "doneTitle": "Here is the playbook",
-      "finish": "Done",
-      "descriptionAfter": "Three quick questions. It makes our tips sharper."
+      "doneTitle": "Here is the playbook"
     },
     "methodology": {
-      "title": "TikTok posting playbook",
-      "text": "How to post daily and see what works.",
-      "sent": "Sent to Telegram, it's in your chat with the bot.",
-      "sentShort": "Sent",
       "needBot": "Open the Blast bot and it will send it to you.",
       "error": "Couldn't send it. Try again.",
       "open": "Download",
       "openBot": "Open bot",
-      "get": "Get it"
+      "get": "Get it",
+      "sentToast": "The guide is in Telegram, in the bot chat"
     },
     "rate": {
       "title": "How are the videos?",
@@ -1475,7 +1469,6 @@
     "pitch": {
       "title": "Unlimited on “{{track}}”",
       "description": "Build as many versions of one track as you need. Free, two steps in Telegram.",
-      "cta": "Unlock for free",
       "freeTitle": "Unlimited on one track",
       "freeText": "Up to {{cap}} videos per batch, $t(funnel.units.hours, {\"count\": {{hours}} }) between batches.",
       "freePrice": "Free",
@@ -1485,8 +1478,6 @@
       "blastTitle": "Blast subscription",
       "blastText": "4 tracks and 100 videos a month, every effect.",
       "blastPrice": "1 990 ₽/mo",
-      "notNow": "Not now",
-      "buyBlast": "Get Blast",
       "lead": {
         "title": "There could be 100 of these a month",
         "compareTitle": "Videos for 1 990 ₽ a month",
@@ -1496,45 +1487,43 @@
         "editorCount": "~7"
       },
       "personal": {
-        "timeSpent": "Right now one video takes you {{spent}}. Here, a couple of minutes.",
-        "moneySpent": "Right now editing costs you {{spent}} a month.",
         "time": "Artists who grow post every day. Here it takes minutes.",
         "money": "Artists who grow post every day. With an editor that's tens of thousands.",
         "ideas": "One track, dozens of different videos. Stats show which one lands.",
         "meaning": "Algorithms reward consistency. One video decides nothing.",
         "noEdit": "We handle all the editing: shots, cuts, subtitles.",
-        "default": "Algorithms reward consistency. One video decides nothing."
+        "default": "Algorithms reward consistency. One video decides nothing.",
+        "timeBy": {
+          "lt_hour": "Right now one video takes you under an hour. Here, a couple of minutes.",
+          "1_3h": "Right now one video takes you 1–3 hours. Here, a couple of minutes.",
+          "half_day": "Right now one video takes you half a day or more. Here, a couple of minutes.",
+          "a_lot": "Right now one video takes you a lot of time. Here, a couple of minutes."
+        },
+        "moneyBy": {
+          "2_5k": "Right now editing costs you 2 000–5 000 ₽ a month.",
+          "5_10k": "Right now editing costs you 5 000–10 000 ₽ a month.",
+          "10k_plus": "Right now editing costs you over 10 000 ₽ a month."
+        }
       },
-      "whyNot": {
-        "title": "Why not now?",
-        "reason": {
-          "noRelease": "No release yet",
-          "noMoney": "No budget",
-          "quality": "Quality fell short",
-          "doubt": "Not sure it works"
-        },
-        "answer": {
-          "later": "We'll remind you later. Grab unlimited on “{{track}}” now, it's free.",
-          "cases": "Our record: TikTok hits of 2024 and 2025. Best test: post the videos and check the stats."
-        },
-        "casesLink": "Cases on the channel"
-      }
+      "study": "See the plan",
+      "skipToFree": "Next: free unlimited",
+      "ladderLabel": "Ways to make more"
     },
     "actions": {
       "title": "Two steps to unlimited",
       "description": "Both in Telegram, under a minute together.",
       "unlock": "Unlock unlimited",
-      "channelTitle": "Subscribe to the Impulse channel",
+      "channelTitle": "Subscribe to the Blast channel",
       "channelText": "Video breakdowns and promo tips for artists.",
       "channelDone": "Subscribed.",
       "channelMissing": "We don't see the subscription yet. Subscribe and check again.",
       "channelOpen": "Open channel",
       "channelCheck": "Check",
-      "managerTitle": "Message our manager",
-      "managerText": "The message is ready, just send it. It has your code {{code}}.",
+      "managerTitle": "Message the manager",
+      "managerText": "You'll talk about how to make Blast better for you. The message is ready, just send it.",
       "managerDone": "Done, the manager will reply soon.",
       "managerOpen": "Message",
-      "managerMessage": "Hi! I want unlimited on the track “{{track}}”. Code: {{code}}"
+      "managerMessage": "Hi! I'd like unlimited on “{{track}}” and I'm happy to share what to improve in Blast. Code: {{code}}"
     },
     "done": {
       "title": "Unlimited is on",
@@ -1552,7 +1541,9 @@
     "other": {
       "title": "Unlimited is already on",
       "description": "It applies to “{{track}}” and doesn't move to another track.",
-      "ok": "Got it"
+      "ok": "Got it",
+      "buy": "Buy",
+      "generate": "Keep generating"
     },
     "tripwire": {
       "title": "No waiting for {{price}} ₽",
@@ -1589,7 +1580,8 @@
     "errors": {
       "noTrack": "Upload a track first",
       "unlock": "Couldn't unlock. Try again.",
-      "save": "Couldn't save. Try again."
+      "save": "Couldn't save. Try again.",
+      "reopen": "Couldn't open the batch. Try again."
     },
     "badge": "Track unlimited",
     "units": {

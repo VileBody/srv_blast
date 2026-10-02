@@ -2,10 +2,10 @@ import { useTranslation } from 'react-i18next';
 import type { FunnelQuestion, FunnelQuota, FunnelRules, FunnelState, RatingReason, VideoVersion } from '../../lib/types';
 import { Button, ButtonLink, GLYPH, Icon } from '../ui/kit';
 import { FunnelSheet } from './FunnelSheet';
-import { PitchFlow, type PitchReason, type PitchScreen } from './PitchFlow';
+import { PitchFlow } from './PitchFlow';
 import {
   FN_GLYPH,
-  MethodologyCard,
+  MethodologyAction,
   PitchLadder,
   QuizQuestion,
   RatingScale,
@@ -13,6 +13,7 @@ import {
   UnlockActionRow,
   UnlockedTicket,
   type ActionStatus,
+  type LadderTier,
   type MethodologyState
 } from './parts';
 
@@ -66,9 +67,9 @@ export function QuizPanel({
         title={t('funnel.quiz.doneTitle')}
         description={view.bridge ?? undefined}
         onClose={onClose}
-        actions={<Button variant="primary" onClick={onClose}>{t('funnel.quiz.finish')}</Button>}
+        actions={<MethodologyAction state={view.methodology} url={view.url} botLink={view.botLink} onGet={onMethodology} onOpened={onClose} />}
       >
-        <MethodologyCard state={view.methodology} url={view.url} botLink={view.botLink} onGet={onMethodology} />
+        <MethodologyStatus state={view.methodology} />
       </FunnelSheet>
     );
   }
@@ -76,8 +77,9 @@ export function QuizPanel({
     <FunnelSheet
       titleId={titleId}
       stepKey={view.question.id}
-      title={t('funnel.quiz.title')}
-      description={t('funnel.quiz.description')}
+      title={view.question.text}
+      // зачем отвечать — только на первом вопросе; дальше в окне один вопрос
+      description={view.index === 0 ? t('funnel.quiz.description') : undefined}
       onClose={onClose}
       progress={{ total: view.total, current: view.index }}
       actions={<Button variant="ghost" onClick={onSkip}>{t('funnel.quiz.skip')}</Button>}
@@ -85,6 +87,13 @@ export function QuizPanel({
       <QuizQuestion question={view.question} onAnswer={onAnswer} pendingId={view.pendingId} />
     </FunnelSheet>
   );
+}
+
+/** Строка о методичке под мостиком — только когда есть что сказать (бот не запущен, сбой). */
+function MethodologyStatus({ state }: { state: MethodologyState }) {
+  const { t } = useTranslation();
+  if (state !== 'needBot' && state !== 'error') return null;
+  return <p className={state === 'error' ? 'text-ui-14 text-warning' : 'text-ui-14 text-text-60'}>{t(`funnel.methodology.${state}`)}</p>;
 }
 
 /* ------------------------------------------------------------------ безлимит (модалка B) */
@@ -102,7 +111,8 @@ export interface UnlimitedView {
   ratingPending?: boolean;
   /* improve */
   reasons?: RatingReason[];
-  fixHref?: string;
+  /** можно открыть этот батч на монтажном столе */
+  canFix?: boolean;
   /* quiz / methodology */
   quiz?: QuizView;
   bridge?: string | null;
@@ -119,9 +129,10 @@ export interface UnlimitedView {
   /* done */
   quota?: FunnelQuota | null;
   otherTrackTitle?: string | null;
-  /* pitch: экран питча и ответы квиза для персонального довода */
-  pitchScreen?: PitchScreen;
-  pitchReason?: PitchReason | null;
+  /* otherTrack: выбранная строка лестницы */
+  tier?: LadderTier | null;
+  buyPending?: boolean;
+  /* pitch: ответы квиза для персонального довода */
   survey?: FunnelState['survey'];
 }
 
@@ -137,8 +148,11 @@ export interface UnlimitedHandlers {
   onUnlock: () => void;
   onGenerate: () => void;
   onClose: () => void;
-  onPitchScreen?: (screen: PitchScreen) => void;
-  onPitchReason?: (reason: PitchReason) => void;
+  /** открыть батч на монтажном столе с его настройками */
+  onFix?: () => void;
+  onTier?: (tier: LadderTier) => void;
+  /** купить трипваер на трек этого батча */
+  onBuyTripwire?: () => void;
 }
 
 export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on: UnlimitedHandlers; titleId?: string }) {
@@ -183,10 +197,10 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
               </li>
             ))}
           </ul>
-          {view.fixHref && (
-            <ButtonLink variant="secondary" size="sm" className="mt-[8px]" href={view.fixHref} iconEnd={<Icon>{GLYPH.arrowRight}</Icon>}>
+          {view.canFix && on.onFix && (
+            <Button variant="secondary" size="sm" className="mt-[8px]" onClick={on.onFix} iconEnd={<Icon>{GLYPH.arrowRight}</Icon>}>
               {t('funnel.improve.open')}
-            </ButtonLink>
+            </Button>
           )}
         </FunnelSheet>
       );
@@ -194,15 +208,20 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
       const quiz = view.quiz;
       if (!quiz || quiz.kind !== 'question') return null;
       return (
-        <FunnelSheet {...common} stepKey={`quiz-${quiz.question.id}`} title={t('funnel.quiz.title')} description={t('funnel.quiz.descriptionAfter')}>
+        <FunnelSheet {...common} stepKey={`quiz-${quiz.question.id}`} title={quiz.question.text} description={quiz.index === 0 ? t('funnel.quiz.description') : undefined}>
           <QuizQuestion question={quiz.question} onAnswer={on.onAnswer} pendingId={quiz.pendingId} />
         </FunnelSheet>
       );
     }
     case 'methodology':
       return (
-        <FunnelSheet {...common} title={t('funnel.quiz.doneTitle')} description={view.bridge ?? undefined} actions={next()}>
-          <MethodologyCard state={view.methodology ?? 'idle'} url={view.methodologyUrl} botLink={view.botLink} onGet={on.onMethodology} />
+        <FunnelSheet
+          {...common}
+          title={t('funnel.quiz.doneTitle')}
+          description={view.bridge ?? undefined}
+          actions={<MethodologyAction state={view.methodology ?? 'idle'} url={view.methodologyUrl} botLink={view.botLink} onGet={on.onMethodology} onOpened={on.onNext} />}
+        >
+          <MethodologyStatus state={view.methodology ?? 'idle'} />
         </FunnelSheet>
       );
     case 'pitch':
@@ -210,14 +229,8 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
         <PitchFlow
           titleId={titleId}
           progress={progress}
-          screen={view.pitchScreen ?? 'lead'}
-          reason={view.pitchReason}
           survey={view.survey}
-          trackTitle={view.trackTitle}
-          channelLink={view.channelLink}
-          onScreen={on.onPitchScreen ?? (() => {})}
-          onReason={on.onPitchReason ?? (() => {})}
-          onUnlock={on.onNext}
+          onNext={on.onNext}
           onClose={on.onClose}
         />
       );
@@ -277,12 +290,8 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
           title={t('funnel.done.title')}
           // «собирай бесплатно» — только когда сейчас есть что собрать; иначе время в билете
           description={t(view.quota && !view.quota.allowed ? 'funnel.done.descriptionWait' : 'funnel.done.description')}
-          actions={
-            <>
-              <Button variant="ghost" onClick={on.onClose}>{t('common.close')}</Button>
-              <Button variant="primary" onClick={on.onGenerate}>{t('funnel.done.generate')}</Button>
-            </>
-          }
+          // одна длинная кнопка: закрыть — крестик в шапке
+          actions={<Button variant="primary" className="flex-1" onClick={on.onGenerate}>{t('funnel.done.generate')}</Button>}
         >
           <UnlockedTicket trackTitle={view.trackTitle} rules={view.rules} quota={view.quota ?? null} />
         </FunnelSheet>
@@ -295,17 +304,27 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
           onClose={on.onClose}
           title={t('funnel.other.title')}
           description={t('funnel.other.description', { track: view.otherTrackTitle ?? '' })}
-          actions={
-            <>
-              <ButtonLink variant="ghost" href="/app/pricing">{t('funnel.popout.plans')}</ButtonLink>
-              <Button variant="primary" onClick={on.onClose}>{t('funnel.other.ok')}</Button>
-            </>
-          }
+          actions={<TierAction tier={view.tier ?? null} pending={view.buyPending} on={on} />}
         >
-          <PitchLadder rules={view.rules} highlight="tripwire" />
+          <PitchLadder rules={view.rules} selected={view.tier} onSelect={on.onTier} />
         </FunnelSheet>
       );
     default:
       return null;
   }
+}
+
+/** Кнопка окна под выбранную строку лестницы: платное — «Купить», бесплатное — собирать дальше. */
+function TierAction({ tier, pending, on }: { tier: LadderTier | null; pending?: boolean; on: UnlimitedHandlers }) {
+  const { t } = useTranslation();
+  if (tier === 'blast') {
+    return <ButtonLink variant="primary" className="flex-1" href="/app/pricing?plan=BLAST">{t('funnel.other.buy')}</ButtonLink>;
+  }
+  if (tier === 'tripwire') {
+    return <Button variant="primary" className="flex-1" loading={pending} onClick={on.onBuyTripwire}>{t('funnel.other.buy')}</Button>;
+  }
+  if (tier === 'free') {
+    return <Button variant="primary" className="flex-1" onClick={on.onGenerate}>{t('funnel.other.generate')}</Button>;
+  }
+  return <Button variant="primary" className="flex-1" onClick={on.onClose}>{t('funnel.other.ok')}</Button>;
 }

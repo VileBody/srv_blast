@@ -93,14 +93,15 @@ export function VideoRatingRow({
   reasons,
   onRate,
   onReasons,
-  fixHref,
+  onFix,
   pending
 }: {
   score: number | null;
   reasons: RatingReason[];
   onRate: (score: number) => void;
   onReasons: (next: RatingReason[]) => void;
-  fixHref?: string;
+  /** открыть этот батч на монтажном столе с его настройками */
+  onFix?: () => void;
   pending?: boolean;
 }) {
   const { t } = useTranslation();
@@ -116,10 +117,10 @@ export function VideoRatingRow({
       {low && (
         <div className="fn-step mt-[12px] flex flex-wrap items-center justify-between gap-[12px]">
           <ReasonPills value={reasons} onChange={onReasons} />
-          {fixHref && (
-            <ButtonLink variant="ghost" size="sm" href={fixHref} iconEnd={<Icon>{GLYPH.arrowRight}</Icon>}>
+          {onFix && (
+            <Button variant="ghost" size="sm" onClick={onFix} iconEnd={<Icon>{GLYPH.arrowRight}</Icon>}>
               {t('funnel.rating.fix')}
-            </ButtonLink>
+            </Button>
           )}
         </div>
       )}
@@ -146,7 +147,8 @@ export function QuizQuestion({
 }) {
   return (
     <fieldset>
-      <legend className="mb-[14px] text-ui-20 text-text [text-wrap:balance]">{question.text}</legend>
+      {/* текст вопроса — заголовок окна; легенда остаётся для читалок */}
+      <legend className="sr-only">{question.text}</legend>
       <div className="flex flex-col gap-[8px]">
         {question.options.map((option) => {
           const chosen = selectedId === option.id || pendingId === option.id;
@@ -178,64 +180,64 @@ export function QuizQuestion({
 
 export type MethodologyState = 'idle' | 'sending' | 'sent' | 'link' | 'needBot' | 'error';
 
-export function MethodologyCard({
+/**
+ * Методичка — одна кнопка в строке действий: «Получить», после отправки окно идёт
+ * дальше само (хост). Ссылка-файл и «открой бота» — та же кнопка в другом виде.
+ */
+export function MethodologyAction({
   state,
   url,
   botLink,
-  onGet
+  onGet,
+  onOpened
 }: {
   state: MethodologyState;
   url?: string | null;
   botLink?: string;
   onGet: () => void;
+  /** человек открыл файл или бота — дальше */
+  onOpened: () => void;
 }) {
   const { t } = useTranslation();
+  if (state === 'link' && url) {
+    return (
+      <ButtonLink variant="primary" href={url} target="_blank" rel="noreferrer" onClick={onOpened} icon={<Icon>{GLYPH.download}</Icon>}>
+        {t('funnel.methodology.open')}
+      </ButtonLink>
+    );
+  }
+  if (state === 'needBot' && botLink) {
+    return (
+      <ButtonLink variant="primary" href={botLink} target="_blank" rel="noreferrer" onClick={onOpened} icon={<Icon>{FN_GLYPH.send}</Icon>}>
+        {t('funnel.methodology.openBot')}
+      </ButtonLink>
+    );
+  }
   return (
-    <div className="flex items-center gap-[16px] rounded-r15 bg-panel p-[16px] max-md:flex-col max-md:items-stretch">
-      <span className="grid h-[44px] w-[44px] shrink-0 place-items-center rounded-r10 bg-accent-soft text-ui-20 text-accent-light max-md:hidden">
-        <Icon>{FN_GLYPH.doc}</Icon>
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-ui-16 text-text">{t('funnel.methodology.title')}</p>
-        <p className="mt-[4px] text-ui-14 text-text-60">
-          {state === 'sent'
-            ? t('funnel.methodology.sent')
-            : state === 'needBot'
-              ? t('funnel.methodology.needBot')
-              : state === 'error'
-                ? t('funnel.methodology.error')
-                : t('funnel.methodology.text')}
-        </p>
-      </div>
-      {state === 'link' && url ? (
-        <ButtonLink variant="primary" size="sm" href={url} target="_blank" rel="noreferrer" icon={<Icon>{GLYPH.download}</Icon>}>
-          {t('funnel.methodology.open')}
-        </ButtonLink>
-      ) : state === 'needBot' && botLink ? (
-        <ButtonLink variant="primary" size="sm" href={botLink} target="_blank" rel="noreferrer" icon={<Icon>{FN_GLYPH.send}</Icon>}>
-          {t('funnel.methodology.openBot')}
-        </ButtonLink>
-      ) : state === 'sent' ? (
-        <span className="flex items-center gap-[6px] text-ui-14 text-success">
-          <Icon>{GLYPH.check}</Icon>
-          {t('funnel.methodology.sentShort')}
-        </span>
-      ) : (
-        <Button variant="primary" size="sm" loading={state === 'sending'} onClick={onGet}>
-          {t('funnel.methodology.get')}
-        </Button>
-      )}
-    </div>
+    <Button variant="primary" loading={state === 'sending' || state === 'sent'} onClick={onGet}>
+      {t('funnel.methodology.get')}
+    </Button>
   );
 }
 
 /* ------------------------------------------------------------------ питч */
 
+export type LadderTier = 'free' | 'tripwire' | 'blast';
+
 /**
  * Три способа собирать больше — лестница, а не три одинаковые карточки: строки одной
- * таблицы, слева что даёт, справа цена. Бесплатная ступень выделена: это следующий шаг.
+ * таблицы, слева что даёт, справа цена. Строку можно выбрать — кнопка окна меняется
+ * под выбор (купить / собирать дальше).
  */
-export function PitchLadder({ rules, highlight = 'free' }: { rules: FunnelRules; highlight?: 'free' | 'tripwire' }) {
+export function PitchLadder({
+  rules,
+  selected,
+  onSelect
+}: {
+  rules: FunnelRules;
+  selected?: LadderTier | null;
+  onSelect?: (tier: LadderTier) => void;
+}) {
   const { t } = useTranslation();
   const rows = [
     {
@@ -258,27 +260,32 @@ export function PitchLadder({ rules, highlight = 'free' }: { rules: FunnelRules;
     }
   ];
   return (
-    <ol className="overflow-hidden rounded-r15 border border-line">
+    <div className="overflow-hidden rounded-r15 border border-line" role="radiogroup" aria-label={t('funnel.pitch.ladderLabel')}>
       {rows.map((row, index) => {
-        const on = row.id === highlight;
+        const on = row.id === selected;
         return (
-          <li
+          <button
             key={row.id}
+            type="button"
+            role="radio"
+            aria-checked={on}
+            onClick={() => onSelect?.(row.id)}
             className={cn(
-              'flex items-start justify-between gap-[16px] px-[18px] py-[14px]',
+              'flex w-full items-start justify-between gap-[16px] px-[18px] py-[14px] text-left transition-[background-color] duration-150',
+              'focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-light',
               index > 0 && 'border-t border-line',
-              on && 'bg-accent-soft'
+              on ? 'bg-accent-soft' : 'hover:bg-field'
             )}
           >
-            <div className="min-w-0">
-              <p className="text-ui-16 text-text">{row.title}</p>
-              <p className="mt-[4px] text-ui-14 text-text-60 [text-wrap:pretty]">{row.text}</p>
-            </div>
+            <span className="min-w-0">
+              <span className="block text-ui-16 text-text">{row.title}</span>
+              <span className="mt-[4px] block text-ui-14 text-text-60 [text-wrap:pretty]">{row.text}</span>
+            </span>
             <span className={cn('shrink-0 whitespace-nowrap text-ui-16 tabular-nums', on ? 'text-accent-light' : 'text-text-80')}>{row.price}</span>
-          </li>
+          </button>
         );
       })}
-    </ol>
+    </div>
   );
 }
 
@@ -347,7 +354,7 @@ export function UnlockedTicket({
   return (
     <div className="overflow-hidden rounded-r15 border border-accent-line bg-panel">
       <div className="px-[18px] pb-[16px] pt-[18px]">
-        <div className="flex items-baseline justify-between gap-[12px]">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-[12px] gap-y-[4px]">
           <p className="min-w-0 truncate text-ui-20 text-text" title={trackTitle}>{trackTitle}</p>
           <span className={cn('shrink-0 text-ui-14 tabular-nums', waiting ? 'text-accent-light' : 'text-text-60')}>
             {waiting ? t('funnel.done.nextIn', { time: timer.text }) : t('funnel.done.left', { n: left, cap })}

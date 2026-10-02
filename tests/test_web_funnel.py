@@ -222,16 +222,32 @@ def test_site_copy_has_no_em_dash_and_no_emoji(client) -> None:
         texts.append(main.funnel.web_bridge(branch))
     for text in texts:
         assert "—" not in text and "\U0001f447" not in text and "\n" not in text, text
-    q2 = next(q for q in questions if q["id"] == "q2")
-    assert q2["text"].startswith("Как ты монтируешь:")
+    # вопрос на сайте — заголовок окна: короткая формулировка, а не ботовая
+    by_id = {q["id"]: q for q in questions}
+    assert by_id["q1"]["text"] == "Сколько роликов в месяц у тебя выходит в TikTok?"
+    assert by_id["q2"]["text"] == "Как ты монтируешь ролики?"
+    assert [o["label"] for o in by_id["q2"]["options"]] == ["Сам", "С монтажёром или сервисом", "Не монтирую"]
+    assert by_id["q2a"]["text"] == "Сколько времени уходит на один ролик?"
+    assert by_id["q2b"]["text"] == "Сколько в месяц уходит на монтаж?"
+    assert by_id["q3"]["text"] == "Что мешает выкладывать чаще?"
+    assert "Не хватает идей" in [o["label"] for o in by_id["q3"]["options"]]
+    # мостик — одно-два коротких предложения под «Держи методичку»
+    for branch in ("time", "money", "ideas", "meaning"):
+        assert len(main.funnel.web_bridge(branch)) <= 120, branch
+    assert main.funnel.web_bridge("time").startswith("Растут те, кто выкладывает 1–2 ролика в день.")
 
 
 def test_survey_stores_the_bot_label_for_the_shared_table(client) -> None:
     """В survey_responses ответ пишется тем же текстом, что у бота: таблица общая."""
     tc, main = client
     tc.post("/api/funnel/survey", json={"questionId": "q2", "answerId": "no_edit"})
+    tc.post("/api/funnel/survey", json={"questionId": "q3", "answerId": "ideas"})
     tg = next(iter(main.funnel._MEMORY.surveys))
-    assert main.funnel._MEMORY.surveys[tg]["answers"]["q2"]["label"] == "Не монтирую — ролики не делаю"
+    answers = main.funnel._MEMORY.surveys[tg]["answers"]
+    assert answers["q2"]["label"] == "Не монтирую — ролики не делаю"
+    assert answers["q3"]["label"] == "Не хватает идей/вариантов подачи"
+    # и в state сайт получает тот же ботовый label (на нём строится фраза питча)
+    assert tc.get("/api/funnel/state").json()["survey"]["answers"]["q3"]["label"] == "Не хватает идей/вариантов подачи"
 
 
 def test_state_exposes_the_unlimited_track_hash(client) -> None:

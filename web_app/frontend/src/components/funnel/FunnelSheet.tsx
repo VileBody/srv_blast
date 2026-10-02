@@ -3,12 +3,12 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../lib/cn';
 import { useModalCount } from '../ui/Modal';
-import { ActionBar, Button, GLYPH, Icon } from '../ui/kit';
+import { Button, GLYPH, Icon } from '../ui/kit';
 
 /*
  * Карточка шага воронки: та же геометрия, что у kit/Dialog (r25, заголовок 24, низ —
  * ActionBar), а прогресс шагов живёт слева в строке действий (контекст по правилу
- * ActionBar), а не надписью над заголовком.
+ * в строке действий), а не надписью над заголовком.
  *
  * Отделена от оверлея: витрина /dev/funnel рисует все шаги рядом теми же компонентами.
  * `stepKey` перемонтирует тело при смене шага — содержимое всплывает (m-nudge из
@@ -53,7 +53,8 @@ export function FunnelSheet({
           />
         ))}
       </span>
-      {t('funnel.step', { n: progress.current + 1, total: progress.total })}
+      {/* на телефоне хватает точек: подпись съела бы место у кнопок строки */}
+      <span className="max-md:sr-only">{t('funnel.step', { n: progress.current + 1, total: progress.total })}</span>
     </span>
   ) : aside;
   return (
@@ -74,10 +75,17 @@ export function FunnelSheet({
           </Button>
         )}
       </header>
-      <div key={stepKey} className="fn-step subtle-scroll min-h-0 flex-1 overflow-y-auto px-[24px] pb-[24px]">{children}</div>
+      {children ? (
+        <div key={stepKey} className="fn-step subtle-scroll min-h-0 flex-1 overflow-y-auto px-[24px] pb-[24px]">{children}</div>
+      ) : (
+        <div className="pb-[10px]" />
+      )}
       {(actions || start) && (
-        <footer className="border-t border-line px-[24px] py-[14px]">
-          <ActionBar start={start}>{actions ?? <span />}</ActionBar>
+        // Одна строка на любой ширине: прогресс слева, кнопки справа (ActionBar на
+        // телефоне складывает их в столбик, а тут кнопка уезжала под прогресс).
+        <footer className="flex items-center gap-[12px] border-t border-line px-[24px] py-[14px] max-md:px-[16px]">
+          {start && <div className="flex shrink-0 items-center text-ui-14 text-text-60">{start}</div>}
+          <div className="flex min-w-0 flex-1 items-center justify-end gap-[8px]">{actions}</div>
         </footer>
       )}
     </section>
