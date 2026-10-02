@@ -846,6 +846,17 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const askDock = (kind: 'edit' | 'shuffle') => setDockReq((r) => ({ kind, n: (r?.n ?? 0) + 1 }));
   /** телефон: панель замены кадра встаёт на место нижней панели инструментов */
   const [replaceSlot, setReplaceSlot] = useState<HTMLElement | null>(null);
+  // лента инструментов шире экрана — затухание у края показывает, что её можно листать
+  const barRef = useRef<HTMLElement | null>(null);
+  const [barFade, setBarFade] = useState({ l: false, r: false });
+  const syncBar = useCallback(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const l = el.scrollLeft > 4; const r = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
+    setBarFade((cur) => (cur.l === l && cur.r === r ? cur : { l, r }));
+  }, []);
+  // разовая подсказка, как работать с таймлайном на телефоне
+  const [mobIntroDismissed, setMobIntroDismissed] = useGuideDismiss('table-mobile-intro', phone);
   // шторка открывается сразу с плитками: если в ней ничего не раскрыто — раскрываем первую
   // непустую группу (на телефоне лишний тап по заголовку группы — это лишний шаг)
   useEffect(() => {
@@ -1573,7 +1584,17 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
       </section>
       {editK !== null
         ? <div ref={setReplaceSlot} className="mm-bar mm-replace-slot" />
-        : <nav className="mm-bar" aria-label="Инструменты">{tools}</nav>}
+        : <nav ref={(el) => { barRef.current = el; if (el) syncBar(); }} className="mm-bar" aria-label="Инструменты" data-fade-l={barFade.l || undefined} data-fade-r={barFade.r || undefined} onScroll={syncBar}>{tools}</nav>}
+      {!mobIntroDismissed && editK === null && !sheet && (
+        <div className="mm-intro" role="note">
+          <ul>
+            <li><Glyph name="chain" size={16} /><span className="tx">Листай дорожки пальцем — под линией по центру двигается время. Два пальца — масштаб</span></li>
+            <li><Glyph name="check" size={16} /><span className="tx">Тапни кадр, склейку, стиль или слово — внизу появятся его действия. Края выбранного тянутся</span></li>
+            <li><Glyph name="fwd" size={16} /><span className="tx">Панель инструментов листается вбок</span></li>
+          </ul>
+          <button type="button" className="mm-intro-ok" onClick={() => setMobIntroDismissed(true)}><span className="tx">Понятно</span></button>
+        </div>
+      )}
       {sheet && (
         <div className="mm-sheet" role="dialog" aria-label={sheetTitle}>
           <div className="mm-sheet-h">
