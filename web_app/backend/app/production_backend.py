@@ -1078,6 +1078,11 @@ class ProductionBackend:
             raise ProductionBackendError("ссылка на исходник не из нашего S3")
         return f"s3://{unquote(bucket)}/{unquote(key)}"
 
+    def source_url(self, locator: str) -> str:
+        """Короткоживущая ссылка на оригинал — ffmpeg читает по ней только нужный кусок файла."""
+        bucket, key = self._parse_s3_locator(locator)
+        return str(self._s3.generate_presigned_url("get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=600))
+
     def download_locator(self, locator: str, path: Path) -> None:
         bucket, key = self._parse_s3_locator(locator)
         self._s3.download_file(bucket, key, str(path))

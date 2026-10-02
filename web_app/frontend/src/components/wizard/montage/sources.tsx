@@ -65,7 +65,7 @@ export function FrameView({ frame, at = 0, t = 0, playing = false, bpm = 128, th
   const poster = thumb ? posterOf(frame.url, (frame.offset ?? 0) + 0.1) : null;
   const media = (cls: string) => (isVideoUrl(frame.url!)
     ? (thumb
-      ? (poster ? <img className={cls} src={poster} alt="" draggable={false} loading="lazy" decoding="async" /> : <video className={cls} src={`${frame.url}#t=${(frame.offset ?? 0) + 0.1}`} muted playsInline preload="metadata" />)
+      ? (poster ? <img className={cls} src={poster} alt="" draggable={false} decoding="async" /> : <video className={cls} src={`${frame.url}#t=${(frame.offset ?? 0) + 0.1}`} muted playsInline preload="metadata" />)
       : <VideoFrame className={cls} url={frame.url!} offset={frame.offset} at={at} playing={playing} />)
     : <img className={cls} src={frame.url!} alt="" draggable={false} />);
   if (frame.fit === 'contain') {

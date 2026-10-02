@@ -111,21 +111,32 @@ def peaks(src: Path) -> dict[str, object]:
 
 # ── одна подготовка на файл: параллельные запросы ждут ту же работу ──────────────
 
-class Builder:
-    """Пул подготовки копий. Повторный запрос того же файла ждёт уже идущую работу."""
+# Общий реестр работ на все пулы: один и тот же файл не сжимается дважды, даже если его
+# одновременно просят фоновый прогрев и открытый экран.
+_JOBS: dict[str, Future] = {}
+_JOBS_LOCK = threading.Lock()
 
-    def __init__(self, workers: int = 3) -> None:
+
+class Builder:
+    """Пул подготовки копий. Повторный запрос того же файла ждёт уже идущую работу.
+
+    urgent — пул открытого экрана: если тот же файл ещё только стоит в очереди фонового
+    прогрева, работа снимается оттуда и запускается здесь сразу, а не ждёт свою очередь.
+    """
+
+    def __init__(self, workers: int = 3, *, urgent: bool = False) -> None:
         self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="media-proxy")
-        self._lock = threading.Lock()
-        self._jobs: dict[str, Future] = {}
+        self._urgent = urgent
 
     def run(self, name: str, fn: Callable[[], None]) -> Future:
         """Запустить подготовку или вернуть уже идущую. Упавшую — запустить заново."""
-        with self._lock:
-            job = self._jobs.get(name)
-            if job is None or (job.done() and job.exception() is not None):
+        with _JOBS_LOCK:
+            job = _JOBS.get(name)
+            if job is not None and self._urgent and not job.running() and not job.done():
+                job.cancel()  # ещё не начата в чужой очереди — забираем себе
+            if job is None or job.cancelled() or (job.done() and job.exception() is not None):
                 job = self._pool.submit(self._guarded, name, fn)
-                self._jobs[name] = job
+                _JOBS[name] = job
             return job
 
     @staticmethod
@@ -225,24 +236,36 @@ def build_track(store, name: str, fetch: Callable[[Path], None]) -> None:
 
 
 # подготовка, о которой просит открытый экран, идёт впереди фонового прогрева
-NOW = Builder(workers=2)
+NOW = Builder(workers=2, urgent=True)
+# миниатюры кадров — своим пулом: полоса из 10–30 кадров не встаёт в очередь перед клипом плеера
+POSTERS = Builder(workers=4, urgent=True)
 
 
-def build_poster(store, clip: str, poster: str, at: float, fetch: Callable[[Path], None]) -> None:
-    """Кадр клипа для миниатюры (JPEG ~10–20 КБ) — вместо <video>, качавшего клип ради кадра."""
+def build_poster(store, clip: str, poster: str, at: float, source: str) -> None:
+    """Кадр клипа для миниатюры (JPEG ~10–20 КБ) — вместо <video>, качавшего клип ради кадра.
+
+    Лёгкая копия уже есть — кадр из неё (ключевой кадр каждые 0,5 с, декодировать почти
+    нечего). Нет — кадр прямо из оригинала: ffmpeg читает по ссылке только нужный кусок
+    файла, а не ждёт, пока клип скачается и сожмётся целиком. Так полоса кадров
+    появляется сразу, даже если прогрев до этих клипов ещё не дошёл.
+    """
     if store.has(poster):
         return
-    build_clip(store, clip, fetch)
     import tempfile
     with tempfile.TemporaryDirectory(prefix="blast-poster-") as tmp:
-        src, dst = Path(tmp) / "clip.mp4", Path(tmp) / "poster.jpg"
-        src.write_bytes(store.read(clip))
-        transcode_frame(src, dst, at)
+        dst = Path(tmp) / "poster.jpg"
+        if store.has(clip):
+            src = Path(tmp) / "clip.mp4"
+            src.write_bytes(store.read(clip))
+            transcode_frame(str(src), dst, at)
+        else:
+            transcode_frame(source, dst, at)
         store.put(poster, dst, "image/jpeg")
 
 
-def transcode_frame(src: Path, dst: Path, at: float) -> None:
-    proc = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{max(0.0, at):.2f}", "-i", str(src), "-frames:v", "1",
+def transcode_frame(src: str, dst: Path, at: float) -> None:
+    """src — путь или ссылка (https): -ss до -i, ffmpeg перематывает по индексу, не читая всё."""
+    proc = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{max(0.0, at):.2f}", "-i", src, "-frames:v", "1",
                            "-vf", "scale=-2:320", "-q:v", "6", str(dst)], capture_output=True, text=True, timeout=60)
     if proc.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
         raise MediaProxyError(f"ffmpeg не смог снять кадр: {(proc.stderr or '').strip()[-300:]}")

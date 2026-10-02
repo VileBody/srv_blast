@@ -39,6 +39,14 @@ def test_proxy_name_is_stable_and_kind_specific() -> None:
     assert a.startswith("clip/")
 
 
+@pytest.fixture(autouse=True)
+def _fresh_job_registry():
+    # реестр работ общий на процесс: у каждого теста своё хранилище, готовые работы не переносим
+    mp._JOBS.clear()
+    yield
+    mp._JOBS.clear()
+
+
 def test_failed_build_is_retried_and_success_is_shared() -> None:
     builder = mp.Builder(workers=1)
     calls = {"n": 0}
@@ -172,6 +180,55 @@ def test_signed_clip_and_its_poster_are_served(client, monkeypatch) -> None:
     poster = tc.get(f"/api/wizard/media/clip/{token}/poster.jpg?t=1.24")
     assert poster.status_code == 200 and poster.content.startswith(b"\xff\xd8")
     assert calls["transcode"] == 1  # кадр снят с уже готовой лёгкой копии, не с оригинала
+
+
+JPEG = bytes([0xFF, 0xD8]) + b"JPEG"
+
+
+def test_poster_without_clip_reads_the_original_directly(client, monkeypatch) -> None:
+    """Прогрев до клипа не дошёл — кадр снимается с оригинала, клип целиком не сжимается."""
+    tc, main, calls = client
+    seen = []
+    monkeypatch.setattr(main.media_proxy, "transcode_frame", lambda src, dst, at: (seen.append((src, at)), dst.write_bytes(JPEG)))
+    track = main.store.ws().saved_tracks[0]
+    token = main.media_proxy.sign(main.RUNTIME.session_secret, {"s": str(track["localUrl"])})
+    poster = tc.get(f"/api/wizard/media/clip/{token}/poster.jpg?t=0.5")
+    assert poster.status_code == 200
+    assert calls["transcode"] == 0 and len(seen) == 1 and seen[0][1] == 0.5
+    assert not seen[0][0].endswith("clip.mp4")  # вход — оригинал, не временная копия
+
+
+def test_urgent_pool_takes_over_a_queued_background_job() -> None:
+    """Экран просит файл, который ещё стоит в очереди прогрева, — не ждём очередь."""
+    import threading
+    gate = threading.Event()
+    background = mp.Builder(workers=1)
+    urgent = mp.Builder(workers=1, urgent=True)
+    background.run("busy", lambda: gate.wait(5))  # единственный фоновый воркер занят
+    queued = background.run("wanted", lambda: None)
+    done = urgent.run("wanted", lambda: None)
+    done.result(timeout=2)  # выполнено срочным пулом, пока фоновый ещё занят
+    assert queued.cancelled()
+    assert urgent.run("wanted", lambda: None) is done
+    gate.set()
+
+
+def test_same_file_is_not_built_twice_across_pools() -> None:
+    import threading
+    gate = threading.Event()
+    calls = {"n": 0}
+
+    def slow() -> None:
+        calls["n"] += 1
+        gate.wait(5)
+
+    a = mp.Builder(workers=1).run("clip", slow)
+    while not a.running():
+        pass
+    b = mp.Builder(workers=1, urgent=True).run("clip", slow)  # уже идёт — ждём её, а не дублируем
+    gate.set()
+    b.result(timeout=5)
+    assert a is b and calls["n"] == 1
 
 
 def test_clip_link_looks_like_video_to_the_site() -> None:

@@ -418,7 +418,7 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
                 {video.clips.map((c, i) => (
                   <button key={`${c.fileName}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === s ? ' cur' : ''}`} style={{ flexGrow: bounds[i + 1] - bounds[i] }} aria-label={`Кадр ${i + 1}`} onClick={() => { if (!edit) seekShot(i); }}>
                     {c.previewUrl && (isSvg(c.previewUrl) ? <img src={c.previewUrl} alt="" draggable={false} />
-                      : posterOf(c.previewUrl, c.previewOffset + 0.1) ? <img src={posterOf(c.previewUrl, c.previewOffset + 0.1)!} alt="" draggable={false} loading="lazy" decoding="async" />
+                      : posterOf(c.previewUrl, c.previewOffset + 0.1) ? <img src={posterOf(c.previewUrl, c.previewOffset + 0.1)!} alt="" draggable={false} decoding="async" />
                         : <video src={`${c.previewUrl}#t=${c.previewOffset + 0.1}`} muted playsInline preload="metadata" />)}
                     {dropRel !== null && Math.abs(bounds[i] - dropRel) < 0.01 && <i className="dm" />}
                     {video.pins[i] && <span className="lk"><Svg d={LOCK} size={9} /></span>}

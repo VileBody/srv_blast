@@ -1319,6 +1319,18 @@ def _media_fetch(locator: str):
     return fetch
 
 
+def _media_source(locator: str) -> str:
+    """Оригинал как вход ffmpeg без скачивания целиком: ссылка S3 или файл своей папки (мок)."""
+    if locator.startswith("s3://"):
+        return _production_backend().source_url(locator)
+    if locator.startswith("/static/"):
+        local = (STATIC_DIR / locator[len("/static/"):]).resolve()
+        if STATIC_DIR.resolve() not in local.parents or not local.exists():
+            raise media_proxy.MediaProxyError("исходник не найден")
+        return str(local)
+    raise media_proxy.MediaProxyError(f"неизвестный источник медиа: {locator[:60]}")
+
+
 def _clip_preview_url(preview_url: str | None) -> str | None:
     """Ссылку на оригинал клипа → ссылка на его лёгкую копию; подготовка — сразу в фон."""
     if not preview_url or RUNTIME.backend != "production":
@@ -1383,7 +1395,8 @@ def api_media_clip_poster(token: str, request: Request, t: float = 0.0) -> Respo
     poster = f"{clip}.t{int(at * 10)}.jpg"
     store = _media_store()
     if not store.has(poster):
-        _await_media(media_proxy.NOW, poster, lambda: media_proxy.build_poster(store, clip, poster, at, _media_fetch(locator)))
+        # свой пул: полоса миниатюр не задерживает клип плеера и не ждёт сжатия клипов целиком
+        _await_media(media_proxy.POSTERS, poster, lambda: media_proxy.build_poster(store, clip, poster, at, _media_source(locator)))
     return _media_response(store, poster, request, "image/jpeg")
 
 
