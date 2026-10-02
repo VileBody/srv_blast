@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { importWithReload } from '../lib/chunkReload';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -9,7 +9,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
-import { hasTrackInput, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER } from '../stores/wizardStore';
+import { backgroundUnits, hasTrackInput, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER, subtitleTextProblem } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { useStoryboardBusy } from '../components/wizard/storyboardData';
 import { LabWorkZone, useFxLab, useLegacyHooksToVariants } from '../components/wizard/FxLab';
@@ -169,8 +169,26 @@ export function WizardPage() {
     }
   }, [params, projectId, projectsQuery.data?.activeProject?.id, projectsQuery.data?.projects, setProjectId]);
 
+  /*
+   * Запись черновика на сервер. Пишут и «Продолжить», и табы этапов — записи идут строго
+   * по очереди, иначе более ранняя могла бы доехать последней и откатить черновик. Удачная
+   * запись кладётся в кэш ['wizard-session']: при следующем входе на страницу восстановление
+   * должно видеть её, а не копию, загруженную до правок.
+   */
+  const saveChain = useRef<Promise<unknown>>(Promise.resolve());
+  const persistDraft = (target: number) => {
+    const run = saveChain.current.catch(() => undefined).then(() => {
+      const current = useWizardStore.getState();
+      return api.saveWizardSession({ projectId: current.projectId, stage: target, data: current.stageData() });
+    });
+    saveChain.current = run;
+    return run.then((data) => {
+      queryClient.setQueryData(['wizard-session'], (old: object | undefined) => ({ ...(old ?? {}), session: data.session }));
+      return data;
+    });
+  };
   const saveSessionMutation = useMutation({
-    mutationFn: () => api.saveWizardSession({ projectId, stage, data: state.stageData() }),
+    mutationFn: (target: number) => persistDraft(target),
     onError: () => {
       // A failed persistence write must stop the stage transition.  Moving on
       // would leave the next panel rendered from a draft the server never saw.
@@ -241,8 +259,15 @@ export function WizardPage() {
   const creditsLeft = meQuery.data ? meQuery.data.creditsLeft : 1;
   // Этап «Пул»: суммы распределения должны сходиться с общим числом видео
   const fixedColorCount = state.background.color ? 1 : 0;
-  const allocBgSum = Object.values(state.allocation.background).reduce((a, b) => a + b, 0);
-  const allocSubsSum = Object.values(state.allocation.subtitles).reduce((a, b) => a + b, 0);
+  // Суммы — только по фонам и стилям, которые сейчас выбраны: доля, оставшаяся у снятого
+  // фона или стиля, рендер развернул бы в лишнее видео.
+  const unitKeys = backgroundUnits(state.background).map((unit) => unit.key);
+  const allocBgSum = unitKeys.reduce((sum, key) => sum + (state.allocation.background[key] ?? 0), 0);
+  const allocSubsSum = state.subtitles.pool.reduce((sum, style) => sum + (state.allocation.subtitles[style] ?? 0), 0);
+  const allocNoStale = Object.entries(state.allocation.background).every(([key, count]) => !count || unitKeys.includes(key))
+    && Object.entries(state.allocation.subtitles).every(([style, count]) => !count || state.subtitles.pool.includes(style));
+  const colorFont = state.background.strobe ? state.allocation.strobeFont : state.allocation.colorFont;
+  const colorFontOk = !state.background.color || !colorFont || state.subtitles.pool.includes(colorFont);
   const allocHooksSum = Object.values(state.allocation.hooks).reduce((a, b) => a + b, 0);
   const allocStylesSum = Object.values(state.allocation.styles ?? {}).reduce((a, b) => a + b, 0);
   const selectedHooks = hookPills(state.hooks);
@@ -259,10 +284,13 @@ export function WizardPage() {
     ? (labVariants.length === 0 ? labAllocSum === 0 : labAllocSum === hookTarget)
     : (selectedHooks.length === 0 ? allocHooksSum === 0 : allocHooksSum === hookTarget)
       && (selectedStyles.length === 0 ? allocStylesSum === 0 : allocStylesSum === hookTarget);
+  // Пустой пул субтитров — не «сошлось»: роликам нечем подписываться
   const allocBalanced =
     state.allocation.total > 0 &&
     allocBgSum === state.allocation.total - fixedColorCount &&
-    (state.subtitles.pool.length === 0 || allocSubsSum === state.allocation.total - fixedColorCount) &&
+    state.subtitles.pool.length > 0 &&
+    allocSubsSum === state.allocation.total - fixedColorCount &&
+    allocNoStale && colorFontOk &&
     fxAllocBalanced;
   const safeVideosToGenerate = Math.max(1, state.allocation.total);
 
@@ -307,28 +335,51 @@ export function WizardPage() {
     if (stage !== 1 && !trackReady) setStage(1);
   }, [setStage, stage, trackReady]);
 
-  // «Продолжить» подсвечивается только при непустом выборе; кликабельность — отдельно
   // «Пул»: генерация ждёт раскадровку и склейки выбранного темпа (см. PoolStoryboard).
   const storyboardBusy = useStoryboardBusy((s) => s.busy);
-  const ready = useMemo(() => {
-    if (stage === 1) return trackReady && timingReady && !segmentInvalid && state.lyrics.trim().length > 0;
-    if (stage === 2) return backgroundVariations(state.background) > 0;
+  const subtitleFontsQuery = useQuery({ queryKey: ['subtitle-fonts'], queryFn: api.subtitleFonts, staleTime: Infinity });
+  const textProblem = subtitleTextProblem(state.subtitles, state.background, subtitleFontsQuery.data);
+  // Ролики батча: по ним сверяются правки стола (хук со стола тоже требует дроп)
+  const combos = useCombos();
+  const montageHooks = Object.entries(state.montage.videos)
+    .some(([index, video]) => video.edited && video.kind !== 'none' && combos[Number(index)]?.sig === video.sig);
+  const bg = state.background;
+
+  /*
+   * Чего не хватает каждому шагу (null — шаг готов). Одна таблица и для «Продолжить», и для
+   * финальной отправки: табы пускают на любой пройденный шаг, поэтому перед генерацией
+   * перепроверяются ВСЕ шаги — снятый стиль, сдвинутый отрывок или пропавший дроп иначе
+   * доехали бы до бэка (422) или молча выпали бы из рендера.
+   */
+  const needDrop = (fxLab ? labVariants.some((v) => v.kind !== 'none') : configuredHooksNeedDrop) || montageHooks;
+  const fxConfigured = fxLab ? labVariantsComplete : configuredHookCount > 0;
+  const stageProblems: Record<number, string | null> = {
+    1: !state.track ? t('wizard.missing.track')
+      : !timingReady ? t('wizard.missing.cut')
+        : !state.lyrics.trim() ? t('wizard.missing.lyrics') : null,
+    // Строб и эффекты на фото без выбора рендер молча выбрасывает — не пускаем дальше,
+    // выбирать за человека тоже не стоит
+    2: backgroundVariations(bg) === 0 ? t('wizard.missing.background')
+      : bg.color && bg.strobe && !bg.glue ? t('wizard.missing.strobeGlue')
+        : bg.photo.length > 0 && bg.photoEffects && !bg.photoStyle ? t('wizard.missing.photoStyle') : null,
     // Варианты: все должны быть настроены (у недонастроенного на шаге FX метка «настроить»),
-    // дроп нужен, если хоть один вариант — не «Без хука».
-    if (stage === 3 && fxLab) return labVariantsComplete && (!labVariants.some((v) => v.kind !== 'none') || dropReady);
-    if (stage === 3) return configuredHookCount > 0 && (!configuredHooksNeedDrop || dropReady);
-    if (stage === 4) return state.subtitles.pool.length > 0;
+    // дроп внутри отрывка нужен, если хоть один вариант — не «Без хука».
+    3: !fxConfigured ? t('wizard.missing.fx')
+      : needDrop && !dropReady ? t('wizard.missing.drop') : null,
+    // Те же невозможные настройки текста, что горят красным на шаге, — бэк отклонил бы их 422
+    4: state.subtitles.pool.length === 0 ? t('wizard.missing.subtitles')
+      : textProblem?.kind === 'font' ? t('wizard.missing.textFont', { style: textProblem.style })
+        : textProblem?.kind === 'fontUnknown' ? t('wizard.missing.textFontUnknown', { style: textProblem.style })
+          : textProblem?.kind === 'down' ? t('wizard.missing.textDown', { style: textProblem.style }) : null,
     // Недонастроенный вариант мог появиться после «Пула» (вернулись на FX и добавили копию) —
     // бэк его не примет, поэтому генерация ждёт, пока его настроят или удалят.
-    if (stage === 5) return allocBalanced && trackReady && !storyboardBusy && (!fxLab || labVariantsComplete);
-    return false;
-  }, [storyboardBusy, allocBalanced, configuredHookCount, configuredHooksNeedDrop, dropReady, segmentInvalid, stage, state.background, state.lyrics, state.subtitles.pool, timingReady, trackReady, fxLab, labVariants, labVariantsComplete]);
-
-  const canContinue = useMemo(() => {
-    return ready;
-  }, [ready, stage]);
-
-
+    5: storyboardBusy ? t('wizard.missing.storyboard')
+      : fxLab && !labVariantsComplete ? t('wizard.missing.fx')
+        : !allocBalanced ? t('wizard.missing.pool') : null
+  };
+  // «Пул» готов, только когда готовы и все шаги до него
+  const ready = stage === 5 ? STAGE_ORDER.every((s) => !stageProblems[s]) : !stageProblems[stage];
+  const canContinue = ready;
 
   /*
    * Метрики прохождения визарда (из ревью): сколько времени человек проводит на этапе —
@@ -356,50 +407,72 @@ export function WizardPage() {
     stageEnteredRef.current = { stage, at: Date.now() };
   }, [stage]);
 
-  // Шаг сменился — прошлая попытка «Продолжить» больше не подсвечивает пропуски
-  useEffect(() => { useWizardAttempt.getState().clear(); }, [stage]);
+  // Шаг сменился — прошлая попытка «Продолжить» больше не подсвечивает пропуски. Пометку,
+  // поставленную ради перехода на этот шаг (генерацию вернули сюда), оставляем.
+  useEffect(() => {
+    const attempt = useWizardAttempt.getState();
+    if (attempt.stage !== stage) attempt.clear();
+  }, [stage]);
 
-  /** Чего не хватает на шаге — пишется над кнопкой после нажатия на неготовом шаге. */
-  const missingText = (): string => {
-    if (stage === 1) {
-      if (!state.track) return t('wizard.missing.track');
-      if (!timingReady) return t('wizard.missing.cut');
-      return t('wizard.missing.lyrics');
-    }
-    if (stage === 2) return t('wizard.missing.background');
-    if (stage === 3) {
-      const needDrop = fxLab ? labVariants.some((v) => v.kind !== 'none') : configuredHooksNeedDrop;
-      const configured = fxLab ? labVariantsComplete : configuredHookCount > 0;
-      if (configured && needDrop && !dropReady) return t('wizard.missing.drop');
-      return t('wizard.missing.fx');
-    }
-    if (stage === 4) return t('wizard.missing.subtitles');
-    if (storyboardBusy) return t('wizard.missing.storyboard');
-    if (fxLab && !labVariantsComplete) return t('wizard.missing.fx');
-    return t('wizard.missing.pool');
+  /** Пометить шаг пропусками; не текущий — открыть его, чтобы человек увидел, что чинить. */
+  const block = (target: number, reason: string) => {
+    if (target !== stage) setStage(target);
+    // проблема в стиле, чья вкладка не открыта, — открываем её: красная строка видна там
+    if (target === 4 && textProblem) state.setSubtitles({ textTab: textProblem.style });
+    useWizardAttempt.getState().mark(target, reason);
   };
 
-  const next = async () => {
-    if (!canContinue) {
-      useWizardAttempt.getState().mark(stage, missingText());
-      return;
+  // Повторный вызов, пока идёт сохранение или отправка, игнорируется: двойной клик или
+  // «Сгенерировать» на столе поверх уже отправленной формы иначе запускали бы второй батч.
+  const submittingRef = useRef(false);
+  /** Почему сейчас нельзя дальше (и пометить это); null — можно. */
+  const blocker = (): string | null => {
+    if (submittingRef.current) return t('wizard.missing.submitting');
+    if (STAGE_ORDER.indexOf(stage) === STAGE_ORDER.length - 1) {
+      for (const s of STAGE_ORDER) {
+        const problem = stageProblems[s];
+        if (problem) { block(s, problem); return problem; }
+      }
+      return null;
     }
-    useWizardAttempt.getState().clear();
+    const problem = stageProblems[stage];
+    if (problem) { block(stage, problem); return problem; }
+    return null;
+  };
+
+  const next = async (): Promise<string | null> => {
+    const reason = blocker();
+    if (reason) return reason;
+    submittingRef.current = true;
     try {
-      await saveSessionMutation.mutateAsync();
-    } catch {
-      return;
+      useWizardAttempt.getState().clear();
+      const idx = STAGE_ORDER.indexOf(stage);
+      const last = idx === STAGE_ORDER.length - 1;
+      try {
+        await saveSessionMutation.mutateAsync(last ? stage : STAGE_ORDER[idx + 1]);
+      } catch {
+        return t('wizard.page.saveFail');
+      }
+      if (!last) {
+        setStage(STAGE_ORDER[idx + 1]);
+        return null;
+      }
+      try {
+        await submitMutation.mutateAsync();
+      } catch {
+        // причину уже показал onError мутации
+        return t('wizard.page.genFail');
+      }
+      return null;
+    } finally {
+      submittingRef.current = false;
     }
-    const idx = STAGE_ORDER.indexOf(stage);
-    if (idx < STAGE_ORDER.length - 1) setStage(STAGE_ORDER[idx + 1]);
-    else submitMutation.mutate();
   };
 
   // «Пул» и монтажный стол смотрят на одно видео батча: листалка «Комбинаций» и
   // переключатель стола двигают один номер.
   const [poolIndex, setPoolIndex] = useState(0);
   const [tableOpen, setTableOpen] = useState(false);
-  const combos = useCombos();
   const montageVideos = useWizardStore((s) => s.montage.videos);
   const storyboardVideos = useWizardStore((s) => s.storyboard.videos);
   const setTimelineFlag = useFxTimelineOpen((s) => s.setOpen);
@@ -520,7 +593,7 @@ export function WizardPage() {
     </WizardCanvas>
     {stage === 5 && tableOpen && (
       <Suspense fallback={null}>
-        <MontageTable index={safePoolIndex} onIndex={setPoolIndex} onClose={() => setTableOpen(false)} onGenerate={() => { if (!canContinue) { const reason = missingText(); useWizardAttempt.getState().mark(stage, reason); return reason; } void next(); return null; }} />
+        <MontageTable index={safePoolIndex} onIndex={setPoolIndex} onClose={() => setTableOpen(false)} onGenerate={() => { const reason = blocker(); if (reason) return reason; void next(); return null; }} />
       </Suspense>
     )}
     </div>

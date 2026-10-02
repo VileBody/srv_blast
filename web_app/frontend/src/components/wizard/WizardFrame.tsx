@@ -113,7 +113,8 @@ export function WizardActions({ ready, loading, onBack, onNext, nextLabel, tone 
   const stage = useWizardStore((state) => state.stage);
   const missing = useWizardAttempt((state) => (state.stage === stage ? state.message : ''));
   const next = (
-    <button type="button" className={cn('w12-cta', tone === 'field' ? 'w12-cta-field' : ready && 'w12-ready')} onClick={onNext} aria-busy={loading || undefined}>
+    // пока сохраняем/отправляем — кнопка мёртвая: второй клик запустил бы второй батч
+    <button type="button" className={cn('w12-cta', tone === 'field' ? 'w12-cta-field' : ready && 'w12-ready')} onClick={onNext} disabled={loading} aria-busy={loading || undefined}>
       {loading ? <span className="spinner" aria-hidden="true" /> : <><span className="w12-l">{nextLabel ?? t('wizard.continue')}</span><Svg>{W12.arrow}</Svg></>}
     </button>
   );

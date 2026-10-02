@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { SavedTrack } from '../lib/types';
+import type { SavedTrack, SubtitleFontCatalog } from '../lib/types';
 import { DEFAULT_FOOTAGE_TYPE, footageTypePlane, normalizeFootageType } from '../data/footageTypes';
+import { findFont, fontBlockedFor, fontStyles, styleIdOf } from '../lib/subtitleText';
 
 export type BackgroundMode = 'footage' | 'photo' | 'color';
 export type HookKind = 'warmup' | 'object' | 'effects' | 'motion' | 'thought' | 'none';
@@ -120,6 +121,38 @@ export function allBackgroundsWide(background: WizardStateData['background']): b
   for (let i = 0; i < background.photo.length; i++) formats.push('4:3');
   if (background.color) formats.push('9:16');
   return formats.length > 0 && formats.every((format) => format === '16:9');
+}
+
+/** Почему настройки текста стиля не примет рендер (те же красные строки, что на шаге «Текст»). */
+export type SubtitleTextProblem =
+  | { style: string; kind: 'font'; blocked: string[] }
+  | { style: string; kind: 'fontUnknown' }
+  | { style: string; kind: 'down' };
+
+/**
+ * Первая невозможная настройка текста среди стилей пула; null — всё примется. Бэк сверяет
+ * то же на отправке (422), но человек должен узнать об этом на шаге, а не после «Сгенерировать».
+ * Без каталога шрифтов (ещё грузится / не загрузился) шрифт не проверить — это проверит бэк.
+ */
+export function subtitleTextProblem(
+  subtitles: Pick<WizardStateData['subtitles'], 'pool' | 'textByStyle'>,
+  background: WizardStateData['background'],
+  catalog: SubtitleFontCatalog | undefined
+): SubtitleTextProblem | null {
+  const wide = allBackgroundsWide(background);
+  for (const style of subtitles.pool) {
+    const settings = textSettingsFor(subtitles, style);
+    const styleId = styleIdOf(style);
+    const pickable = fontStyles(styleId ? [styleId] : [], catalog);
+    if (settings.font && catalog && pickable.length) {
+      const base = findFont(catalog, settings.font);
+      if (!base) return { style, kind: 'fontUnknown' };
+      const blocked = fontBlockedFor(base, pickable);
+      if (blocked.length) return { style, kind: 'font', blocked };
+    }
+    if (settings.position === 'down' && !wide) return { style, kind: 'down' };
+  }
+  return null;
 }
 
 /**
