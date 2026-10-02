@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Ref } fr
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
-import { isVideoUrl } from '../../../lib/media';
+import { isVideoUrl, posterOf } from '../../../lib/media';
 import type { StoryboardCandidate } from '../../../lib/types';
 import { useWizardStore, type StoryboardVideo } from '../../../stores/wizardStore';
 import { seedKeyFor, useRecipeCuts } from '../storyboardData';
@@ -62,9 +62,10 @@ export function FrameView({ frame, at = 0, t = 0, playing = false, bpm = 128, th
     return <div className={`mt-fv ${className}`} style={{ ...style, background: on ? frame.color : '#05010f' }} />;
   }
   if (!frame.url) return null;
+  const poster = thumb ? posterOf(frame.url, (frame.offset ?? 0) + 0.1) : null;
   const media = (cls: string) => (isVideoUrl(frame.url!)
     ? (thumb
-      ? <video className={cls} src={`${frame.url}#t=${(frame.offset ?? 0) + 0.1}`} muted playsInline preload="metadata" />
+      ? (poster ? <img className={cls} src={poster} alt="" draggable={false} decoding="async" /> : <video className={cls} src={`${frame.url}#t=${(frame.offset ?? 0) + 0.1}`} muted playsInline preload="metadata" />)
       : <VideoFrame className={cls} url={frame.url!} offset={frame.offset} at={at} playing={playing} />)
     : <img className={cls} src={frame.url!} alt="" draggable={false} />);
   if (frame.fit === 'contain') {

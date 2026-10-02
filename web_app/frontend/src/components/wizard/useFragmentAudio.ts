@@ -1,42 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { SavedTrack } from '../../lib/types';
 import { useWizardStore } from '../../stores/wizardStore';
 
 /**
- * Ссылка на прослушивание трека — всегда свежая с бэка.
+ * Ссылка на прослушивание трека.
  *
- * `track.localUrl` в сторе — presigned-URL на 24 ч, снятый в момент загрузки; черновик
- * визарда переживает его в localStorage, и после этого плеер молча получал 403.
- * Локальные `/static/...` (mock) отдаём как есть — их подписывать нечем и незачем.
+ * Сохранённый трек играет лёгкую копию со своего домена (`/api/wizard/media/track/:id`, AAC
+ * 96 кбит/с — в 3–4 раза легче оригинала). Адрес один на все экраны и не протухает, поэтому
+ * браузер качает трек один раз и дальше берёт из кэша: раньше каждый экран просил свежую
+ * presigned-ссылку на оригинал, и трек скачивался заново. Файл из этой вкладки (blob:) — как есть.
  */
 export function usePlaybackUrl(track: SavedTrack | null | undefined): string | null {
   const stored = track?.localUrl ?? null;
-  // /static/ (mock) и blob: (файл из этой вкладки) играют как есть — свежая ссылка нужна только S3
-  const needsFresh = Boolean(track?.id) && !/^(\/static\/|blob:)/.test(stored ?? '');
-  const fresh = useQuery({
-    queryKey: ['track-playback', track?.id],
-    queryFn: () => api.trackPlayback(String(track?.id)),
-    enabled: needsFresh,
-    staleTime: 6 * 60 * 60_000,
-    retry: 1
-  });
-  if (!needsFresh) return stored;
-  return fresh.data?.url ?? null;
-}
-
-/**
- * Откуда браузеру скачать трек, чтобы посчитать волну. Плеер играет presigned-ссылку S3, но
- * `fetch` с чужого домена упирается в CORS бакета — волна выходила ровной полосой. Поэтому для
- * сохранённого трека данные идут со своего домена (`/api/wizard/track-audio`); /static (мок) и
- * blob: (файл из этой вкладки) — как есть.
- */
-export function useWaveSourceUrl(track: SavedTrack | null | undefined, blobUrl?: string | null): string | null {
-  if (blobUrl) return blobUrl;
-  const stored = track?.localUrl ?? null;
-  if (stored && /^(\/static\/|blob:)/.test(stored)) return stored;
-  return track?.id ? api.trackAudioUrl(String(track.id)) : null;
+  if (stored?.startsWith('blob:') || !track?.id) return stored;
+  return api.trackMediaUrl(String(track.id));
 }
 
 /**

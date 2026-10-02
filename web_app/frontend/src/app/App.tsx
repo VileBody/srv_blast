@@ -1,47 +1,68 @@
-import { MobileUploadPage } from '../pages/MobileUploadPage';
+import { lazy, Suspense, type ComponentType, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
-import { AdminAnalyticsPage } from '../pages/AdminAnalyticsPage';
 import { AuthPage } from '../pages/AuthPage';
 import { BlockedPage } from '../pages/BlockedPage';
-import { DashboardPage } from '../pages/DashboardPage';
-import { LegalPage } from '../pages/LegalPage';
-import { PricingPage } from '../pages/PricingPage';
-import { ProcessingPage } from '../pages/ProcessingPage';
-import { ProfilePage } from '../pages/ProfilePage';
-import { TikTokPostPage } from '../pages/TikTokPostPage';
-import { ProjectDetailPage } from '../pages/ProjectDetailPage';
-import { ProjectsPage } from '../pages/ProjectsPage';
 import { SimplePage } from '../pages/SimplePage';
-import { StatsPage } from '../pages/StatsPage';
-import { WizardPage } from '../pages/WizardPage';
-import { KitPage } from '../pages/KitPage';
+import { importWithReload } from '../lib/chunkReload';
+
+/*
+ * Страницы грузятся по требованию — каждая своим куском JS. Раньше весь сайт был одним
+ * файлом (~920 КБ, 283 КБ в gzip): его качали целиком даже ради экрана входа. Вход, 404 и
+ * блокировка — в основном файле: маленькие и нужны сразу.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const page = <K extends string>(load: () => Promise<Record<K, ComponentType<any>>>, name: K) =>
+  lazy(() => importWithReload(load).then((m) => ({ default: m[name] })));
+
+const MobileUploadPage = page(() => import('../pages/MobileUploadPage'), 'MobileUploadPage');
+const AdminAnalyticsPage = page(() => import('../pages/AdminAnalyticsPage'), 'AdminAnalyticsPage');
+const DashboardPage = page(() => import('../pages/DashboardPage'), 'DashboardPage');
+const LegalPage = page(() => import('../pages/LegalPage'), 'LegalPage');
+const PricingPage = page(() => import('../pages/PricingPage'), 'PricingPage');
+const ProcessingPage = page(() => import('../pages/ProcessingPage'), 'ProcessingPage');
+const ProfilePage = page(() => import('../pages/ProfilePage'), 'ProfilePage');
+const TikTokPostPage = page(() => import('../pages/TikTokPostPage'), 'TikTokPostPage');
+const ProjectDetailPage = page(() => import('../pages/ProjectDetailPage'), 'ProjectDetailPage');
+const ProjectsPage = page(() => import('../pages/ProjectsPage'), 'ProjectsPage');
+const StatsPage = page(() => import('../pages/StatsPage'), 'StatsPage');
+const WizardPage = page(() => import('../pages/WizardPage'), 'WizardPage');
+const KitPage = page(() => import('../pages/KitPage'), 'KitPage');
+
+/** Пока кусок страницы грузится — спокойный спиннер на её месте (оболочка сайта остаётся). */
+function Lazy({ children }: { children: ReactNode }) {
+  return (
+    <Suspense fallback={<div className="grid min-h-[40vh] place-items-center" role="status" aria-label="Загрузка"><span className="spinner" /></div>}>
+      {children}
+    </Suspense>
+  );
+}
 
 export function App() {
   return (
     <Routes>
-      <Route path="/upload/" element={<MobileUploadPage />} />
+      <Route path="/upload/" element={<Lazy><MobileUploadPage /></Lazy>} />
       <Route path="/" element={<Navigate to="/app" replace />} />
       <Route path="/login" element={<AuthPage mode="login" />} />
       <Route path="/register" element={<AuthPage mode="register" />} />
       <Route path="/blocked" element={<BlockedPage />} />
       <Route path="/not-found" element={<SimplePage kind="404" />} />
       <Route path="/error" element={<SimplePage kind="error" />} />
-      <Route path="/legal/policy" element={<LegalPage kind="policy" />} />
-      <Route path="/legal/offer" element={<LegalPage kind="offer" />} />
+      <Route path="/legal/policy" element={<Lazy><LegalPage kind="policy" /></Lazy>} />
+      <Route path="/legal/offer" element={<Lazy><LegalPage kind="offer" /></Lazy>} />
       {/* витрина компонентов единой шкалы UI — только dev-сборка, в прод не попадает */}
-      {import.meta.env.DEV && <Route path="/dev/kit" element={<KitPage />} />}
+      {import.meta.env.DEV && <Route path="/dev/kit" element={<Lazy><KitPage /></Lazy>} />}
       <Route path="/app" element={<AppShell />}>
-        <Route index element={<DashboardPage />} />
-        <Route path="generate" element={<WizardPage />} />
-        <Route path="projects" element={<ProjectsPage />} />
-        <Route path="projects/:id" element={<ProjectDetailPage />} />
-        <Route path="projects/:id/post" element={<TikTokPostPage />} />
-        <Route path="profile" element={<ProfilePage />} />
-        <Route path="pricing" element={<PricingPage />} />
-        <Route path="stats" element={<StatsPage />} />
-        <Route path="admin/analytics" element={<AdminAnalyticsPage />} />
-        <Route path="processing/:jobId" element={<ProcessingPage />} />
+        <Route index element={<Lazy><DashboardPage /></Lazy>} />
+        <Route path="generate" element={<Lazy><WizardPage /></Lazy>} />
+        <Route path="projects" element={<Lazy><ProjectsPage /></Lazy>} />
+        <Route path="projects/:id" element={<Lazy><ProjectDetailPage /></Lazy>} />
+        <Route path="projects/:id/post" element={<Lazy><TikTokPostPage /></Lazy>} />
+        <Route path="profile" element={<Lazy><ProfilePage /></Lazy>} />
+        <Route path="pricing" element={<Lazy><PricingPage /></Lazy>} />
+        <Route path="stats" element={<Lazy><StatsPage /></Lazy>} />
+        <Route path="admin/analytics" element={<Lazy><AdminAnalyticsPage /></Lazy>} />
+        <Route path="processing/:jobId" element={<Lazy><ProcessingPage /></Lazy>} />
       </Route>
       <Route path="*" element={<SimplePage kind="404" />} />
     </Routes>

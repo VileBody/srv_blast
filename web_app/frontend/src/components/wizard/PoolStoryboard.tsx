@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { posterOf } from '../../lib/media';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { cssZoom } from '../../lib/zoom';
@@ -141,6 +142,10 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   const [t, setT] = useState(0.4);
   const tRef = useRef(0.4);
   const [playing, setPlaying] = useState(true);
+  // звук ещё качается: время стоит (иначе картинка убегала вперёд без музыки и потом
+  // дёргалась назад), на кнопке — загрузка вместо «мёртвого» плея
+  const [buffering, setBuffering] = useState(false);
+  const bufRef = useRef(false);
   const [edit, setEdit] = useState<null | { k: number; orig: StoryboardVideo; candidates: StoryboardCandidate[]; pos: number; loading: boolean }>(null);
   useEffect(() => { setEdit(null); tRef.current = 0.4; setT(0.4); }, [current]);
   const audioUrl = usePlaybackUrl(track);
@@ -163,6 +168,9 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
     let raf = 0; let last = 0;
     const tick = (ts: number) => {
       const audio = audioRef.current;
+      const waiting = Boolean(!edit && audio && !audio.paused && audio.readyState < 3);
+      if (waiting !== bufRef.current) { bufRef.current = waiting; setBuffering(waiting); }
+      if (waiting) { last = ts; raf = requestAnimationFrame(tick); return; }
       let next: number;
       if (!edit && audio && !audio.paused && audio.readyState >= 2 && recipe.window) next = audio.currentTime - recipe.window.start;
       else { next = tRef.current + (last ? (ts - last) / 1000 : 0); }
@@ -174,7 +182,7 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); if (bufRef.current) { bufRef.current = false; setBuffering(false); } };
   }, [playing, shots, edit, bounds, dur, recipe.window]);
   const shotAt = (v: number) => { let s = 0; while (s < shots - 1 && v >= bounds[s + 1]) s++; return s; };
   const s = shotAt(t);
@@ -351,7 +359,9 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
             // демо-превью мока — анимированный SVG: <video> его не откроет
             return isSvg(c.previewUrl)
               ? <img key={`${c.fileName}:${i}`} className={`shot${visible ? ' on' : ''}`} src={c.previewUrl} alt="" draggable={false} style={style} />
-              : <video key={`${c.fileName}:${i}`} ref={(el) => { videoRefs.current[i] = el; }} className={`shot${visible ? ' on' : ''}`} src={c.previewUrl} muted playsInline preload="auto" style={style} />;
+              // качаем только соседей текущего кадра (предыдущий — для перехода, следующий — к склейке):
+              // раньше все кадры ролика грузились разом, на слабой сети это забивало канал
+              : <video key={`${c.fileName}:${i}`} ref={(el) => { videoRefs.current[i] = el; }} className={`shot${visible ? ' on' : ''}`} src={Math.abs(i - s) <= 1 || (s === video.clips.length - 1 && i === 0) ? c.previewUrl : undefined} muted playsInline preload="auto" style={style} />;
           })}
           {placeholder && <div className="psb-ph"><span className="tx">{placeholder}</span></div>}
           <div className="psb-shade" />
@@ -373,8 +383,8 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
             </>
           )}
           {video && (
-            <button type="button" className="psb-play psb-glass" aria-label={playing ? 'Пауза' : 'Воспроизвести'} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
-              {playing ? <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 4h3v12H6zM11 4h3v12h-3z" fill="currentColor" /></svg> : <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="currentColor" /></svg>}
+            <button type="button" className="psb-play psb-glass" aria-label={buffering ? 'Загружается' : playing ? 'Пауза' : 'Воспроизвести'} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
+              {buffering ? <span className="spinner" aria-hidden="true" /> : playing ? <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 4h3v12H6zM11 4h3v12h-3z" fill="currentColor" /></svg> : <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="currentColor" /></svg>}
             </button>
           )}
           {video && clip && (
@@ -407,7 +417,9 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
               <div ref={strip.ref} className={`psb-strip${edit ? ' editing' : ''}`} data-fade-l={strip.fadeLeft || undefined} data-fade-r={strip.fadeRight || undefined}>
                 {video.clips.map((c, i) => (
                   <button key={`${c.fileName}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === s ? ' cur' : ''}`} style={{ flexGrow: bounds[i + 1] - bounds[i] }} aria-label={`Кадр ${i + 1}`} onClick={() => { if (!edit) seekShot(i); }}>
-                    {c.previewUrl && (isSvg(c.previewUrl) ? <img src={c.previewUrl} alt="" draggable={false} /> : <video src={`${c.previewUrl}#t=${c.previewOffset + 0.1}`} muted playsInline preload="metadata" />)}
+                    {c.previewUrl && (isSvg(c.previewUrl) ? <img src={c.previewUrl} alt="" draggable={false} />
+                      : posterOf(c.previewUrl, c.previewOffset + 0.1) ? <img src={posterOf(c.previewUrl, c.previewOffset + 0.1)!} alt="" draggable={false} decoding="async" />
+                        : <video src={`${c.previewUrl}#t=${c.previewOffset + 0.1}`} muted playsInline preload="metadata" />)}
                     {dropRel !== null && Math.abs(bounds[i] - dropRel) < 0.01 && <i className="dm" />}
                     {video.pins[i] && <span className="lk"><Svg d={LOCK} size={9} /></span>}
                     {video.repeats.includes(i) && <i className="rp" />}

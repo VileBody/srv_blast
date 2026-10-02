@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { importWithReload } from '../lib/chunkReload';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -27,7 +28,7 @@ import { useCombos } from '../components/wizard/montage/combos';
 import { useFxTimelineOpen } from '../components/wizard/timelineGuides';
 
 // Монтажный стол — тяжёлый полноэкранный экран «Пула»: грузится, когда его открыли
-const MontageTable = lazy(() => import('../components/wizard/montage/MontageTable').then((m) => ({ default: m.MontageTable })));
+const MontageTable = lazy(() => importWithReload(() => import('../components/wizard/montage/MontageTable')).then((m) => ({ default: m.MontageTable })));
 
 function apiErrorText(error: unknown): string | undefined {
   if (!(error instanceof ApiError)) return undefined;
@@ -50,6 +51,9 @@ function apiErrorText(error: unknown): string | undefined {
 
 /* Этап «Пул» вынесен в components/wizard/SlicePanel.tsx (Figma W19/W33) */
 
+/** вайбы, для которых лёгкие копии клипов уже заказаны в этой вкладке */
+const prewarmed = new Set<string>();
+
 export function WizardPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -61,6 +65,19 @@ export function WizardPage() {
   const projectId = useWizardStore((state) => state.projectId);
   const setProjectId = useWizardStore((state) => state.setProjectId);
   const state = useWizardStore();
+  // Вайб выбран на «Фоне» — сервер сразу начинает готовить лёгкие копии его клипов: к «Пулу»
+  // превью кадров открываются без ожидания. Один раз на вайб и отрывок; это ускорение,
+  // поэтому сбой не мешает работе — подбор на «Пуле» всё равно подготовит свои клипы сам.
+  useEffect(() => {
+    if (!state.timingFrom || !state.timingTo) return;
+    for (const group of state.background.footage) {
+      const key = `${group}|${state.timingFrom}|${state.timingTo}`;
+      if (prewarmed.has(key)) continue;
+      prewarmed.add(key);
+      void api.prewarmMedia({ group, clipFrom: state.timingFrom, clipTo: state.timingTo })
+        .catch((error: unknown) => { prewarmed.delete(key); console.warn('media prewarm failed', group, error); });
+    }
+  }, [state.background.footage, state.timingFrom, state.timingTo]);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
   const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: api.projects });
   const wizardSessionQuery = useQuery({ queryKey: ['wizard-session'], queryFn: api.wizardSession });
@@ -180,7 +197,8 @@ export function WizardPage() {
     // reset стирал их вместе с настройками батча, и «+» на втором батче уводил
     // человека обратно на загрузку файла — хотя ProjectDetailPage.addBatch
     // рассчитывает найти их в сторе и открыть сразу этап «Фон».
-    onSuccess: (data) => { push({ variant: 'success', title: t('wizard.page.genStarted') }); state.newBatch(projectId); state.ackCarriedOver(); navigate(data.redirectTo); },
+    // шапка опрашивает активную генерацию редко, пока её нет, — сообщаем о новой сразу
+    onSuccess: (data) => { push({ variant: 'success', title: t('wizard.page.genStarted') }); void queryClient.invalidateQueries({ queryKey: ['active-job'] }); state.newBatch(projectId); state.ackCarriedOver(); navigate(data.redirectTo); },
     // 402 — упёрлись в лимит роликов: причина + путь к решению, а не общий «не удалось»
     onError: (error) => {
       const limitReached = error instanceof ApiError && error.status === 402;

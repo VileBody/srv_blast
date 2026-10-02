@@ -226,9 +226,10 @@ export const api = {
   tiktokVideos: (days = 30) => request<{ videos: TiktokVideo[]; hasMore: boolean; retentionAvailable: false; mock?: boolean }>(`/api/tiktok/videos?days=${days}`),
 
   previousTrack: () => request<{ track: SavedTrack | null }>('/api/wizard/previous-track'),
-  trackPlayback: (trackId: string) => request<{ url: string }>(`/api/wizard/track-playback?trackId=${encodeURIComponent(trackId)}`),
-  // байты трека со своего домена — для волны (fetch presigned-ссылки S3 упирается в CORS бакета)
-  trackAudioUrl: (trackId: string) => `${API_BASE}/api/wizard/track-audio?trackId=${encodeURIComponent(trackId)}`,
+  // лёгкая копия трека для прослушки (AAC 96 кбит/с) — один адрес на все экраны, кэш браузера
+  trackMediaUrl: (trackId: string) => `${API_BASE}/api/wizard/media/track/${encodeURIComponent(trackId)}`,
+  // громкость трека каждые 50 мс — волна без скачивания файла
+  trackPeaks: (trackId: string) => request<{ rate: number; duration: number; rms: number[] }>(`/api/wizard/media/track/${encodeURIComponent(trackId)}/peaks`),
   uploadTrack: (file: File) => {
     const form = new FormData();
     form.append('file', file);
@@ -285,6 +286,9 @@ export const api = {
     request<StoryboardCutsResponse>('/api/wizard/storyboard/cuts', { method: 'POST', body: JSON.stringify(payload) }),
   storyboardPick: (payload: { clipFrom: string; clipTo: string; cuts: number[]; videos: { index: number; group: string; seedKey: string; pins?: Record<number, string> }[] }) =>
     request<{ videos: StoryboardPickedVideo[]; mock?: boolean }>('/api/wizard/storyboard/pick', { method: 'POST', body: JSON.stringify(payload) }),
+  // вайб выбран — сервер заранее готовит лёгкие копии его первых клипов (превью «Пула» без ожидания)
+  prewarmMedia: (payload: { group: string; clipFrom: string; clipTo: string }) =>
+    request<{ queued: number }>('/api/wizard/media/prewarm', { method: 'POST', body: JSON.stringify(payload) }),
   storyboardAlternatives: (payload: { clipFrom: string; clipTo: string; cuts: number[]; group: string; shot: number; seedKey: string; exclude: string[]; limit?: number }) =>
     request<{ candidates: StoryboardCandidate[]; mock?: boolean }>('/api/wizard/storyboard/alternatives', { method: 'POST', body: JSON.stringify(payload) }),
   asrStart: (payload: { clipFrom: string; clipTo: string; fragment: string; lyrics: string; trackId: string }) =>

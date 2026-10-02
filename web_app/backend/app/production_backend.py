@@ -1055,6 +1055,38 @@ class ProductionBackend:
             raise ProductionBackendError(f"invalid S3 locator {value!r}")
         return bucket, key
 
+    def media_store(self):
+        """Где сайт хранит лёгкие копии медиа (превью клипов, трек для прослушки)."""
+        from .media_proxy import S3Store
+        return S3Store(self._s3, self.config.asset_bucket, self.config.asset_prefix)
+
+    def media_locator(self, value: str) -> str:
+        """presigned-ссылка нашего S3 или s3:// → s3://bucket/key (адрес оригинала)."""
+        if value.startswith("s3://"):
+            return value
+        endpoint = urlparse(self.config.s3_endpoint_url)
+        parsed = urlparse(value)
+        bucket = key = ""
+        if parsed.hostname and parsed.hostname == endpoint.hostname:
+            path = parsed.path.lstrip("/")
+            if "/" in path:
+                bucket, key = path.split("/", 1)
+        elif endpoint.hostname and parsed.hostname and parsed.hostname.endswith(f".{endpoint.hostname}"):
+            bucket = parsed.hostname[: -(len(endpoint.hostname) + 1)]
+            key = parsed.path.lstrip("/")
+        if not bucket or not key:
+            raise ProductionBackendError("ссылка на исходник не из нашего S3")
+        return f"s3://{unquote(bucket)}/{unquote(key)}"
+
+    def source_url(self, locator: str) -> str:
+        """Короткоживущая ссылка на оригинал — ffmpeg читает по ней только нужный кусок файла."""
+        bucket, key = self._parse_s3_locator(locator)
+        return str(self._s3.generate_presigned_url("get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=600))
+
+    def download_locator(self, locator: str, path: Path) -> None:
+        bucket, key = self._parse_s3_locator(locator)
+        self._s3.download_file(bucket, key, str(path))
+
     def open_track_audio(self, value: str) -> tuple[Any, str, int | None]:
         """Поток байтов сохранённого трека (тело, content-type, длина) — для своего домена.
 

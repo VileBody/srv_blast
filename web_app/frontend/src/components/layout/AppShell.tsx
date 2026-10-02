@@ -192,7 +192,8 @@ export function AppShell() {
   const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
-  const activeJobQuery = useQuery({ queryKey: ['active-job'], queryFn: api.activeJob, refetchInterval: 5000 });
+  // идёт генерация — следим часто; нет — раз в 30 с (раньше каждые 5 с на любой странице)
+  const activeJobQuery = useQuery({ queryKey: ['active-job'], queryFn: api.activeJob, refetchInterval: (query) => (query.state.data?.job ? 5000 : 30_000) });
   const activeJob = activeJobQuery.data?.job;
   const [lastCompletedJob, setLastCompletedJob] = useState<string | null>(null);
   const notifiedJob = useRef<string | null>(null);
