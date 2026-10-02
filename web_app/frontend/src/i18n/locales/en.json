@@ -730,7 +730,10 @@
       "guideFooterTitle": "All variants in the batch",
       "guideFooterText": "Switch between variants here. “+” copies the current one — change its style or transition.",
       "visBrowse": "browse examples",
-      "visPick": "pick in the strip below"
+      "visPick": "pick in the strip below",
+      "copyVariant": "Copy the current variant",
+      "removedVariant": "Removed: {{label}}",
+      "undoRemove": "Undo"
     },
     "pool": {
       "total": "Total videos:",

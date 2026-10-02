@@ -803,3 +803,7 @@
 /* прогрев: подтверждение «Назад», когда файл уже загружен (назад его стирает) */
 .w12 .w12-warm-confirm { display: inline-flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 4px 10px; font-size: 12px; line-height: 16px; color: var(--w12-text-2); text-align: right; }
 .w12 .w12-warm-confirm .w12-link { font-size: 12px; }
+/* вариант FX удалён: «Вернуть» несколько секунд под списком вариантов типа */
+.w12 .w12-fx-undo { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 10px 10px; padding: 8px 12px; border-radius: 10px; background: var(--w12-field); font-size: 12px; line-height: 16px; color: var(--w12-text-2); }
+.w12 .w12-fx-undo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w12 .w12-fx-undo .w12-link { flex: none; font-size: 12px; }
