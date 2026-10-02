@@ -1426,7 +1426,11 @@
     "expiredText": "Отправь боту команду /site — он пришлёт новую. Или войди через Telegram.",
     "error": "Не получилось открыть ссылку",
     "errorText": "Обнови страницу. Если не поможет — войди через Telegram.",
-    "toLogin": "Войти"
+    "toLogin": "Войти",
+    "otherAccount": "Войти как другой аккаунт?",
+    "otherAccountText": "В этом браузере открыт другой аккаунт Blast. Ссылка из бота ведёт в аккаунт твоего Telegram.",
+    "otherAccountConfirm": "Сменить аккаунт",
+    "otherAccountStay": "Остаться"
   },
   "funnel": {
     "step": "{{n}} из {{total}}",
@@ -1435,11 +1439,10 @@
       "prompt": "Оцени ролик",
       "thanksHigh": "Спасибо за оценку",
       "thanksLow": "Что не так?",
-      "whatsWrong": "Что не так",
       "fix": "Поправить на таймлайне",
       "reason": {
         "subtitles": "Субтитры",
-        "footage": "Исходники",
+        "footage": "Кадры",
         "transitions": "Переходы",
         "other": "Другое"
       }
@@ -1450,7 +1453,7 @@
       "skip": "Пропустить",
       "doneTitle": "Держи методичку",
       "finish": "Готово",
-      "descriptionAfter": "Три коротких вопроса. Так подсказки и питч будут точнее."
+      "descriptionAfter": "Три коротких вопроса. Так подсказки будут точнее."
     },
     "methodology": {
       "title": "Методичка по выкладке в TikTok",
@@ -1513,8 +1516,16 @@
       "generate": "Собрать ещё",
       "left": "доступно {{n}} из {{cap}}",
       "ruleCap": "До {{cap}} роликов за раз",
-      "ruleCooldown": "Между батчами {{hours}} часа",
-      "ruleDaily": "В первые сутки {{batches}} батча, дальше {{videos}} роликов в день"
+      "ruleCooldown_one": "Между батчами {{count}} час",
+      "ruleCooldown_few": "Между батчами {{count}} часа",
+      "ruleCooldown_many": "Между батчами {{count}} часов",
+      "ruleCooldown_other": "Между батчами {{count}} часа",
+      "ruleDaily_one": "В первые сутки {{count}} батч, дальше $t(funnel.units.videos, {\"count\": {{videos}} }) в день",
+      "ruleDaily_few": "В первые сутки {{count}} батча, дальше $t(funnel.units.videos, {\"count\": {{videos}} }) в день",
+      "ruleDaily_many": "В первые сутки {{count}} батчей, дальше $t(funnel.units.videos, {\"count\": {{videos}} }) в день",
+      "ruleDaily_other": "В первые сутки {{count}} батча, дальше $t(funnel.units.videos, {\"count\": {{videos}} }) в день",
+      "descriptionWait": "Безлимит на этот трек открыт. Сейчас лимит исчерпан, когда он обновится, напишем в Telegram.",
+      "nextIn": "следующий батч через {{time}}"
     },
     "other": {
       "title": "Безлимит уже открыт",
@@ -1539,12 +1550,12 @@
       "cooldown": {
         "title": "Перезарядка",
         "until": "до следующего батча",
-        "text": "Между батчами на безлимите {{hours}} часа. Когда можно будет собирать, напишем в Telegram."
+        "text": "Между батчами на безлимите $t(funnel.units.hours, {\"count\": {{hours}} }). Когда можно будет собирать, напишем в Telegram."
       },
       "daily": {
         "title": "Лимит на сегодня",
         "until": "до новых роликов",
-        "text": "В первые сутки безлимита {{batches}} батча, дальше {{videos}} роликов в день. Напишем, когда лимит обновится."
+        "text": "В первые сутки безлимита $t(funnel.units.batches, {\"count\": {{batches}} }), дальше $t(funnel.units.videos, {\"count\": {{videos}} }) в день. Напишем, когда лимит обновится."
       },
       "creditsOut": {
         "title": "Бесплатные ролики закончились",
@@ -1554,7 +1565,23 @@
     },
     "errors": {
       "noTrack": "Сначала загрузи трек",
-      "unlock": "Не получилось открыть безлимит. Попробуй ещё раз."
+      "unlock": "Не получилось открыть безлимит. Попробуй ещё раз.",
+      "save": "Не получилось сохранить. Попробуй ещё раз."
+    },
+    "badge": "Безлимит на трек",
+    "units": {
+      "hours_one": "{{count}} час",
+      "hours_few": "{{count}} часа",
+      "hours_many": "{{count}} часов",
+      "hours_other": "{{count}} часа",
+      "batches_one": "{{count}} батч",
+      "batches_few": "{{count}} батча",
+      "batches_many": "{{count}} батчей",
+      "batches_other": "{{count}} батча",
+      "videos_one": "{{count}} ролик",
+      "videos_few": "{{count}} ролика",
+      "videos_many": "{{count}} роликов",
+      "videos_other": "{{count}} ролика"
     }
   }
 }

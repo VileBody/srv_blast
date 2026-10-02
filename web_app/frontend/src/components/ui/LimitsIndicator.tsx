@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cssZoom } from '../../lib/zoom';
 import { LimitsPopoutCard, TrackLimitBar, type PopoutVariant } from '../funnel/LimitsPopout';
-import { quotaLeft, useFunnelState, useTripwirePurchase } from '../funnel/useFunnel';
+import { isUnlimitedTrack, quotaLeft, useFunnelState, useTripwirePurchase } from '../funnel/useFunnel';
 import { funnelSeen, markFunnelSeen, useFunnelUi } from '../../stores/funnelUi';
 
 /*
@@ -24,6 +24,9 @@ import { funnelSeen, markFunnelSeen, useFunnelUi } from '../../stores/funnelUi';
  * поповера и окно у кружка, которое всплывает само один раз на каждое исчерпание —
  * перезарядка с трипваером или «бесплатные ролики кончились» со входом в безлимит.
  */
+
+/** Через сколько снова показать окно «бесплатные ролики кончились». */
+const CREDITS_OUT_REPEAT_MS = 24 * 3600 * 1000;
 
 /** Донат-индикатор (Figma 758:584): кольцо whitey + дуга grad-main от 12 часов по часовой */
 function LimitRing({ pct }: { pct: number }) {
@@ -96,7 +99,7 @@ export function LimitsIndicator({
 }: {
   offsetY?: number;
   /** трек страницы (визард — текущий, батч — трек батча): на него открывается безлимит */
-  track?: { id?: string; title?: string; projectId?: string };
+  track?: { id?: string; audioHash?: string; title?: string; projectId?: string };
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -121,10 +124,14 @@ export function LimitsIndicator({
   // Окно у кружка: перезарядка безлимита или кончились бесплатные ролики (без безлимита).
   const popout: { variant: PopoutVariant; key: string } | null = quota && !quota.allowed && !quota.tripwire
     ? { variant: quota.reason === 'daily_limit' ? 'daily' : 'cooldown', key: `limit:${quota.availableAt}` }
-    : funnel && !funnel.hasPaid && creditsOut && (!unlimited || (track?.id && unlimited.trackId !== track.id))
-      ? { variant: 'creditsOut', key: unlimited ? `credits-out:${track?.id}` : 'credits-out' }
+    : funnel && !funnel.hasPaid && creditsOut && (!unlimited || isUnlimitedTrack(unlimited, track) === false)
+      ? { variant: 'creditsOut', key: unlimited ? `credits-out:${track?.audioHash ?? track?.id}` : 'credits-out' }
       : null;
-  const showPopout = Boolean(popout && popout.key !== closedKey && !funnelSeen(popout.key));
+  // «Ролики кончились» напоминаем раз в сутки, а не один раз навсегда; окно перезарядки
+  // и так своё на каждое исчерпание (ключ с availableAt).
+  const showPopout = Boolean(
+    popout && popout.key !== closedKey && !funnelSeen(popout.key, popout.variant === 'creditsOut' ? CREDITS_OUT_REPEAT_MS : undefined)
+  );
   const closePopout = () => {
     if (!popout) return;
     markFunnelSeen(popout.key);
@@ -184,7 +191,7 @@ export function LimitsIndicator({
               buyPending={tripwire.isPending}
               onUnlock={track?.id ? () => {
                 closePopout();
-                openUnlimited({ source: 'gate', trackId: track.id, trackTitle: track.title, projectId: track.projectId });
+                openUnlimited({ source: 'gate', trackId: track.id, audioHash: track.audioHash, trackTitle: track.title, projectId: track.projectId });
               } : undefined}
               onClose={closePopout}
             />

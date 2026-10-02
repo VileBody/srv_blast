@@ -1,6 +1,35 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../../lib/api';
-import type { FunnelQuota } from '../../lib/types';
+import { api, ApiError } from '../../lib/api';
+import type { FunnelQuota, FunnelState } from '../../lib/types';
+
+/** Название трека для людей — без расширения файла («Нет любви.mp3» → «Нет любви»). */
+export function trackTitleOf(filename?: string | null): string | undefined {
+  return filename ? filename.replace(/\.[A-Za-z0-9]{1,5}$/, '') : undefined;
+}
+
+/** Код ошибки бэка из тела `{detail: {code}}` (или undefined). */
+export function apiErrorCode(error: unknown): string | undefined {
+  if (!(error instanceof ApiError)) return undefined;
+  return (error.detail as { detail?: { code?: string } } | null)?.detail?.code;
+}
+
+/** Трек, о котором речь на странице: id и хэш (по хэшу сверяем надёжнее). */
+export interface TrackRef {
+  id?: string;
+  audioHash?: string;
+}
+
+/**
+ * Тот ли это трек, на котором открыт безлимит. Сверяем по хэшу: у безлимита
+ * SavedTrack мог пропасть (trackId null), а id одного трека бывает не один.
+ * `null` — сравнить нечем (у страницы нет ни хэша, ни id).
+ */
+export function isUnlimitedTrack(unlimited: FunnelState['unlimited'], track?: TrackRef): boolean | null {
+  if (!unlimited || !track) return null;
+  if (track.audioHash && unlimited.audioHash) return track.audioHash === unlimited.audioHash;
+  if (track.id && unlimited.trackId) return track.id === unlimited.trackId;
+  return track.id || track.audioHash ? false : null;
+}
 
 /** Состояние воронки: квиз, действия, безлимит на трек и его квота. Общий ключ для всех мест. */
 export function useFunnelState(enabled = true) {

@@ -600,6 +600,8 @@ export interface FunnelState {
   };
   actions: { channel_subscribed: boolean; manager_contacted: boolean };
   unlimited: null | {
+    /** хэш трека безлимита: по нему сверяем трек (SavedTrack мог пропасть, тогда trackId null) */
+    audioHash: string;
     trackId: string | null;
     trackTitle: string | null;
     unlockedAt: string;

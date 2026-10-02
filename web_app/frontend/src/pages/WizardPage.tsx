@@ -23,6 +23,7 @@ import { WizardCanvas, WizardHeaderCard } from '../components/wizard/WizardFrame
 import { demoTrackUrl } from '../dev/demoTrack';
 import { useToast } from '../contexts/ToastContext';
 import { useFunnelUi } from '../stores/funnelUi';
+import { trackTitleOf } from '../components/funnel/useFunnel';
 import { useWizardStore } from '../stores/wizardStore';
 import { useCombos } from '../components/wizard/montage/combos';
 import { useFxTimelineOpen } from '../components/wizard/timelineGuides';
@@ -197,7 +198,13 @@ export function WizardPage() {
       // кончилась — обновляем лимиты, окно перезарядки всплывёт у кружка лимитов.
       const limit = limitReached ? (error.detail as { detail?: { code?: string; unlimitedOffer?: boolean } })?.detail : undefined;
       if (limit?.code === 'credits_exhausted' && limit.unlimitedOffer) {
-        openUnlimited({ source: 'gate', projectId: projectId ?? undefined, trackId: state.track?.id, trackTitle: state.track?.filename });
+        openUnlimited({
+          source: 'gate',
+          projectId: projectId ?? undefined,
+          trackId: state.track?.id,
+          audioHash: state.track?.audioHash,
+          trackTitle: trackTitleOf(state.track?.filename)
+        });
         return;
       }
       if (limit?.code && ['cooldown', 'daily_limit', 'track_batch_cap'].includes(limit.code)) {

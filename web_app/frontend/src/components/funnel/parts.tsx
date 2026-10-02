@@ -20,6 +20,9 @@ export const RATING_REASONS: RatingReason[] = ['subtitles', 'footage', 'transiti
 /**
  * Шкала 1–10. Одна строка из десяти квадратов: оценка ставится одним нажатием, без
  * подтверждения. Выбранная — акцентная заливка, остальные тихие.
+ *
+ * Квадрат не уже 32 px (цель для пальца): где десять в ряд не влезают (телефон 375),
+ * шкала переносится на два ряда по пять, а не сжимается.
  */
 export function RatingScale({
   value,
@@ -33,7 +36,7 @@ export function RatingScale({
   label: string;
 }) {
   return (
-    <div className="flex items-center gap-[4px] max-md:w-full" role="radiogroup" aria-label={label}>
+    <div className="grid grid-cols-[repeat(10,32px)] gap-[4px] max-md:w-full max-md:grid-cols-[repeat(10,minmax(32px,1fr))] max-[440px]:grid-cols-[repeat(5,minmax(32px,1fr))]" role="radiogroup" aria-label={label}>
       {Array.from({ length: 10 }, (_, index) => {
         const score = index + 1;
         const active = value === score;
@@ -46,7 +49,7 @@ export function RatingScale({
             disabled={disabled}
             onClick={() => onChange(score)}
             className={cn(
-              'grid h-ctl-sm w-[32px] min-w-0 place-items-center rounded-r6 max-md:w-auto max-md:flex-1 text-ui-14 tabular-nums transition-[background-color,color,transform] duration-150 active:scale-[.94] disabled:pointer-events-none disabled:opacity-40',
+              'grid h-ctl-sm min-w-[32px] place-items-center rounded-r6 text-ui-14 tabular-nums transition-[background-color,color,transform] duration-150 active:scale-[.94] disabled:pointer-events-none disabled:opacity-40',
               'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light',
               active ? 'bg-accent-strong text-text' : value !== null && score < value ? 'bg-accent-soft text-text-80' : 'bg-field text-text-60 hover:bg-field-hover hover:text-text'
             )}
@@ -68,7 +71,7 @@ export function ReasonPills({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-wrap gap-[8px]" role="group" aria-label={t('funnel.rating.whatsWrong')}>
+    <div className="flex flex-wrap gap-[8px]" role="group" aria-label={t('funnel.rating.thanksLow')}>
       {RATING_REASONS.map((reason) => {
         const on = value.includes(reason);
         return (
@@ -326,21 +329,29 @@ export function UnlockActionRow({
 export function UnlockedTicket({
   trackTitle,
   rules,
-  quota
+  quota,
+  now
 }: {
   trackTitle: string;
   rules: FunnelRules;
   quota: FunnelQuota | null;
+  /** витрина подставляет фиксированное время, чтобы таймер не тикал */
+  now?: number;
 }) {
   const { t } = useTranslation();
   const left = quota ? (quota.allowed ? quota.maxVideos : 0) : rules.batchCap;
   const cap = quota?.batchCap ?? rules.batchCap;
+  // квота на сейчас исчерпана: вместо «0 из 5» — когда следующий батч
+  const waiting = Boolean(quota && !quota.allowed);
+  const timer = useCountdown(waiting ? quota?.availableAt ?? null : null, now);
   return (
     <div className="overflow-hidden rounded-r15 border border-accent-line bg-panel">
       <div className="px-[18px] pb-[16px] pt-[18px]">
         <div className="flex items-baseline justify-between gap-[12px]">
           <p className="min-w-0 truncate text-ui-20 text-text" title={trackTitle}>{trackTitle}</p>
-          <span className="shrink-0 text-ui-14 tabular-nums text-text-60">{t('funnel.done.left', { n: left, cap })}</span>
+          <span className={cn('shrink-0 text-ui-14 tabular-nums', waiting ? 'text-accent-light' : 'text-text-60')}>
+            {waiting ? t('funnel.done.nextIn', { time: timer.text }) : t('funnel.done.left', { n: left, cap })}
+          </span>
         </div>
         <div className="mt-[12px] h-[6px] overflow-hidden rounded-full bg-field" aria-hidden="true">
           <div className="fn-meter-fill h-full rounded-full bg-accent-light" style={{ width: `${cap ? (left / cap) * 100 : 0}%` }} />
@@ -349,8 +360,8 @@ export function UnlockedTicket({
       <ul className="grid grid-cols-3 border-t border-line max-md:grid-cols-1">
         {[
           t('funnel.done.ruleCap', { cap: rules.batchCap }),
-          t('funnel.done.ruleCooldown', { hours: rules.cooldownHours }),
-          t('funnel.done.ruleDaily', { batches: rules.firstDayBatches, videos: rules.dailyVideos })
+          t('funnel.done.ruleCooldown', { count: rules.cooldownHours }),
+          t('funnel.done.ruleDaily', { count: rules.firstDayBatches, videos: rules.dailyVideos })
         ].map((rule, index) => (
           <li key={index} className={cn('px-[18px] py-[12px] text-ui-14 text-text-80 [text-wrap:pretty]', index > 0 && 'border-l border-line max-md:border-l-0 max-md:border-t')}>
             {rule}

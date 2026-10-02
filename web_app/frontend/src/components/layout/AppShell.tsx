@@ -12,7 +12,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { SvgMaskIcon } from './SvgMaskIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { AppAnalytics } from '../analytics/AppAnalytics';
-import { FunnelHost } from '../funnel/FunnelHost';
+import { FunnelBadge, FunnelHost } from '../funnel/FunnelHost';
 
 // The desktop screens were laid out for a 1600x900 canvas. Scaling from 1280x800
 // left a 1280x720 laptop at 90%, while the same page at browser zoom 80% got the
@@ -248,6 +248,8 @@ export function AppShell() {
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
         {/* модалки воронки после генерации: квиз и безлимит на трек */}
         {meQuery.isSuccess && <FunnelHost />}
+        {/* модалку безлимита закрыли, не пройдя: плашка в углу открывает её снова */}
+        {meQuery.isSuccess && <FunnelBadge />}
         <main className="with-sidebar min-w-0 flex-1">
           <div className="app-content">
             <MobileHeader onOpen={() => setDrawerOpen(true)} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />

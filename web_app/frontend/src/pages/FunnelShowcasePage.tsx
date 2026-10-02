@@ -167,6 +167,9 @@ export function FunnelShowcasePage() {
           <State label="Безлимит открыт">
             <UnlimitedPanel view={view('done', { quota: QUOTA_OK })} on={ON} />
           </State>
+          <State label="Безлимит открыт, лимит на сейчас исчерпан">
+            <UnlimitedPanel view={view('done', { quota: QUOTA_COOLDOWN })} on={ON} />
+          </State>
           <State label="Безлимит уже на другом треке">
             <UnlimitedPanel view={view('otherTrack', { otherTrackTitle: 'Последний танец' })} on={ON} />
           </State>

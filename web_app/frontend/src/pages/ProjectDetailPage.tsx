@@ -10,6 +10,8 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { BatchLayout, BatchTrack, GenerationsCard, PreviewColumn, TrackCard } from '../components/project/BatchCards';
 import { startNextBatch } from '../stores/wizardStore';
 import { trackOfJob, useVideoRatings } from '../components/funnel/FunnelHost';
+import { useFunnelState } from '../components/funnel/useFunnel';
+import { markFunnelSeen, useFunnelUi } from '../stores/funnelUi';
 
 /** Батч видео (Figma W36, состояние с лимитами — W47). Раскладка общая с W51 (генерация). */
 export function ProjectDetailPage() {
@@ -31,6 +33,31 @@ export function ProjectDetailPage() {
   const completedVideos = videos.filter((video) => video.status === 'COMPLETED');
   const ratings = useVideoRatings(selectedJob, id);
   const [search, setSearch] = useSearchParams();
+  const funnelQuery = useFunnelState();
+  const openUnlimited = useFunnelUi((state) => state.openUnlimited);
+
+  // «Оценить и получить безлимит» из Telegram (?unlimited=1): сразу модалка безлимита
+  // по последнему батчу. Параметр снимаем, чтобы обновление страницы её не открывало.
+  const unlimitedParam = search.get('unlimited') === '1';
+  const funnelReady = Boolean(funnelQuery.data) || funnelQuery.isError;
+  useEffect(() => {
+    if (!unlimitedParam || !selectedJob || !funnelReady) return;
+    if (funnelQuery.data && !funnelQuery.data.hasPaid) {
+      const track = trackOfJob(selectedJob);
+      markFunnelSeen(`unlimited:${selectedJob.id}`);
+      openUnlimited({
+        source: 'results',
+        jobId: selectedJob.id,
+        projectId: id,
+        trackId: track.id,
+        audioHash: track.audioHash,
+        trackTitle: track.title,
+        videos: selectedJob.videos
+      });
+    }
+    search.delete('unlimited');
+    setSearch(search, { replace: true });
+  }, [unlimitedParam, selectedJob, funnelReady, funnelQuery.data, openUnlimited, id, search, setSearch]);
 
   // Возврат из банка после трипваера 399 ₽ (оплату подтверждает бот, лимиты снимает credits_db)
   useEffect(() => {
