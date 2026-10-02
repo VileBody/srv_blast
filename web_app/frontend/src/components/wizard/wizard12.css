@@ -807,3 +807,7 @@
 .w12 .w12-fx-undo { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 10px 10px; padding: 8px 12px; border-radius: 10px; background: var(--w12-field); font-size: 12px; line-height: 16px; color: var(--w12-text-2); }
 .w12 .w12-fx-undo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .w12 .w12-fx-undo .w12-link { flex: none; font-size: 12px; }
+/* «Свои видео»: заголовок карточки ролика — кнопка выбора (клавиатура), подтверждение удаления файла */
+.w12 .w12-plan-pick { min-width: 0; text-align: left; color: inherit; border-radius: 6px; }
+.w12 .w12-plan-pick:focus-visible { outline: 2px solid var(--w12-accent-line); outline-offset: 2px; }
+.w12 .w12-split.w12-split-warn { background: var(--w12-warn-soft); color: var(--w12-warn); }

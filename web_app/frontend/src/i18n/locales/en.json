@@ -852,7 +852,10 @@
       "queueDone": "done",
       "queueError": "failed",
       "summary": "Videos going to the Pool: {{count}}",
-      "chooseSource": "Source:"
+      "chooseSource": "Source:",
+      "seconds": "{{value}} s",
+      "deleteConfirm": "Delete from server",
+      "deleteCancel": "Keep"
     },
     "preview": {
       "unavailable": "Video example unavailable",

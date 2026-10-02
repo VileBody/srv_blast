@@ -855,7 +855,10 @@
       "queueDone": "готово",
       "queueError": "ошибка",
       "summary": "В Пул уйдёт видео: {{count}}",
-      "chooseSource": "Источник:"
+      "chooseSource": "Источник:",
+      "seconds": "{{value}} с",
+      "deleteConfirm": "Удалить с сервера",
+      "deleteCancel": "Оставить"
     },
     "preview": {
       "unavailable": "Видео-пример недоступен",
