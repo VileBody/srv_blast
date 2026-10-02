@@ -3,6 +3,7 @@
    у цвета — однотонный фон со стробом. Выбирают кадры прямо в превью ролика: механика
    раскадровки «Пула» — стрелки, «Заменить кадр», варианты, «Готово» закрепляет. */
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
 import { isVideoUrl } from '../../../lib/media';
@@ -96,7 +97,7 @@ const secs = (t: number) => `${t.toFixed(1).replace('.', ',')} с`;
  * кадра — клипы того же вайба без занятых в батче, «Готово» закрепляет выбор в плане
  * (он и уйдёт в рендер), «Отмена» возвращает прежний, кубик перемешивает незакреплённые.
  */
-export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, drop, dockRef, onChanged, onError, request, compact }: {
+export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, drop, dockRef, onChanged, onError, request, compact, slot }: {
   combo: Combo; video: StoryboardVideo; frames: Frame[]; bounds: number[]; k: number; onSeek: (k: number) => void;
   /** замена идёт — превью крутит этот кадр по кругу; null — снова играет ролик */
   onEdit: (k: number | null) => void;
@@ -107,6 +108,11 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
   request?: { kind: 'edit' | 'shuffle'; n: number } | null;
   /** телефон: полоса кадров уже есть на таймлайне — док виден только пока идёт замена */
   compact?: boolean;
+  /**
+   * телефон: куда вывести панель замены — на место нижней панели стола. В превью её
+   * перекрывала рамка ролика, а «Готово» уезжало за край узкого кадра.
+   */
+  slot?: HTMLElement | null;
 }) {
   const shots = Math.max(1, bounds.length - 1);
   const timingFrom = useWizardStore((s) => s.timingFrom);
@@ -204,6 +210,22 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
   const atDrop = drop !== null && Math.abs((bounds[k] ?? -1) - drop) < 0.02;
   const strip = useStripFollow(edit?.k ?? k, frames.length);
   if (compact && !edit) return null;
+  // место под панель появляется кадром позже, чем стартует замена — до него ничего не рисуем
+  if (compact && edit && !slot) return null;
+  if (compact && edit && slot) {
+    return createPortal(
+      <div className="mm-replace" role="group" aria-label={`Замена кадра ${edit.k + 1}`}>
+        <button type="button" className="mm-replace-btn" onClick={cancel}><I d={CROSS} size={16} /><span className="tx">Отмена</span></button>
+        <div className="mm-replace-var">
+          <button type="button" aria-label="Предыдущий вариант" disabled={edit.pos <= 0} onClick={() => variant(-1)}><Arrow dir="l" /></button>
+          <span className="cnt num tx">{edit.loading ? 'Подбираем…' : <>{edit.pos + 1}<small> / {edit.candidates.length}</small></>}</span>
+          <button type="button" aria-label="Следующий вариант" disabled={edit.loading || edit.pos >= edit.candidates.length - 1} onClick={() => variant(1)}><Arrow dir="r" /></button>
+        </div>
+        <button type="button" className="mm-replace-btn pri" onClick={done} disabled={edit.loading}><I d={CHECK} size={16} /><span className="tx">Готово</span></button>
+      </div>,
+      slot
+    );
+  }
   return (
     <>
       {shots > 1 && !edit && !compact && (

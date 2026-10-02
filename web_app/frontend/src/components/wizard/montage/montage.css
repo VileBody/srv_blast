@@ -208,3 +208,9 @@ img.mt-fv-cover { object-fit: cover; }
 /* хук двигает дроп: за него можно взяться */
 .mt .fxt-clip.hk { cursor: grab; }
 .mt .fxt-clip.hk.drag { cursor: grabbing; box-shadow: 0 0 0 1.5px var(--fxt-hook), 0 6px 18px rgba(5, 1, 15, .5); }
+
+/* выбранный кадр: кружки переходов на его склейках уходят, чтобы край (склейку) можно было
+   тянуть целиком, а не за узкую полоску над кружком; ручки краёв — белые, заметные */
+.mt .fxt-join.under { opacity: 0; pointer-events: none; transform: scale(.6); }
+.mt .fxt-clip.fr.mt-fr.sel .fxt-edge { width: 16px; }
+.mt .fxt-clip.fr.mt-fr.sel .fxt-edge::after { opacity: 1; width: 4px; height: 22px; background: #fff; } /* ui-allow: ручка обрезки — белая, как рамка выбранного */

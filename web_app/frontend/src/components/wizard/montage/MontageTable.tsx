@@ -750,6 +750,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const framesOfCombo = useFramesOf(shots);
   const clipsOf = framesOfCombo;
   const clips = framesOfCombo(combo);
+  // статичный цвет (без стробоскопа) склеек в рендере не имеет — переход на нём бэк отвергнет
+  // при генерации (montage.py), поэтому склейки-переходы на таком ролике не показываем вовсе
+  const staticColor = clips.length > 0 && clips.every((c) => c.color && !c.strobe);
   // Пример пункта библиотеки: настоящий рендер из каталога эффектов (как на шаге FX), а если его
   // нет — тот же эффект на кадрах этого ролика (переход — на первой склейке, хук — у дропа).
   const previewOf = (item: LibItem): LibPreview => {
@@ -841,6 +844,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
   const [sheet, setSheet] = useState<null | 'hook' | 'trans' | 'style' | 'text' | 'frame' | 'pace'>(null);
   const [dockReq, setDockReq] = useState<{ kind: 'edit' | 'shuffle'; n: number } | null>(null);
   const askDock = (kind: 'edit' | 'shuffle') => setDockReq((r) => ({ kind, n: (r?.n ?? 0) + 1 }));
+  /** телефон: панель замены кадра встаёт на место нижней панели инструментов */
+  const [replaceSlot, setReplaceSlot] = useState<HTMLElement | null>(null);
   // шторка открывается сразу с плитками: если в ней ничего не раскрыто — раскрываем первую
   // непустую группу (на телефоне лишний тап по заголовку группы — это лишний шаг)
   useEffect(() => {
@@ -1018,7 +1023,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     }
     say('На этом кадре уже два стиля — это максимум');
   };
-  const setTransition = (i: number, label: string) => { remember(); setTimeline({ transitions: { ...vfx.transitions, [i]: label } }); };
+  const noCutsNote = () => say('У статичного цвета нет склеек — переход на нём не встанет');
+  const setTransition = (i: number, label: string) => { if (staticColor && label !== NO_GLUE) { noCutsNote(); return; } remember(); setTimeline({ transitions: { ...vfx.transitions, [i]: label } }); };
   const popEdited = useRef<number | null>(null);
   const setCutTransition = (i: number, label: string) => {
     if (popEdited.current !== i) { remember(); popEdited.current = i; }
@@ -1026,6 +1032,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     setTimeline({ transitions: { ...cur, [i]: label } });
   };
   const setTransitionAll = (label: string) => {
+    if (staticColor && label !== NO_GLUE) { noCutsNote(); return; }
     remember();
     setTimeline({ transitions: Object.fromEntries(cuts.map((_, i) => [i, label])) });
     setHooks({ config: { effectGlue: label } });
@@ -1339,6 +1346,27 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
 
   const canvas = (
                 <div ref={cvRef} className="fxt-cv" style={{ width: canvasW }} onPointerDown={phone ? onCanvasDownPhone : onCanvasDown} onClick={phone ? onCanvasTap : undefined}>
+                {/* телефон: слева от начала ролика пусто (ноль — под линией по центру), там названия
+                    дорожек. Они часть полотна — уезжают вместе с дорожками, к ним можно отлистать */}
+                {phone && (
+        <div className="mm-heads">
+          <div className="mm-h r" />
+          <div className="mm-h f"><span className="fxt-ic k-frame sm"><Glyph name="film" size={13} /></span><span className="tx">Кадры</span></div>
+          <div className="mm-h hk"><span className="fxt-ic k-hook sm"><Glyph name="effects" size={13} /></span><span className="tx">Хук</span></div>
+          <div className="mm-h st">
+            <span className="fxt-ic k-style sm"><Glyph name="crystal" size={13} /></span><span className="tx">Стиль</span>
+            {!lane2 && <button type="button" className="mm-hadd" aria-label="Добавить вторую дорожку стиля" onClick={() => setLane2Open(true)}><Glyph name="plus" size={12} sw={2} /></button>}
+          </div>
+          {lane2 && (
+            <div className="mm-h st">
+              <span className="fxt-ic k-style sm"><Glyph name="crystal" size={13} /></span><span className="tx">Стиль 2</span>
+              {!styles.some((x) => x.lane === 1) && <button type="button" className="mm-hadd" aria-label="Убрать вторую дорожку стиля" onClick={() => setLane2Open(false)}><Glyph name="close" size={11} sw={2} /></button>}
+            </div>
+          )}
+          <div className="mm-h sb"><span className="fxt-ic k-trans sm"><Glyph name="text" size={13} /></span><span className="tx">Текст</span></div>
+          <div className="mm-h au"><span className="fxt-ic k-trans sm"><Glyph name="audio" size={13} /></span><span className="tx">Биты</span></div>
+        </div>
+                )}
                   <div className="fxt-ruler">
                     {ticks.map(({ v, maj }) => <span key={v}><i className={`fxt-tick${maj ? ' maj' : ''}`} style={{ left: tx(v) }} />{maj && <span className="fxt-tlab num" style={{ left: tx(v) }}>{pad(Math.floor((start + v) / 60))}:{pad(Math.round(start + v) % 60)}</span>}</span>)}
                     {dropView !== null && <div className="fxt-dropflag num" style={{ left: tx(dropView) }}><span>Дроп {tc(start + dropView)}</span></div>}
@@ -1360,10 +1388,10 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
                         </div>
                       );
                     })}
-                    {!recipe.loading && cuts.map((c, i) => {
+                    {!recipe.loading && !staticColor && cuts.map((c, i) => {
                       const label = transitionAt(i);
                       return (
-                        <button key={`j${i}`} type="button" className={`fxt-join${label === NO_GLUE ? ' none' : ''}${sel?.type === 'cut' && sel.i === i ? ' sel' : ''}${place && 'join' in place && place.join === i ? ' target' : ''}`} style={{ left: tx(c) }} aria-label={`Склейка ${i + 1}: ${label}`}
+                        <button key={`j${i}`} type="button" className={`fxt-join${label === NO_GLUE ? ' none' : ''}${sel?.type === 'frame' && (sel.i === i || sel.i === i + 1) ? ' under' : ''}${sel?.type === 'cut' && sel.i === i ? ' sel' : ''}${place && 'join' in place && place.join === i ? ' target' : ''}`} style={{ left: tx(c) }} aria-label={`Склейка ${i + 1}: ${label}`}
                           onClick={(e) => { setSel({ type: 'cut', i }); popEdited.current = null; if (phone) { setSheet('trans'); return; } seek(Math.max(0, c - 0.5)); const z = zoomScale(); const r = e.currentTarget.getBoundingClientRect(); setPop({ type: 'cut', i, x: (r.left + r.width / 2) / z, y: r.top / z }); }}>
                           {label === NO_GLUE ? <Glyph name="plus" size={12} sw={2} /> : <Ic kind="trans" label={label} on size={24} />}
                         </button>
@@ -1444,7 +1472,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     if (!sel) {
       return [
         tool('src', 'reroll', 'Кадр', () => { if (!sbVideo) { say('Кадры этого ролика подберутся при генерации'); return; } setSel({ type: 'frame', i: fNow }); askDock('edit'); }, { disabled: !sbVideo }),
-        tool('trans', 't_snap', 'Переход', () => { const k = nearestCut(); if (k < 0) { say('В ролике нет склеек'); return; } setSel({ type: 'cut', i: k }); setSheet('trans'); }),
+        tool('trans', 't_snap', 'Переход', () => { const k = nearestCut(); if (k < 0) { say('В ролике нет склеек'); return; } setSel({ type: 'cut', i: k }); setSheet('trans'); }, { disabled: staticColor }),
         tool('style', 'crystal', 'Стиль', () => setSheet('style')),
         tool('hook', 'effects', 'Хук', () => setSheet('hook'), { disabled: !combo.hookAllowed }),
         tool('text', 'text', 'Текст', () => setSheet('text')),
@@ -1460,7 +1488,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         tool('re', 'reroll', 'Заменить', () => askDock('edit'), { disabled: !sbVideo }),
         tool('mix', 'chain', 'Перемешать', () => askDock('shuffle'), { disabled: !sbVideo }),
         ...(srcPins[i] ? [tool('unpin', 'lock', 'Открепить', () => { unpin(i); say(`Кадр ${i + 1} откреплён`); })] : []),
-        ...(i < shots - 1 ? [tool('tr', 't_snap', 'Переход', () => { setSel({ type: 'cut', i }); setSheet('trans'); })] : []),
+        ...(i < shots - 1 && !staticColor ? [tool('tr', 't_snap', 'Переход', () => { setSel({ type: 'cut', i }); setSheet('trans'); })] : []),
         tool('st', 'crystal', 'Стиль', () => setSheet('style'))];
     }
     if (sel.type === 'cut') {
@@ -1525,14 +1553,14 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
       <section ref={pvRef} className="mm-pv" aria-label="Превью">
         <Stage frames={clips} bounds={bounds} t={t} playing={playing} fx={{ transitionAt, styles, hookKind: kind, hookLabel: activeHookLabel, hookRange, frameUrl: frameUrlOf(vfx.frame) }} sub={subFor(combo)} w={stageSize.w} h={stageSize.h}>
           {sbVideo && clips.length === shots && (
-            <FrameDock combo={combo} video={sbVideo} frames={clips} bounds={bounds} k={editK ?? (sel?.type === 'frame' ? sel.i : fNow)} drop={drop} compact request={dockReq}
+            <FrameDock combo={combo} video={sbVideo} frames={clips} bounds={bounds} k={editK ?? (sel?.type === 'frame' ? sel.i : fNow)} drop={drop} compact request={dockReq} slot={replaceSlot}
               onSeek={(k) => { seek(bounds[k] + 0.001); setSel({ type: 'frame', i: k }); }}
               onEdit={setEditK} onChanged={markEdited} onError={say} />
           )}
         </Stage>
       </section>
       <div className="mm-transport">
-        <span className="mm-time num tx"><b>{tc(t)}</b> / {tc(dur)}</span>
+        <span className="mm-time num"><b>{tc(t)}</b><span>&nbsp;/ {tc(dur)}</span></span>
         <button type="button" className="mm-play" aria-label={playing ? 'Пауза' : 'Воспроизвести'} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}><Glyph name={playing ? 'pause' : 'play'} size={22} /></button>
         <div className="mm-hist">
           <button type="button" className="mm-ic" aria-label="Отменить" disabled={!past.current.length} onClick={undo}><Glyph name="undo" size={20} /></button>
@@ -1543,7 +1571,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
         <div ref={scrollRef} className="fxt-scroll mm-scroll" onScroll={onPhoneScroll}>{canvas}</div>
         <i className="mm-playhead" aria-hidden="true" />
       </section>
-      <nav className="mm-bar" aria-label="Инструменты">{tools}</nav>
+      {editK !== null
+        ? <div ref={setReplaceSlot} className="mm-bar mm-replace-slot" />
+        : <nav className="mm-bar" aria-label="Инструменты">{tools}</nav>}
       {sheet && (
         <div className="mm-sheet" role="dialog" aria-label={sheetTitle}>
           <div className="mm-sheet-h">
@@ -1557,10 +1587,12 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
                   {PACES.map((pace, k) => (
                     <button key={pace} type="button" aria-pressed={recipe.pace === pace} onClick={() => { if (recipe.pace !== pace) { recipe.setPace(pace); setSel(null); } }}>
                       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true" dangerouslySetInnerHTML={{ __html: paceGlyph(k) }} />
-                      <span className="tx">{paceTip(pace)}</span>
+                      <b className="tx">{{ sparse: 'Реже', auto: 'Авто', dense: 'Чаще' }[pace]}</b>
+                      {recipe.data && <small className="tx">{recipe.data.cuts[pace].length + 1} {kadr(recipe.data.cuts[pace].length + 1)}</small>}
                     </button>
                   ))}
                 </div>
+                <p className="mm-note tx">Темп меняет склейки во всех роликах батча. «Авто» — как посчитает рендер по темпу трека.</p>
                 <button type="button" className="fxt-pill" aria-pressed={snap} onClick={() => setSnap((v) => !v)}><Glyph name="magnet" size={16} /><span className="tx">{snap ? 'Прилипание к битам включено' : 'Прилипание к битам выключено'}</span></button>
               </div>
             ) : (

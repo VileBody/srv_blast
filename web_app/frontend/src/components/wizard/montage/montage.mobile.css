@@ -34,12 +34,14 @@
 .mob .mm-pv .mt-dock { left: 8px; right: 8px; bottom: 8px; }
 
 /* ── время и плей ── */
-.mm-transport { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; height: 48px; padding: 0 12px; }
-.mm-time { font-size: 12px; color: var(--fxt-t40); white-space: nowrap; }
+.mm-transport { flex: none; display: grid; grid-template-columns: 1fr 44px 1fr; align-items: center; height: 48px; padding: 0 8px 0 16px; }
+/* одна линия: время, плей и отмена по центру строки, без подгонок текста */
+.mob .mm-time { display: flex; align-items: center; height: 44px; top: 0; font-size: 12px; line-height: 16px; color: var(--fxt-t40); white-space: nowrap; }
 .mm-time b { font-weight: 400; color: var(--text); }
-.mob .mm-play { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; color: var(--text); }
-.mob .mm-play:active { background: var(--fxt-t06); }
-.mm-hist { display: flex; justify-content: flex-end; gap: 4px; }
+.mob .mm-play { display: grid; place-items: center; width: 44px; height: 44px; color: var(--text); background: none; transition: opacity .12s ease, transform .12s ease; }
+.mob .mm-play:active { opacity: .6; transform: scale(.92); }
+.mob .mm-play:focus-visible { outline-offset: -2px; border-radius: 50%; }
+.mm-hist { display: flex; align-items: center; justify-content: flex-end; gap: 0; height: 44px; }
 
 /* ── таймлайн: неподвижная линия по центру, дорожки едут под ней ── */
 .mm-tl { position: relative; flex: none; display: flex; background: var(--fxt-well); border-top: 1px solid var(--fxt-line); }
@@ -89,7 +91,12 @@
 .mm-allcuts { margin: 0 0 10px; }
 .mm-pace { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
 .mm-pace .fxt-seg { width: 100%; }
-.mm-pace .fxt-seg button { flex: 1; flex-direction: column; height: 64px; gap: 4px; font-size: 12px; } /* ui-allow: подпись темпа под глифом */
+.mm-pace .fxt-seg { height: auto; }
+.mm-pace .fxt-seg button { flex: 1; flex-direction: column; height: 72px; gap: 2px; font-size: 14px; line-height: 20px; }
+.mm-pace .fxt-seg button b { font-weight: 400; }
+.mm-pace .fxt-seg button small { font-size: 12px; line-height: 16px; color: var(--fxt-t60); } /* ui-allow: число кадров под темпом = text-ui-12 */
+.mm-note { margin: 0; font-size: 12px; line-height: 16px; color: var(--fxt-t40); } /* ui-allow: пояснение в шторке = text-ui-12 */
+.mm-sheet .mt-frame-plate .nm { font-size: 11px; line-height: 14px; } /* ui-allow: подпись рамки в узкой плитке */
 
 /* тост — над панелью, не под пальцем */
 .mob .mt-toast, .mob .mt-toast.show { left: 12px; right: 12px; bottom: 140px; transform: none; text-align: center; }
@@ -108,3 +115,28 @@
 .mm-sheet .mt-fxtile .mt-on.act { right: 4px; top: 4px; }
 .mm-sheet .mt-fxtile-none { padding: 6px; font-size: 10px; line-height: 13px; } /* ui-allow: заглушка «нет примера» в мелкой плитке */
 .mob .mt-gridnote { top: 56px; left: 12px; right: 12px; width: auto; max-width: none; transform: none; white-space: normal; text-align: center; }
+
+/* ── колонка дорожек: часть полотна в пустой зоне перед нулём ролика (ноль — под центральной
+      линией); уезжает вместе с дорожками, к ней можно отлистать в начало ── */
+.mm-heads { position: absolute; left: 0; top: 0; bottom: 0; width: 76px; z-index: 6; pointer-events: none; }
+.mm-h { display: flex; align-items: center; gap: 6px; padding-left: 10px; height: 32px; font-size: 11px; line-height: 14px; color: var(--fxt-t60); } /* ui-allow: подпись дорожки в узкой колонке */
+.mm-h .tx { top: 0; white-space: nowrap; }
+.mm-h .fxt-ic.sm { width: 20px; height: 20px; }
+.mm-h.r { height: 22px; }
+.mm-h.f { height: 52px; }
+.mm-h.hk, .mm-h.st { height: 34px; }
+.mm-h.sb, .mm-h.au { height: 32px; }
+.mob .mm-hadd { pointer-events: auto; display: grid; place-items: center; width: 22px; height: 22px; margin-left: -2px; border-radius: 50%; background: var(--fxt-style-soft); color: var(--fxt-style); }
+
+/* ── панель замены кадра — на месте нижней панели: отмена · варианты · готово ── */
+.mm-replace-slot { padding: 8px 12px 10px; }
+.mm-replace { flex: 1; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+.mob .mm-replace-btn { display: flex; align-items: center; justify-content: center; gap: 6px; height: 44px; border-radius: var(--r10); background: var(--fxt-raise); color: var(--text); font-size: 14px; }
+.mob .mm-replace-btn.pri { background: var(--accent-strong); }
+.mob .mm-replace-btn:disabled { opacity: .45; }
+.mob .mm-replace-btn:active { transform: scale(.97); }
+.mm-replace-var { display: flex; align-items: center; height: 44px; border-radius: var(--r10); background: var(--fxt-raise); }
+.mob .mm-replace-var button { display: grid; place-items: center; width: 40px; height: 44px; color: var(--text); }
+.mob .mm-replace-var button:disabled { opacity: .3; }
+.mm-replace-var .cnt { min-width: 56px; text-align: center; top: 0; font-size: 14px; }
+.mm-replace-var .cnt small { color: var(--fxt-t40); font-size: 14px; }
