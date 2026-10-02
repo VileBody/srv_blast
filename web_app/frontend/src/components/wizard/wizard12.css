@@ -800,3 +800,6 @@
 .w12 .w12-stl-act .w12-icon-btn:disabled { opacity: .4; background: none; color: var(--w12-text-2); }
 .w12 .w12-stl-act-tip { position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; padding: 6px 10px; border-radius: 10px; background: var(--w12-field-2); border: 1px solid var(--w12-line-2); font-size: 12px; line-height: 16px; color: var(--w12-text); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
 .w12 .w12-stl-act:hover .w12-stl-act-tip, .w12 .w12-stl-act:focus-within .w12-stl-act-tip { opacity: 1; transition-delay: .2s; }
+/* прогрев: подтверждение «Назад», когда файл уже загружен (назад его стирает) */
+.w12 .w12-warm-confirm { display: inline-flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 4px 10px; font-size: 12px; line-height: 16px; color: var(--w12-text-2); text-align: right; }
+.w12 .w12-warm-confirm .w12-link { font-size: 12px; }
