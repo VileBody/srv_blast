@@ -138,10 +138,10 @@ def resolve(settings: dict[str, Any] | None, *, subtitles_mode: str, render_pres
     settings = dict(settings or {})
     style = STYLE_BY_MODE.get(subtitles_mode)
     if is_kant_style(subtitles_mode):
-        # тайтл: цвет акцента рендер тоже отверг бы (jsx_style_config) — ловим на отправке
-        if _has_text_settings(settings, accent=True):
-            raise SubtitleTextError("У тайтла настройки текста зашиты в шаблон — шрифт, размер, цвет и положение не меняются")
-        return None
+        size, position = _kant_settings(settings, render_preset)
+        if (size, position) == ("large", "center"):
+            return None
+        return {"size": size, "height": "normal", "position": position, "shadow": "soft"}
     if style is None:
         if _has_text_settings(settings):
             raise SubtitleTextError(f"Настройки текста не поддерживаются для режима {subtitles_mode!r}")
@@ -157,12 +157,27 @@ def resolve(settings: dict[str, Any] | None, *, subtitles_mode: str, render_pres
     return out
 
 
-def _has_text_settings(settings: dict[str, Any], *, accent: bool = False) -> bool:
-    """Выбрано что-то кроме значений по умолчанию (accent — считать и акцентный цвет)."""
-    keys = ("font", "accentFont", "focusStyle", *(("accentColor",) if accent else ()))
-    return any(settings.get(k) for k in keys) or any(
+def _has_text_settings(settings: dict[str, Any]) -> bool:
+    """Выбрано что-то кроме значений по умолчанию (акцентный цвет сюда не входит)."""
+    return any(settings.get(k) for k in ("font", "accentFont", "focusStyle")) or any(
         settings.get(k) not in (None, d) for k, d in
         (("size", "large"), ("height", "normal"), ("position", "center"), ("shadow", "soft")))
+
+
+KANT_FIXED_MESSAGE = "У тайтла шрифт, цвет и анимация зашиты в шаблон — меняются только размер и положение"
+
+
+def _kant_settings(settings: dict[str, Any], render_preset: str) -> tuple[str, str]:
+    """Тайтл: из настроек текста применимы только размер и положение (рендер: kant_layout_config).
+    Шрифт/пара/высота/тень/курсив/акцентный цвет — ошибка, а не тихий сброс."""
+    if any(settings.get(k) for k in ("font", "accentFont", "focusStyle", "accentColor")) or any(
+            settings.get(k) not in (None, d) for k, d in (("height", "normal"), ("shadow", "soft"))):
+        raise SubtitleTextError(KANT_FIXED_MESSAGE)
+    size = _choice(settings, "size", SIZES, "large")
+    position = _choice(settings, "position", POSITIONS, "center")
+    if position == "down" and render_preset != "wide":
+        raise SubtitleTextError("Положение «снизу» доступно только для горизонтальных видео 16:9")
+    return size, position
 
 
 def _normalize(settings: dict[str, Any], style: str) -> tuple[dict[str, Any], Any]:
@@ -260,9 +275,8 @@ def geometry(settings: dict[str, Any] | None, *, style: str, render_preset: str)
     ошибка, что на отправке (SubtitleTextError → 422), а не тихая подмена.
     """
     if is_kant_style(style):
-        if _has_text_settings(settings or {}, accent=True):
-            raise SubtitleTextError("У тайтла настройки текста зашиты в шаблон — шрифт, размер, цвет и положение не меняются")
-        return kant_geometry(style)
+        size, position = _kant_settings(dict(settings or {}), render_preset)
+        return kant_geometry(style, size=size, position=position)
     if style not in STYLE_BY_MODE.values():
         raise SubtitleTextError(f"Неизвестный стиль субтитров: {style!r}")
     out, params = _normalize(dict(settings or {}), style)
@@ -345,9 +359,12 @@ def _geometry_body(eng: ModuleType, style: str, out: dict[str, Any], params: Any
 
 
 
-def kant_geometry(style: str) -> dict[str, Any]:
+def kant_geometry(style: str, *, size: str = "large", position: str = "center") -> dict[str, Any]:
     """Тайтл Kant для JS-превью: шаблон текста, вход, разбиение на экраны — из той же
-    спеки, что читает рендер. Раскладка всегда по центру кадра, поверх всех слоёв."""
+    спеки, что читает рендер; размер и положение — те же пресеты, что у прочих стилей
+    (рендер: app.subtitle_text_style.kant_layout_config)."""
+    eng = engine()
+    align, center_y = eng.POSITION_PRESETS[position]
     spec = kant_spec()
     tid = kant_title_by_style()[style]
     row = spec["titles"][tid]
@@ -355,10 +372,10 @@ def kant_geometry(style: str) -> dict[str, Any]:
     return {
         "style": style,
         "comp": {"w": 1080, "h": 1920},
-        "alignX": "center",
-        "centerY": 0.5,
-        "marginX": 0.0,
-        "marginY": 0.0,
+        "alignX": align,
+        "centerY": center_y,
+        "marginX": eng.SAFE_MARGIN_X,
+        "marginY": eng.SAFE_MARGIN_Y,
         "shadow": "none",
         "accentColor": None,
         "fonts": {ps: {"capH": 0, "advance": 0, "lcAdvance": None, "bodyTop": None, "bodyBottom": None,
@@ -374,5 +391,6 @@ def kant_geometry(style: str) -> dict[str, Any]:
             "look": row["look"],
             "split": dict(spec["split"]),
             "phrase": dict(spec["phrase"]),
+            "scale": eng.SIZE_PRESETS[size],
         },
     }

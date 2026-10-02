@@ -280,6 +280,7 @@ export function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: 
   const styles = tabStyle ? [tabStyle] : [];
   const pickable = fontStyles(styles, catalog);
   const hasBrat = tabStyle === 'brat';
+  const fixed = isFixedStyle(tabStyle);
   const styleAccent = styleAccentColor(catalog, tabStyle, subtitles.color);
   const base = findFont(catalog, settings.font);
   const accents = accentFontsFor(catalog, base, pickable);
@@ -328,10 +329,10 @@ export function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: 
             ))}
           </div>
         )}
-        {!tab ? <p className="w12-set-empty">{t('wizard.subs.customization.pickStyleFirst')}</p> : isFixedStyle(tabStyle) ? (
-          <p className="w12-set-empty">{t('wizard.subs.customization.fixedTitle')}</p>
-        ) : (
+        {!tab ? <p className="w12-set-empty">{t('wizard.subs.customization.pickStyleFirst')}</p> : (
           <div className="w12-set-rows">
+            {/* тайтл: шрифт, цвет и анимация зашиты в шаблон — остаются размер и положение */}
+            {fixed && <p className="w12-set-note">{t('wizard.subs.customization.fixedTitle')}</p>}
             {queryDown(catalogQuery) && <InlineError error={catalogQuery.error} offline={catalogQuery.fetchStatus === 'paused'} onRetry={() => catalogQuery.refetch()} retrying={catalogQuery.isFetching} />}
             {pickable.length > 0 && <FontMenu label={t('wizard.subs.customization.font')} value={settings.font ?? ''} options={fontOptions} onChange={onFont} />}
             {hasBrat && <p className="w12-set-note">{t('wizard.subs.customization.fontLockedBrat')}</p>}
@@ -350,14 +351,15 @@ export function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: 
             ]} />}
             <VisualChoice kind="position" label={t('wizard.subs.customization.position')} value={settings.position} onChange={(position) => updateText({ position })} options={positions} />
             {settings.position === 'down' && !wide && <p role="alert" className="w12-miss">{t('wizard.subs.customization.downInvalid')}</p>}
-            <VisualChoice kind="shadow" label={t('wizard.subs.customization.shadow')} value={settings.shadow} onChange={(shadow) => updateText({ shadow })} options={[
+            {!fixed && <VisualChoice kind="shadow" label={t('wizard.subs.customization.shadow')} value={settings.shadow} onChange={(shadow) => updateText({ shadow })} options={[
               { value: 'none', label: t('wizard.subs.customization.none') }, { value: 'soft', label: t('wizard.subs.customization.soft') }, { value: 'strong', label: t('wizard.subs.customization.strong') }
-            ]} />
+            ]} />}
             {hasBrat && <VisualChoice kind="focus" label={t('wizard.subs.customization.focusStyle')} value={settings.focusStyle ?? 'none'}
               onChange={(focus) => updateText({ focusStyle: focus === 'none' ? null : focus })} options={[
                 { value: 'none', label: t('wizard.subs.customization.focusNone') }, { value: 'italic', label: t('wizard.subs.customization.focusItalic') },
                 { value: 'bold_italic', label: t('wizard.subs.customization.focusBoldItalic') }, { value: 'faux_italic', label: t('wizard.subs.customization.focusFaux') }
               ]} />}
+            {!fixed && <>
             <SubtitleColorControl label={t('wizard.subs.customization.color')} value={subtitles.color}
               defaultColor={WHITE_TEXT} defaultLabel={t('wizard.subs.customization.whiteColor')} onChange={(color) => setSubtitles({ color })} />
             {/* свотч = прод-цвет акцента стиля (у Jakson/Tape красный, у остальных — как основной текст);
@@ -365,6 +367,7 @@ export function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: 
             <SubtitleColorControl label={t('wizard.subs.customization.accentColor')} value={settings.accentColor ?? styleAccent}
               defaultColor={styleAccent} defaultLabel={t('wizard.subs.customization.accentColorDefault')}
               onChange={(color) => updateText({ accentColor: color.toLowerCase() === styleAccent.toLowerCase() ? null : color })} />
+            </>}
           </div>
         )}
       </div>

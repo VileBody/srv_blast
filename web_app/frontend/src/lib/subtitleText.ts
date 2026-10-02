@@ -11,10 +11,13 @@ export type KantStyleId = 'kant_two_frames' | 'kant_gum' | 'kant_matrix' | 'kant
 export type SubtitleStyleId = 'jakson' | 'impulse' | 'tape' | 'trendy' | 'brat' | KantStyleId;
 
 const STYLE_IDS: SubtitleStyleId[] = ['jakson', 'impulse', 'tape', 'trendy', 'brat'];
-/** Имя в пуле (ключ WEB_SUBTITLE_MODE_MAP_JSON) → тайтл. */
-export const KANT_STYLE_BY_NAME: Record<string, KantStyleId> = {
-  'two frames': 'kant_two_frames', gum: 'kant_gum', matrix: 'kant_matrix', edit: 'kant_edit', vhs: 'kant_vhs', lani: 'kant_lani_style',
-};
+/** Тайтлы под именами Бласта: имя = ключ WEB_SUBTITLE_MODE_MAP_JSON = label в kant_titles.json
+ *  (совпадение держит tests/test_web_kant_titles.py). */
+export const KANT_STYLES: { id: KantStyleId; name: string }[] = [
+  { id: 'kant_two_frames', name: 'Duo' }, { id: 'kant_gum', name: 'Bubble' }, { id: 'kant_matrix', name: 'Code' },
+  { id: 'kant_edit', name: 'Novel' }, { id: 'kant_vhs', name: 'Retro' }, { id: 'kant_lani_style', name: 'Scribble' },
+];
+const KANT_STYLE_BY_NAME: Record<string, KantStyleId> = Object.fromEntries(KANT_STYLES.map((s) => [s.name.toLowerCase(), s.id]));
 
 /** Имя стиля из пула («Jakson», «Brat», «Gum»…) → id стиля каталога. */
 export function styleIdOf(name: string): SubtitleStyleId | null {
@@ -23,7 +26,7 @@ export function styleIdOf(name: string): SubtitleStyleId | null {
   return KANT_STYLE_BY_NAME[id] ?? null;
 }
 
-/** Тайтл: шрифт, цвет, размер и положение зашиты в шаблон — настроек текста нет. */
+/** Тайтл: шрифт, цвет и анимация зашиты в шаблон — из настроек текста только размер и положение. */
 export function isFixedStyle(style: SubtitleStyleId | null | undefined): style is KantStyleId {
   return !!style && style.startsWith('kant_');
 }

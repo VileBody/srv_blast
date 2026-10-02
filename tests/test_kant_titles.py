@@ -9,7 +9,7 @@ import pytest
 
 from app.jsx_subtitles_builder import KANT_SPEC, build_jsx_subtitles_overlay, kant_phrases
 from app.render_plan import _subtitle_operation
-from app.subtitle_text_style import jsx_style_config
+from app.subtitle_text_style import SubtitleTextStyle, jsx_style_config
 from core.subtitles_mode import (
     KANT_TITLE_BY_MODE,
     SUBTITLES_MODE_JSX_5TH,
@@ -107,7 +107,21 @@ def test_overlay_rejects_settings_the_title_cannot_apply():
             build_jsx_subtitles_overlay(mode="kant_gum", word_timings=WORDS, **kw)
     with pytest.raises(ValueError):
         jsx_style_config("kant_gum", None, "#FF0000")
+    for bad in (SubtitleTextStyle(font="Inter-Regular"), SubtitleTextStyle(shadow="none"), SubtitleTextStyle(height="tall")):
+        with pytest.raises(ValueError):
+            jsx_style_config("kant_gum", bad, None)
     assert jsx_style_config("kant_gum", None, None) is None
+    assert jsx_style_config("kant_gum", SubtitleTextStyle(), None) is None
+
+
+def test_size_and_position_reach_the_title_placement():
+    cfg = jsx_style_config("kant_gum", SubtitleTextStyle(size="small", position="left"), None)
+    assert cfg == {"scale": 80.0, "align": "left", "centerY": 0.5, "marginX": 0.07}
+    js = build_jsx_subtitles_overlay(mode="kant_gum", word_timings=WORDS, style_config=cfg)
+    assert '"scale": 80.0' in js and '"align": "left"' in js and "align: L.align" in js
+    # по умолчанию — прод: крупно, по центру, строка не шире 87% кадра текста
+    js = build_jsx_subtitles_overlay(mode="kant_gum", word_timings=WORDS)
+    assert '"scale": 100.0' in js and '"align": "center"' in js and f'"maxWidth": {float(KANT_SPEC["split"]["maxWidth"])}' in js
 
 
 def test_render_plan_keeps_the_title_operation():

@@ -274,8 +274,18 @@ def kant_phrases(word_timings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def build_kant_title_overlay(*, mode: str, word_timings: list[dict[str, Any]], target_comp: str) -> str:
+KANT_LAYOUT_KEYS = frozenset({"scale", "align", "centerY", "marginX"})
+_KANT_TEXT_W, _KANT_TEXT_H = 1080, 1920   # кадр текста, к которому привязаны доли (как у прочих стилей)
+
+
+def build_kant_title_overlay(*, mode: str, word_timings: list[dict[str, Any]], target_comp: str,
+                             layout: Optional[dict[str, Any]] = None) -> str:
     """Тайтл Kant (AddText .aep) на каждую фразу трека поверх target_comp.
+
+    layout — размер и положение из настроек текста (app.subtitle_text_style.jsx_style_config):
+    {scale %, align center/left/right, centerY — доля высоты кадра текста 1080×1920, marginX — поле}.
+    Кадр текста стоит по центру целевой композиции (на 16:9 видна его середина), строка — не шире
+    split.maxWidth спеки (87% кадра текста), как в превью сайта.
 
     .aep выбранного тайтла едет внутри JSX бинарной строкой (символ = байт, overlay.js_binary_literal)
     и раскладывается во временную папку ноды: скрипт вставляется в render JSX текстом, отдельной
@@ -291,6 +301,20 @@ def build_kant_title_overlay(*, mode: str, word_timings: list[dict[str, Any]], t
     phrases = kant_phrases(word_timings)
     if not phrases:
         raise ValueError("build_kant_title_overlay: no words")
+    lay = dict(layout or {})
+    unknown = set(lay) - KANT_LAYOUT_KEYS
+    if unknown:
+        raise ValueError(f"build_kant_title_overlay: unknown layout keys {sorted(unknown)}")
+    align = str(lay.get("align") or "center")
+    if align not in ("center", "left", "right"):
+        raise ValueError(f"build_kant_title_overlay: bad align {align!r}")
+    opts = {
+        "scale": float(lay.get("scale", 100.0)),
+        "align": align,
+        "centerY": float(lay.get("centerY", 0.5)),
+        "marginX": float(lay.get("marginX", 0.0)),
+        "maxWidth": float(KANT_SPEC["split"]["maxWidth"]),
+    }
     aep = (_KANT_DIR / "aep" / f"{title}.aep").read_bytes()
     lib = (_KANT_DIR / "kant_titles.jsx").read_text(encoding="utf-8-sig")
     return "\n".join([
@@ -315,9 +339,14 @@ def build_kant_title_overlay(*, mode: str, word_timings: list[dict[str, Any]], t
         "  if (!comp && app.project.activeItem instanceof CompItem) comp = app.project.activeItem;",
         "  if (!comp) throw new Error('kant titles: target comp not found: ' + name);",
         f"  var phrases = {json.dumps(phrases, ensure_ascii=False)};",
+        f"  var L = {json.dumps(opts)};",
+        # кадр текста 1080×1920 по центру целевой композиции: доли — от него, не от самой композиции
+        f"  var x0 = comp.width / 2 - {_KANT_TEXT_W // 2}, y0 = comp.height / 2 - {_KANT_TEXT_H // 2};",
         "  for (var p = 0; p < phrases.length; p++) {",
         "    var ph = phrases[p];",
-        f"    KantTitles.placeLine(comp, {json.dumps(title)}, ph.text, ph.start, ph.end, {{ words: ph.words, x: comp.width / 2, y: comp.height / 2 }});",
+        f"    KantTitles.placeLine(comp, {json.dumps(title)}, ph.text, ph.start, ph.end, {{ words: ph.words,",
+        f"      x: comp.width / 2, y: y0 + L.centerY * {_KANT_TEXT_H}, scale: L.scale, maxWidth: L.maxWidth, align: L.align,",
+        f"      left: x0 + L.marginX * {_KANT_TEXT_W}, right: x0 + (1 - L.marginX) * {_KANT_TEXT_W} }});",
         "  }",
         "})();",
     ])
@@ -346,12 +375,14 @@ def build_jsx_subtitles_overlay(
     from core.subtitles_mode import SUBTITLES_MODE_KANT_TITLES
 
     if mode in SUBTITLES_MODE_KANT_TITLES:
-        # у тайтлов нет настроек текста/цвета/бленда — переданные значения были бы молча потеряны
-        if style_config or fill_hex or subs_blend:
-            raise ValueError(f"build_jsx_subtitles_overlay: {mode} has no text style / fill / blend settings")
+        # цвет и бленд зашиты в тайтл — переданные значения были бы молча потеряны; из настроек
+        # текста тайтл принимает только размер и положение (style_config = layout тайтла)
+        if fill_hex or subs_blend:
+            raise ValueError(f"build_jsx_subtitles_overlay: {mode} has no fill / blend settings")
         if not word_timings:
             raise ValueError("build_jsx_subtitles_overlay: empty word_timings")
-        return build_kant_title_overlay(mode=mode, word_timings=word_timings, target_comp=target_comp)
+        return build_kant_title_overlay(mode=mode, word_timings=word_timings, target_comp=target_comp,
+                                        layout=style_config)
 
     script_name = _SCRIPT_BY_MODE.get(mode)
     if not script_name:

@@ -94,6 +94,8 @@ export interface KantSpec {
   look: KantLook;
   split: { maxWeight: number; minFit: number; minScreen: number; introShare: number; minStretch: number; maxWidth: number; fadeFrames: number };
   phrase: { gap: number; maxWords: number; tail: number };
+  /** размер из настроек текста (SIZE_PRESETS: 1 / 0.9 / 0.8) — масштаб слоя тайтла */
+  scale?: number;
 }
 
 /** Буква тайтла на кадре: видимость, масштаб вокруг её низа, подмена знака (дешифровка). */
@@ -662,7 +664,7 @@ function kantFace(K: KantSpec, text: string, font = K.text.font): { font: string
 function kantWidth(K: KantSpec, text: string, measure: Measure): number {
   const face = kantFace(K, text);
   const seg: Seg = { text, font: face.font, size: K.text.size, tracking: K.text.tracking, upper: false, color: K.text.fill };
-  return measure(seg) * (K.text.scale[0] / 100) * face.squeeze;
+  return measure(seg) * (K.text.scale[0] / 100) * face.squeeze * (K.scale ?? 1);
 }
 
 /** Экраны фразы — порт KantTitles.splitLine (слова с таймингами). */
@@ -723,8 +725,8 @@ function kantLook(K: KantSpec, base: Seg, sx: number, sy: number, fit: number, t
       if (fl?.box) out.box = true;
       else if (fl?.font) {
         out.seg = { ...base, font: kantFace(K, base.text, fl.font).font, tracking: fl.tracking ?? 0 };
-        out.sx = ((fl.scale?.[0] ?? 100) / 100) * fit;
-        out.sy = ((fl.scale?.[1] ?? 100) / 100) * fit;
+        out.sx = ((fl.scale?.[0] ?? 100) / 100) * fit * (K.scale ?? 1);
+        out.sy = ((fl.scale?.[1] ?? 100) / 100) * fit * (K.scale ?? 1);
         out.seg.size = T.size;
       } else if (tau < 0.35) out.blur = 10 * (1 - clamp((tau - 0.1) / 0.25, 0, 1));
       break;
@@ -772,18 +774,21 @@ function kantLook(K: KantSpec, base: Seg, sx: number, sy: number, fit: number, t
 function kantGroups(g: SubtitleGeometry, words: TimedWord[], measure: Measure): Group[] {
   const K = g.kant!;
   const T = K.text;
-  const cx = COMP_W / 2;
   const cy = COMP_H * g.centerY;
-  const maxW = COMP_W * 0.87;                // place(): maxWidth = target.width × 0.87
+  const maxW = K.split.maxWidth;             // place(): maxWidth из спеки (87% кадра текста)
+  const size = K.scale ?? 1;
   const groups: Group[] = [];
   for (const ph of kantPhrases(words, K.phrase)) {
     for (const scr of kantScreens(K, ph.words, ph.end, measure)) {
       const face = kantFace(K, scr.text);
       const natural = kantWidth(K, scr.text, measure);
       const fit = natural > maxW ? maxW / natural : 1;
+      // выравнивание по краю: центр строки = поле + полширины текста после подгона (place())
+      const half = (natural * fit) / 2;
+      const cx = g.alignX === 'left' ? COMP_W * g.marginX + half : g.alignX === 'right' ? COMP_W * (1 - g.marginX) - half : COMP_W / 2;
       const base: Seg = { text: scr.text, font: face.font, size: T.size * fit, tracking: T.tracking, upper: false, color: T.fill };
-      const sx = (T.scale[0] / 100) * face.squeeze;
-      const sy = T.scale[1] / 100;
+      const sx = (T.scale[0] / 100) * face.squeeze * size;
+      const sy = (T.scale[1] / 100) * size;
       // длинный вход на коротком экране ускоряется (layer.stretch в place())
       const dur = Math.max(FRAME, scr.end - scr.start);
       const stretch = K.intro > K.split.introShare * dur ? Math.max(K.split.minStretch, (100 * K.split.introShare * dur) / K.intro) : 100;

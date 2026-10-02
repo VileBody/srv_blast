@@ -246,6 +246,7 @@
         },
 
         // opts: { x, y (центр строки в целевой комп.), maxWidth (px целевой комп.), scale (%), fadeFrames, name,
+        //         align ("left"/"right" — строка прижата к opts.left / opts.right, px целевой комп.),
         //         fontMap ({PostScript: PostScript} — свои замены шрифтов, перекрывают кириллические) }
         place: function (target, id, text, start, end, opts) {
             opts = opts || {};
@@ -260,6 +261,11 @@
             var probe = Math.min(comp.duration - comp.frameDuration, info.intro + 0.3); // после входа — текст в финальном размере
             var w = textWidth(comp, probe) * scale / 100;
             if (w > maxW && w > 0) scaleFonts(comp, maxW / w);
+            // выравнивание по краю: центр строки = край + полширины текста после подгона
+            var wFit = (w > maxW && w > 0) ? maxW : w;
+            var x = opts.x !== undefined ? opts.x : target.width / 2;
+            if (opts.align === "left" && opts.left !== undefined) x = opts.left + wFit / 2;
+            else if (opts.align === "right" && opts.right !== undefined) x = opts.right - wFit / 2;
 
             var layer = target.layers.add(comp);
             layer.name = comp.name;
@@ -273,7 +279,7 @@
             layer.outPoint = Math.min(end, start + comp.duration * stretch / 100);
             var tg = layer.property("ADBE Transform Group");
             tg.property("ADBE Scale").setValue([scale, scale]);
-            tg.property("ADBE Position").setValue([opts.x !== undefined ? opts.x : target.width / 2, opts.y !== undefined ? opts.y : target.height / 2]);
+            tg.property("ADBE Position").setValue([x, opts.y !== undefined ? opts.y : target.height / 2]);
             if (opts.fadeFrames !== 0) fadeOut(layer, opts.fadeFrames || 3);
             return layer;
         },
