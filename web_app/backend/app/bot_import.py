@@ -422,7 +422,7 @@ def build_wizard_import(
     hooked = kind != "none"
     if kind in {"object", "warmup", "thought"}:
         # Комбо этих хуков ставит после дропа случайные переходы с сидом от id джобы
-        notes.append("Случайные переходы после дропа на сайте выпадут другие: у нового ролика свой сид.")
+        notes.append("Переходы после дропа на сайте могут выпасть другие, чем в боте.")
     if hooked and drop is None:
         raise BotImportError("Для хука ролика нужен дроп, а его нет")
 
