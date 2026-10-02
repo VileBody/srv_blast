@@ -412,7 +412,7 @@ export function StageSlice() {
             <button type="button" className="w12-small-btn w12-accent" onClick={distributeEvenly}><span className="w12-l">{t('wizard.pool.distributeEven')}</span></button>
           )}
           <Stepper value={alloc.total} min={fixedCount + (units.length ? 1 : 0)} onChange={(total) => setAllocation({ total })} />
-          <LimitsIndicator />
+          <LimitsIndicator track={{ id: state.track?.id, title: state.track?.filename?.replace(/\.[A-Za-z0-9]{1,5}$/, ''), projectId: state.projectId ?? undefined }} />
         </span>
       </div>
 

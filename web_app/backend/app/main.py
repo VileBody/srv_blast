@@ -23,7 +23,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import mock_store as store
-from . import analytics, asr_preview, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
+from . import analytics, asr_preview, auth_store, fraud_guard, funnel, google_auth, persistence, security, telegram_bot
 from . import render_job as render_job_builder
 from . import demo_media, effect_map
 from . import storyboard as storyboard_svc
@@ -688,7 +688,10 @@ def _handoff_lock(token: str) -> asyncio.Lock:
 
 
 async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int) -> dict[str, Any]:
-    """Проект с треком из бота. Повторное открытие той же ссылки ведёт в тот же проект."""
+    """Проект с треком из бота. Повторное открытие той же ссылки ведёт в тот же проект.
+
+    Проект заводим только после того, как трек проверен (слот, объект в S3): сбой на
+    середине не должен оставлять пустой проект, а повтор — плодить ещё один."""
     known = record["result"]
     if known.get("projectId") and store.get_project(str(known["projectId"])):
         project_id = str(known["projectId"])
@@ -703,34 +706,39 @@ async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int)
         raise HTTPException(status_code=422, detail={"code": "handoff_invalid", "message": "Ссылка без трека."})
 
     billing = _billing_backend()
-    project = store.create_project(Path(filename).stem or "Новый проект", "TRIAL", "auto")
-    analytics.track("project_created", store.current_user_id(), {"projectId": project["id"], "source": "bot_handoff"})
-    result: dict[str, Any] = {"projectId": project["id"], "track": None, "repeat": False}
+    from .billing_backend import TrackQuotaExhausted
+
     try:
         allowed = await billing.can_upload_track(tg_id, audio_hash)
+        registered = (
+            await run_in_threadpool(_production_backend().register_bot_track, audio_s3_url, filename=filename)
+            if allowed
+            else None
+        )
     except Exception as exc:
         raise _production_error(exc) from exc
-    if not allowed:
+
+    def _new_project() -> dict[str, Any]:
+        project = store.create_project(Path(filename).stem or "Новый проект", "TRIAL", "auto")
+        analytics.track("project_created", store.current_user_id(), {"projectId": project["id"], "source": "bot_handoff"})
+        return project
+
+    async def _without_track(project: dict[str, Any]) -> dict[str, Any]:
         analytics.track("limit_hit", store.current_user_id(), {"limit": "tracks", "source": "bot_handoff"})
-        result["trackError"] = "tracks_limit"
         await billing.set_handoff_result(token, {"projectId": project["id"]})
-        return result
+        return {"projectId": project["id"], "track": None, "repeat": False, "trackError": "tracks_limit"}
+
+    if registered is None:
+        return await _without_track(_new_project())
     try:
-        registered = await run_in_threadpool(
-            _production_backend().register_bot_track, audio_s3_url, filename=filename
-        )
         # Слот трека тратим здесь, как при обычной загрузке на сайте. Хэш тот же, по
         # которому бот считает свои треки, — генерация этого трека в боте второй слот не возьмёт.
         await billing.consume_track(tg_id, audio_hash)
+    except TrackQuotaExhausted:
+        return await _without_track(_new_project())
     except Exception as exc:
-        from .billing_backend import TrackQuotaExhausted
-
-        if isinstance(exc, TrackQuotaExhausted):
-            analytics.track("limit_hit", store.current_user_id(), {"limit": "tracks", "source": "bot_handoff"})
-            result["trackError"] = "tracks_limit"
-            await billing.set_handoff_result(token, {"projectId": project["id"]})
-            return result
         raise _production_error(exc) from exc
+    project = _new_project()
     track = store.save_track(
         filename,
         s3_url=registered["s3_url"],
@@ -739,8 +747,7 @@ async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int)
     )
     analytics.track("track_uploaded", store.current_user_id(), {"trackId": track["id"], "source": "bot_handoff"})
     await billing.set_handoff_result(token, {"projectId": project["id"], "trackId": track["id"]})
-    result["track"] = track
-    return result
+    return {"projectId": project["id"], "track": track, "repeat": False}
 
 
 # Ссылка «на сайт» из публичного бота: бот уже знает chat_id, поэтому подтверждать вход
@@ -773,15 +780,24 @@ async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[st
         if created:
             analytics.track("signup_completed", user["id"], {"source": "bot_handoff"})
         analytics.track("bot_handoff", user["id"], {"kind": record["kind"], "redeemCount": record["redeem_count"]})
-        if record["kind"] != "track":
+        if record["kind"] not in {"track", "remix"}:
             return {"ok": True, "created": created, "redirectTo": "/app"}
         project = await _handoff_track_project(payload.token, record, tg_id)
-        return {
+        out: dict[str, Any] = {
             "ok": True,
             "created": created,
             "redirectTo": f"/app/generate?project={project['projectId']}",
             **project,
         }
+        if record["kind"] == "remix":
+            # «Докрутить на сайте»: отрезок и текст ролика из бота — в черновик визарда.
+            draft = dict(record["payload"].get("draft") or {})
+            out["draft"] = {
+                "clipStart": float(draft.get("clipStart") or 0.0),
+                "clipEnd": float(draft.get("clipEnd") or 0.0),
+                "lyrics": str(draft.get("lyrics") or ""),
+            }
+        return out
 
 
 @app.get("/api/auth/tg-verify", tags=["auth"])
@@ -1020,7 +1036,7 @@ async def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
             order = await _billing_backend().create_order(
                 tg_id=tg_id,
                 package_type=payload.packageType,
-                email=str(store.USER.get("email") or store.USER.get("googleEmail") or ""),
+                email=_billing_email(),
                 recurrent_accepted=payload.recurrentAccepted,
                 idempotency_key=payload.idempotencyKey,
             )
@@ -1127,7 +1143,7 @@ async def api_payment_retry() -> dict[str, Any]:
         order = await _billing_backend().create_order(
             tg_id=_telegram_chat_id(),
             package_type=tier,
-            email=str(store.USER.get("email") or store.USER.get("googleEmail") or ""),
+            email=_billing_email(),
             recurrent_accepted=True,
         )
         return {"ok": True, "subscription": data["subscription"], "paymentUrl": order["paymentUrl"], "mock": False}
@@ -1976,11 +1992,15 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     credits_total = store.video_limit()
     # Повтор по тому же ключу возвращает уже созданный джоб — и не должен упираться в лимит
     replay = payload.idempotencyKey and payload.idempotencyKey in store.JOB_IDEMPOTENCY
+    mock_batch_mode = "credits"
     if RUNTIME.backend == "mock" and credits_total is not None and not replay:
         credits_left = credits_total - store.SUBSCRIPTION["creditsUsed"]
-        if payload.videosToGenerate > credits_left:
-            analytics.track("limit_hit", store.current_user_id(), {"limit": "videos", "left": credits_left})
-            raise HTTPException(status_code=402, detail=f"Доступно {credits_left} генераций")
+        mock_batch_mode = await _plan_generation_or_402(
+            _funnel_tg_id(),
+            str((stage_data.get("track") or {}).get("audioHash") or ""),
+            payload.videosToGenerate,
+            credits_left,
+        )
     try:
         job = store.create_job(
             project_id,
@@ -1993,6 +2013,13 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         # Раскладка батча не сошлась (пул, варианты FX, устаревшая раскадровка) — это
         # ошибка вводных, которую человек может поправить, а не 500.
         raise HTTPException(422, detail=str(exc)) from exc
+    if RUNTIME.backend == "mock" and not replay:
+        mock_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
+        if mock_hash:
+            await funnel.repo().record_track_batch(
+                tg_id=_funnel_tg_id(), audio_hash=mock_hash, job_id=job["id"],
+                videos=int(job.get("versions") or payload.videosToGenerate), mode=mock_batch_mode,
+            )
     if RUNTIME.backend == "production":
         live_job = store.JOBS[job["id"]]
         try:
@@ -2021,21 +2048,41 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         except Exception as exc:
             store.rollback_job_creation(live_job["id"])
             raise _production_error(exc) from exc
+        videos_n = len(live_job.get("videos") or [])
+        # Безлимит на трек (docs/BOT_TO_WEB_FLOW.md, раздел 5): батч по открытому
+        # треку идёт без кредитов, пока хватает квоты; иначе — обычный путь.
         try:
-            await _billing_backend().reserve(tg_id, live_job["id"], len(live_job.get("videos") or []))
+            credits_left = await _billing_backend().balance(tg_id)
+            batch_mode = await _plan_generation_or_402(tg_id, track_hash, videos_n, credits_left)
+        except HTTPException:
+            store.rollback_job_creation(live_job["id"])
+            raise
+        free_batch = batch_mode == "free"
+        if free_batch:
+            live_job["freeUnlimited"] = True
+        try:
+            if not free_batch:
+                await _billing_backend().reserve(tg_id, live_job["id"], videos_n)
+            await funnel.repo().record_track_batch(
+                tg_id=tg_id, audio_hash=track_hash, job_id=live_job["id"], videos=videos_n, mode=batch_mode,
+            )
             await _billing_backend().consume_track(tg_id, track_hash)
             from . import production_monitor
             await production_monitor.enqueue_job(live_job)
         except Exception as exc:
             from .billing_backend import InsufficientCredits, TrackQuotaExhausted
 
+            async def _undo() -> None:
+                await funnel.repo().drop_track_batch(live_job["id"])
+                if not free_batch:
+                    await _billing_backend().refund(tg_id, live_job["id"], videos_n)
+
             if isinstance(exc, InsufficientCredits):
+                await funnel.repo().drop_track_batch(live_job["id"])
                 store.rollback_job_creation(live_job["id"])
-                raise HTTPException(status_code=402, detail=f"Доступно {exc.available} генераций") from exc
+                raise HTTPException(status_code=402, detail=await _credits_exhausted_detail(tg_id, exc.available)) from exc
             if isinstance(exc, TrackQuotaExhausted):
-                await _billing_backend().refund(
-                    tg_id, live_job["id"], len(live_job.get("videos") or [])
-                )
+                await _undo()
                 store.rollback_job_creation(live_job["id"])
                 raise HTTPException(status_code=402, detail="Лимит уникальных треков исчерпан") from exc
             partial = any(
@@ -2046,9 +2093,7 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
                 live_job["enqueueError"] = str(exc)[:2000]
                 persistence.save_job(live_job["id"])
             else:
-                await _billing_backend().refund(
-                    tg_id, live_job["id"], len(live_job.get("videos") or [])
-                )
+                await _undo()
                 store.rollback_job_creation(live_job["id"])
             raise _production_error(exc) from exc
         live_job.pop("enqueueError", None)
@@ -2057,6 +2102,225 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         job = store.get_job(live_job["id"]) or live_job
     analytics.track("generation_started", store.current_user_id(), {"jobId": job["id"], "videos": job["versions"], "projectId": project_id})
     return {"job": job, "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
+
+
+def _billing_email() -> str:
+    """Контакт для чека T-Bank: почта аккаунта, иначе привязанного Google — одна для всех оплат."""
+    return str(store.USER.get("email") or store.USER.get("googleEmail") or "")
+
+
+def _funnel_tg_id() -> int:
+    """Кто для воронки этот человек: в проде — его chat_id (общий с ботом ключ).
+
+    В mock chat_id может не быть — берём стабильное число из id аккаунта, чтобы
+    флоу прокликивался локально."""
+    if RUNTIME.backend == "production":
+        return _telegram_chat_id()
+    raw = store.ws().user.get("tgChatId")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return int(hashlib.sha256(store.current_user_id().encode()).hexdigest()[:12], 16)
+
+
+async def _credits_exhausted_detail(tg_id: int, available: int) -> dict[str, Any]:
+    """402 «кредиты кончились»: фронт по `unlimitedOffer` открывает модалку безлимита."""
+    # Бесплатным — всегда: нет безлимита — модалка его откроет, открыт на другом
+    # треке — объяснит, что он не переносится (на том же треке сюда не попадаем:
+    # там отказ приходит кодом квоты).
+    offer = not await funnel.repo().has_paid(tg_id)
+    analytics.track("limit_hit", store.current_user_id(), {"limit": "videos", "left": available})
+    return {
+        "code": "credits_exhausted",
+        "message": f"Доступно {available} генераций",
+        "available": available,
+        "unlimitedOffer": offer,
+    }
+
+
+async def _plan_generation_or_402(tg_id: int, track_hash: str, videos: int, credits_left: int) -> str:
+    """«free» или «credits»; не хватает ни квоты трека, ни кредитов — 402 с причиной."""
+    try:
+        mode, _quota = await funnel.plan_generation(tg_id, track_hash, videos, credits_left)
+    except funnel.TrackLimitError as exc:
+        analytics.track("limit_hit", store.current_user_id(), {"limit": "track_quota", "reason": exc.code})
+        raise HTTPException(
+            status_code=402,
+            detail={"code": exc.code, "message": exc.message, "quota": funnel.quota_view(exc.quota)},
+        ) from exc
+    if mode == "credits" and videos > credits_left:
+        raise HTTPException(status_code=402, detail=await _credits_exhausted_detail(tg_id, credits_left))
+    return mode
+
+
+def _funnel_http(exc: funnel.FunnelError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message})
+
+
+def _track_hash_for(track_id: str) -> tuple[dict[str, Any], str]:
+    track = store.saved_track(track_id)
+    if not track or not track.get("audioHash"):
+        raise HTTPException(status_code=404, detail={"code": "track_not_found", "message": "Трек не найден."})
+    return track, str(track["audioHash"])
+
+
+class FunnelSurveyPayload(BaseModel):
+    questionId: str = Field(min_length=1, max_length=16)
+    answerId: str = Field(min_length=1, max_length=32)
+
+
+class FunnelRatingPayload(BaseModel):
+    videoId: str = Field(min_length=1, max_length=64)
+    jobId: str = Field(default="", max_length=64)
+    projectId: str = Field(default="", max_length=64)
+    score: int = Field(ge=1, le=10)
+    reasons: list[Literal["subtitles", "footage", "transitions", "other"]] = Field(default_factory=list)
+    comment: str = Field(default="", max_length=1000)
+
+
+class FunnelTrackPayload(BaseModel):
+    trackId: str = Field(min_length=1, max_length=64)
+
+
+class FunnelTripwirePayload(BaseModel):
+    trackId: str = Field(min_length=1, max_length=64)
+    # куда вернуть после оплаты: только путь внутри приложения, не внешний адрес
+    returnPath: str = Field(default="/app", max_length=200, pattern=r"^/app(/[A-Za-z0-9_\-/]*)?$")
+    idempotencyKey: str = Field(min_length=8, max_length=128)
+
+
+@app.get("/api/funnel/state", tags=["funnel"])
+async def api_funnel_state() -> dict[str, Any]:
+    return await funnel.state(_funnel_tg_id(), saved_tracks=store.ws().saved_tracks)
+
+
+@app.post("/api/funnel/survey", tags=["funnel"])
+async def api_funnel_survey(payload: FunnelSurveyPayload) -> dict[str, Any]:
+    try:
+        result = await funnel.answer_survey(_funnel_tg_id(), payload.questionId, payload.answerId)
+    except funnel.FunnelError as exc:
+        raise _funnel_http(exc) from exc
+    analytics.track("survey_answered", store.current_user_id(), {"question": payload.questionId, "answer": payload.answerId})
+    return result
+
+
+@app.post("/api/funnel/methodology", tags=["funnel"])
+async def api_funnel_methodology() -> dict[str, Any]:
+    try:
+        return await run_in_threadpool(funnel.send_methodology, _funnel_tg_id())
+    except funnel.FunnelError as exc:
+        raise _funnel_http(exc) from exc
+
+
+@app.post("/api/funnel/rating", tags=["funnel"])
+async def api_funnel_rating(payload: FunnelRatingPayload) -> dict[str, Any]:
+    job = store.JOBS.get(payload.jobId) if payload.jobId else None
+    if job is not None and job.get("userId") != store.current_user_id():
+        raise HTTPException(status_code=404, detail="Job not found")
+    await funnel.repo().save_video_rating(
+        _funnel_tg_id(),
+        video_id=payload.videoId,
+        job_id=payload.jobId,
+        project_id=payload.projectId,
+        score=payload.score,
+        reasons=list(payload.reasons),
+        comment=payload.comment,
+    )
+    analytics.track("video_rated", store.current_user_id(), {"videoId": payload.videoId, "score": payload.score})
+    if job is not None:
+        # Оценка батча теперь складывается из оценок роликов (шкала 1–10): job.rating и
+        # событие generation_rated, которые писала старая оценка 1–5, не пропадают.
+        scores = dict(job.get("videoRatings") or {})
+        scores[payload.videoId] = payload.score
+        job["videoRatings"] = scores
+        job["rating"] = round(sum(scores.values()) / len(scores), 1)
+        persistence.save_job(job["id"])
+        analytics.track(
+            "generation_rated",
+            store.current_user_id(),
+            {"jobId": job["id"], "rating": job["rating"], "scale": 10, "videos": len(scores)},
+        )
+    return {"ok": True}
+
+
+@app.get("/api/funnel/ratings", tags=["funnel"])
+async def api_funnel_ratings(jobId: str) -> dict[str, Any]:
+    job = store.get_job(jobId)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    ids = [str(v["id"]) for v in job.get("videos") or []]
+    return {"ratings": await funnel.repo().list_video_ratings(_funnel_tg_id(), ids)}
+
+
+@app.post("/api/funnel/actions/channel", tags=["funnel"])
+async def api_funnel_channel() -> dict[str, Any]:
+    tg_id = _funnel_tg_id()
+    try:
+        subscribed = await run_in_threadpool(funnel.check_channel_member, tg_id)
+    except funnel.FunnelError as exc:
+        raise _funnel_http(exc) from exc
+    if subscribed:
+        await funnel.repo().mark_funnel_action(tg_id, funnel.ACTION_CHANNEL)
+        analytics.track("funnel_action", store.current_user_id(), {"action": "channel"})
+    return {"subscribed": subscribed}
+
+
+@app.post("/api/funnel/actions/manager", tags=["funnel"])
+async def api_funnel_manager() -> dict[str, Any]:
+    # Факт отправки сообщения проверить нельзя — засчитываем переход по диплинку.
+    await funnel.repo().mark_funnel_action(_funnel_tg_id(), funnel.ACTION_MANAGER)
+    analytics.track("funnel_action", store.current_user_id(), {"action": "manager"})
+    return {"ok": True}
+
+
+@app.post("/api/funnel/unlock", tags=["funnel"])
+async def api_funnel_unlock(payload: FunnelTrackPayload) -> dict[str, Any]:
+    _, audio_hash = _track_hash_for(payload.trackId)
+    tg_id = _funnel_tg_id()
+    try:
+        await funnel.unlock(tg_id, audio_hash)
+    except funnel.FunnelError as exc:
+        raise _funnel_http(exc) from exc
+    analytics.track("unlimited_unlocked", store.current_user_id(), {"trackId": payload.trackId})
+    return await funnel.state(tg_id, saved_tracks=store.ws().saved_tracks)
+
+
+@app.get("/api/funnel/quota", tags=["funnel"])
+async def api_funnel_quota(trackId: str) -> dict[str, Any]:
+    _, audio_hash = _track_hash_for(trackId)
+    q = await funnel.track_quota(_funnel_tg_id(), audio_hash)
+    return {"quota": funnel.quota_view(q) if q else None}
+
+
+@app.post("/api/funnel/tripwire", tags=["funnel"])
+async def api_funnel_tripwire(payload: FunnelTripwirePayload) -> dict[str, Any]:
+    if RUNTIME.backend != "production":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "payments_unavailable", "message": "Оплата работает только в проде."},
+        )
+    _, audio_hash = _track_hash_for(payload.trackId)
+    tg_id = _telegram_chat_id()
+    unl = await funnel.repo().get_track_unlimited(tg_id)
+    if unl and unl["audio_hash"] != audio_hash:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "unlimited_other_track", "message": "Безлимит уже открыт на другом треке."},
+        )
+    from .billing_backend import PaymentInitError
+
+    try:
+        order = await _billing_backend().create_tripwire_order(
+            tg_id=tg_id,
+            audio_hash=audio_hash,
+            return_path=payload.returnPath,
+            email=_billing_email(),
+            idempotency_key=payload.idempotencyKey,
+        )
+    except PaymentInitError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+    analytics.track("tripwire_started", store.current_user_id(), {"trackId": payload.trackId})
+    return order
 
 
 # ------------------------- Mock API: preview -------------------------
@@ -3062,6 +3326,83 @@ def api_dev_billing(state: str, monthsAgo: int = 0) -> dict[str, Any]:
     else:
         raise HTTPException(status_code=422, detail="state: past_due | active | canceled")
     return {"ok": True, "subscription": sub}
+
+
+FUNNEL_DEMO_SCENES = (
+    "generating", "results", "results-surveyed", "unlocked", "cooldown", "daily", "credits-out", "other-track",
+)
+_FUNNEL_DEMO_PROJECT = "Демо воронки"
+_FUNNEL_DEMO_HASH = "demo-funnel-track"
+
+
+@app.post("/api/dev/funnel-demo/{scene}", tags=["system"])
+async def api_dev_funnel_demo(scene: str) -> dict[str, Any]:
+    """DEV-ручка (только mock): настоящий проект и батч в нужном состоянии воронки.
+
+    Чтобы прокликать квиз, оценки, модалку безлимита и окно перезарядки на живых
+    страницах сайта, не дожидаясь рендера. Каждая сцена пересобирает демо-проект.
+    """
+    if RUNTIME.backend != "mock":
+        raise HTTPException(status_code=404, detail="Not found")
+    if scene not in FUNNEL_DEMO_SCENES:
+        raise HTTPException(status_code=422, detail={"code": "unknown_scene", "scenes": list(FUNNEL_DEMO_SCENES)})
+    space = store.ws()
+    tg_id = _funnel_tg_id()
+    mem = funnel._MEMORY
+    # чистое состояние воронки этого человека
+    mem.surveys.pop(tg_id, None)
+    mem.actions.pop(tg_id, None)
+    mem.unlimited.pop(tg_id, None)
+    mem.ratings = {k: v for k, v in mem.ratings.items() if k[0] != tg_id}
+    mem.batches = [b for b in mem.batches if b["tg_id"] != tg_id]
+    mem.paid.discard(tg_id)
+    for old in [p for p in space.projects if p.get("name") == _FUNNEL_DEMO_PROJECT]:
+        store.delete_project(old["id"])
+    space.saved_tracks = [t for t in space.saved_tracks if t.get("audioHash") != _FUNNEL_DEMO_HASH]
+
+    project = store.create_project(_FUNNEL_DEMO_PROJECT, "TRIAL", "auto")
+    track = store.save_track("Нет любви.mp3", s3_url="s3://demo/no-love.mp3", playback_url=None, audio_hash=_FUNNEL_DEMO_HASH)
+    now = datetime.now(timezone.utc)
+    generating = scene == "generating"
+    job_id = f"job_demo_{uuid4().hex[:6]}"
+    videos = []
+    for index in (1, 2, 3):
+        status = "COMPLETED" if not generating or index == 1 else ("PROCESSING" if index == 2 else "PENDING")
+        videos.append({
+            "id": f"{job_id}_v{index}", "index": index, "status": status, "progress": 100 if status == "COMPLETED" else 40,
+            "source": "Тревожная природа", "format": "9:16", "subtitleStyle": "Jakson", "hook": "none",
+            "thumbnailUrl": None, "downloadUrl": None,
+        })
+    store.JOBS[job_id] = {
+        "id": job_id, "projectId": project["id"], "userId": space.user["id"], "orchestratorJobId": None,
+        "stageData": {"track": track}, "renderJob": {"variations": []},
+        "status": "PROCESSING" if generating else "COMPLETED", "versions": 3, "rating": None, "outputUrls": [],
+        "createdAt": store.iso(now - timedelta(minutes=8)), "completedAt": None if generating else store.iso(now),
+        "videos": videos, "mock": True,
+    }
+    total = store.video_limit() or 5
+    space.subscription["creditsUsed"] = total if scene in {"cooldown", "daily", "credits-out", "unlocked", "other-track"} else 3
+
+    if scene in {"results-surveyed", "unlocked", "cooldown", "daily", "other-track"}:
+        for qid, aid in (("q1", "1_10"), ("q2", "self"), ("q2a", "1_3h"), ("q3", "time")):
+            await funnel.answer_survey(tg_id, qid, aid)
+    if scene in {"unlocked", "cooldown", "daily", "other-track"}:
+        for action in funnel.UNLOCK_ACTIONS:
+            await mem.mark_funnel_action(tg_id, action)
+        row = await mem.unlock_track_unlimited(tg_id, "other-track-hash" if scene == "other-track" else _FUNNEL_DEMO_HASH)
+        if scene == "other-track":
+            store.save_track("Последний танец.mp3", s3_url="s3://demo/last-dance.mp3", playback_url=None, audio_hash="other-track-hash")
+        if scene == "cooldown":
+            row["unlocked_at"] = now - timedelta(hours=2)
+            await mem.record_track_batch(tg_id=tg_id, audio_hash=_FUNNEL_DEMO_HASH, job_id=job_id, videos=5, mode="free")
+            mem.batches[-1]["created_at"] = now - timedelta(hours=1, minutes=19)
+        if scene == "daily":
+            row["unlocked_at"] = now - timedelta(hours=6)
+            for jid, ago in (("demo_a", timedelta(hours=5, minutes=30)), ("demo_b", timedelta(hours=4, minutes=40))):
+                await mem.record_track_batch(tg_id=tg_id, audio_hash=_FUNNEL_DEMO_HASH, job_id=jid, videos=5, mode="free")
+                mem.batches[-1]["created_at"] = now - ago
+    page = f"/app/processing/{job_id}" if generating else f"/app/projects/{project['id']}"
+    return {"scene": scene, "projectId": project["id"], "jobId": job_id, "trackId": track["id"], "open": page}
 
 
 @app.post("/api/dev/mark-posted/{video_id}", tags=["system"])

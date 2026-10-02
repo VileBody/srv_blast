@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { Button } from '../components/ui/kit';
 import { BatchLayout, GenerationsCard, ProcessingAside, ProgressTrack, TrackCard } from '../components/project/BatchCards';
+import { useQuizOnGeneration, useVideoRatings } from '../components/funnel/FunnelHost';
 
 /** Средняя длительность рендера одной вариации — из неё считаем «осталось NN минут». */
 const MINUTES_PER_VIDEO = 3;
@@ -80,6 +81,9 @@ export function ProcessingPage() {
           : t('processing.reasonUnknown');
   const allDone = videos.length > 0 && done.length === videos.length;
   const project = projectQuery.data?.project;
+  // Воронка: квиз, пока идёт рендер; оценка под каждым готовым роликом (первая 7+ — безлимит)
+  useQuizOnGeneration(job);
+  const ratings = useVideoRatings(job, job?.projectId);
 
   /*
    * Метрика отвала на экране ожидания (из ревью): рендер идёт минутами, и главный вопрос —
@@ -204,6 +208,7 @@ export function ProcessingPage() {
           <GenerationsCard
             videos={videos}
             loading={!allDone}
+            videoFooter={ratings.render}
             postOne={project ? (video) => {
               const index = done.findIndex((item) => item.id === video.id);
               navigate(`/app/projects/${project.id}/post?batch=${job?.id}&video=${Math.max(0, index)}`);

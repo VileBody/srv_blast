@@ -45,6 +45,8 @@ def _new_app(*, rust_enabled: bool, rust_default: bool = False, paid: bool = Fal
     app.store = _Store()
     app.credits_db = _Credits(paid=paid)
     app.settings = SimpleNamespace(
+        web_handoff_enabled=False,
+        generation_subscription_required=False,
         rust_gen_enabled=rust_enabled,
         rust_gen_bot_default_enabled=rust_default,
         initial_credits=5,

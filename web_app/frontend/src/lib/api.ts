@@ -8,6 +8,10 @@ import type {
   AnalyticsResponse,
   Subscription,
   SavedTrack,
+  FunnelState,
+  FunnelQuota,
+  RatingReason,
+  VideoRating,
   TrackUsageEntry,
   StoryboardCandidate,
   StoryboardCutsResponse,
@@ -168,8 +172,31 @@ export const api = {
       track?: SavedTrack | null;
       repeat?: boolean;
       trackError?: 'tracks_limit';
+      /** «Докрутить на сайте»: отрезок и текст ролика из бота */
+      draft?: { clipStart: number; clipEnd: number; lyrics: string };
     }>('/api/auth/handoff', { method: 'POST', body: JSON.stringify({ token }) }),
   logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+  /* ---------------- воронка после генерации (docs/BOT_TO_WEB_FLOW.md) ---------------- */
+  funnelState: () => request<FunnelState>('/api/funnel/state'),
+  funnelSurvey: (questionId: string, answerId: string) =>
+    request<{ next: string | null; done: boolean; branch?: string; bridge?: string }>('/api/funnel/survey', {
+      method: 'POST',
+      body: JSON.stringify({ questionId, answerId })
+    }),
+  funnelMethodology: () =>
+    request<{ url: string | null; sent: boolean; botLink?: string }>('/api/funnel/methodology', { method: 'POST' }),
+  funnelRate: (payload: { videoId: string; jobId: string; projectId: string; score: number; reasons: RatingReason[]; comment?: string }) =>
+    request<{ ok: boolean }>('/api/funnel/rating', { method: 'POST', body: JSON.stringify(payload) }),
+  funnelRatings: (jobId: string) =>
+    request<{ ratings: Record<string, VideoRating> }>(`/api/funnel/ratings?jobId=${encodeURIComponent(jobId)}`),
+  funnelChannel: () => request<{ subscribed: boolean }>('/api/funnel/actions/channel', { method: 'POST' }),
+  funnelManager: () => request<{ ok: boolean }>('/api/funnel/actions/manager', { method: 'POST' }),
+  funnelUnlock: (trackId: string) =>
+    request<FunnelState>('/api/funnel/unlock', { method: 'POST', body: JSON.stringify({ trackId }) }),
+  funnelQuota: (trackId: string) =>
+    request<{ quota: FunnelQuota | null }>(`/api/funnel/quota?trackId=${encodeURIComponent(trackId)}`),
+  funnelTripwire: (payload: { trackId: string; returnPath: string; idempotencyKey: string }) =>
+    request<{ orderId: string; paymentUrl: string }>('/api/funnel/tripwire', { method: 'POST', body: JSON.stringify(payload) }),
   /** Причина блокировки аккаунта — единственная ручка, которая забаненному отвечает 200 */
   banStatus: () => request<{ banned: boolean; reason: string | null; bannedAt: string | null }>('/api/auth/ban-status'),
   /**

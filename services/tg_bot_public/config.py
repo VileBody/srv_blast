@@ -337,6 +337,8 @@ class Settings:
     # The @impulsemarketing subscription gate on onboarding. Off by default:
     # «Едем!» leads straight to the track upload.
     onboarding_subscription_required: bool = _bool_env("ONBOARDING_SUBSCRIPTION_REQUIRED", False)
+    # Подписка на канал — шаг прямо перед «Запустить» генерацию в боте. По умолчанию вкл.
+    generation_subscription_required: bool = _bool_env("GENERATION_SUBSCRIPTION_REQUIRED", True)
 
     @property
     def web_handoff_enabled(self) -> bool:

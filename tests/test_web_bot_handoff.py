@@ -198,3 +198,30 @@ def test_bot_track_must_live_in_the_raw_audio_bucket(monkeypatch) -> None:
     out = backend.register_bot_track("s3://raw-audio/raw_audio/1/x.mp3", filename="x.mp3")
     assert out == {"s3_url": "s3://raw-audio/raw_audio/1/x.mp3", "playback_url": "https://s3/raw-audio/raw_audio/1/x.mp3"}
     assert heads == [("raw-audio", "raw_audio/1/x.mp3")]
+
+
+def test_s3_failure_leaves_no_empty_project(client, monkeypatch) -> None:
+    """Сбой на проверке трека — 503 без пустого проекта; повтор заводит ровно один."""
+    tc, main = client
+    billing = _Billing(_track_record())
+
+    class _Flaky(_Backend):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fail = True
+
+        def register_bot_track(self, s3_url: str, *, filename: str) -> dict[str, str]:
+            if self.fail:
+                raise TimeoutError("s3 head timeout")
+            return super().register_bot_track(s3_url, filename=filename)
+
+    backend = _Flaky()
+    _production(monkeypatch, main, billing, backend)
+    assert tc.post("/api/auth/handoff", json={"token": TOKEN}).status_code == 503
+    _as_user(main)
+    assert main.store.ws().projects == []
+    backend.fail = False
+    body = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+    _as_user(main)
+    assert [p["id"] for p in main.store.ws().projects] == [body["projectId"]]
+    assert billing.consumed == [(CHAT, "a" * 64)]

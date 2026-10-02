@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import html
 import json
@@ -61,15 +61,28 @@ from .video_prepare import (
     normalize_video_for_ae,
 )
 from .config import SETTINGS, Settings
-from .credits_db import CreditsDB, package_video_credits
+from .credits_db import CreditsDB, normalize_package_code, package_video_credits
+from . import site_reminders, track_unlimited
+from .track_unlimited import TRIPWIRE_PACKAGE
 from .marketing_texts import (
     BTN_VERSIONS_WARN_CHANGE,
     BTN_VERSIONS_WARN_CONTINUE,
     BTN_WEB_FORK_BOT,
+    BTN_REMIND_CONTINUE,
+    BTN_REMIND_GENERATE,
     BTN_WEB_FORK_SITE,
+    BOT_ONE_VIDEO_NOTE,
+    GEN_SUBSCRIPTION_MISSING,
+    GEN_SUBSCRIPTION_REMINDER,
+    GEN_SUBSCRIPTION_TEXT,
+    SITE_CTA_AFTER_LOW,
+    SITE_CTA_AFTER_MID,
+    SITE_CTA_AFTER_PITCH,
+    BTN_WEB_REMIX,
     BTN_WEB_SITE_OPEN,
     METHODOLOGY_FILE_ID,
     SITE_MORE_STYLES,
+    SITE_UNLIMITED_HINT,
     SITE_MORE_SUBTITLES,
     SITE_MORE_TRANSITIONS,
     SURVEY_CB_PREFIX,
@@ -77,7 +90,12 @@ from .marketing_texts import (
     SURVEY_Q2_BRANCH_BY_ANSWER,
     SURVEY_Q3_BRANCH_BY_ANSWER,
     SURVEY_QUESTIONS,
+    REMIND_SITE_IDLE,
+    REMIND_SITE_NO_GEN,
+    REMIND_SITE_RECHARGE,
+    REMIND_SITE_UNOPENED,
     SURVEY_THANKS,
+    TRIPWIRE_PAID_TEXT,
     VERSIONS_INVALID,
     VERSIONS_PROMPT,
     VERSIONS_PROMPT_FREE_SUFFIX,
@@ -88,6 +106,7 @@ from .marketing_texts import (
     WEB_FORK_REMINDER,
     WEB_FORK_TEXT,
     WEB_FORK_UNAVAILABLE,
+    WEB_REMIX_TEXT,
     WEB_SITE_DISABLED,
     WEB_SITE_TEXT,
     bridge_text_for_branch,
@@ -105,6 +124,7 @@ from .state_store import (
     STAGE_PROCESSING,
     STAGE_WAIT_AUDIO,
     STAGE_WAIT_WEB_FORK,
+    STAGE_WAIT_GEN_SUBSCRIPTION,
     STAGE_WAIT_CONFIRM,
     STAGE_WAIT_CONFIRM_MODE,
     STAGE_WAIT_CONFIRM_TEXT,
@@ -3614,6 +3634,10 @@ class BlastBotApp:
                 await self._handle_wait_web_fork(message, st)
                 return
 
+            if st.stage == STAGE_WAIT_GEN_SUBSCRIPTION:
+                await self._handle_wait_gen_subscription(message, st)
+                return
+
             if st.stage in {STAGE_WAIT_LYRICS_CHOICE, STAGE_WAIT_LYRICS_TEXT}:
                 # Removed step, kept only to rescue in-flight sessions.
                 await self._handle_legacy_lyrics_stage(message, st)
@@ -3870,6 +3894,10 @@ class BlastBotApp:
         self._state_cleanup_task = asyncio.create_task(self._state_cleanup_loop(), name="tg_bot_state_cleanup_loop")
         self._fs_cleanup_task = asyncio.create_task(self._fs_cleanup_loop(), name="tg_bot_fs_cleanup_loop")
         self._subscription_charge_task = asyncio.create_task(self._subscription_charge_loop(), name="tg_bot_subscription_charge")
+        if self.settings.web_handoff_enabled:
+            self._site_reminder_task = asyncio.create_task(
+                self._site_reminders_loop(), name="tg_bot_site_reminders"
+            )
         await self._restore_runtime_processing_states()
         self._recovery_task = asyncio.create_task(self._recovery_loop(), name="tg_bot_recovery_loop")
         self._outbox_task = asyncio.create_task(self._runtime_outbox_loop(), name="tg_bot_outbox_dispatcher")
@@ -3903,6 +3931,7 @@ class BlastBotApp:
             getattr(self, "_admin_panel_task", None),
             getattr(self, "_payment_poll_task", None),
             getattr(self, "_subscription_charge_task", None),
+            getattr(self, "_site_reminder_task", None),
             getattr(self, "_broadcast_task", None),
             getattr(self, "_lifecycle_task", None),
             getattr(self, "_manager_alert_task", None),
@@ -6736,45 +6765,73 @@ class BlastBotApp:
             "username": str(getattr(user, "username", "") or "").strip(),
         }
 
+    @staticmethod
+    def _file_signature(path: Path) -> str:
+        stat = path.stat()
+        return f"{stat.st_size}:{stat.st_mtime_ns}"
+
+    def _fork_upload_for(self, st: ChatState, prepared_path: Path) -> Optional[Tuple[str, str]]:
+        """Трек, уже залитый на развилке, — (s3_url, hash), если это тот же файл.
+
+        Генерация в боте берёт его вместо второй заливки и второго хэширования. Файл
+        сверяем по пути, размеру и mtime: переподготовленный mp3 зальём заново."""
+        if not st.web_handoff_audio_s3_url or not st.web_handoff_audio_hash:
+            return None
+        if str(prepared_path) != st.web_handoff_prepared_path or not prepared_path.is_file():
+            return None
+        if self._file_signature(prepared_path) != st.web_handoff_prepared_sig:
+            return None
+        return st.web_handoff_audio_s3_url, st.web_handoff_audio_hash
+
+    async def _mint_track_handoff(self, message: Message, st: ChatState) -> None:
+        """Свежая ссылка «на сайт» для трека, уже залитого на развилке."""
+        token = await self.credits_db.create_web_handoff(
+            int(st.chat_id),
+            "track",
+            {
+                "audioS3Url": st.web_handoff_audio_s3_url,
+                "audioHash": st.web_handoff_audio_hash,
+                "filename": str(st.pending_audio_filename or Path(st.web_handoff_prepared_path).name),
+                "profile": self._web_handoff_profile(message),
+            },
+            ttl_seconds=self.settings.web_handoff_ttl_s,
+        )
+        st.web_handoff_url = self._web_handoff_link(token)
+        st.web_handoff_expires_at = time.time() + self.settings.web_handoff_ttl_s
+
     async def _offer_web_fork(self, message: Message, st: ChatState) -> None:
         """Upload the prepared track, mint a handoff link and ask where to build.
 
         The track goes to the same raw-audio bucket the site reads, so the site
         registers it by its s3:// URL without a second upload. The hash is the
         one the bot itself charges track slots by (prepared mp3), which keeps a
-        later bot generation of the same track from consuming a second slot."""
+        later bot generation of the same track from consuming a second slot —
+        and the bot reuses this upload if the user builds here instead."""
         chat_id = int(st.chat_id)
         prepared_path = Path(str(st.prepared_audio_local_path or ""))
         try:
-            audio_hash = await asyncio.to_thread(self._sha256_file, prepared_path)
-            audio_s3_url = await asyncio.to_thread(
+            st.web_handoff_audio_hash = await asyncio.to_thread(self._sha256_file, prepared_path)
+            st.web_handoff_audio_s3_url = await asyncio.to_thread(
                 self.s3.upload_file,
                 path=prepared_path,
                 bucket=self.settings.s3_bucket_raw_audio,
                 key=self._build_raw_audio_key(chat_id=chat_id, file_name=prepared_path.name),
                 content_type="audio/mpeg",
             )
-            token = await self.credits_db.create_web_handoff(
-                chat_id,
-                "track",
-                {
-                    "audioS3Url": audio_s3_url,
-                    "audioHash": audio_hash,
-                    "filename": str(st.pending_audio_filename or prepared_path.name),
-                    "profile": self._web_handoff_profile(message),
-                },
-                ttl_seconds=self.settings.web_handoff_ttl_s,
-            )
+            st.web_handoff_prepared_path = str(prepared_path)
+            st.web_handoff_prepared_sig = self._file_signature(prepared_path)
+            await self._mint_track_handoff(message, st)
         except Exception:
             # The bot path is a full alternative, so a failed link does not
             # block the user — but it is logged and counted, never silent.
             log.exception("web_fork_failed chat=%s", chat_id)
             await self.credits_db.log_event(chat_id, "web_fork_failed")
+            st.web_handoff_audio_s3_url = ""
+            st.web_handoff_audio_hash = ""
             await message.answer(WEB_FORK_UNAVAILABLE)
             await self._ask_timing_choice(message, st, prefix="Трек готов! ")
             return
         st.stage = STAGE_WAIT_WEB_FORK
-        st.web_handoff_url = self._web_handoff_link(token)
         await self.store.set(st)
         await self.credits_db.log_event(chat_id, "web_fork_shown")
         await self._send_web_fork(message, st)
@@ -6801,7 +6858,87 @@ class BlastBotApp:
         if str(message.text or "").strip() == BTN_WEB_FORK_BOT:
             await self._choose_bot_at_fork(message, st)
             return
+        # Развилка может ждать днями: протухшую ссылку не повторяем, выпускаем новую.
+        if time.time() > st.web_handoff_expires_at - 600:
+            await self._mint_track_handoff(message, st)
+            await self.store.set(st)
         await self._send_web_fork(message, st, text=WEB_FORK_REMINDER)
+
+    def _site_remix_source(self, st: ChatState) -> Optional[Dict[str, Any]]:
+        """Что перенести на сайт из только что собранного батча (или None)."""
+        if not self.settings.web_handoff_enabled:
+            return None
+        audio_s3_url = str(st.batch_audio_s3_url or "")
+        prepared = Path(str(st.prepared_audio_local_path or ""))
+        if not audio_s3_url or not prepared.is_file():
+            return None
+        return {
+            "audioS3Url": audio_s3_url,
+            "prepared": str(prepared),
+            "filename": str(st.pending_audio_filename or prepared.name),
+            "clipStart": float(st.user_clip_start_sec or 0.0),
+            "clipEnd": float(st.user_clip_end_sec or 0.0),
+            "lyrics": str(st.target_fragment or ""),
+        }
+
+    async def _offer_site_remix_best_effort(self, *, bot: Bot, st: ChatState, source: Optional[Dict[str, Any]]) -> None:
+        """«Докрутить на сайте» под готовым роликом: тот же трек, отрезок и текст в визарде.
+
+        Ролик уже доставлен — сбой здесь только логируется: предложение не важнее
+        результата, а генерацию оно не трогает."""
+        if source is None:
+            return
+        try:
+            audio_hash = await asyncio.to_thread(self._sha256_file, Path(source["prepared"]))
+            payload = {
+                "audioS3Url": source["audioS3Url"],
+                "audioHash": audio_hash,
+                "filename": source["filename"],
+                "draft": {
+                    "clipStart": source["clipStart"],
+                    "clipEnd": source["clipEnd"],
+                    "lyrics": source["lyrics"],
+                },
+                "profile": {"username": str(st.chat_username or "")},
+            }
+            # Тот же трек понадобится и после оценки ролика (ссылка на сайт вместо
+            # приглашения друга / анкеты) — помним его в состоянии чата.
+            st.web_remix_payload = payload
+            token = await self.credits_db.create_web_handoff(
+                int(st.chat_id), "remix", payload, ttl_seconds=self.settings.web_handoff_ttl_s,
+            )
+            await bot.send_message(
+                int(st.chat_id),
+                WEB_REMIX_TEXT,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=BTN_WEB_REMIX, url=self._web_handoff_link(token))],
+                ]),
+            )
+            await self.credits_db.log_event(int(st.chat_id), "web_remix_offered")
+        except Exception:
+            log.exception("web_remix_offer_failed chat=%s", st.chat_id)
+
+    async def _send_site_unlimited_cta(self, message: Message, st: ChatState, text: str) -> None:
+        """Вместо приглашения друга и анкет — на сайт: правки на таймлайне и безлимит на трек.
+
+        Ссылка ведёт на тот же трек, отрезок и текст, что у ролика из бота (remix), если
+        он ещё известен; иначе — просто в аккаунт."""
+        chat_id = int(st.chat_id)
+        payload = dict(st.web_remix_payload or {})
+        kind = "remix" if payload.get("audioS3Url") else "site"
+        token = await self.credits_db.create_web_handoff(
+            chat_id, kind, payload or {"profile": self._web_handoff_profile(message)},
+            ttl_seconds=self.settings.web_handoff_ttl_s,
+        )
+        st.stage = STAGE_IDLE
+        await self.store.set(st)
+        await self.credits_db.log_event(chat_id, "site_unlimited_cta", kind)
+        await message.answer(
+            text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=BTN_WEB_FORK_SITE, url=self._web_handoff_link(token))],
+            ]),
+        )
 
     async def _send_site_link(self, message: Message) -> None:
         """/site: a fresh login link (no track) — straight into the account."""
@@ -7276,6 +7413,13 @@ class BlastBotApp:
         if FRAME_FLOW_ENABLED and vertical and not st.frame_id:
             await self._ask_frame(message, st)
             return
+        if self.settings.web_handoff_enabled:
+            # В боте — один ролик за раз; пачки до 5 и безлимит на трек живут на сайте.
+            st.versions_count = 1
+            await self.store.set(st)
+            await message.answer(BOT_ONE_VIDEO_NOTE)
+            await self._show_final_confirm_after_versions(message, st)
+            return
         paid = await self.credits_db.has_paid(st.chat_id)
         text = VERSIONS_PROMPT
         if not paid:
@@ -7387,6 +7531,36 @@ class BlastBotApp:
                 return
         await self._show_final_confirm_after_versions(message, st)
 
+    async def _ask_generation_subscription(self, message: Message, st: ChatState) -> None:
+        st.stage = STAGE_WAIT_GEN_SUBSCRIPTION
+        await self.store.set(st)
+        await self.credits_db.log_event(int(st.chat_id), "gen_subscription_asked")
+        channel = self.settings.subscription_channel
+        await message.answer(
+            GEN_SUBSCRIPTION_TEXT.format(channel=channel),
+            reply_markup=_kb([BTN_SUBSCRIBED], [BTN_RESTART]),
+        )
+
+    async def _handle_wait_gen_subscription(self, message: Message, st: ChatState) -> None:
+        text = str(message.text or "").strip()
+        if text == BTN_RESTART:
+            await self._move_to_wait_audio(int(st.chat_id), message)
+            return
+        if text != BTN_SUBSCRIBED:
+            await message.answer(GEN_SUBSCRIPTION_REMINDER, reply_markup=_kb([BTN_SUBSCRIBED], [BTN_RESTART]))
+            return
+        user_id = int(message.from_user.id) if message.from_user else int(st.chat_id)
+        if not await self._check_subscription(user_id):
+            await message.answer(
+                GEN_SUBSCRIPTION_MISSING.format(channel=self.settings.subscription_channel),
+                reply_markup=_kb([BTN_SUBSCRIBED], [BTN_RESTART]),
+            )
+            return
+        await self.credits_db.log_event(int(st.chat_id), "subscription_ok", "before_generation")
+        st.stage = STAGE_WAIT_CONFIRM
+        await self.store.set(st)
+        await self._handle_wait_confirm(message, st, subscribed=True)
+
     async def _show_final_confirm_after_versions(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_CONFIRM
         await self.store.set(st)
@@ -7409,21 +7583,30 @@ class BlastBotApp:
             reply_markup=_kb([BTN_VERSIONS_WARN_CONTINUE], [BTN_VERSIONS_WARN_CHANGE]),
         )
 
-    async def _handle_wait_confirm(self, message: Message, st: ChatState) -> None:
+    async def _handle_wait_confirm(self, message: Message, st: ChatState, *, subscribed: bool = False) -> None:
         text = str(message.text or "").strip()
-        if text == BTN_RESTART:
-            if message.chat is not None:
-                await self._move_to_wait_audio(int(message.chat.id), message)
-            return
-        if text != BTN_LAUNCH:
-            await message.answer("Нажми «Запустить» или «Начать заново».", reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]))
-            return
+        if not subscribed:
+            if text == BTN_RESTART:
+                if message.chat is not None:
+                    await self._move_to_wait_audio(int(message.chat.id), message)
+                return
+            if text != BTN_LAUNCH:
+                await message.answer("Нажми «Запустить» или «Начать заново».", reply_markup=_kb([BTN_LAUNCH, BTN_RESTART]))
+                return
 
         if message.chat is None:
             return
 
         chat_id = int(message.chat.id)
         user_id = message.from_user.id if message.from_user else chat_id
+        # Подписка на канал — условие запуска генерации (раньше стояла на входе в бот).
+        if (
+            not subscribed
+            and self.settings.generation_subscription_required
+            and not await self._check_subscription(int(user_id))
+        ):
+            await self._ask_generation_subscription(message, st)
+            return
         # Order mirrors the flow: window first, lines second.
         if not self._has_timing_window(st):
             st.stage = STAGE_WAIT_TIMING_INPUT
@@ -7469,7 +7652,8 @@ class BlastBotApp:
             await self.credits_db.log_event(chat_id, "no_credits")
             await message.answer(
                 "Твои кредиты закончились. Хочешь посмотреть тарифы?\n\n"
-                "/packages — посмотреть тарифы",
+                "/packages — посмотреть тарифы"
+                f"{_site_more_line(SITE_UNLIMITED_HINT)}",
                 reply_markup=_kb([BTN_ALL_PACKAGES]),
             )
             st.stage = STAGE_PACKAGES_OFFER
@@ -7491,8 +7675,9 @@ class BlastBotApp:
         # (already-known) track never spends a slot; a brand-new track does,
         # and is blocked outright if the tariff's track quota is exhausted.
         # Fail closed on a hashing error — never let it bypass the track gate.
+        fork_upload = self._fork_upload_for(st, prepared_path)
         try:
-            audio_hash = await asyncio.to_thread(self._sha256_file, prepared_path)
+            audio_hash = fork_upload[1] if fork_upload else await asyncio.to_thread(self._sha256_file, prepared_path)
         except Exception as hash_e:
             log.warning("audio_hash_gate_failed chat=%s err=%s", chat_id, str(hash_e))
             await message.answer(
@@ -7572,7 +7757,8 @@ class BlastBotApp:
         try:
             versions = max(1, min(5, int(st.versions_count or 1)))
             await message.answer("Запускаю генерацию…")
-            audio_s3_url = await asyncio.to_thread(
+            # Трек уже залит на развилке «сайт / бот» — второй раз не заливаем.
+            audio_s3_url = fork_upload[0] if fork_upload else await asyncio.to_thread(
                 self.s3.upload_file,
                 path=prepared_path,
                 bucket=self.settings.s3_bucket_raw_audio,
@@ -8186,6 +8372,11 @@ class BlastBotApp:
         )
 
     async def _show_referral_ask(self, message: Message, st: ChatState) -> None:
+        if self.settings.web_handoff_enabled:
+            # Приглашение друга за второй ролик заменено сайтом: там бесплатный
+            # безлимит на этот трек (оценка + два шага в Telegram).
+            await self._send_site_unlimited_cta(message, st, SITE_CTA_AFTER_PITCH)
+            return
         st.stage = STAGE_REFERRAL_ASK
         await self.store.set(st)
         await message.answer(
@@ -8317,7 +8508,11 @@ class BlastBotApp:
     # --- Rating first video ---
     async def _handle_rate_video(self, message: Message, st: ChatState) -> None:
         text = str(message.text or "").strip()
-        if text == BTN_RATE_LOW:
+        if text == BTN_RATE_LOW and self.settings.web_handoff_enabled:
+            await self.credits_db.log_event(st.chat_id, "rate_video", "low")
+            st.last_rating = "low"
+            await self._send_site_unlimited_cta(message, st, SITE_CTA_AFTER_LOW)
+        elif text == BTN_RATE_LOW:
             await self.credits_db.log_event(st.chat_id, "rate_video", "low")
             st.last_rating = "low"
             st.stage = STAGE_FEEDBACK_LOW
@@ -8398,6 +8593,9 @@ class BlastBotApp:
         await self._send_improvement_thanks(message, st)
 
     async def _send_improvement_thanks(self, message: Message, st: ChatState) -> None:
+        if self.settings.web_handoff_enabled:
+            await self._send_site_unlimited_cta(message, st, SITE_CTA_AFTER_MID)
+            return
         chat_id = st.chat_id
         bal = await self.credits_db.get_balance(chat_id)
         track_bal = await self.credits_db.get_track_balance(chat_id)
@@ -9703,6 +9901,126 @@ class BlastBotApp:
                 log.warning("reminder loop error=%r", e)
             await asyncio.sleep(3600)  # check every hour
 
+    # ------------------------------------------------------------------
+    # Напоминания про сайт (services/tg_bot_public/site_reminders.py)
+    # ------------------------------------------------------------------
+
+    _SITE_REMINDERS_LOCK_KEY = "tg_bot_public:site_reminders:lock"
+    _SITE_REMINDERS_PERIOD_S = 600
+
+    async def _site_reminders_loop(self) -> None:
+        while True:
+            try:
+                # Один тик на все реплики: замок живёт чуть меньше периода.
+                got = await self.store.redis.set(
+                    self._SITE_REMINDERS_LOCK_KEY, "1", nx=True, ex=self._SITE_REMINDERS_PERIOD_S - 30
+                )
+                if got:
+                    sent = await self._site_reminders_tick(datetime.now(timezone.utc))
+                    if sent:
+                        log.info("site_reminders sent=%s", sent)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("site_reminders loop error")
+            await asyncio.sleep(self._SITE_REMINDERS_PERIOD_S)
+
+    async def _site_reminders_tick(self, now: datetime) -> int:
+        if not site_reminders.is_daytime(now):
+            return 0
+        sent = 0
+        for row in await self.credits_db.site_handoff_reminder_rows():
+            if row["stayed_in_bot"] or row["generated_on_site"]:
+                continue
+            tg_id = int(row["tg_id"])
+            if int(row["redeem_count"]) == 0:
+                step = site_reminders.due_step(
+                    timedelta(seconds=float(row["age_s"])), site_reminders.UNOPENED_STEPS
+                )
+                kind, text, button, link_kind = "unopened", REMIND_SITE_UNOPENED, BTN_WEB_FORK_SITE, "track"
+            else:
+                step = site_reminders.due_step(
+                    timedelta(seconds=float(row["since_open_s"] or 0.0)), site_reminders.NO_GEN_STEPS
+                )
+                kind, text, button, link_kind = "no_gen", REMIND_SITE_NO_GEN, BTN_REMIND_CONTINUE, "site"
+            if step is None:
+                continue
+            ref = f"{str(row['token_hash'])[:16]}:{step}"
+            payload = row["payload"] if link_kind == "track" else {"profile": row["payload"].get("profile") or {}}
+            sent += await self._send_site_reminder(
+                now, tg_id, kind=kind, ref=ref, text=text, button=button, link_kind=link_kind, payload=payload
+            )
+
+        for row in await self.credits_db.track_unlimited_rows():
+            tg_id = int(row["tg_id"])
+            batches = await self.credits_db.list_track_batches(tg_id, str(row["audio_hash"]))
+            if not batches:
+                continue
+            items = [track_unlimited.TrackBatch(b["created_at"], int(b["videos"]), str(b["mode"])) for b in batches]
+            last = batches[-1]
+            # «Обновились» — только если после последнего батча лимит был исчерпан.
+            then = track_unlimited.evaluate(
+                now=last["created_at"] + timedelta(seconds=1), unlocked_at=row["unlocked_at"],
+                tripwire=False, batches=items,
+            )
+            current = track_unlimited.evaluate(
+                now=now, unlocked_at=row["unlocked_at"], tripwire=False, batches=items,
+            )
+            if then.allowed or not current.allowed:
+                continue
+            sent += await self._send_site_reminder(
+                now, tg_id, kind="recharge", ref=str(last["job_id"]),
+                text=REMIND_SITE_RECHARGE.format(n=current.max_videos), button=BTN_REMIND_GENERATE,
+                link_kind="site", payload={},
+            )
+
+        for row in await self.credits_db.idle_generation_rows():
+            tg_id = int(row["tg_id"])
+            if not await self._is_free_funnel_chat(tg_id):
+                continue
+            step = site_reminders.due_step(timedelta(seconds=float(row["idle_s"])), site_reminders.IDLE_STEPS)
+            if step is None:
+                continue
+            sent += await self._send_site_reminder(
+                now, tg_id, kind="idle", ref=f"{row['last_ref']}:{step}", text=REMIND_SITE_IDLE,
+                button=BTN_REMIND_GENERATE, link_kind="site", payload={},
+            )
+        return sent
+
+    async def _send_site_reminder(
+        self,
+        now: datetime,
+        tg_id: int,
+        *,
+        kind: str,
+        ref: str,
+        text: str,
+        button: str,
+        link_kind: str,
+        payload: Dict[str, Any],
+    ) -> int:
+        if not site_reminders.can_send(now, await self.credits_db.last_reminder_at(tg_id)):
+            return 0
+        # Отмечаем ДО отправки: лучше не дослать, чем прислать дважды.
+        if not await self.credits_db.try_mark_reminder(tg_id, kind, ref):
+            return 0
+        try:
+            token = await self.credits_db.create_web_handoff(
+                tg_id, link_kind, payload, ttl_seconds=self.settings.web_handoff_ttl_s
+            )
+            await self._require_bot().send_message(
+                tg_id,
+                text,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=button, url=self._web_handoff_link(token))],
+                ]),
+            )
+        except Exception as exc:
+            log.warning("site_reminder send failed chat=%s kind=%s err=%r", tg_id, kind, exc)
+            return 0
+        await self.credits_db.log_event(tg_id, "site_reminder", f"{kind}:{ref}")
+        return 1
+
     async def _payment_poll_loop(self) -> None:
         """Poll T-Bank every 30s for pending payments, credit on CONFIRMED."""
         while True:
@@ -9777,16 +10095,19 @@ class BlastBotApp:
                                 bal = await self.credits_db.get_balance(tg_id)
                                 track_bal = await self.credits_db.get_track_balance(tg_id)
                                 try:
-                                    await bot.send_message(
-                                        tg_id,
-                                        f"Оплата прошла успешно! Пакет «{pkg}» активирован.\n\n"
-                                        f"Начислено кредитов: {credits_to_add}\n"
-                                        f"Баланс: {bal}\n"
-                                        f"Доступно уникальных треков: {track_bal}\n\n"
-                                        f"{sub_line}"
-                                        "Отправь трек, чтобы начать генерацию.",
-                                        reply_markup=_kb(["Отправить трек"]),
-                                    )
+                                    if normalize_package_code(str(pkg)) == TRIPWIRE_PACKAGE:
+                                        await bot.send_message(tg_id, TRIPWIRE_PAID_TEXT)
+                                    else:
+                                        await bot.send_message(
+                                            tg_id,
+                                            f"Оплата прошла успешно! Пакет «{pkg}» активирован.\n\n"
+                                            f"Начислено кредитов: {credits_to_add}\n"
+                                            f"Баланс: {bal}\n"
+                                            f"Доступно уникальных треков: {track_bal}\n\n"
+                                            f"{sub_line}"
+                                            "Отправь трек, чтобы начать генерацию.",
+                                            reply_markup=_kb(["Отправить трек"]),
+                                        )
                                 except Exception as e:
                                     log.warning("payment notify user=%s err=%s", tg_id, e)
                                 uname = f"@{username}" if username else str(tg_id)
@@ -10752,7 +11073,16 @@ class BlastBotApp:
             last_error_code="",
             last_error_text="",
         )
+        # Снимок ДО сброса: сброс чистит ссылку на трек батча, а «Докрутить на сайте»
+        # переносит именно этот трек, отрезок и текст.
+        try:
+            remix_source = self._site_remix_source(st)
+        except Exception:
+            # Предложение не важнее результата: ролики уже доставлены, батч закрываем всегда.
+            log.exception("web_remix_source_failed chat=%s", st.chat_id)
+            remix_source = None
         self._reset_processing_state(st)  # sets stage = RATE_VIDEO
+        await self._offer_site_remix_best_effort(bot=bot, st=st, source=remix_source)
 
         # Credits already deducted at launch time
         bal = await self.credits_db.get_balance(st.chat_id)

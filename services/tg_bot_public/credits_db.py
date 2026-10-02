@@ -29,9 +29,12 @@ _NO_ADMINS = " AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
 _NO_ADMINS_BARE = " AND tg_id NOT IN (SELECT tg_id FROM admins)"
 
 
+from .track_unlimited import TRIPWIRE_PACKAGE  # noqa: E402
+
 # Bot → site handoff link kinds: "track" carries an uploaded track into a new
-# project; "site" just logs the user in (the /site command).
-WEB_HANDOFF_KINDS = ("track", "site")
+# project; "remix" — the same plus the window and lyrics of a finished bot
+# video («Докрутить на сайте»); "site" just logs the user in (the /site command).
+WEB_HANDOFF_KINDS = ("track", "remix", "site")
 
 
 def _jsonb_dict(value: Any) -> Dict[str, Any]:
@@ -420,6 +423,8 @@ def normalize_package_code(value: str) -> str:
         return name_to_code[s]
     if s in {"5", "15", "30", "50"}:
         return s
+    if s == TRIPWIRE_PACKAGE:
+        return s
     return ""
 
 
@@ -430,6 +435,9 @@ _PACKAGE_VIDEO_CREDITS = {
     # The current bot represents the unlimited annual tariff with a high
     # sentinel so the existing integer balance contract remains unchanged.
     "50": 100_000,
+    # Трипваер 399 ₽ не даёт роликов: он снимает лимиты с одного трека
+    # (track_unlimited.tripwire_paid_at), см. confirm_payment_once.
+    TRIPWIRE_PACKAGE: 0,
 }
 
 
@@ -870,6 +878,79 @@ class CreditsDB:
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_web_handoff_tg_created ON web_handoff_tokens(tg_id, created_at)"
         )
+        # Бесплатный «безлимит на трек» (services/tg_bot_public/track_unlimited.py).
+        # PRIMARY KEY tg_id: безлимит открывается на ОДИН трек и не переносится.
+        # TIMESTAMPTZ — квоты считаются по UTC-времени, без наивных datetime.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS track_unlimited ("
+            "tg_id             BIGINT PRIMARY KEY,"
+            "audio_hash        TEXT NOT NULL,"
+            "unlocked_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "tripwire_order_id TEXT NOT NULL DEFAULT '',"
+            "tripwire_paid_at  TIMESTAMPTZ"
+            ")"
+        )
+        # Каждый батч сайта по треку — и за кредиты, и бесплатный: от батча за
+        # кредиты тоже считается перезарядка (первые 5 роликов).
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS track_batches ("
+            "id          BIGSERIAL PRIMARY KEY,"
+            "tg_id       BIGINT NOT NULL,"
+            "audio_hash  TEXT NOT NULL,"
+            "job_id      TEXT NOT NULL UNIQUE,"
+            "videos      INTEGER NOT NULL,"
+            "released    INTEGER NOT NULL DEFAULT 0,"
+            "mode        TEXT NOT NULL,"
+            "created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_track_batches_track ON track_batches(tg_id, audio_hash, created_at)"
+        )
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS track_tripwire_orders ("
+            "order_id    TEXT PRIMARY KEY,"
+            "tg_id       BIGINT NOT NULL,"
+            "audio_hash  TEXT NOT NULL,"
+            "created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()"
+            ")"
+        )
+        # Ценностные действия для безлимита (подписка на ТГК, сообщение менеджеру).
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS funnel_actions ("
+            "tg_id       BIGINT NOT NULL,"
+            "action      TEXT NOT NULL,"
+            "detail      TEXT NOT NULL DEFAULT '',"
+            "created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "PRIMARY KEY (tg_id, action)"
+            ")"
+        )
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS video_ratings ("
+            "tg_id       BIGINT NOT NULL,"
+            "video_id    TEXT NOT NULL,"
+            "job_id      TEXT NOT NULL DEFAULT '',"
+            "project_id  TEXT NOT NULL DEFAULT '',"
+            "score       INTEGER NOT NULL,"
+            "reasons     JSONB NOT NULL DEFAULT '[]'::jsonb,"
+            "comment     TEXT NOT NULL DEFAULT '',"
+            "source      TEXT NOT NULL DEFAULT 'web',"
+            "created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "PRIMARY KEY (tg_id, video_id)"
+            ")"
+        )
+        # Напоминания бота: (kind, ref) — повод, один раз на человека.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS reminder_log ("
+            "tg_id       BIGINT NOT NULL,"
+            "kind        TEXT NOT NULL,"
+            "ref         TEXT NOT NULL DEFAULT '',"
+            "sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "PRIMARY KEY (tg_id, kind, ref)"
+            ")"
+        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_reminder_log_sent ON reminder_log(tg_id, sent_at)")
 
         # Marketing spend per calendar month — the only input the dashboard
         # cannot derive from product data. Feeds CAC / cost-per-signup on the
@@ -2057,6 +2138,282 @@ class CreditsDB:
                 json.dumps(result or {}, ensure_ascii=False),
             )
 
+    # Безлимит на трек
+
+    async def _apply_tripwire(self, conn: asyncpg.Connection, *, tg_id: int, order_id: str) -> None:
+        """Снять лимиты с трека заказа. Трек заказа фиксируется при его создании."""
+        audio_hash = await conn.fetchval(
+            "SELECT audio_hash FROM track_tripwire_orders WHERE order_id = $1 AND tg_id = $2",
+            order_id,
+            int(tg_id),
+        )
+        if not audio_hash:
+            raise ValueError(f"tripwire order {order_id} has no track")
+        row = await conn.fetchrow(
+            "INSERT INTO track_unlimited (tg_id, audio_hash, tripwire_order_id, tripwire_paid_at) "
+            "VALUES ($1, $2, $3, NOW()) "
+            "ON CONFLICT (tg_id) DO UPDATE SET tripwire_order_id = EXCLUDED.tripwire_order_id, "
+            "tripwire_paid_at = COALESCE(track_unlimited.tripwire_paid_at, NOW()) "
+            "WHERE track_unlimited.audio_hash = EXCLUDED.audio_hash "
+            "RETURNING audio_hash",
+            int(tg_id),
+            str(audio_hash),
+            order_id,
+        )
+        if row is None:
+            # Заказ оформлен на другой трек, чем открытый безлимит. Сайт такое не
+            # создаёт; деньги приняты — оператор должен увидеть и разобрать вручную.
+            log.error("tripwire_track_mismatch tg=%s order=%s", tg_id, order_id)
+
+    async def record_tripwire_order(self, *, order_id: str, tg_id: int, audio_hash: str) -> None:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO track_tripwire_orders (order_id, tg_id, audio_hash) VALUES ($1, $2, $3) "
+                "ON CONFLICT (order_id) DO NOTHING",
+                order_id,
+                int(tg_id),
+                str(audio_hash),
+            )
+
+    async def get_track_unlimited(self, tg_id: int) -> Optional[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT tg_id, audio_hash, unlocked_at, tripwire_order_id, tripwire_paid_at "
+                "FROM track_unlimited WHERE tg_id = $1",
+                int(tg_id),
+            )
+        return dict(row) if row else None
+
+    async def unlock_track_unlimited(self, tg_id: int, audio_hash: str) -> Dict[str, Any]:
+        """Открыть безлимит на трек. Уже открытый (на любом треке) не меняется."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO track_unlimited (tg_id, audio_hash) VALUES ($1, $2) ON CONFLICT (tg_id) DO NOTHING",
+                int(tg_id),
+                str(audio_hash),
+            )
+            row = await conn.fetchrow(
+                "SELECT tg_id, audio_hash, unlocked_at, tripwire_order_id, tripwire_paid_at "
+                "FROM track_unlimited WHERE tg_id = $1",
+                int(tg_id),
+            )
+        return dict(row)
+
+    async def record_track_batch(
+        self, *, tg_id: int, audio_hash: str, job_id: str, videos: int, mode: str
+    ) -> None:
+        if mode not in {"free", "credits"}:
+            raise ValueError(f"unknown track batch mode: {mode!r}")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO track_batches (tg_id, audio_hash, job_id, videos, mode) VALUES ($1, $2, $3, $4, $5) "
+                "ON CONFLICT (job_id) DO NOTHING",
+                int(tg_id),
+                str(audio_hash),
+                str(job_id),
+                int(videos),
+                mode,
+            )
+
+    async def release_track_batch(self, job_id: str, videos: int) -> None:
+        """Вернуть в квоту ролики, которые не отрендерились (как возврат кредитов)."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE track_batches SET released = LEAST(videos, released + $2) WHERE job_id = $1",
+                str(job_id),
+                max(0, int(videos)),
+            )
+
+    async def drop_track_batch(self, job_id: str) -> None:
+        """Батч не ушёл в работу (ошибка постановки) — его будто не было."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM track_batches WHERE job_id = $1", str(job_id))
+
+    async def list_track_batches(self, tg_id: int, audio_hash: str) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT job_id, GREATEST(0, videos - released) AS videos, mode, created_at "
+                "FROM track_batches WHERE tg_id = $1 AND audio_hash = $2 ORDER BY created_at",
+                int(tg_id),
+                str(audio_hash),
+            )
+        return [dict(r) for r in rows]
+
+    async def last_track_batch_at(self, tg_id: int) -> Optional[datetime]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            return await conn.fetchval("SELECT MAX(created_at) FROM track_batches WHERE tg_id = $1", int(tg_id))
+
+    async def mark_funnel_action(self, tg_id: int, action: str, detail: str = "") -> bool:
+        """True — действие засчитано впервые."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "INSERT INTO funnel_actions (tg_id, action, detail) VALUES ($1, $2, $3) "
+                "ON CONFLICT (tg_id, action) DO NOTHING RETURNING 1",
+                int(tg_id),
+                str(action),
+                str(detail or ""),
+            )
+        return row is not None
+
+    async def funnel_actions(self, tg_id: int) -> Dict[str, datetime]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT action, created_at FROM funnel_actions WHERE tg_id = $1", int(tg_id))
+        return {str(r["action"]): r["created_at"] for r in rows}
+
+    async def save_video_rating(
+        self,
+        tg_id: int,
+        *,
+        video_id: str,
+        score: int,
+        job_id: str = "",
+        project_id: str = "",
+        reasons: Optional[List[str]] = None,
+        comment: str = "",
+        source: str = "web",
+    ) -> None:
+        if not 1 <= int(score) <= 10:
+            raise ValueError("score must be 1..10")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO video_ratings (tg_id, video_id, job_id, project_id, score, reasons, comment, source) "
+                "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8) "
+                "ON CONFLICT (tg_id, video_id) DO UPDATE SET score = EXCLUDED.score, "
+                "reasons = EXCLUDED.reasons, comment = EXCLUDED.comment, updated_at = NOW()",
+                int(tg_id),
+                str(video_id),
+                str(job_id or ""),
+                str(project_id or ""),
+                int(score),
+                json.dumps(list(reasons or []), ensure_ascii=False),
+                _norm_text(comment, max_len=1000),
+                str(source or "web"),
+            )
+
+    async def list_video_ratings(self, tg_id: int, video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT video_id, score, reasons, comment FROM video_ratings "
+                "WHERE tg_id = $1 AND video_id = ANY($2::TEXT[])",
+                int(tg_id),
+                [str(v) for v in video_ids],
+            )
+        out: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            reasons = r["reasons"]
+            out[str(r["video_id"])] = {
+                "score": int(r["score"]),
+                "reasons": json.loads(reasons) if isinstance(reasons, str) else list(reasons or []),
+                "comment": str(r["comment"] or ""),
+            }
+        return out
+
+    async def try_mark_reminder(self, tg_id: int, kind: str, ref: str = "") -> bool:
+        """True — напоминание с этим поводом ещё не отправлялось (и теперь отмечено)."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "INSERT INTO reminder_log (tg_id, kind, ref) VALUES ($1, $2, $3) "
+                "ON CONFLICT (tg_id, kind, ref) DO NOTHING RETURNING 1",
+                int(tg_id),
+                str(kind),
+                str(ref or ""),
+            )
+        return row is not None
+
+    async def last_reminder_at(self, tg_id: int) -> Optional[datetime]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            return await conn.fetchval("SELECT MAX(sent_at) FROM reminder_log WHERE tg_id = $1", int(tg_id))
+
+    # Напоминания про сайт (services/tg_bot_public/site_reminders.py)
+
+    async def site_handoff_reminder_rows(self, max_age_days: int = 4) -> List[Dict[str, Any]]:
+        """Последняя ссылка «на сайт» с треком у каждого человека + что было после неё.
+
+        Возраст считается в SQL: все created_at здесь — наивное UTC, а сравнивать их
+        с datetime процесса значит гадать о таймзоне сервера."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT DISTINCT ON (t.tg_id)
+                    t.tg_id, t.token_hash, t.payload, t.redeem_count,
+                    EXTRACT(EPOCH FROM NOW() - t.created_at) AS age_s,
+                    EXTRACT(EPOCH FROM NOW() - t.first_redeemed_at) AS since_open_s,
+                    (t.expires_at > NOW()) AS alive,
+                    EXISTS (
+                        SELECT 1 FROM activity_log a
+                        WHERE a.tg_id = t.tg_id AND a.created_at >= t.created_at
+                          AND a.event IN ('web_fork_bot', 'generation_started')
+                    ) AS stayed_in_bot,
+                    EXISTS (
+                        SELECT 1 FROM web_activity_log w
+                        WHERE w.tg_id = t.tg_id AND w.event = 'generation_started'
+                          AND w.created_at >= t.created_at
+                    ) AS generated_on_site
+                FROM web_handoff_tokens t
+                WHERE t.kind = 'track' AND t.created_at > NOW() - make_interval(days => $1)
+                ORDER BY t.tg_id, t.created_at DESC
+                """,
+                int(max_age_days),
+            )
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["payload"] = _jsonb_dict(r["payload"])
+            out.append(item)
+        return out
+
+    async def track_unlimited_rows(self) -> List[Dict[str, Any]]:
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT tg_id, audio_hash, unlocked_at, tripwire_paid_at FROM track_unlimited "
+                "WHERE tripwire_paid_at IS NULL"
+            )
+        return [dict(r) for r in rows]
+
+    async def idle_generation_rows(self, min_days: int = 3, max_days: int = 15) -> List[Dict[str, Any]]:
+        """Последняя генерация (бот или сайт) у тех, кто затих от min до max дней назад."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                WITH gens AS (
+                    -- только окно до max_days: более старые генерации в ответ не попадут
+                    -- никогда, а без границы каждый тик сканировал бы всю историю
+                    SELECT tg_id, created_at FROM activity_log
+                    WHERE event = 'generation_started' AND created_at > NOW() - make_interval(days => $2)
+                    UNION ALL
+                    SELECT tg_id, created_at FROM web_activity_log
+                    WHERE event = 'generation_started' AND tg_id IS NOT NULL
+                      AND created_at > NOW() - make_interval(days => $2)
+                ), last AS (
+                    SELECT tg_id, MAX(created_at) AS last_at FROM gens GROUP BY tg_id
+                )
+                SELECT tg_id, EXTRACT(EPOCH FROM NOW() - last_at) AS idle_s,
+                       to_char(last_at, 'YYYYMMDDHH24MI') AS last_ref
+                FROM last
+                WHERE last_at < NOW() - make_interval(days => $1)
+                """,
+                int(min_days),
+                int(max_days),
+            )
+        return [dict(r) for r in rows]
+
     async def count_events(self, tg_id: int, event: str) -> int:
         """How many times `event` was logged for this user (all time).
 
@@ -2706,6 +3063,8 @@ class CreditsDB:
                     clean_actor,
                     clean_order_id,
                 )
+                if package_code == TRIPWIRE_PACKAGE:
+                    await self._apply_tripwire(conn, tg_id=tg_id, order_id=clean_order_id)
                 result = dict(payment)
                 result.update(
                     {

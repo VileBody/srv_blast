@@ -4,6 +4,9 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cssZoom } from '../../lib/zoom';
+import { LimitsPopoutCard, TrackLimitBar, type PopoutVariant } from '../funnel/LimitsPopout';
+import { quotaLeft, useFunnelState, useTripwirePurchase } from '../funnel/useFunnel';
+import { funnelSeen, markFunnelSeen, useFunnelUi } from '../../stores/funnelUi';
 
 /*
  * Лимиты (Figma W19+W46 — Пул; W36+W47 — батч): кружок-индикатор рядом со счётчиком,
@@ -16,6 +19,10 @@ import { cssZoom } from '../../lib/zoom';
  *
  * Геометрия: кружок 25×25; поповер 360 r15 grad-soft-20 backdrop-blur-50, правый край =
  * правый край кружка. Строка лимита — подпись и «n из m» сверху, тонкая шкала под ними.
+ *
+ * Безлимит на трек (docs/BOT_TO_WEB_FLOW.md, раздел 5) живёт здесь же: третья строка
+ * поповера и окно у кружка, которое всплывает само один раз на каждое исчерпание —
+ * перезарядка с трипваером или «бесплатные ролики кончились» со входом в безлимит.
  */
 
 /** Донат-индикатор (Figma 758:584): кольцо whitey + дуга grad-main от 12 часов по часовой */
@@ -83,16 +90,50 @@ function LimitBar({ label, used, total }: { label: string; used: number; total: 
  * Хост затемнения — ближайший предок с `data-limits-dim` (ему нужен `relative` и r25).
  * @param offsetY отступ поповера от низа кружка (Figma W46: 13, W47: 28)
  */
-export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
+export function LimitsIndicator({
+  offsetY = 13,
+  track
+}: {
+  offsetY?: number;
+  /** трек страницы (визард — текущий, батч — трек батча): на него открывается безлимит */
+  track?: { id?: string; title?: string; projectId?: string };
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<{ host: HTMLElement; x: number; y: number } | null>(null);
   const ringRef = useRef<HTMLSpanElement>(null);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
+  const funnelQuery = useFunnelState();
+  const tripwire = useTripwirePurchase();
+  const openUnlimited = useFunnelUi((state) => state.openUnlimited);
+  const [closedKey, setClosedKey] = useState<string | null>(null);
+
+  const sub = meQuery.data?.subscription;
+  const videosTotal = sub?.creditsTotal ?? null;
+  const videosUsed = sub?.creditsUsed ?? 0;
+  const tracksTotal = sub?.tracksTotal ?? null;
+  const tracksUsed = sub?.tracksUsed ?? 0;
+  const funnel = funnelQuery.data;
+  const unlimited = funnel?.unlimited ?? null;
+  const quota = unlimited?.quota ?? null;
+  const creditsOut = videosTotal !== null && videosUsed >= videosTotal;
+
+  // Окно у кружка: перезарядка безлимита или кончились бесплатные ролики (без безлимита).
+  const popout: { variant: PopoutVariant; key: string } | null = quota && !quota.allowed && !quota.tripwire
+    ? { variant: quota.reason === 'daily_limit' ? 'daily' : 'cooldown', key: `limit:${quota.availableAt}` }
+    : funnel && !funnel.hasPaid && creditsOut && (!unlimited || (track?.id && unlimited.trackId !== track.id))
+      ? { variant: 'creditsOut', key: unlimited ? `credits-out:${track?.id}` : 'credits-out' }
+      : null;
+  const showPopout = Boolean(popout && popout.key !== closedKey && !funnelSeen(popout.key));
+  const closePopout = () => {
+    if (!popout) return;
+    markFunnelSeen(popout.key);
+    setClosedKey(popout.key);
+  };
 
   // позиция кружка внутри карточки-хоста — по ней ставим копию кружка и поповер
   useLayoutEffect(() => {
-    if (!open || !ringRef.current) { setAnchor(null); return; }
+    if ((!open && !showPopout) || !ringRef.current) { setAnchor(null); return; }
     const host = ringRef.current.closest('[data-limits-dim]') as HTMLElement | null;
     if (!host) return;
     const ring = ringRef.current.getBoundingClientRect();
@@ -103,16 +144,14 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
     // и поповер уезжал вверх-влево от кружка.
     const zoom = cssZoom(host);
     setAnchor({ host, x: (ring.left - box.left) / zoom, y: (ring.top - box.top) / zoom });
-  }, [open]);
+  }, [open, showPopout]);
 
-  const sub = meQuery.data?.subscription;
-  const videosTotal = sub?.creditsTotal ?? null;
-  const videosUsed = sub?.creditsUsed ?? 0;
-  const tracksTotal = sub?.tracksTotal ?? null;
-  const tracksUsed = sub?.tracksUsed ?? 0;
-
-  // Кружок заполняется по лимиту ВИДЕО (решение заказчика); безлимит — пустое кольцо
-  const pct = videosTotal ? videosUsed / videosTotal : 0;
+  // Кружок заполняется по лимиту ВИДЕО (решение заказчика); безлимит — пустое кольцо.
+  // Ролики кончились, а безлимит на трек открыт — кружок показывает уже его окно.
+  const window_ = quotaLeft(quota);
+  const pct = creditsOut && quota && !quota.tripwire && window_.cap
+    ? (window_.cap - window_.left) / window_.cap
+    : videosTotal ? videosUsed / videosTotal : 0;
 
   return (
     <span
@@ -132,7 +171,29 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
         <LimitRing pct={pct} />
       </button>
 
-      {open && anchor && createPortal(
+      {showPopout && popout && anchor && funnel && createPortal(
+        // ui-allow: якорь окна повторяет геометрию кружка 25×25, как у поповера ниже
+        <span className="pointer-events-none absolute z-[9] h-[25px] w-[25px] max-md:!left-[20px] max-md:right-[20px] max-md:w-auto" style={{ left: anchor.x, top: anchor.y }}>
+          <span className="absolute right-0 max-md:left-0" style={{ top: 25 + offsetY }}>
+            <LimitsPopoutCard
+              variant={popout.variant}
+              trackTitle={unlimited?.trackTitle}
+              availableAt={quota?.availableAt}
+              rules={funnel.rules}
+              onBuy={unlimited?.trackId ? () => tripwire.mutate(unlimited.trackId as string) : undefined}
+              buyPending={tripwire.isPending}
+              onUnlock={track?.id ? () => {
+                closePopout();
+                openUnlimited({ source: 'gate', trackId: track.id, trackTitle: track.title, projectId: track.projectId });
+              } : undefined}
+              onClose={closePopout}
+            />
+          </span>
+        </span>,
+        anchor.host
+      )}
+
+      {open && !showPopout && anchor && createPortal(
         <>
           <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-[6] rounded-r25 bg-[rgba(20,14,36,0.4)]" />
           <span className="pointer-events-none absolute z-[8] h-[25px] w-[25px] max-md:!left-[20px] max-md:right-[20px] max-md:w-auto" style={{ left: anchor.x, top: anchor.y }}>
@@ -144,6 +205,7 @@ export function LimitsIndicator({ offsetY = 13 }: { offsetY?: number }) {
               <span className="text-ui-20 text-text">{t('limits.title')}</span>
               <LimitBar label={t('limits.tracks')} used={tracksUsed} total={tracksTotal} />
               <LimitBar label={t('limits.videos')} used={videosUsed} total={videosTotal} />
+              {quota && <TrackLimitBar trackTitle={unlimited?.trackTitle ?? null} quota={quota} />}
             </span>
           </span>
         </>,

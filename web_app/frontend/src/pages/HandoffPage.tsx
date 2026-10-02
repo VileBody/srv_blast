@@ -9,6 +9,13 @@ import { useWizardStore } from '../stores/wizardStore';
 
 type Failure = 'expired' | 'error';
 
+/** секунды → «мм:сс:сс» (формат полей тайминга визарда, см. timingToSeconds) */
+function secondsToTiming(value: number): string {
+  const cs = Math.round(Math.max(0, value) * 100);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(Math.floor(cs / 6000))}:${pad(Math.floor((cs % 6000) / 100))}:${pad(cs % 100)}`;
+}
+
 /**
  * Ссылка «на сайт» из публичного бота: `/go/<token>`.
  *
@@ -37,6 +44,14 @@ export function HandoffPage() {
           const store = useWizardStore.getState();
           if (store.projectId !== res.projectId) store.reset(res.projectId);
           if (res.track) store.setTrack(res.track);
+          // «Докрутить на сайте»: отрезок и текст ролика из бота сразу в черновике
+          // только при первом открытии: повтор той же ссылки не затирает правки
+          if (!res.repeat && res.draft && res.draft.clipEnd > res.draft.clipStart) {
+            store.setField('timingMode', 'manual');
+            store.setField('timingFrom', secondsToTiming(res.draft.clipStart));
+            store.setField('timingTo', secondsToTiming(res.draft.clipEnd));
+            if (res.draft.lyrics) store.setField('lyrics', res.draft.lyrics);
+          }
         }
         if (res.trackError === 'tracks_limit') {
           push({ variant: 'error', title: t('handoff.tracksLimit'), text: t('handoff.tracksLimitText') });

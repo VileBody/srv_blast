@@ -22,6 +22,7 @@ import { useAsrPreview } from '../components/wizard/useAsrPreview';
 import { WizardCanvas, WizardHeaderCard } from '../components/wizard/WizardFrame';
 import { demoTrackUrl } from '../dev/demoTrack';
 import { useToast } from '../contexts/ToastContext';
+import { useFunnelUi } from '../stores/funnelUi';
 import { useWizardStore } from '../stores/wizardStore';
 import { useCombos } from '../components/wizard/montage/combos';
 import { useFxTimelineOpen } from '../components/wizard/timelineGuides';
@@ -61,6 +62,7 @@ export function WizardPage() {
   const projectId = useWizardStore((state) => state.projectId);
   const setProjectId = useWizardStore((state) => state.setProjectId);
   const state = useWizardStore();
+  const openUnlimited = useFunnelUi((ui) => ui.openUnlimited);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
   const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: api.projects });
   const wizardSessionQuery = useQuery({ queryKey: ['wizard-session'], queryFn: api.wizardSession });
@@ -190,6 +192,17 @@ export function WizardPage() {
       if (asrPending) {
         push({ variant: 'info', title: t('wizard.page.asrPendingTitle'), text: t('wizard.page.asrPendingText') });
         return;
+      }
+      // Воронка: бесплатные ролики кончились — открываем безлимит на этот трек; квота трека
+      // кончилась — обновляем лимиты, окно перезарядки всплывёт у кружка лимитов.
+      const limit = limitReached ? (error.detail as { detail?: { code?: string; unlimitedOffer?: boolean } })?.detail : undefined;
+      if (limit?.code === 'credits_exhausted' && limit.unlimitedOffer) {
+        openUnlimited({ source: 'gate', projectId: projectId ?? undefined, trackId: state.track?.id, trackTitle: state.track?.filename });
+        return;
+      }
+      if (limit?.code && ['cooldown', 'daily_limit', 'track_batch_cap'].includes(limit.code)) {
+        void queryClient.invalidateQueries({ queryKey: ['funnel-state'] });
+        void queryClient.invalidateQueries({ queryKey: ['me'] });
       }
       push({
         variant: 'error',

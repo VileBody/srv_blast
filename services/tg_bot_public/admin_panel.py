@@ -35,6 +35,8 @@ from services.orchestrator.alignment_smoke_auth import (
 )
 from services.orchestrator.windows_node_pool import normalize_windows_urls, runtime_windows_urls_key
 
+from .marketing_texts import TRIPWIRE_PAID_TEXT
+from .track_unlimited import TRIPWIRE_PACKAGE
 from .credits_db import (
     normalize_package_code as _normalize_pkg_code,
     package_video_credits,
@@ -5109,25 +5111,28 @@ def build_app(
             # Notify user as side-effect. Unlock is already committed.
             if bot_ref and bot_ref[0]:
                 try:
-                    from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-                    bal = await credits_db.get_balance(tg_id)
-                    sub_line = (
-                        f"Подписка продлена: следующее списание — {sub_extended_until[0]}.\n\n"
-                        if sub_extended_until[0] else ""
-                    )
-                    await bot_ref[0].send_message(
-                        tg_id,
-                        f"\u2705 Оплата прошла! Пакет \u00ab{pkg}\u00bb активирован.\n"
-                        f"Начислено {credits_to_add} генераций.\n\n"
-                        f"Доступно генераций: {bal}\n\n"
-                        f"{sub_line}"
-                        "Отправь трек аудио-файлом, и я соберу клип.",
-                        reply_markup=ReplyKeyboardMarkup(
-                            keyboard=[[KeyboardButton(text="Отправить трек")]],
-                            resize_keyboard=True,
-                        ),
-                    )
-                    await bot_ref[0].send_message(tg_id, "Пришли аудио в формате mp3.")
+                    if _normalize_pkg_code(str(pkg)) == TRIPWIRE_PACKAGE:
+                        await bot_ref[0].send_message(tg_id, TRIPWIRE_PAID_TEXT)
+                    else:
+                        from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+                        bal = await credits_db.get_balance(tg_id)
+                        sub_line = (
+                            f"Подписка продлена: следующее списание — {sub_extended_until[0]}.\n\n"
+                            if sub_extended_until[0] else ""
+                        )
+                        await bot_ref[0].send_message(
+                            tg_id,
+                            f"\u2705 Оплата прошла! Пакет \u00ab{pkg}\u00bb активирован.\n"
+                            f"Начислено {credits_to_add} генераций.\n\n"
+                            f"Доступно генераций: {bal}\n\n"
+                            f"{sub_line}"
+                            "Отправь трек аудио-файлом, и я соберу клип.",
+                            reply_markup=ReplyKeyboardMarkup(
+                                keyboard=[[KeyboardButton(text="Отправить трек")]],
+                                resize_keyboard=True,
+                            ),
+                        )
+                        await bot_ref[0].send_message(tg_id, "Пришли аудио в формате mp3.")
                 except Exception as e:
                     log.warning("tbank notify: failed to notify user %s: %s", tg_id, e)
 

@@ -60,6 +60,11 @@ PLANS = {
     "IMPULSE": Plan("IMPULSE", "Импульс", 29990, None, 24, "product", 365),
 }
 
+# Трипваер «безлимит на трек» (399 ₽): снимает лимиты с одного трека, роликов
+# не начисляет. Не тариф — в PLANS его нет, на странице тарифов не показывается.
+# payment_name совпадает с кодом пакета, по которому confirm_payment_once его узнаёт.
+TRIPWIRE_PLAN = Plan("TRACK399", "track399", 399, 0, 0, "product")
+
 _PAYMENT_PLAN = {
     "15": "BLAST", "бласт": "BLAST",
     "30": "GLOW", "глоу": "GLOW",
@@ -242,7 +247,11 @@ class BillingBackend:
         tracks_used = await self._db.count_user_tracks(tg_id)
         payments = await self._db.get_payments(tg_id=tg_id, limit=100)
         confirmed = next(
-            (item for item in payments if str(item.get("status") or "").upper() == "CONFIRMED"),
+            (
+                item for item in payments
+                if str(item.get("status") or "").upper() == "CONFIRMED"
+                and str(item.get("package") or "") != TRIPWIRE_PLAN.payment_name
+            ),
             None,
         )
         tier = _PAYMENT_PLAN.get(str((confirmed or {}).get("package") or "").lower(), "TRIAL")
@@ -339,6 +348,15 @@ class BillingBackend:
     async def claim_bonus(self, tg_id: int) -> dict[str, Any]:
         await self._db.claim_web_subscription_bonus(int(tg_id))
         return await self.snapshot(int(tg_id))
+
+    @property
+    def db(self):
+        """credits_db — общий с ботом слой данных (воронка сайта, app/funnel.py)."""
+        return self._db
+
+    async def balance(self, tg_id: int) -> int:
+        await self.ensure_user(int(tg_id))
+        return int(await self._db.get_balance(int(tg_id)))
 
     async def redeem_handoff(self, token: str) -> dict[str, Any] | None:
         """Ссылка «на сайт» из публичного бота: запись токена или None (протух/неизвестен)."""
@@ -462,6 +480,50 @@ class BillingBackend:
         recurrent = plan.kind == "subscription"
         if recurrent and not recurrent_accepted:
             raise BillingError("recurrent payment consent is required for BLAST")
+        return await self._init_order(
+            tg_id=tg_id,
+            plan=plan,
+            email=email,
+            idempotency_key=idempotency_key,
+            success_url=f"{SETTINGS.app_url}/app/pricing?payment=success",
+            fail_url=f"{SETTINGS.app_url}/app/pricing?payment=failed",
+        )
+
+    async def create_tripwire_order(
+        self,
+        *,
+        tg_id: int,
+        audio_hash: str,
+        return_path: str,
+        email: str,
+        idempotency_key: str,
+    ) -> dict[str, str]:
+        """Заказ трипваера на конкретный трек: после оплаты с него снимаются лимиты.
+
+        `return_path` — путь приложения, откуда купили (его проверяет схема запроса)."""
+        back = f"{SETTINGS.app_url}{return_path}"
+        return await self._init_order(
+            tg_id=tg_id,
+            plan=TRIPWIRE_PLAN,
+            email=email,
+            idempotency_key=idempotency_key,
+            success_url=f"{back}?payment=success",
+            fail_url=f"{back}?payment=failed",
+            track_hash=audio_hash,
+        )
+
+    async def _init_order(
+        self,
+        *,
+        tg_id: int,
+        plan: Plan,
+        email: str,
+        idempotency_key: str,
+        success_url: str,
+        fail_url: str,
+        track_hash: str = "",
+    ) -> dict[str, str]:
+        recurrent = plan.kind == "subscription"
         clean_key = str(idempotency_key or "").strip()
         if not clean_key:
             raise PaymentInitError(
@@ -490,6 +552,9 @@ class BillingBackend:
                 "payment idempotency key was already used for another order",
                 status_code=409,
             )
+        if track_hash:
+            # До Init в банке: оплата без привязки к треку не смогла бы снять лимиты.
+            await self._db.record_tripwire_order(order_id=order_id, tg_id=int(tg_id), audio_hash=track_hash)
         if not created:
             saved_url = str(intent.get("payment_url") or "").strip()
             if saved_url:
@@ -513,13 +578,15 @@ class BillingBackend:
                 description=(
                     f"Подписка «{plan.payment_name}»"
                     if recurrent
+                    else "Безлимит на трек"
+                    if plan is TRIPWIRE_PLAN
                     else f"Пакет «{plan.payment_name}»"
                 ),
                 email=email,
                 recurrent=recurrent,
                 customer_key=str(int(tg_id)) if recurrent else "",
-                success_url=f"{SETTINGS.app_url}/app/pricing?payment=success",
-                fail_url=f"{SETTINGS.app_url}/app/pricing?payment=failed",
+                success_url=success_url,
+                fail_url=fail_url,
             )
         except Exception as exc:
             # A transport failure is ambiguous: T-Bank may have accepted Init

@@ -70,7 +70,7 @@ class _Msg:
     def __init__(self, text=""):
         self.text = text
         self.chat = SimpleNamespace(id=CHAT)
-        self.from_user = SimpleNamespace(first_name="Лена", last_name="", username="lena_beats")
+        self.from_user = SimpleNamespace(id=CHAT, first_name="Лена", last_name="", username="lena_beats")
         self.audio = self.voice = self.document = None
         self.answers: list[tuple[str, object]] = []
 
@@ -88,6 +88,8 @@ def _settings(**over):
         s3_raw_audio_prefix="raw_audio",
         initial_credits=5,
         initial_track_credits=1,
+        generation_subscription_required=False,
+        subscription_channel="@impulsemarketing",
     )
     base.update(over)
     return SimpleNamespace(**base)
@@ -256,7 +258,7 @@ def test_audio_step_routes_to_fork_when_site_is_on():
 
 
 def test_handoff_kinds_and_token_hash():
-    assert WEB_HANDOFF_KINDS == ("track", "site")
+    assert WEB_HANDOFF_KINDS == ("track", "remix", "site")
     assert CreditsDB.hash_handoff_token("abc") == hashlib.sha256(b"abc").hexdigest()
     with pytest.raises(ValueError):
         _run(CreditsDB.__new__(CreditsDB).create_web_handoff(1, "job", {}, ttl_seconds=60))
@@ -270,3 +272,85 @@ def test_settings_reject_relative_site_url(monkeypatch):
         config.Settings(web_app_url="app.blast808.com")
     assert config.Settings(web_app_url="https://app.blast808.com").web_handoff_enabled is True
     assert config.Settings(web_app_url="").web_handoff_enabled is False
+
+
+def test_build_in_bot_reuses_the_fork_upload(tmp_path):
+    """«Собрать в боте» после развилки: тот же файл не заливаем и не хэшируем второй раз."""
+    app = _make_app()
+    st = _state_with_track(tmp_path)
+    _run(app._offer_web_fork(_Msg(), st))
+    saved = app.store.by_id[CHAT]
+    reused = app._fork_upload_for(saved, Path(saved.prepared_audio_local_path))
+    assert reused == (saved.web_handoff_audio_s3_url, hashlib.sha256(b"ID3 prepared bytes").hexdigest())
+    # переподготовленный файл (другая подпись) — уже не тот трек, зальём заново
+    Path(saved.prepared_audio_local_path).write_bytes(b"different bytes!")
+    assert app._fork_upload_for(saved, Path(saved.prepared_audio_local_path)) is None
+
+
+def test_stale_fork_link_is_reissued(tmp_path):
+    app = _make_app()
+    _run(app._offer_web_fork(_Msg(), _state_with_track(tmp_path)))
+    st = app.store.by_id[CHAT]
+    st.web_handoff_expires_at = 0.0  # ссылка протухла, пока развилка ждала
+    msg = _Msg(text="привет")
+    _run(app._handle_wait_web_fork(msg, st))
+    assert len(app.credits_db.handoffs) == 2
+    assert msg.answers[-1][1].inline_keyboard[0][0].url == "https://app.blast808.com/go/tok2"
+    assert app.credits_db.handoffs[1]["payload"]["audioS3Url"] == st.web_handoff_audio_s3_url
+
+
+def test_bot_builds_one_video_and_points_to_the_site_for_batches(monkeypatch):
+    app = _make_app()
+    shown: list[int] = []
+
+    async def _confirm(message, st):
+        shown.append(st.versions_count)
+
+    monkeypatch.setattr(app, "_show_final_confirm_after_versions", _confirm, raising=False)
+    monkeypatch.setattr(pub, "FRAME_FLOW_ENABLED", False)
+    msg = _Msg()
+    st = ChatState(chat_id=CHAT, versions_count=4)
+    _run(app._ask_versions(msg, st))
+    assert shown == [1] and msg.answers[0][0] == mt.BOT_ONE_VIDEO_NOTE
+
+
+def test_launch_waits_for_channel_subscription(monkeypatch):
+    app = _make_app(generation_subscription_required=True, subscription_channel="@impulsemarketing")
+    subscribed = {"ok": False}
+
+    async def _check(user_id):
+        return subscribed["ok"]
+
+    monkeypatch.setattr(app, "_check_subscription", _check, raising=False)
+    launched: list[bool] = []
+
+    async def _confirm(message, st, *, subscribed=False):
+        launched.append(subscribed)
+
+    msg = _Msg(text=pub.BTN_LAUNCH)
+    st = ChatState(chat_id=CHAT)
+    _run(pub.BlastBotApp._handle_wait_confirm(app, msg, st))
+    assert app.store.by_id[CHAT].stage == pub.STAGE_WAIT_GEN_SUBSCRIPTION
+    assert "@impulsemarketing" in msg.answers[-1][0]
+
+    monkeypatch.setattr(app, "_handle_wait_confirm", _confirm, raising=False)
+    not_yet = _Msg(text=pub.BTN_SUBSCRIBED)
+    _run(app._handle_wait_gen_subscription(not_yet, app.store.by_id[CHAT]))
+    assert launched == [] and "Пока не видим" in not_yet.answers[-1][0]
+    subscribed["ok"] = True
+    _run(app._handle_wait_gen_subscription(_Msg(text=pub.BTN_SUBSCRIBED), app.store.by_id[CHAT]))
+    assert launched == [True]
+
+
+def test_after_pitch_and_low_rating_the_bot_leads_to_the_site_not_to_a_friend_invite():
+    app = _make_app()
+    st = ChatState(chat_id=CHAT, web_remix_payload={"audioS3Url": "s3://raw/x.mp3", "audioHash": "h", "draft": {"clipStart": 1.0, "clipEnd": 9.0, "lyrics": "l"}})
+    msg = _Msg()
+    _run(app._show_referral_ask(msg, st))
+    assert msg.answers[-1][0] == mt.SITE_CTA_AFTER_PITCH
+    assert app.credits_db.handoffs[-1]["kind"] == "remix"
+    assert app.store.by_id[CHAT].stage == pub.STAGE_IDLE
+    low = _Msg(text=pub.BTN_RATE_LOW)
+    _run(app._handle_rate_video(low, ChatState(chat_id=CHAT)))
+    assert low.answers[-1][0] == mt.SITE_CTA_AFTER_LOW
+    assert app.credits_db.handoffs[-1]["kind"] == "site"  # трек неизвестен — просто в аккаунт

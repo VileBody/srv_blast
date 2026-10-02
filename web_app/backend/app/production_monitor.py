@@ -65,7 +65,13 @@ async def sync_job(job: dict) -> None:
             if failed:
                 if not chat_id:
                     raise RuntimeError(f"refund owner has no Telegram chat: job={job['id']}")
-                await get_billing().refund(int(chat_id), job["id"], failed)
+                if job.get("freeUnlimited"):
+                    # Батч по безлимиту трека кредитов не брал — возвращаем квоту трека.
+                    from . import funnel
+
+                    await funnel.repo().release_track_batch(job["id"], failed)
+                else:
+                    await get_billing().refund(int(chat_id), job["id"], failed)
             job["failedCreditsRefunded"] = failed
         await run_in_threadpool(persistence.save_job, job["id"])
         if job.get("productionNotifications"):
