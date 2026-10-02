@@ -1616,20 +1616,39 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     const beat = right ? beats.find((b) => b > drop + 0.01) : [...beats].reverse().find((b) => b < drop - 0.01);
     commitDrop(beat ?? drop + (right ? 1 : -1) / FPS);
   };
-  const tool = (key: string, icon: string, label: string, run: () => void, opts: { disabled?: boolean; danger?: boolean } = {}) => (
-    <button key={key} type="button" className={`mm-tool${opts.danger ? ' danger' : ''}`} disabled={opts.disabled} onClick={run}>
+  /*
+   * Недоступный инструмент не молчит: вместо мёртвой серой кнопки — тап показывает причину.
+   * off — эта причина (aria-disabled, кнопка остаётся в фокусе и читается скринридером).
+   */
+  const tool = (key: string, icon: string, label: string, run: () => void, opts: { off?: string | null; danger?: boolean } = {}) => (
+    <button key={key} type="button" className={`mm-tool${opts.danger ? ' danger' : ''}`} aria-disabled={opts.off ? true : undefined} onClick={opts.off ? () => say(opts.off!) : run}>
       <Glyph name={icon} size={22} /><span className="tx">{label}</span>
     </button>
   );
+  // замена и перемешивание кадров идут через док ролика: без него (нет раскадровки или она ещё
+  // собирается под новые склейки) тап раньше ничего не делал
+  const dockReady = Boolean(sbVideo) && clips.length === shots && !recipe.loading;
+  const srcOff = dockReady ? null
+    : sbVideo ? 'Кадры ещё подбираются — подожди пару секунд'
+      : combo.bgKey?.startsWith('photo:') ? 'Фото подберутся при генерации'
+        : combo.bgKey?.startsWith('upload:') ? 'Своё видео пойдёт клипами встык — кадры не заменяются'
+          : combo.bgKey === '__color__' ? 'У цвета нет кадров-клипов'
+            : 'Кадры этого ролика подберутся при генерации';
+  const transOff = staticColor ? 'У статичного цвета нет склеек — переход на нём не встанет'
+    : recipe.loading ? 'Склейки ещё считаются — подожди пару секунд'
+      : !cuts.length ? 'В ролике нет склеек' : null;
+  const hookOff = combo.hookAllowed ? null : 'Хук ставится только на вертикальное видео — на фото, цвете и 16:9 его нет';
+  const frameOff = combo.vertical ? null : 'Рамка ставится только на вертикальное видео — на 16:9 её обрезало бы';
+  const allTool = (run: () => void, count = total) => (count > 1 ? [tool('every', 'grid', `Во все ${count}`, run)] : []);
   const tools = (() => {
     if (!sel) {
       return [
-        tool('src', 'reroll', 'Кадр', () => { if (!sbVideo) { say('Кадры этого ролика подберутся при генерации'); return; } setSel({ type: 'frame', i: fNow }); askDock('edit'); }, { disabled: !sbVideo }),
-        tool('trans', 't_snap', 'Переход', () => { const k = nearestCut(); if (k < 0) { say('В ролике нет склеек'); return; } setSel({ type: 'cut', i: k }); setSheet('trans'); }, { disabled: staticColor }),
+        tool('src', 'reroll', 'Кадр', () => { setSel({ type: 'frame', i: fNow }); askDock('edit'); }, { off: srcOff }),
+        tool('trans', 't_snap', 'Переход', () => { setSel({ type: 'cut', i: Math.max(0, nearestCut()) }); setSheet('trans'); }, { off: transOff }),
         tool('style', 'crystal', 'Стиль', () => setSheet('style')),
-        tool('hook', 'effects', 'Хук', () => setSheet('hook'), { disabled: !combo.hookAllowed }),
+        tool('hook', 'effects', 'Хук', () => setSheet('hook'), { off: hookOff }),
         tool('text', 'text', 'Текст', () => setSheet('text')),
-        tool('frame', 'frames', 'Рамка', () => setSheet('frame'), { disabled: !combo.vertical }),
+        tool('frame', 'frames', 'Рамка', () => setSheet('frame'), { off: frameOff }),
         tool('pace', 'audio', 'Темп', () => setSheet('pace')),
         tool('grid', 'grid', 'Все ролики', () => { setView('grid'); setSel(null); })
       ];
@@ -1638,8 +1657,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     if (sel.type === 'frame') {
       const i = sel.i;
       return [back,
-        tool('re', 'reroll', 'Заменить', () => askDock('edit'), { disabled: !sbVideo }),
-        tool('mix', 'chain', 'Перемешать', () => askDock('shuffle'), { disabled: !sbVideo }),
+        tool('re', 'reroll', 'Заменить', () => askDock('edit'), { off: srcOff }),
+        tool('mix', 'chain', 'Перемешать', () => askDock('shuffle'), { off: srcOff }),
         ...(srcPins[i] ? [tool('unpin', 'lock', 'Открепить', () => { unpin(i); say(`Кадр ${i + 1} откреплён`); })] : []),
         ...(i < shots - 1 && !staticColor ? [tool('tr', 't_snap', 'Переход', () => { setSel({ type: 'cut', i }); setSheet('trans'); })] : []),
         tool('st', 'crystal', 'Стиль', () => setSheet('style'))];
@@ -1649,21 +1668,26 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
       return [back,
         tool('tr', 't_snap', 'Переход', () => setSheet('trans')),
         tool('all', 'chain', 'Ко всем', () => setTransitionAll(transitionAt(i))),
-        tool('off', 't_none', 'Убрать', () => { setTransition(i, NO_GLUE); say(`Склейка ${i + 1}: без перехода`); }, { disabled: transitionAt(i) === NO_GLUE })];
+        ...allTool(() => cutToAll(i)),
+        tool('off', 't_none', 'Убрать', () => { setTransition(i, NO_GLUE); say(`Склейка ${i + 1}: без перехода`); }, { off: transitionAt(i) === NO_GLUE ? 'На этой склейке и так без перехода' : null })];
     }
     if (sel.type === 'style') {
-      return [back, tool('re', 'crystal', 'Заменить', () => setSheet('style')), tool('del', 'trash', 'Удалить', del, { danger: true })];
+      const s = styles.find((x) => x.uid === sel.uid);
+      return [back, tool('re', 'crystal', 'Заменить', () => setSheet('style')),
+        ...(s ? [tool('whole', 'film', 'На весь', () => styleWhole(s)), ...allTool(() => styleToAll(s))] : []),
+        tool('del', 'trash', 'Удалить', del, { danger: true })];
     }
     if (sel.type === 'hook') {
       const slow = kind === 'effects' && config.effectHook === 'Слоу-шаттер';
       const ext = (config.effectHookExtend ?? '') as SlowExtend;
       const nextExt = SLOW_EXTENDS[(SLOW_EXTENDS.findIndex(([o]) => o === ext) + 1) % SLOW_EXTENDS.length];
       return [back,
-        tool('l', 'back', 'Бит назад', () => hookToBeat(false), { disabled: drop === null }),
-        tool('r', 'fwd', 'Бит вперёд', () => hookToBeat(true), { disabled: drop === null }),
+        tool('l', 'back', 'Бит назад', () => hookToBeat(false), { off: drop === null ? 'Сначала выбери дроп на шаге FX' : null }),
+        tool('r', 'fwd', 'Бит вперёд', () => hookToBeat(true), { off: drop === null ? 'Сначала выбери дроп на шаге FX' : null }),
         tool('re', 'effects', 'Сменить', () => setSheet('hook')),
         ...(slow ? [tool('ext', 'slowshutter', nextExt[1], () => setSlowExtend(nextExt[0]))] : []),
-        tool('del', 'trash', 'Удалить', del, { danger: true, disabled: kind === 'none' })];
+        ...(activeHookLabel ? allTool(hookToAll, hookIdx.length) : []),
+        tool('del', 'trash', 'Удалить', del, { danger: true, off: kind === 'none' ? 'У ролика нет хука' : null })];
     }
     const i = sel.i; const w = subs[i];
     return [back,
@@ -1723,6 +1747,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
       <section ref={tlRef} className="mm-tl" aria-label="Таймлайн">
         <div ref={scrollRef} className="fxt-scroll mm-scroll" onScroll={onPhoneScroll}>{canvas}</div>
         <i className="mm-playhead" aria-hidden="true" />
+        {/* на телефоне подсказки дорожек скрыты — загрузку и сбой склеек показываем над таймлайном */}
+        {recipe.loading && <div className="mm-tlmsg" role="status"><span className="spinner" aria-hidden="true" /><span className="tx">Считаем склейки по темпу трека…</span></div>}
+        {recipe.error && !recipe.loading && <div className="mm-tlmsg err" role="alert"><span className="tx">Не удалось посчитать склейки</span><button type="button" className="fxt-pill" onClick={recipe.retry}><span className="tx">Повторить</span></button></div>}
       </section>
       {editK !== null
         ? <div ref={setReplaceSlot} className="mm-bar mm-replace-slot" />
@@ -1760,9 +1787,18 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
               </div>
             ) : (
               <>
-                {sheet === 'trans' && sel?.type === 'cut' && cuts.length > 1 && (
-                  <button type="button" className="fxt-pill mm-allcuts" onClick={() => setTransitionAll(transitionAt(sel.i))}><span className="tx">«{transitionAt(sel.i)}» — на все склейки</span></button>
+                {/* действия выделенного — те же, что в строке выделения на десктопе */}
+                {sheet === 'trans' && sel?.type === 'cut' && (
+                  <div className="mm-sheet-acts">
+                    {cuts.length > 1 && <button type="button" className="fxt-pill" onClick={() => setTransitionAll(transitionAt(sel.i))}><span className="tx">«{transitionAt(sel.i)}» — на все склейки</span></button>}
+                    {allPill(() => cutToAll(sel.i))}
+                  </div>
                 )}
+                {sheet === 'style' && sel?.type === 'style' && (() => {
+                  const s = styles.find((x) => x.uid === sel.uid);
+                  return s ? <div className="mm-sheet-acts"><button type="button" className="fxt-pill" onClick={() => styleWhole(s)}><span className="tx">На весь отрывок</span></button>{allPill(() => styleToAll(s))}</div> : null;
+                })()}
+                {sheet === 'hook' && activeHookLabel && hookIdx.length > 1 && <div className="mm-sheet-acts">{allPill(hookToAll, hookIdx.length)}</div>}
                 <Library tab={sheet} setTab={(k) => setSheet(k === 'src' ? null : k)} open={open} setOpen={toggleOpen} used={used} activeHookKind={kind}
                   subStyle={vfx.sub} subPreviews={subPreviews} onPickSub={setSub} textCfg={<SubtitleTextCustomization guideTargetRef={cfgRef} />}
                   onAdd={sheetAdd} onDragStart={() => undefined} tapAdd
