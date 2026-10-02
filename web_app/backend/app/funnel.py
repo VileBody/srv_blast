@@ -341,7 +341,7 @@ async def unlock(tg_id: int, audio_hash: str) -> dict[str, Any]:
     r = repo()
     # Воронка конверсионная: платящим безлимит не открываем (у них тариф).
     if await r.has_paid(int(tg_id)):
-        raise FunnelError("unlimited_paid", "Безлимит на трек — для бесплатного тарифа.", 409)
+        raise FunnelError("unlimited_paid", "Безлимит на трек открывается только на бесплатном тарифе.", 409)
     actions = await r.funnel_actions(int(tg_id))
     missing = [a for a in UNLOCK_ACTIONS if a not in actions]
     if missing:
