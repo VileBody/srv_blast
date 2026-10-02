@@ -459,7 +459,12 @@
       "lockedCut": "Select a fragment on the waveform. Then type the lines sung in it here.",
       "undoText": "The fragment moved, so the lyrics were cleared.",
       "undo": "Undo",
-      "hintFull": "Write it the way it is sung, one line at a time."
+      "hintFull": "Write it the way it is sung, one line at a time.",
+      "asrRetry": "Retry recognition",
+      "asrRetryTip": "Retry recognition: lay the words out on the track again",
+      "asrRetryBusy": "Recognition is already running",
+      "asrResetTip": "Reset edits: restore timings and focus from recognition",
+      "asrStartFailed": "Could not start recognition"
     },
     "bg": {
       "heading": "Choose background",

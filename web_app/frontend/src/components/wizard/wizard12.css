@@ -784,3 +784,11 @@
 .w12 .w12-drop-clock { min-width: 3.4em; font-variant-numeric: tabular-nums; transform: translateY(1px); }
 .w12 .w12-drop-left { font-size: 13px; line-height: 18px; color: var(--w12-text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
 @media (max-width: 767px) { .w12 .w12-drop-left { display: none; } }
+/* «Проверка субтитров»: действия иконками с подсказкой по ховеру и фокусу (сброс правок, повтор распознавания) */
+.w12 .w12-stl-acts { display: inline-flex; align-items: center; gap: 4px; }
+.w12 .w12-stl-act { position: relative; display: inline-flex; }
+.w12 .w12-stl-act .w12-icon-btn { width: 32px; height: 32px; border-radius: 10px; color: var(--w12-text-2); }
+.w12 .w12-stl-act .w12-icon-btn svg.w12-i { width: 16px; height: 16px; }
+.w12 .w12-stl-act .w12-icon-btn:disabled { opacity: .4; background: none; color: var(--w12-text-2); }
+.w12 .w12-stl-act-tip { position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; padding: 6px 10px; border-radius: 10px; background: var(--w12-field-2); border: 1px solid var(--w12-line-2); font-size: 12px; line-height: 16px; color: var(--w12-text); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
+.w12 .w12-stl-act:hover .w12-stl-act-tip, .w12 .w12-stl-act:focus-within .w12-stl-act-tip { opacity: 1; transition-delay: .2s; }

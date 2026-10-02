@@ -1,13 +1,14 @@
 import type React from 'react';
-import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent, ReactNode, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { cssZoom } from '../../lib/zoom';
-import { PAUSE, PLAY, Svg, W12 } from './WizardFrame';
+import { PAUSE, PLAY, Svg } from './WizardFrame';
 import { AsrWord, useWizardStore } from '../../stores/wizardStore';
-import { usePlaybackUrl } from './useFragmentAudio';
+import { timingToSeconds, usePlaybackUrl } from './useFragmentAudio';
+import { retryAsrPreview, useAsrRun } from './useAsrPreview';
 import { peakLevels, useTrackPeaks } from './trackPeaks';
 import { useSubtitleClock } from '../../lib/subtitleClock';
 
@@ -82,6 +83,24 @@ type Drag = {
   moved: boolean;
 };
 
+/* Глифы действий шага: «вернуть» — стрелка назад, «повторить» — круговая по часовой.
+   Общий W12.reset похож на обе сразу — по нему было не понять, что сделает кнопка. */
+const UNDO_GLYPH = <path d="M9 14 4.5 9.5 9 5M4.5 9.5h10a5 5 0 0 1 0 10H11" />;
+const RETRY_GLYPH = <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5v4h-4" />;
+
+/** Иконка-кнопка с подсказкой по ховеру и фокусу (тот же приём, что у «?» в заголовке). */
+function TimelineAction({ label, tip, icon, disabled, onClick }: { label: string; tip: string; icon: ReactNode; disabled: boolean; onClick: () => void }) {
+  const tipId = useId();
+  return (
+    <span className="w12-stl-act">
+      <button type="button" className="w12-icon-btn" aria-label={label} aria-describedby={tipId} disabled={disabled} onClick={onClick}>
+        <Svg>{icon}</Svg>
+      </button>
+      <span role="tooltip" id={tipId} className="w12-stl-act-tip">{tip}</span>
+    </span>
+  );
+}
+
 function TimelineNote({ eyebrow, text }: { eyebrow: string; text: string }) {
   return (
     <div className="w12-stl-note">
@@ -99,6 +118,11 @@ export function SubtitleTimeline() {
   const setAsrWord = useWizardStore((state) => state.setAsrWord);
   const toggleAsrFocus = useWizardStore((state) => state.toggleAsrFocus);
   const resetAsrEdits = useWizardStore((state) => state.resetAsrEdits);
+  const asrRun = useAsrRun();
+  // Повтор нельзя, пока распознавание идёт (в том числе пока сам start ещё не ответил)
+  const asrRunning = asrRun.starting || asr.status === 'QUEUED' || asr.status === 'RUNNING';
+  // Сбой start — не FAILED с бэка, а упавший запрос: без явной строки он был бы немым
+  const asrFailed = asr.status === 'FAILED' || asrRun.startFailed;
 
   const clipStart = asr.clipStart ?? 0;
   const clipEnd = asr.clipEnd ?? clipStart + 1;
@@ -108,12 +132,19 @@ export function SubtitleTimeline() {
   const [laneW, setLaneW] = useState(0);
 
   // --- сетка битов: bpm и якорь (лучший дроп приснапан к биту) — из того же /hook/analyze, что у FX
+  // Запрос один в один как на шаге FX (HookPanel): тот же ключ, гейт и staleTime — кэш общий,
+  // анализ трека не гоняется дважды. Раньше сюда уходили тайминги вместо trackId, бэк
+  // отвечал NEEDS_CLIP с bpm 0, и сетка битов не появлялась никогда.
   const timingFrom = useWizardStore((state) => state.timingFrom);
   const timingTo = useWizardStore((state) => state.timingTo);
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
+  const clipFromS = timingToSeconds(timingFrom);
+  const clipToS = timingToSeconds(timingTo);
+  const clipReady = clipFromS !== null && clipToS !== null && clipToS > clipFromS;
   const dropsQuery = useQuery({
-    queryKey: ['drops', timingFrom, timingTo],
-    queryFn: () => api.drops(timingFrom, timingTo),
-    enabled: Boolean(timingFrom && timingTo),
+    queryKey: ['drops', track?.id, timingFrom, timingTo],
+    queryFn: () => api.drops(track!.id, timingFrom, timingTo),
+    enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops) && Boolean(track) && clipReady,
     staleTime: 5 * 60_000
   });
   const beats = useMemo(() => {
@@ -202,6 +233,8 @@ export function SubtitleTimeline() {
 
   // --- плеер отрывка ---
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  /** отложенный до метаданных сик: один на плеер, иначе клики копят слушатели */
+  const pendingSeekRef = useRef<(() => void) | null>(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(clipStart);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -226,14 +259,22 @@ export function SubtitleTimeline() {
     el.onended = () => setPlaying(false);
     el.oncanplay = () => setAudioReady(true);
     audioRef.current = el;
-    return () => { el.pause(); if (audioRef.current === el) audioRef.current = null; };
+    return () => {
+      el.pause();
+      // отложенный сик со своим play() сработал бы после ухода с экрана — призрачный звук
+      if (pendingSeekRef.current) el.removeEventListener('loadedmetadata', pendingSeekRef.current);
+      pendingSeekRef.current = null;
+      if (audioRef.current === el) audioRef.current = null;
+    };
   }, [url, clipStart]);
 
   /** сик с учётом того, что до метаданных браузер его молча игнорирует */
   const seekEl = (el: HTMLAudioElement, sec: number, then?: () => void) => {
-    const run = () => { el.currentTime = sec; then?.(); };
-    if (el.readyState >= 1) run();
-    else el.addEventListener('loadedmetadata', run, { once: true });
+    const run = () => { pendingSeekRef.current = null; el.currentTime = sec; then?.(); };
+    if (el.readyState >= 1) { run(); return; }
+    if (pendingSeekRef.current) el.removeEventListener('loadedmetadata', pendingSeekRef.current);
+    pendingSeekRef.current = run;
+    el.addEventListener('loadedmetadata', run, { once: true });
   };
 
   const seek = (sec: number) => {
@@ -434,10 +475,17 @@ export function SubtitleTimeline() {
           </span>
         </h2>
         <div className="w12-side">
-          {asr.status === 'FAILED' && <span className="w12-stl-failed">{t('wizard.subs.timeline.failed')}</span>}
-          <button type="button" className="w12-ghost" onClick={resetAsrEdits} disabled={!asr.edited}>
-            <Svg>{W12.reset}</Svg><span className="w12-l">{t('wizard.subs.timeline.reset')}</span>
-          </button>
+          {asrFailed && !asrRunning && <span className="w12-stl-failed">{t('wizard.subs.timeline.failed')}</span>}
+          <span className="w12-stl-acts">
+            <TimelineAction label={t('wizard.subs.timeline.reset')} tip={t('wizard.text.asrResetTip')} icon={UNDO_GLYPH} disabled={!asr.edited} onClick={resetAsrEdits} />
+            <TimelineAction
+              label={t('wizard.text.asrRetry')}
+              tip={asrRunning ? t('wizard.text.asrRetryBusy') : t('wizard.text.asrRetryTip')}
+              icon={RETRY_GLYPH}
+              disabled={asrRunning || !asrRun.inputsReady}
+              onClick={retryAsrPreview}
+            />
+          </span>
         </div>
       </div>
 
@@ -472,9 +520,16 @@ export function SubtitleTimeline() {
           >
             {!ready ? (
               <div className="w12-stl-empty">
-                {asr.status === 'FAILED' ? (asr.error || t('wizard.subs.timeline.failed'))
-                  : asr.status === 'IDLE' ? t('wizard.subs.timeline.idleHint')
-                    : <><span className="spinner" aria-hidden="true" />{t('wizard.subs.timeline.runningHint')}</>}
+                {asrRunning ? <><span className="spinner" aria-hidden="true" />{t('wizard.subs.timeline.runningHint')}</>
+                  : asrFailed ? (
+                    <>
+                      <span>{asr.status === 'FAILED' ? (asr.error || t('wizard.subs.timeline.failed')) : t('wizard.text.asrStartFailed')}</span>
+                      {/* из сбоя есть выход прямо здесь: раньше FAILED был тупиком до смены вводных */}
+                      <button type="button" className="w12-small-btn" disabled={!asrRun.inputsReady} onPointerDown={(e) => e.stopPropagation()} onClick={retryAsrPreview}>
+                        <span className="w12-l">{t('wizard.text.asrRetry')}</span>
+                      </button>
+                    </>
+                  ) : t('wizard.subs.timeline.idleHint')}
               </div>
             ) : (
               <div className="w12-stl-canvas" style={{ width }}>
