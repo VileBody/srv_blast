@@ -1,11 +1,12 @@
 import { KeyboardEvent, PointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { AUDIO_FILE_ACCEPT, isAudioFile } from '../../lib/mediaFiles';
 import { useToast } from '../../contexts/ToastContext';
 import { useWizardStore } from '../../stores/wizardStore';
+import { ActionBar, Button, Dialog } from '../ui/kit';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss } from '../guidance/useGuideDismiss';
 import { formatClock, formatSeconds, parseClock, snapTenth, SEGMENT_SECONDS, toStoreTiming } from './timing';
@@ -40,6 +41,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
   const setField = useWizardStore((state) => state.setField);
   const projectId = useWizardStore((state) => state.projectId);
   const reset = useWizardStore((state) => state.reset);
+  const queryClient = useQueryClient();
   const tried = useTried(1);
   const fileInput = useRef<HTMLInputElement>(null);
   const cutRef = useRef<HTMLDivElement>(null);
@@ -77,6 +79,25 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
         action: limitReached ? { label: t('wizard.track.limitCta'), href: '/app/pricing' } : undefined
       });
     }
+  });
+  /*
+   * «Сбросить» стирает и серверный черновик: иначе после перезагрузки restoreSession
+   * подтянул бы старый трек и выбор обратно (локально пусто — значит, берётся сервер).
+   * Сначала пишем пустой черновик, и только после удачной записи чистим локально —
+   * при сбое ничего не теряем и говорим об этом.
+   */
+  const [confirmReset, setConfirmReset] = useState(false);
+  const resetDraft = useMutation({
+    mutationFn: () => api.saveWizardSession({ projectId, stage: 1, data: {} }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['wizard-session'], (old: object | undefined) => ({ ...(old ?? {}), session: data.session }));
+      stop();
+      setBlobUrl(null);
+      useLyricsUndo.getState().drop();
+      reset(projectId);
+      setConfirmReset(false);
+    },
+    onError: () => push({ variant: 'error', title: t('wizard.track.resetFail'), text: t('wizard.page.saveFailText') })
   });
   const takeFile = (file?: File | null) => {
     if (!file) return;
@@ -261,6 +282,19 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
 
   return (
     <>
+      <Dialog
+        open={confirmReset}
+        title={t('wizard.track.resetTitle')}
+        onClose={() => { if (!resetDraft.isPending) setConfirmReset(false); }}
+        footer={(
+          <ActionBar>
+            <Button variant="ghost" disabled={resetDraft.isPending} onClick={() => setConfirmReset(false)}>{t('wizard.track.resetCancel')}</Button>
+            <Button variant="primary" loading={resetDraft.isPending} disabled={resetDraft.isPending} onClick={() => resetDraft.mutate()}>{t('wizard.track.resetApply')}</Button>
+          </ActionBar>
+        )}
+      >
+        <p className="text-ui-16 text-text-80">{t('wizard.track.resetText')}</p>
+      </Dialog>
       {/* ── трек ── */}
       <div className="w12-sec">
         <div className="w12-sec-head">
@@ -268,7 +302,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
           <div className="w12-side">
             <span>{creditsLeft === null ? t('wizard.track.availableUnlimited') : t('wizard.track.available', { count: creditsLeft })}</span>
             {track && (
-              <button type="button" className="w12-ghost" onClick={() => { stop(); setBlobUrl(null); useLyricsUndo.getState().drop(); reset(projectId); }}>
+              <button type="button" className="w12-ghost" onClick={() => setConfirmReset(true)}>
                 <Svg>{W12.reset}</Svg><span className="w12-l">{t('wizard.track.reset')}</span>
               </button>
             )}
