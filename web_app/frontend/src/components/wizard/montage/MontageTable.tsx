@@ -8,8 +8,8 @@ import { HookConfig, HookKind, MontageVideo, TimelinePace, TimelineRecipe, Timel
 import { KANT_STYLES, styleIdOf } from '../../../lib/subtitleText';
 import { EFFECT_HOOKS, MOTIONS, NO_GLUE, OBJECTS, THOUGHTS, previewIdFor } from '../hookCatalog';
 import { PACES, useRecipeCuts } from '../storyboardData';
-import { secondsToDropTime, usePlaybackUrl, useWaveSourceUrl } from '../useFragmentAudio';
-import { useSegmentWave } from './segmentWave';
+import { secondsToDropTime, usePlaybackUrl } from '../useFragmentAudio';
+import { peakLevels, useTrackPeaks } from '../trackPeaks';
 import { usePhone } from '../../../lib/usePhone';
 import { SubtitleTextCustomization } from '../SubtitlesPanel';
 import { SubtitleCanvas, type SubtitleCanvasProps } from '../SubtitleCanvas';
@@ -233,7 +233,10 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
         {Array.from({ length: shots }, (_, i) => {
           const frame = frames[i];
           const visible = i === fNow || (inTr && i === fNow - 1);
-          if (!visible) return null;
+          // следующий кадр уже на странице (невидимый): к склейке его клип подгружен
+          const ahead = i === fNow + 1;
+          if (!visible && !ahead) return null;
+          if (ahead && !visible) return frame ? <FrameView key={`${frame.id}:${i}`} frame={frame} t={t} at={0} playing={false} className="shot" style={{ zIndex: 0, opacity: 0 }} /> : null;
           const style = { zIndex: i === fNow ? 2 : 1, ...shotStyle(i) };
           if (!frame) return <div key={`ph${i}`} className="fxt-ph" style={{ ...style, background: `linear-gradient(145deg, hsl(${(i * 53 + 260) % 360} 45% 22%), hsl(${(i * 53 + 305) % 360} 35% 10%))` }}><span>КАДР {pad(i + 1)}</span></div>;
           return <FrameView key={`${frame.id}:${i}`} frame={frame} t={t} at={t - (bounds[i] ?? 0)} playing={playing && i === fNow} className="shot on" style={style} />;
@@ -892,8 +895,10 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
 
   /* ── звук отрывка ── */
   const audioUrl = usePlaybackUrl(track);
-  // волна отрывка на дорожке «Биты»: ~24 столбика в секунду, при зуме они растягиваются
-  const wavePeaksSeg = useSegmentWave(useWaveSourceUrl(track), start, start + dur, Math.max(32, Math.round(dur * 24)));
+  // волна отрывка на дорожке «Биты»: громкость с сервера (трек не качается ради неё отдельно),
+  // ~20 столбиков в секунду, при зуме они растягиваются
+  const trackPeaks = useTrackPeaks(track);
+  const wavePeaksSeg = useMemo(() => (trackPeaks ? peakLevels(trackPeaks, start, start + dur, Math.max(32, Math.round(dur * 20))) : null), [trackPeaks, start, dur]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   useEffect(() => {
     if (!audioUrl) return undefined;
@@ -908,6 +913,10 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     if (playing) { audio.currentTime = start + tRef.current; void audio.play().catch(() => undefined); } else audio.pause();
   }, [playing, start]);
 
+  // звук ещё качается: время стоит, на кнопке плея — загрузка (а не «мёртвая» кнопка)
+  const [buffering, setBuffering] = useState(false);
+  const bufRef = useRef(false);
+
   /* ── транспорт: «Подряд» — в конце ролика играет следующий, весь батч без кликов ── */
   const indexRef = useRef(index);
   indexRef.current = index;
@@ -916,6 +925,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
     let raf = 0; let last = 0;
     const tick = (ts: number) => {
       const audio = audioRef.current;
+      const waiting = Boolean(audio && !audio.paused && audio.readyState < 3);
+      if (waiting !== bufRef.current) { bufRef.current = waiting; setBuffering(waiting); }
+      if (waiting) { last = ts; raf = requestAnimationFrame(tick); return; }
       let next: number;
       if (audio && !audio.paused && audio.readyState >= 2) next = audio.currentTime - start;
       else { const dt = last ? (ts - last) / 1000 : 0; next = tRef.current + dt; }
@@ -933,7 +945,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); if (bufRef.current) { bufRef.current = false; setBuffering(false); } };
   }, [playing, dur, start, chain, view, total, onIndex, say]);
 
   /* ── геометрия ── */
@@ -1561,7 +1573,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
       </section>
       <div className="mm-transport">
         <span className="mm-time num"><b>{tc(t)}</b><span>&nbsp;/ {tc(dur)}</span></span>
-        <button type="button" className="mm-play" aria-label={playing ? 'Пауза' : 'Воспроизвести'} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}><Glyph name={playing ? 'pause' : 'play'} size={22} /></button>
+        <button type="button" className="mm-play" aria-label={buffering ? 'Загружается' : playing ? 'Пауза' : 'Воспроизвести'} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>{buffering ? <span className="spinner" aria-hidden="true" /> : <Glyph name={playing ? 'pause' : 'play'} size={22} />}</button>
         <div className="mm-hist">
           <button type="button" className="mm-ic" aria-label="Отменить" disabled={!past.current.length} onClick={undo}><Glyph name="undo" size={20} /></button>
           <button type="button" className="mm-ic" aria-label="Вернуть" disabled={!future.current.length} onClick={redo}><Glyph name="redo" size={20} /></button>
@@ -1689,8 +1701,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate }: { index: n
           <section className="fxt-panel fxt-pv" aria-label="Превью">
             <Stage frames={clips} bounds={bounds} t={t} playing={playing} fx={{ transitionAt, styles, hookKind: kind, hookLabel: activeHookLabel, hookRange, frameUrl: frameUrlOf(vfx.frame) }} sub={subFor(combo)} w={stageSize.w} h={stageSize.h}>
               <div className="fxt-chip"><Glyph name="film" size={12} /><span className="tx">Ролик {index + 1} из {total} · {combo.bgLabel}</span></div>
-              {editK === null && <button type="button" className="fxt-play" aria-label={playing ? 'Пауза' : 'Воспроизвести'} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
-                <Glyph name={playing ? 'pause' : 'play'} size={20} />
+              {editK === null && <button type="button" className="fxt-play" aria-label={buffering ? 'Загружается' : playing ? 'Пауза' : 'Воспроизвести'} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
+                {buffering ? <span className="spinner" aria-hidden="true" /> : <Glyph name={playing ? 'pause' : 'play'} size={20} />}
               </button>}
               {sbVideo && clips.length === shots && (
                 <FrameDock combo={combo} video={sbVideo} frames={clips} bounds={bounds} k={editK ?? fNow} drop={drop} dockRef={dockRef}

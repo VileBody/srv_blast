@@ -141,6 +141,10 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   const [t, setT] = useState(0.4);
   const tRef = useRef(0.4);
   const [playing, setPlaying] = useState(true);
+  // звук ещё качается: время стоит (иначе картинка убегала вперёд без музыки и потом
+  // дёргалась назад), на кнопке — загрузка вместо «мёртвого» плея
+  const [buffering, setBuffering] = useState(false);
+  const bufRef = useRef(false);
   const [edit, setEdit] = useState<null | { k: number; orig: StoryboardVideo; candidates: StoryboardCandidate[]; pos: number; loading: boolean }>(null);
   useEffect(() => { setEdit(null); tRef.current = 0.4; setT(0.4); }, [current]);
   const audioUrl = usePlaybackUrl(track);
@@ -163,6 +167,9 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
     let raf = 0; let last = 0;
     const tick = (ts: number) => {
       const audio = audioRef.current;
+      const waiting = Boolean(!edit && audio && !audio.paused && audio.readyState < 3);
+      if (waiting !== bufRef.current) { bufRef.current = waiting; setBuffering(waiting); }
+      if (waiting) { last = ts; raf = requestAnimationFrame(tick); return; }
       let next: number;
       if (!edit && audio && !audio.paused && audio.readyState >= 2 && recipe.window) next = audio.currentTime - recipe.window.start;
       else { next = tRef.current + (last ? (ts - last) / 1000 : 0); }
@@ -174,7 +181,7 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
+    return () => { cancelAnimationFrame(raf); if (bufRef.current) { bufRef.current = false; setBuffering(false); } };
   }, [playing, shots, edit, bounds, dur, recipe.window]);
   const shotAt = (v: number) => { let s = 0; while (s < shots - 1 && v >= bounds[s + 1]) s++; return s; };
   const s = shotAt(t);
@@ -373,8 +380,8 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
             </>
           )}
           {video && (
-            <button type="button" className="psb-play psb-glass" aria-label={playing ? 'Пауза' : 'Воспроизвести'} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
-              {playing ? <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 4h3v12H6zM11 4h3v12h-3z" fill="currentColor" /></svg> : <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="currentColor" /></svg>}
+            <button type="button" className="psb-play psb-glass" aria-label={buffering ? 'Загружается' : playing ? 'Пауза' : 'Воспроизвести'} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
+              {buffering ? <span className="spinner" aria-hidden="true" /> : playing ? <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 4h3v12H6zM11 4h3v12h-3z" fill="currentColor" /></svg> : <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="currentColor" /></svg>}
             </button>
           )}
           {video && clip && (

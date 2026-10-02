@@ -50,6 +50,9 @@ function apiErrorText(error: unknown): string | undefined {
 
 /* Этап «Пул» вынесен в components/wizard/SlicePanel.tsx (Figma W19/W33) */
 
+/** вайбы, для которых лёгкие копии клипов уже заказаны в этой вкладке */
+const prewarmed = new Set<string>();
+
 export function WizardPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -61,6 +64,19 @@ export function WizardPage() {
   const projectId = useWizardStore((state) => state.projectId);
   const setProjectId = useWizardStore((state) => state.setProjectId);
   const state = useWizardStore();
+  // Вайб выбран на «Фоне» — сервер сразу начинает готовить лёгкие копии его клипов: к «Пулу»
+  // превью кадров открываются без ожидания. Один раз на вайб и отрывок; это ускорение,
+  // поэтому сбой не мешает работе — подбор на «Пуле» всё равно подготовит свои клипы сам.
+  useEffect(() => {
+    if (!state.timingFrom || !state.timingTo) return;
+    for (const group of state.background.footage) {
+      const key = `${group}|${state.timingFrom}|${state.timingTo}`;
+      if (prewarmed.has(key)) continue;
+      prewarmed.add(key);
+      void api.prewarmMedia({ group, clipFrom: state.timingFrom, clipTo: state.timingTo })
+        .catch((error: unknown) => { prewarmed.delete(key); console.warn('media prewarm failed', group, error); });
+    }
+  }, [state.background.footage, state.timingFrom, state.timingTo]);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
   const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: api.projects });
   const wizardSessionQuery = useQuery({ queryKey: ['wizard-session'], queryFn: api.wizardSession });

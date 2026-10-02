@@ -26,6 +26,7 @@ from . import mock_store as store
 from . import analytics, asr_preview, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
 from . import render_job as render_job_builder
 from . import demo_media, effect_map
+from . import media_proxy
 from . import storyboard as storyboard_svc
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
@@ -385,6 +386,12 @@ class StoryboardPickPayload(BaseModel):
     clipTo: str = ""
     cuts: list[float] = Field(default_factory=list, max_length=400)
     videos: list[StoryboardVideoPayload] = Field(min_length=1, max_length=100)
+
+
+class MediaPrewarmPayload(BaseModel):
+    group: str = Field(min_length=1, max_length=200)
+    clipFrom: str = ""
+    clipTo: str = ""
 
 
 class StoryboardAlternativesPayload(BaseModel):
@@ -1281,6 +1288,146 @@ def api_track_audio(trackId: str = "") -> Response:
     return RedirectResponse(url, status_code=307)
 
 
+# ------------------------- Лёгкие копии медиа (media_proxy) -------------------------
+# Сайт не качает оригиналы: превью клипов и трек идут через эту прослойку. Она по
+# требованию сжимает файл ffmpeg'ом, хранит копию (S3 на проде, папка в моке) и отдаёт
+# её со своего домена с поддержкой Range — перемотка и кэш браузера работают.
+
+MEDIA_LOCAL = ROOT.parent / ".media_cache"
+MEDIA_WAIT_S = 60  # клип ≤ 20 с сжимается за секунды; дольше — это уже поломка, а не очередь
+
+
+def _media_store():
+    if RUNTIME.backend == "production":
+        return _production_backend().media_store()
+    return media_proxy.LocalStore(MEDIA_LOCAL)
+
+
+def _media_fetch(locator: str):
+    """Как скачать оригинал: s3:// — из нашего S3, /static/... — из своей папки (мок)."""
+    def fetch(path: Path) -> None:
+        if locator.startswith("s3://"):
+            _production_backend().download_locator(locator, path)
+            return
+        if locator.startswith("/static/"):
+            local = (STATIC_DIR / locator[len("/static/"):]).resolve()
+            if STATIC_DIR.resolve() not in local.parents or not local.exists():
+                raise media_proxy.MediaProxyError("исходник не найден")
+            path.write_bytes(local.read_bytes())
+            return
+        raise media_proxy.MediaProxyError(f"неизвестный источник медиа: {locator[:60]}")
+    return fetch
+
+
+def _clip_preview_url(preview_url: str | None) -> str | None:
+    """Ссылку на оригинал клипа → ссылка на его лёгкую копию; подготовка — сразу в фон."""
+    if not preview_url or RUNTIME.backend != "production":
+        return preview_url
+    locator = _production_backend().media_locator(preview_url)
+    name = media_proxy.proxy_name(locator, "clip") + ".mp4"
+    store = _media_store()
+    media_proxy.BUILDER.run(name, lambda: media_proxy.build_clip(store, name, _media_fetch(locator)))
+    return f"/api/wizard/media/clip/{media_proxy.sign(RUNTIME.session_secret, {'s': locator})}"
+
+
+def _media_response(store, name: str, request: Request, content_type: str) -> Response:
+    headers = {"Cache-Control": "private, max-age=86400", "Accept-Ranges": "bytes"}
+    if isinstance(store, media_proxy.LocalStore):
+        from fastapi.responses import FileResponse
+        return FileResponse(store.path(name), media_type=content_type, headers=headers)
+    body, ctype, length, content_range = store.open(name, request.headers.get("range"))
+    if length is not None:
+        headers["Content-Length"] = str(length)
+    if content_range:
+        headers["Content-Range"] = str(content_range)
+    return StreamingResponse(body.iter_chunks(chunk_size=256 * 1024), status_code=206 if content_range else 200,
+                             media_type=ctype or content_type, headers=headers)
+
+
+def _await_media(builder, name: str, fn) -> None:
+    try:
+        builder.run(name, fn).result(timeout=MEDIA_WAIT_S)
+    except media_proxy.MediaProxyError as exc:
+        raise HTTPException(status_code=502, detail=f"Не удалось подготовить превью: {exc}") from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="Превью готовится дольше обычного — попробуй ещё раз") from exc
+    except Exception as exc:
+        raise _production_error(exc) from exc
+
+
+@app.get("/api/wizard/media/clip/{token}", tags=["wizard"])
+def api_media_clip(token: str, request: Request) -> Response:
+    """Лёгкая копия клипа (540p, ключевой кадр каждые 0,5 с, faststart) — для превью."""
+    try:
+        locator = media_proxy.unsign(RUNTIME.session_secret, token).get("s", "")
+    except (media_proxy.MediaProxyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    name = media_proxy.proxy_name(locator, "clip") + ".mp4"
+    store = _media_store()
+    if not store.has(name):
+        # экран просит клип прямо сейчас — он идёт впереди фонового прогрева
+        _await_media(media_proxy.NOW, name, lambda: media_proxy.build_clip(store, name, _media_fetch(locator)))
+    return _media_response(store, name, request, "video/mp4")
+
+
+def _track_media(track_id: str):
+    track = next((item for item in store.ws().saved_tracks if item.get("id") == track_id), None)
+    if track is None:
+        raise HTTPException(status_code=404, detail="track not found")
+    locator = str(track.get("s3Key") or "") if RUNTIME.backend == "production" else str(track.get("localUrl") or "")
+    if not locator:
+        raise HTTPException(status_code=404, detail="track has no source")
+    name = media_proxy.proxy_name(locator, "track")
+    media = _media_store()
+    if not (media.has(f"{name}.m4a") and media.has(f"{name}.json")):
+        _await_media(media_proxy.NOW, name, lambda: media_proxy.build_track(media, name, _media_fetch(locator)))
+    return media, name
+
+
+MEDIA_PREWARM_CLIPS = 24
+
+
+@app.post("/api/wizard/media/prewarm", tags=["wizard"])
+async def api_media_prewarm(payload: MediaPrewarmPayload) -> dict[str, Any]:
+    """Вайб выбран на шаге «Фон» — готовим лёгкие копии его первых клипов заранее.
+
+    Точный подбор кадров случится только на «Пуле» (нужны дроп и раздача роликов), но клипы он
+    берёт из этого же пула в этом же порядке. Копии общие для всех и хранятся всегда — к
+    «Пулу» превью кадров открываются без ожидания, а база со временем прогревается сама.
+    """
+    if RUNTIME.backend != "production":
+        return {"queued": 0, "mock": True}
+    try:
+        start, end = _storyboard_window(payload.clipFrom, payload.clipTo)
+    except HTTPException:
+        return {"queued": 0, "mock": False}  # отрывок ещё не выбран — прогревать нечего
+    try:
+        res = await run_in_threadpool(
+            _production_backend().storyboard_alternatives,
+            group_name=payload.group, clip_start_abs=start, clip_end_abs=end, switch_points_abs=[],
+            interval_idx=0, seed_key="media-prewarm", exclude_file_names=[], limit=MEDIA_PREWARM_CLIPS,
+        )
+        queued = sum(1 for c in res.get("candidates") or [] if _clip_preview_url(c.get("preview_url")))
+    except Exception as exc:
+        raise _storyboard_error(exc) from exc
+    return {"queued": queued, "mock": False}
+
+
+@app.get("/api/wizard/media/track/{track_id}", tags=["wizard"])
+def api_media_track(track_id: str, request: Request) -> Response:
+    """Трек для прослушки на сайте: AAC 96 кбит/с вместо оригинала (в 3–4 раза легче)."""
+    media, name = _track_media(track_id)
+    return _media_response(media, f"{name}.m4a", request, "audio/mp4")
+
+
+@app.get("/api/wizard/media/track/{track_id}/peaks", tags=["wizard"])
+def api_media_track_peaks(track_id: str) -> Response:
+    """Громкость трека каждые 50 мс — волну сайт рисует по ним, не скачивая файл."""
+    media, name = _track_media(track_id)
+    return Response(media.read(f"{name}.json"), media_type="application/json",
+                    headers={"Cache-Control": "private, max-age=86400"})
+
+
 @app.get("/api/wizard/drops", tags=["wizard"])
 async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
     """Кандидаты дропа для выбранного отрывка — то же, что показывает бот.
@@ -1436,7 +1583,8 @@ async def api_storyboard_pick(payload: StoryboardPickPayload) -> dict[str, Any]:
                 out[video.index] = {
                     "index": video.index,
                     "group": group,
-                    "clips": [storyboard_svc.clip_view(c) for c in picked.get("clips") or []],
+                    "clips": [{**view, "previewUrl": _clip_preview_url(view.get("previewUrl"))}
+                              for view in (storyboard_svc.clip_view(c) for c in picked.get("clips") or [])],
                     "repeats": list(picked.get("repeats") or []),
                     "plan": picked.get("plan"),
                 }
@@ -1462,7 +1610,7 @@ async def api_storyboard_alternatives(payload: StoryboardAlternativesPayload) ->
     except Exception as exc:
         raise _storyboard_error(exc) from exc
     return {"candidates": [
-        {"fileName": c.get("file_name"), "previewUrl": c.get("preview_url"),
+        {"fileName": c.get("file_name"), "previewUrl": _clip_preview_url(c.get("preview_url")),
          "previewOffset": c.get("preview_offset_sec") or 0.0, "tags": list(c.get("tags") or [])}
         for c in res.get("candidates") or []
     ], "mock": False}

@@ -7,7 +7,8 @@ import { cn } from '../../lib/cn';
 import { cssZoom } from '../../lib/zoom';
 import { PAUSE, PLAY, Svg, W12 } from './WizardFrame';
 import { AsrWord, useWizardStore } from '../../stores/wizardStore';
-import { usePlaybackUrl, useWaveSourceUrl } from './useFragmentAudio';
+import { usePlaybackUrl } from './useFragmentAudio';
+import { peakLevels, useTrackPeaks } from './trackPeaks';
 import { useSubtitleClock } from '../../lib/subtitleClock';
 
 /*
@@ -153,41 +154,17 @@ export function SubtitleTimeline() {
     return best;
   };
 
-  // --- волна отрывка: декодируем файл один раз, пики считаем под текущий масштаб
-  /** плеер уже может играть — только тогда качаем файл второй раз ради волны */
+  // --- волна отрывка: громкость с сервера (раньше экран качал трек второй раз и раскодировал его)
   const [audioReady, setAudioReady] = useState(false);
   const waveRef = useRef<HTMLCanvasElement>(null);
-  const [wave, setWave] = useState<{ url: string; data: Float32Array; rate: number } | null>(null);
-  const waveUrl = useWaveSourceUrl(track);
-  useEffect(() => {
-    if (!waveUrl || asr.status !== 'COMPLETED' || !audioReady) return;
-    if (wave && wave.url === waveUrl) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const buf = await fetch(waveUrl).then((r) => r.arrayBuffer());
-        const ctx = new AudioContext();
-        const decoded = await ctx.decodeAudioData(buf);
-        void ctx.close();
-        const rate = decoded.sampleRate;
-        const from = Math.max(0, Math.floor(clipStart * rate));
-        const to = Math.min(decoded.length, Math.ceil(clipEnd * rate));
-        const mono = new Float32Array(Math.max(0, to - from));
-        for (let ch = 0; ch < decoded.numberOfChannels; ch += 1) {
-          const src = decoded.getChannelData(ch);
-          for (let i = from; i < to; i += 1) mono[i - from] += src[i] / decoded.numberOfChannels;
-        }
-        if (!cancelled) setWave({ url: waveUrl, data: mono, rate });
-      } catch {
-        /* волна — украшение: без неё таймлайн работает как раньше */
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waveUrl, asr.status, audioReady, clipStart, clipEnd]);
+  const trackPeaks = useTrackPeaks(track);
+  const waveLevels = useMemo(
+    () => (trackPeaks && asr.status === 'COMPLETED' ? peakLevels(trackPeaks, clipStart, clipEnd, Math.max(16, Math.round((clipEnd - clipStart) * 20))) : null),
+    [trackPeaks, asr.status, clipStart, clipEnd]
+  );
   useEffect(() => {
     const canvas = waveRef.current;
-    if (!canvas || !wave) return;
+    if (!canvas || !waveLevels) return;
     const w = Math.ceil(duration * pxPerSec);
     const h = BAR_TOP;
     const dpr = window.devicePixelRatio || 1;
@@ -198,17 +175,13 @@ export function SubtitleTimeline() {
     g.scale(dpr, dpr);
     g.clearRect(0, 0, w, h);
     g.fillStyle = 'rgba(246,245,253,0.16)';
-    const perPx = wave.data.length / w;
+    const step = w / waveLevels.length;
     const mid = h / 2;
-    for (let x = 0; x < w; x += 1) {
-      const a = Math.floor(x * perPx);
-      const b = Math.min(wave.data.length, Math.floor((x + 1) * perPx));
-      let peak = 0;
-      for (let i = a; i < b; i += 1) { const v = Math.abs(wave.data[i]); if (v > peak) peak = v; }
-      const hh = Math.max(1, peak * (h - 24) * 0.5);
-      g.fillRect(x, mid - hh, 1, hh * 2);
-    }
-  }, [wave, duration, pxPerSec]);
+    waveLevels.forEach((level, i) => {
+      const hh = Math.max(1, level * (h - 24) * 0.5);
+      g.fillRect(i * step, mid - hh, Math.max(1, step - 1), hh * 2);
+    });
+  }, [waveLevels, duration, pxPerSec]);
 
   // --- кастомный тултип на слове (вместо нативного title): текст + точные тайминги
   const [hovered, setHovered] = useState<number | null>(null);
