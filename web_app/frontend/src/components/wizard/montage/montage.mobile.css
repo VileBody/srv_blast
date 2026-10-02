@@ -126,7 +126,7 @@
 .mm-h.f { height: 52px; }
 .mm-h.hk, .mm-h.st { height: 34px; }
 .mm-h.sb, .mm-h.au { height: 32px; }
-.mob .mm-hadd { pointer-events: auto; display: grid; place-items: center; width: 60px; height: 24px; margin-left: 4px; border-radius: var(--r6); background: var(--fxt-raise); box-shadow: inset 0 0 0 1px var(--fxt-line2); color: var(--fxt-t80); }
+.mob .mm-hadd { pointer-events: auto; display: grid; place-items: center; width: 45px; height: 24px; margin-left: 4px; border-radius: var(--r6); background: var(--fxt-raise); box-shadow: inset 0 0 0 1px var(--fxt-line2); color: var(--fxt-t80); }
 .mob .mm-hadd:active { background: var(--fxt-t06); color: var(--text); }
 
 /* ── панель замены кадра — на месте нижней панели: отмена · варианты · готово ── */
