@@ -532,6 +532,29 @@ class AsrWordsUpdateResponse(BaseModel):
     clip_end_abs: float
 
 
+class AsrPreviewFromJobRequest(BaseModel):
+    """«Докрутить на сайте»: готовая asr_preview-джоба со Stage 1 бот-джобы.
+
+    Слова ролика из бота переезжают на таймлайн сайта как есть, без повторного
+    выравнивания, а рендер сайта переиспользует их через `reuse_text_job_id`.
+    """
+    source_job_id: str = Field(min_length=1, max_length=128)
+
+
+class JobEditStateResponse(BaseModel):
+    """Состояние монтажа готовой джобы (см. tasks.job_edit_state)."""
+    job_id: str
+    status: Optional[str] = None
+    request: Optional[Dict[str, Any]] = None
+    resume_state_source: str = ""
+    window: Optional[Dict[str, float]] = None
+    footage_plan: Optional[Dict[str, Any]] = None
+    footage_plan_meta: Optional[Dict[str, Any]] = None
+    switch_points_abs: Optional[List[float]] = None
+    words: List[Dict[str, Any]] = Field(default_factory=list)
+    asr: Dict[str, Any] = Field(default_factory=dict)
+
+
 class FocusWord(BaseModel):
     """Слово, которое автор пометил «фокусным» на таймлайне. `t_start` нужен,
     чтобы отличить повторы одного слова в тексте."""
