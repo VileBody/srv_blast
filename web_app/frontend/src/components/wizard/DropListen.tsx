@@ -29,6 +29,8 @@ export function DropListen() {
   const url = usePlaybackUrl(track);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const rafRef = useRef(0);
+  /** запуск, ждущий метаданных: один на плеер — повторные клики не копят слушатели */
+  const pendingRef = useRef<{ el: HTMLAudioElement; run: () => void } | null>(null);
   const [playing, setPlaying] = useState(false);
   const [now, setNow] = useState<number | null>(null);
 
@@ -40,7 +42,15 @@ export function DropListen() {
     : dropInClip ? { from: Math.max(clipFrom, drop! - LEAD_S), to: Math.min(clipTo, drop! + TAIL_S) }
       : { from: clipFrom, to: clipTo };
 
+  const dropPending = () => {
+    const pending = pendingRef.current;
+    if (pending) pending.el.removeEventListener('loadedmetadata', pending.run);
+    pendingRef.current = null;
+  };
+
   const stop = () => {
+    // без снятия ожидающего запуска медленная сеть доигрывала бы его после стопа/ухода с шага
+    dropPending();
     cancelAnimationFrame(rafRef.current);
     audioRef.current?.pause();
     setPlaying(false);
@@ -59,6 +69,7 @@ export function DropListen() {
     const a = audio;
     const end = range.to;
     const run = () => {
+      pendingRef.current = null;
       a.currentTime = range.from;
       void a.play().catch(() => stop());
       setPlaying(true);
@@ -71,7 +82,10 @@ export function DropListen() {
       rafRef.current = requestAnimationFrame(tick);
     };
     // сик до загрузки метаданных браузер молча игнорирует — ждём их
-    if (a.readyState >= 1) run(); else a.addEventListener('loadedmetadata', run, { once: true });
+    dropPending();
+    if (a.readyState >= 1) { run(); return; }
+    pendingRef.current = { el: a, run };
+    a.addEventListener('loadedmetadata', run, { once: true });
   };
 
   // другой кандидат во время прослушивания — сразу слушаем вокруг него
@@ -81,6 +95,14 @@ export function DropListen() {
   }, [dropTime]);
   // смена трека/отрывка и уход со страницы глушат звук
   useEffect(() => stop, [url, timingFrom, timingTo]);
+  // размонтирование: плеер больше никому не нужен — отпускаем и его загрузку
+  useEffect(() => () => {
+    dropPending();
+    cancelAnimationFrame(rafRef.current);
+    audioRef.current?.pause();
+    audioRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const left = playing && now !== null && dropInClip ? drop! - now : null;
   const disabled = !url || !range;
