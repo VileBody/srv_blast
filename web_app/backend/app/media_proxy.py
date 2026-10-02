@@ -226,3 +226,23 @@ def build_track(store, name: str, fetch: Callable[[Path], None]) -> None:
 
 # подготовка, о которой просит открытый экран, идёт впереди фонового прогрева
 NOW = Builder(workers=2)
+
+
+def build_poster(store, clip: str, poster: str, at: float, fetch: Callable[[Path], None]) -> None:
+    """Кадр клипа для миниатюры (JPEG ~10–20 КБ) — вместо <video>, качавшего клип ради кадра."""
+    if store.has(poster):
+        return
+    build_clip(store, clip, fetch)
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="blast-poster-") as tmp:
+        src, dst = Path(tmp) / "clip.mp4", Path(tmp) / "poster.jpg"
+        src.write_bytes(store.read(clip))
+        transcode_frame(src, dst, at)
+        store.put(poster, dst, "image/jpeg")
+
+
+def transcode_frame(src: Path, dst: Path, at: float) -> None:
+    proc = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{max(0.0, at):.2f}", "-i", str(src), "-frames:v", "1",
+                           "-vf", "scale=-2:320", "-q:v", "6", str(dst)], capture_output=True, text=True, timeout=60)
+    if proc.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
+        raise MediaProxyError(f"ffmpeg не смог снять кадр: {(proc.stderr or '').strip()[-300:]}")

@@ -11,6 +11,7 @@ import { PACES, useRecipeCuts } from '../storyboardData';
 import { secondsToDropTime, usePlaybackUrl } from '../useFragmentAudio';
 import { peakLevels, useTrackPeaks } from '../trackPeaks';
 import { usePhone } from '../../../lib/usePhone';
+import { useLowData } from '../../../lib/network';
 import { SubtitleTextCustomization } from '../SubtitlesPanel';
 import { SubtitleCanvas, type SubtitleCanvasProps } from '../SubtitleCanvas';
 import { StoryboardReplaceGuideVisual, TimelineEntryGuideVisual } from '../timelineGuides';
@@ -322,10 +323,17 @@ export interface LibPreview { url?: string | null; sim?: (size: { w: number; h: 
 const TILE = { w: 180, h: 320 };
 function TileMedia({ preview }: { preview: LibPreview }) {
   const [ref, seen] = useInView<HTMLSpanElement>();
+  // медленная сеть / экономия трафика: пример не стартует сам — играет по наведению или тапу
+  const lowData = useLowData();
+  const hover = (play: boolean) => (e: React.SyntheticEvent<HTMLSpanElement>) => {
+    const video = e.currentTarget.querySelector('video');
+    if (!lowData || !video) return;
+    if (play) void video.play().catch(() => undefined); else video.pause();
+  };
   return (
-    <span ref={ref} className="mt-fxtile-media">
+    <span ref={ref} className="mt-fxtile-media" onPointerEnter={hover(true)} onPointerLeave={hover(false)}>
       {seen && (preview.url
-        ? <video src={preview.url} autoPlay muted loop playsInline preload="metadata" />
+        ? <video src={preview.url} autoPlay={!lowData} muted loop playsInline preload={lowData ? 'none' : 'metadata'} />
         : preview.sim?.(TILE))}
       {seen && !preview.url && preview.sim && <span className="mt-fxtile-tag">на твоём ролике</span>}
       {preview.state === 'loading' && <span className="mt-fxtile-none"><span className="spinner" aria-hidden="true" /></span>}

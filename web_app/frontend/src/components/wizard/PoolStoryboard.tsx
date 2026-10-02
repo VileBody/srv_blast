@@ -1,4 +1,5 @@
 import { ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { posterOf } from '../../lib/media';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { cssZoom } from '../../lib/zoom';
@@ -358,7 +359,9 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
             // демо-превью мока — анимированный SVG: <video> его не откроет
             return isSvg(c.previewUrl)
               ? <img key={`${c.fileName}:${i}`} className={`shot${visible ? ' on' : ''}`} src={c.previewUrl} alt="" draggable={false} style={style} />
-              : <video key={`${c.fileName}:${i}`} ref={(el) => { videoRefs.current[i] = el; }} className={`shot${visible ? ' on' : ''}`} src={c.previewUrl} muted playsInline preload="auto" style={style} />;
+              // качаем только соседей текущего кадра (предыдущий — для перехода, следующий — к склейке):
+              // раньше все кадры ролика грузились разом, на слабой сети это забивало канал
+              : <video key={`${c.fileName}:${i}`} ref={(el) => { videoRefs.current[i] = el; }} className={`shot${visible ? ' on' : ''}`} src={Math.abs(i - s) <= 1 || (s === video.clips.length - 1 && i === 0) ? c.previewUrl : undefined} muted playsInline preload="auto" style={style} />;
           })}
           {placeholder && <div className="psb-ph"><span className="tx">{placeholder}</span></div>}
           <div className="psb-shade" />
@@ -414,7 +417,9 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
               <div ref={strip.ref} className={`psb-strip${edit ? ' editing' : ''}`} data-fade-l={strip.fadeLeft || undefined} data-fade-r={strip.fadeRight || undefined}>
                 {video.clips.map((c, i) => (
                   <button key={`${c.fileName}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === s ? ' cur' : ''}`} style={{ flexGrow: bounds[i + 1] - bounds[i] }} aria-label={`Кадр ${i + 1}`} onClick={() => { if (!edit) seekShot(i); }}>
-                    {c.previewUrl && (isSvg(c.previewUrl) ? <img src={c.previewUrl} alt="" draggable={false} /> : <video src={`${c.previewUrl}#t=${c.previewOffset + 0.1}`} muted playsInline preload="metadata" />)}
+                    {c.previewUrl && (isSvg(c.previewUrl) ? <img src={c.previewUrl} alt="" draggable={false} />
+                      : posterOf(c.previewUrl, c.previewOffset + 0.1) ? <img src={posterOf(c.previewUrl, c.previewOffset + 0.1)!} alt="" draggable={false} loading="lazy" decoding="async" />
+                        : <video src={`${c.previewUrl}#t=${c.previewOffset + 0.1}`} muted playsInline preload="metadata" />)}
                     {dropRel !== null && Math.abs(bounds[i] - dropRel) < 0.01 && <i className="dm" />}
                     {video.pins[i] && <span className="lk"><Svg d={LOCK} size={9} /></span>}
                     {video.repeats.includes(i) && <i className="rp" />}

@@ -152,10 +152,30 @@ def test_track_media_only_for_own_tracks(client) -> None:
 
 def test_clip_link_must_be_signed(client) -> None:
     tc, _, _ = client
-    assert tc.get("/api/wizard/media/clip/not-a-token").status_code == 404
+    assert tc.get("/api/wizard/media/clip/not-a-token/clip.mp4").status_code == 404
+    assert tc.get("/api/wizard/media/clip/not-a-token/poster.jpg?t=1").status_code == 404
 
 
 def test_prewarm_is_a_no_op_in_mock(client) -> None:
     tc, _, _ = client
     r = tc.post("/api/wizard/media/prewarm", json={"group": "Ночной город", "clipFrom": "00:10:00", "clipTo": "00:22:00"})
     assert r.status_code == 200 and r.json()["queued"] == 0
+
+
+def test_signed_clip_and_its_poster_are_served(client, monkeypatch) -> None:
+    tc, main, calls = client
+    monkeypatch.setattr(main.media_proxy, "transcode_frame", lambda src, dst, at: dst.write_bytes(b"\xff\xd8JPEG"))
+    track = main.store.ws().saved_tracks[0]
+    token = main.media_proxy.sign(main.RUNTIME.session_secret, {"s": str(track["localUrl"])})
+    clip = tc.get(f"/api/wizard/media/clip/{token}/clip.mp4")
+    assert clip.status_code == 200 and clip.content.startswith(b"FAKEMEDIA")
+    poster = tc.get(f"/api/wizard/media/clip/{token}/poster.jpg?t=1.24")
+    assert poster.status_code == 200 and poster.content.startswith(b"\xff\xd8")
+    assert calls["transcode"] == 1  # кадр снят с уже готовой лёгкой копии, не с оригинала
+
+
+def test_clip_link_looks_like_video_to_the_site() -> None:
+    # сайт отличает видео от картинки по расширению (lib/media.ts isVideoUrl)
+    import re
+    url = "/api/wizard/media/clip/abc.def/clip.mp4"
+    assert re.search(r"\.(mp4|webm|mov|m4v)(?:[?#]|$)", url, re.I)

@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { importWithReload } from '../lib/chunkReload';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -27,7 +28,7 @@ import { useCombos } from '../components/wizard/montage/combos';
 import { useFxTimelineOpen } from '../components/wizard/timelineGuides';
 
 // Монтажный стол — тяжёлый полноэкранный экран «Пула»: грузится, когда его открыли
-const MontageTable = lazy(() => import('../components/wizard/montage/MontageTable').then((m) => ({ default: m.MontageTable })));
+const MontageTable = lazy(() => importWithReload(() => import('../components/wizard/montage/MontageTable')).then((m) => ({ default: m.MontageTable })));
 
 function apiErrorText(error: unknown): string | undefined {
   if (!(error instanceof ApiError)) return undefined;
@@ -196,7 +197,8 @@ export function WizardPage() {
     // reset стирал их вместе с настройками батча, и «+» на втором батче уводил
     // человека обратно на загрузку файла — хотя ProjectDetailPage.addBatch
     // рассчитывает найти их в сторе и открыть сразу этап «Фон».
-    onSuccess: (data) => { push({ variant: 'success', title: t('wizard.page.genStarted') }); state.newBatch(projectId); state.ackCarriedOver(); navigate(data.redirectTo); },
+    // шапка опрашивает активную генерацию редко, пока её нет, — сообщаем о новой сразу
+    onSuccess: (data) => { push({ variant: 'success', title: t('wizard.page.genStarted') }); void queryClient.invalidateQueries({ queryKey: ['active-job'] }); state.newBatch(projectId); state.ackCarriedOver(); navigate(data.redirectTo); },
     // 402 — упёрлись в лимит роликов: причина + путь к решению, а не общий «не удалось»
     onError: (error) => {
       const limitReached = error instanceof ApiError && error.status === 402;

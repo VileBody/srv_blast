@@ -4,6 +4,7 @@ import { AppShell } from '../components/layout/AppShell';
 import { AuthPage } from '../pages/AuthPage';
 import { BlockedPage } from '../pages/BlockedPage';
 import { SimplePage } from '../pages/SimplePage';
+import { importWithReload } from '../lib/chunkReload';
 
 /*
  * Страницы грузятся по требованию — каждая своим куском JS. Раньше весь сайт был одним
@@ -12,7 +13,7 @@ import { SimplePage } from '../pages/SimplePage';
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const page = <K extends string>(load: () => Promise<Record<K, ComponentType<any>>>, name: K) =>
-  lazy(() => load().then((m) => ({ default: m[name] })));
+  lazy(() => importWithReload(load).then((m) => ({ default: m[name] })));
 
 const MobileUploadPage = page(() => import('../pages/MobileUploadPage'), 'MobileUploadPage');
 const AdminAnalyticsPage = page(() => import('../pages/AdminAnalyticsPage'), 'AdminAnalyticsPage');

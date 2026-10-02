@@ -1327,7 +1327,8 @@ def _clip_preview_url(preview_url: str | None) -> str | None:
     name = media_proxy.proxy_name(locator, "clip") + ".mp4"
     store = _media_store()
     media_proxy.BUILDER.run(name, lambda: media_proxy.build_clip(store, name, _media_fetch(locator)))
-    return f"/api/wizard/media/clip/{media_proxy.sign(RUNTIME.session_secret, {'s': locator})}"
+    # расширение в адресе обязательно: сайт отличает видео от картинки по нему (isVideoUrl)
+    return f"/api/wizard/media/clip/{media_proxy.sign(RUNTIME.session_secret, {'s': locator})}/clip.mp4"
 
 
 def _media_response(store, name: str, request: Request, content_type: str) -> Response:
@@ -1355,7 +1356,7 @@ def _await_media(builder, name: str, fn) -> None:
         raise _production_error(exc) from exc
 
 
-@app.get("/api/wizard/media/clip/{token}", tags=["wizard"])
+@app.get("/api/wizard/media/clip/{token}/clip.mp4", tags=["wizard"])
 def api_media_clip(token: str, request: Request) -> Response:
     """Лёгкая копия клипа (540p, ключевой кадр каждые 0,5 с, faststart) — для превью."""
     try:
@@ -1368,6 +1369,22 @@ def api_media_clip(token: str, request: Request) -> Response:
         # экран просит клип прямо сейчас — он идёт впереди фонового прогрева
         _await_media(media_proxy.NOW, name, lambda: media_proxy.build_clip(store, name, _media_fetch(locator)))
     return _media_response(store, name, request, "video/mp4")
+
+
+@app.get("/api/wizard/media/clip/{token}/poster.jpg", tags=["wizard"])
+def api_media_clip_poster(token: str, request: Request, t: float = 0.0) -> Response:
+    """Кадр клипа для миниатюры (JPEG ~10–20 КБ) — полоса кадров не качает видео ради картинки."""
+    try:
+        locator = media_proxy.unsign(RUNTIME.session_secret, token).get("s", "")
+    except (media_proxy.MediaProxyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    at = round(max(0.0, min(float(t), 600.0)), 1)
+    clip = media_proxy.proxy_name(locator, "clip") + ".mp4"
+    poster = f"{clip}.t{int(at * 10)}.jpg"
+    store = _media_store()
+    if not store.has(poster):
+        _await_media(media_proxy.NOW, poster, lambda: media_proxy.build_poster(store, clip, poster, at, _media_fetch(locator)))
+    return _media_response(store, poster, request, "image/jpeg")
 
 
 def _track_media(track_id: str):

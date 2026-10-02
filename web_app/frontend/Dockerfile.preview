@@ -7,6 +7,8 @@ RUN npm ci --include=dev --no-audit --no-fund
 
 COPY . ./
 RUN npm run typecheck && npm run build
+# заранее сжатые копии для gzip_static: nginx отдаёт .gz без сжатия на каждый запрос
+RUN find dist -type f \( -name '*.js' -o -name '*.css' -o -name '*.svg' -o -name '*.json' -o -name '*.html' \) -size +1k       -exec sh -c 'gzip -9 -c "$1" > "$1.gz"' _ {} \;
 
 FROM nginx:1.27-alpine
 
