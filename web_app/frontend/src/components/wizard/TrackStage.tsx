@@ -9,7 +9,8 @@ import { useWizardStore } from '../../stores/wizardStore';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss } from '../guidance/useGuideDismiss';
 import { formatClock, formatSeconds, parseClock, snapTenth, SEGMENT_SECONDS, toStoreTiming } from './timing';
-import { timingToSeconds, usePlaybackUrl, useWaveSourceUrl } from './useFragmentAudio';
+import { timingToSeconds, usePlaybackUrl } from './useFragmentAudio';
+import { peakLevels, useTrackPeaks } from './trackPeaks';
 import { useWavePeaks } from './useWavePeaks';
 import { PAUSE, PLAY, Svg, W12 } from './WizardFrame';
 import { useLyricsUndo, useTried } from './wizardAttempt';
@@ -45,10 +46,13 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
 
   /* ── файл ── */
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
-  // Трек из черновика / прошлого батча: blob-ссылки нет, играем по свежей presigned-ссылке
+  // Трек из черновика / прошлого батча: blob-ссылки нет, играем лёгкую копию со своего домена
   const playbackUrl = usePlaybackUrl(track);
   const audioUrl = blobUrl ?? playbackUrl;
-  const waveSourceUrl = useWaveSourceUrl(track, blobUrl);
+  // волна: только что загруженный файл уже в памяти — считаем из него; сохранённый трек —
+  // по громкости с сервера, без скачивания файла
+  const localPeaksUrl = blobUrl ?? (track?.localUrl?.startsWith('blob:') ? track.localUrl : null);
+  const serverPeaks = useTrackPeaks(localPeaksUrl ? null : track);
   const previousQuery = useQuery({ queryKey: ['wizard-previous-track'], queryFn: api.previousTrack, enabled: !track, staleTime: 30_000 });
   const upload = useMutation({
     mutationFn: api.uploadTrack,
@@ -220,7 +224,11 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     </label>
   );
 
-  const peaksHi = useWavePeaks(waveSourceUrl, BARS * MAX_ZOOM);
+  const localPeaks = useWavePeaks(localPeaksUrl, BARS * MAX_ZOOM);
+  const peaksHi = useMemo(
+    () => (localPeaksUrl ? localPeaks : serverPeaks ? peakLevels(serverPeaks, 0, serverPeaks.duration, BARS * MAX_ZOOM) : null),
+    [localPeaksUrl, localPeaks, serverPeaks]
+  );
   const [zoom, setZoom] = useState(1);
   const barCount = BARS * zoom;
   // столбики текущего зума: максимум по группе пиков высокого разрешения

@@ -116,6 +116,7 @@ def _new_app(*, jobs: dict[str, dict[str, Any]]) -> public_app.BlastBotApp:
     app.settings = SimpleNamespace(
         bot_status_update_interval_s=5.0,
         tg_force_free_funnel_chat_ids=frozenset(),
+        web_handoff_enabled=False,
     )
     app.store = _FakeStore()
     app.orchestrator = _FakeOrchestrator(jobs)

@@ -34,6 +34,7 @@ EXTRA_EVENTS = {
     "payment_failed",
     "subscription_canceled",
     "limit_hit",
+    "bot_handoff",  # открыл ссылку «на сайт» из публичного бота
 }
 
 # Events accepted from the authenticated browser. Server-owned milestones such
@@ -55,6 +56,7 @@ CLIENT_EVENTS = {
     "wizard_guide_seen",
     "wizard_guide_dismissed",
     "wizard_guide_idle_reactivated",
+    "pitch_objection",
 }
 
 # Browser payloads must stay both useful and privacy-safe. Unknown fields are
@@ -80,6 +82,8 @@ CLIENT_EVENT_PROPS: dict[str, set[str]] = {
     "wizard_guide_seen": {"guideId"},
     "wizard_guide_dismissed": {"guideId"},
     "wizard_guide_idle_reactivated": {"guideId"},
+    # Возражение в питче модалки безлимита («Почему не сейчас?»): какой ответ выбрали.
+    "pitch_objection": {"reason"},
 }
 
 MAX_EVENTS = 50_000  # верхняя граница буфера в памяти, чтобы мок не съел RAM

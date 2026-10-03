@@ -27,6 +27,10 @@ COPY services/__init__.py /app/services/__init__.py
 COPY services/tg_bot_public/__init__.py /app/services/tg_bot_public/__init__.py
 COPY services/tg_bot_public/credits_db.py /app/services/tg_bot_public/credits_db.py
 COPY services/tg_bot_public/tbank_client.py /app/services/tg_bot_public/tbank_client.py
+# правила «безлимита на трек» (их импортирует credits_db) и тексты квиза/питча —
+# одни и те же у бота и сайта
+COPY services/tg_bot_public/track_unlimited.py /app/services/tg_bot_public/track_unlimited.py
+COPY services/tg_bot_public/marketing_texts.py /app/services/tg_bot_public/marketing_texts.py
 COPY services/tg_bot_public/certs/ /app/services/tg_bot_public/certs/
 
 EXPOSE 8000

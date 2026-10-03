@@ -63,7 +63,7 @@ def _new_app() -> public_app.BlastBotApp:
     app = object.__new__(public_app.BlastBotApp)
     app.store = _FakeStore()
     app.credits_db = _FailIfCalledCredits()
-    app.settings = SimpleNamespace(public_stage1_alignment_backend="local_ctc")
+    app.settings = SimpleNamespace(public_stage1_alignment_backend="local_ctc", generation_subscription_required=False)
     return app
 
 

@@ -65,7 +65,15 @@
 :where(.fxt-acc) > :where(:not(.fxt-acc-h)) { animation: m-drop var(--m-base) var(--m-ease) backwards; }
 :where(.fxt-lib-b) > :where(*) { animation: m-fade var(--m-fast) var(--m-ease) backwards; }
 
+/* воронка после генерации: сменился шаг — его заголовок и тело всплывают, карточка на месте */
+:where(.fn-step) { animation: m-nudge var(--m-base) var(--m-ease) backwards; }
+/* единственный авторский момент воронки: безлимит открыт — шкала квоты набирается один раз */
+@keyframes fn-meter { from { transform: scaleX(0); } }
+:where(.fn-meter-fill) { transform-origin: left center; animation: fn-meter var(--m-slow) var(--m-ease) 120ms backwards; }
+
 @media (prefers-reduced-motion: reduce) {
+  :where(.fn-step),
+  :where(.fn-meter-fill),
   :where(.app-content) > :where(*),
   :where(.card, .card-2, .w12-card),
   :where(.m-stagger) > :where(*),

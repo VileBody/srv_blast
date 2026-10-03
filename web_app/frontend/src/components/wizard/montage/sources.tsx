@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Ref } fr
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
-import { isVideoUrl } from '../../../lib/media';
+import { isVideoUrl, posterOf } from '../../../lib/media';
 import type { StoryboardCandidate } from '../../../lib/types';
 import { useWizardStore, type StoryboardVideo } from '../../../stores/wizardStore';
 import { seedKeyFor, useRecipeCuts } from '../storyboardData';
@@ -62,9 +62,10 @@ export function FrameView({ frame, at = 0, t = 0, playing = false, bpm = 128, th
     return <div className={`mt-fv ${className}`} style={{ ...style, background: on ? frame.color : '#05010f' }} />;
   }
   if (!frame.url) return null;
+  const poster = thumb ? posterOf(frame.url, (frame.offset ?? 0) + 0.1) : null;
   const media = (cls: string) => (isVideoUrl(frame.url!)
     ? (thumb
-      ? <video className={cls} src={`${frame.url}#t=${(frame.offset ?? 0) + 0.1}`} muted playsInline preload="metadata" />
+      ? (poster ? <img className={cls} src={poster} alt="" draggable={false} decoding="async" /> : <video className={cls} src={`${frame.url}#t=${(frame.offset ?? 0) + 0.1}`} muted playsInline preload="metadata" />)
       : <VideoFrame className={cls} url={frame.url!} offset={frame.offset} at={at} playing={playing} />)
     : <img className={cls} src={frame.url!} alt="" draggable={false} />);
   if (frame.fit === 'contain') {
@@ -215,13 +216,13 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
   if (compact && edit && slot) {
     return createPortal(
       <div className="mm-replace" role="group" aria-label={`Замена кадра ${edit.k + 1}`}>
-        <button type="button" className="mm-replace-btn" onClick={cancel}><I d={CROSS} size={16} /><span className="tx">Отмена</span></button>
+        <button type="button" className="mm-replace-btn" aria-label="Отмена — вернуть прежний кадр" onClick={cancel}><I d={CROSS} size={18} /></button>
         <div className="mm-replace-var">
           <button type="button" aria-label="Предыдущий вариант" disabled={edit.pos <= 0} onClick={() => variant(-1)}><Arrow dir="l" /></button>
           <span className="cnt num tx">{edit.loading ? 'Подбираем…' : <>{edit.pos + 1}<small> / {edit.candidates.length}</small></>}</span>
           <button type="button" aria-label="Следующий вариант" disabled={edit.loading || edit.pos >= edit.candidates.length - 1} onClick={() => variant(1)}><Arrow dir="r" /></button>
         </div>
-        <button type="button" className="mm-replace-btn pri" onClick={done} disabled={edit.loading}><I d={CHECK} size={16} /><span className="tx">Готово</span></button>
+        <button type="button" className="mm-replace-btn pri" aria-label="Готово — оставить этот кадр" onClick={done} disabled={edit.loading}><I d={CHECK} size={20} /></button>
       </div>,
       slot
     );

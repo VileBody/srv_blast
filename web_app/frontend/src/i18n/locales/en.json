@@ -1001,7 +1001,8 @@
     "unlimited": "∞ uses",
     "noLimit": "No limit",
     "of": "{{used}} of {{total}}",
-    "out": "used up"
+    "out": "used up",
+    "blastNudge": "Blast subscription: 100 videos and 4 tracks a month for 1 990 ₽"
   },
   "auth": {
     "registerTitle": "Sign up",
@@ -1403,5 +1404,201 @@
     "showAll": "Show all ({{count}})",
     "showLess": "Show less",
     "failedPart": "{{count}} failed"
+  },
+  "handoff": {
+    "loading": "Opening your track…",
+    "trackReady": "Your track from the bot is here",
+    "trackReadyText": "Add the lyrics and pick a segment — we'll guide you from there.",
+    "tracksLimit": "Track limit reached",
+    "tracksLimitText": "The track is in the project, but your track limit is used up. Upgrade to build videos.",
+    "expired": "This link has expired",
+    "expiredText": "Send /site to the bot to get a new one, or log in with Telegram.",
+    "error": "Couldn't open the link",
+    "errorText": "Refresh the page. If that doesn't help, log in with Telegram.",
+    "toLogin": "Log in",
+    "otherAccount": "Log in as another account?",
+    "otherAccountText": "Another Blast account is open in this browser. The bot link leads to the account of your Telegram.",
+    "otherAccountConfirm": "Switch account",
+    "otherAccountStay": "Stay here",
+    "remixReady": "Your bot video is on the editing table",
+    "remixReadyText": "Same cuts, clips, transitions and subtitles. Edit and generate.",
+    "remixFailed": "The video edit did not carry over",
+    "remixApplyFailed": "The project is open with your track, but the bot video edit didn't load.",
+    "linkAccount": "Link Telegram to {{account}}?",
+    "linkAccountNoName": "Link Telegram to this account?",
+    "linkAccountText": "A Blast account without Telegram is open in this browser. Link Telegram and the track from the bot lands there. Or log in as a separate account with Telegram.",
+    "linkAccountConfirm": "Link",
+    "linkAccountSeparate": "Log in separately"
+  },
+  "funnel": {
+    "step": "{{n}} of {{total}}",
+    "next": "Next",
+    "rating": {
+      "prompt": "Rate this video",
+      "thanksHigh": "Thanks for rating",
+      "thanksLow": "What's off?",
+      "fix": "Fix on the timeline",
+      "reason": {
+        "subtitles": "Subtitles",
+        "footage": "Footage",
+        "transitions": "Transitions",
+        "other": "Other"
+      }
+    },
+    "quiz": {
+      "description": "Answer a few questions and get the TikTok posting guide.",
+      "skip": "Skip",
+      "doneTitle": "Here is the playbook"
+    },
+    "methodology": {
+      "needBot": "Open the Blast bot and it will send it to you.",
+      "error": "Couldn't send it. Try again.",
+      "open": "Download",
+      "openBot": "Open bot",
+      "get": "Get it",
+      "sentToast": "The guide is in Telegram, in the bot chat"
+    },
+    "rate": {
+      "title": "How are the videos?",
+      "description": "Rate each from 1 to 10. It takes a minute."
+    },
+    "improve": {
+      "title": "What should we tweak?",
+      "description": "Almost everything is fixed on the timeline, no new render needed.",
+      "tip": {
+        "footage": "Don't like a shot: swap it on the timeline, the rest stays.",
+        "transitions": "A transition feels off: set your own on that exact cut.",
+        "subtitles": "A word is off-beat: move its timing and mark focus words."
+      },
+      "open": "Open timeline"
+    },
+    "pitch": {
+      "title": "Unlimited on “{{track}}”",
+      "description": "Build as many versions of one track as you need. Free, two steps in Telegram.",
+      "freeTitle": "Unlimited on one track",
+      "freeText": "Up to {{cap}} videos per batch, $t(funnel.units.hours, {\"count\": {{hours}} }) between batches.",
+      "freePrice": "Free",
+      "tripwireTitle": "Any track, no limits",
+      "tripwireText": "Up to {{cap}} videos per batch, no waiting. One-time payment.",
+      "tripwirePrice": "{{price}} ₽",
+      "blastTitle": "Blast subscription",
+      "blastText": "4 tracks and 100 videos a month, every effect.",
+      "blastPrice": "1 990 ₽/mo",
+      "lead": {
+        "title": "There could be 100 of these a month",
+        "compareTitle": "Videos for 1 990 ₽ a month",
+        "blast": "Blast",
+        "blastCount": "100",
+        "editor": "Editor",
+        "editorCount": "~7"
+      },
+      "personal": {
+        "time": "Artists who grow post every day. Here it takes minutes.",
+        "money": "Artists who grow post every day. With an editor that's tens of thousands.",
+        "ideas": "One track, dozens of different videos. Stats show which one lands.",
+        "meaning": "Algorithms reward consistency. One video decides nothing.",
+        "noEdit": "We handle all the editing: shots, cuts, subtitles.",
+        "default": "Algorithms reward consistency. One video decides nothing.",
+        "timeBy": {
+          "lt_hour": "Right now one video takes you under an hour. Here, a couple of minutes.",
+          "1_3h": "Right now one video takes you 1–3 hours. Here, a couple of minutes.",
+          "half_day": "Right now one video takes you half a day or more. Here, a couple of minutes.",
+          "a_lot": "Right now one video takes you a lot of time. Here, a couple of minutes."
+        },
+        "moneyBy": {
+          "2_5k": "Right now editing costs you 2 000–5 000 ₽ a month.",
+          "5_10k": "Right now editing costs you 5 000–10 000 ₽ a month.",
+          "10k_plus": "Right now editing costs you over 10 000 ₽ a month."
+        }
+      },
+      "study": "See the plan",
+      "skipToFree": "Next: free unlimited",
+      "ladderLabel": "Ways to make more"
+    },
+    "actions": {
+      "title": "Two steps to unlimited",
+      "description": "Both in Telegram, under a minute together.",
+      "unlock": "Unlock unlimited",
+      "channelTitle": "Subscribe to the Blast channel",
+      "channelText": "Video breakdowns and promo tips for artists.",
+      "channelDone": "Subscribed.",
+      "channelMissing": "We don't see the subscription yet. Subscribe and check again.",
+      "channelOpen": "Open channel",
+      "channelCheck": "Check",
+      "managerTitle": "Message the manager",
+      "managerText": "You'll talk about how to make Blast better for you. The message is ready, just send it.",
+      "managerDone": "Done, the manager will reply soon.",
+      "managerOpen": "Message",
+      "managerMessage": "Hi! I'd like unlimited on “{{track}}” and I'm happy to share what to improve in Blast. Code: {{code}}"
+    },
+    "done": {
+      "title": "Unlimited is on",
+      "description": "Build versions of this track for free. We'll ping you in Telegram when the limit refreshes.",
+      "generate": "Build more",
+      "left": "{{n}} of {{cap}} available",
+      "ruleCap": "Up to {{cap}} videos per batch",
+      "ruleCooldown_one": "{{count}} hour between batches",
+      "ruleCooldown_other": "{{count}} hours between batches",
+      "ruleDaily_one": "{{count}} batch on day one, then $t(funnel.units.videos, {\"count\": {{videos}} }) a day",
+      "ruleDaily_other": "{{count}} batches on day one, then $t(funnel.units.videos, {\"count\": {{videos}} }) a day",
+      "descriptionWait": "Unlimited is on for this track. The limit is used up for now; we'll ping you in Telegram when it refreshes.",
+      "nextIn": "next batch in {{time}}"
+    },
+    "other": {
+      "title": "Unlimited is already on",
+      "description": "It applies to “{{track}}” and doesn't move to another track.",
+      "ok": "Got it",
+      "buy": "Buy",
+      "generate": "Keep generating"
+    },
+    "tripwire": {
+      "title": "No waiting for {{price}} ₽",
+      "text": "Any of your tracks: up to {{cap}} videos per batch, no cooldown. One-time, not a subscription.",
+      "buy": "Remove limits",
+      "paid": "Limits removed from the track",
+      "failed": "Payment didn't go through",
+      "expires": "Offer ends in {{time}}"
+    },
+    "limits": {
+      "track": "Track unlimited",
+      "noLimits": "no limits",
+      "available": "{{n}} of {{cap}}",
+      "recharge": "in {{time}}"
+    },
+    "popout": {
+      "plans": "Plans",
+      "cooldown": {
+        "title": "Recharging",
+        "until": "until the next batch",
+        "text": "There are $t(funnel.units.hours, {\"count\": {{hours}} }) between unlimited batches. We'll ping you in Telegram when you can build again."
+      },
+      "daily": {
+        "title": "Today's limit",
+        "until": "until new videos",
+        "text": "$t(funnel.units.batches, {\"count\": {{batches}} }) on day one, then $t(funnel.units.videos, {\"count\": {{videos}} }) a day. We'll ping you when the limit refreshes."
+      },
+      "creditsOut": {
+        "title": "Free videos are used up",
+        "text": "Unlock unlimited on this track: rate your videos and take two steps in Telegram. It's free.",
+        "unlock": "Unlock unlimited"
+      }
+    },
+    "errors": {
+      "noTrack": "Upload a track first",
+      "unlock": "Couldn't unlock. Try again.",
+      "save": "Couldn't save. Try again.",
+      "reopen": "Couldn't open the batch. Try again.",
+      "load": "Couldn't load. Try again.",
+      "retry": "Retry"
+    },
+    "badge": "Track unlimited",
+    "units": {
+      "hours_one": "{{count}} hour",
+      "hours_other": "{{count}} hours",
+      "batches_one": "{{count}} batch",
+      "batches_other": "{{count}} batches",
+      "videos_one": "{{count}} video",
+      "videos_other": "{{count}} videos"
+    }
   }
 }

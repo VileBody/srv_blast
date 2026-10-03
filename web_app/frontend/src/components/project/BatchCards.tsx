@@ -149,7 +149,7 @@ export function failureReason(error: string | null | undefined): string | null {
 }
 
 /** Строка генерации (620×60, #1d1534, r15): № + чипы + TikTok + скачивание (Figma W36). */
-export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?: () => void }) {
+export function GenerationRow({ video, onPost, footer }: { video: VideoVersion; onPost?: () => void; footer?: ReactNode }) {
   const { t } = useTranslation();
   const chip = useChip();
   // Опубликованный ролик выглядел ровно как неопубликованный: юзер не понимал, что уже ушло
@@ -213,6 +213,8 @@ export function GenerationRow({ video, onPost }: { video: VideoVersion; onPost?:
           {reason ?? t('processing.failedNoReason')}
         </p>
       )}
+      {/* оценка ролика 1–10 (воронка после генерации, components/funnel) */}
+      {footer}
     </div>
   );
 }
@@ -390,9 +392,15 @@ export function GenerationsCard({
   loading,
   rating,
   onRate,
-  ratingPending
+  ratingPending,
+  videoFooter,
+  track
 }: {
   videos: VideoVersion[];
+  /** трек батча — для безлимита из окна у кружка лимитов */
+  track?: { id?: string; audioHash?: string; title?: string; projectId?: string };
+  /** подвал строки готового ролика — оценка 1–10 */
+  videoFooter?: (video: VideoVersion) => ReactNode;
   postAll?: () => void;
   /** постинг одного ролика: индекс в списке (Figma W36 — иконка TikTok в строке) */
   postOne?: (video: VideoVersion) => void;
@@ -445,7 +453,7 @@ export function GenerationsCard({
             {t('projectDetail.downloadAll')}
           </Button>
           {/* flex по центру: строчная обёртка садила кружок на базовую линию, ниже кнопок */}
-          <span className="flex items-center max-md:ml-auto"><LimitsIndicator offsetY={28} /></span>
+          <span className="flex items-center max-md:ml-auto"><LimitsIndicator offsetY={28} track={track} /></span>
         </span>
       </div>
       <div className="relative min-h-0 flex-1">
@@ -470,7 +478,7 @@ export function GenerationsCard({
           ) : (
             videos.map((v) => v.status === 'PENDING' || v.status === 'PROCESSING'
               ? <LoadingRow key={v.id} video={v} active={v.id === activePending?.id} />
-              : <GenerationRow key={v.id} video={v} onPost={postOne && v.status === 'COMPLETED' ? () => postOne(v) : undefined} />)
+              : <GenerationRow key={v.id} video={v} footer={videoFooter?.(v)} onPost={postOne && v.status === 'COMPLETED' ? () => postOne(v) : undefined} />)
           )}
           {loading && pending.length === 0 && <LoadingRow />}
         </div>

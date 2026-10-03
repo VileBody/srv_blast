@@ -340,6 +340,26 @@ def safe_extension(filename: str | None, allowed: set[str], fallback: str) -> st
     return suffix if suffix in allowed else fallback
 
 
+# Путь возврата внутри приложения (после оплаты, после входа): только /app…, с query.
+# Сегменты пути непустые (значит, без `//`), без точек, схем, `\`, `@` и `#` — такой
+# путь не уведёт на чужой хост ни при склейке с APP_URL, ни в навигации браузера.
+# Без lookahead: им же проверяет pydantic (Rust regex lookaround не умеет).
+APP_RETURN_PATH_RE = r"^/app(?:/[A-Za-z0-9_\-]+)*/?(?:\?[A-Za-z0-9_\-=&%]*)?$"
+
+
+def safe_app_path(value: str | None) -> str | None:
+    """Путь внутри приложения или None, если он не проходит APP_RETURN_PATH_RE."""
+    import re
+
+    path = str(value or "")
+    return path if len(path) <= 300 and re.fullmatch(APP_RETURN_PATH_RE, path) else None
+
+
+def with_query_param(path: str, key: str, value: str) -> str:
+    """Дописать параметр к пути, у которого query уже может быть (`?project=…`)."""
+    return f"{path}{'&' if '?' in path else '?'}{key}={value}"
+
+
 def sanitize_filename(filename: str | None, fallback: str) -> str:
     """Оставить только имя файла без путей и управляющих символов."""
     from pathlib import Path

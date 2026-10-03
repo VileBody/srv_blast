@@ -3314,6 +3314,211 @@ def apply_asr_words_edit(
     return result
 
 
+# ── «Докрутить на сайте»: состояние монтажа готовой джобы ──────────────────────
+
+# Поля запроса джобы, по которым сайт восстанавливает ролик в визарде: окно, хук,
+# переход/грейд, рамка, цвета, вайб. Остальное (очереди, токены, сиды) наружу не идёт.
+EDIT_STATE_REQUEST_KEYS = (
+    "audio_s3_url",
+    "lyrics_text",
+    "target_fragment",
+    "stage1_alignment_backend",
+    "subtitles_mode",
+    "user_clip_start_sec",
+    "user_clip_end_sec",
+    "hook_enabled",
+    "user_drop_t",
+    "hook_device",
+    "f4_device",
+    "f4_bpm",
+    "effect_hook",
+    "effect_transition",
+    "effect_extra",
+    "effect_extra_full",
+    "effect_hook_extend",
+    "effect_cut_transitions",
+    "effect_extra_ranges",
+    "f2_shape",
+    "frame_id",
+    "f1_sound_url",
+    "f1_sound_text",
+    "f6_video_url",
+    "f6_video_width",
+    "f6_video_height",
+    "f6_video_duration",
+    "f6_video_has_audio",
+    "subtitle_color_hex",
+    "accent_color_hex",
+    "rotation_theme",
+    "rotation_tags_group",
+    "render_preset",
+    "bg_mode",
+    "bg_solid_color",
+    "variant_index",
+    "variants_total",
+)
+
+# Stage 1 целиком: ровно то, что `_seed_resume_state_from_source_job` переносит в
+# рендер и что `gemini_orchestrator` сверяет на cache-compat (mode/reference/identity).
+_ASR_CLONE_KEYS = (
+    "stage1_asr",
+    "stage1_asr_mode",
+    "stage1_asr_reference_text",
+    "stage1_alignment_backend",
+    "stage1_alignment_metadata",
+)
+
+
+class EditStateUnavailable(LookupError):
+    """У джобы нет сохранённого состояния (протухла или не дошла до Stage 2)."""
+
+
+def _load_job_resume_state(store: JobStore, job_id: str) -> tuple[Dict[str, Any], str]:
+    """resume_state джобы из тех же источников и в том же порядке, что reuse:
+    runtime БД → job result → файл. Возвращает (state, источник)."""
+    state = _load_resume_state_from_runtime_db(job_id=job_id)
+    if state:
+        return state, "runtime_db"
+    state = _resume_state_from_job_result(store, job_id)
+    if state:
+        return state, "job_result"
+    path = _job_resume_state_path(work_dir=SETTINGS.work_dir, job_id=job_id)
+    if path.exists():
+        state = _load_resume_state_file(path)
+        if state:
+            return state, "file"
+    return {}, ""
+
+
+def _stage1_working_window(stage1_asr: Dict[str, Any]) -> tuple[float, float] | None:
+    """Окно, в котором реально лежат слова: рабочее окно выравнивателя (оно может быть
+    уже пользовательского), иначе окно фрагмента."""
+    selected = stage1_asr.get("selected_fragment") if isinstance(stage1_asr, dict) else None
+    if not isinstance(selected, dict):
+        return None
+    analytics = selected.get("fragment_analytics") or {}
+    try:
+        return float(analytics["working_start_abs"]), float(analytics["working_end_abs"])
+    except Exception:
+        pass
+    audio = selected.get("audio") or {}
+    try:
+        return float(audio["clip_start_abs"]), float(audio["clip_end_abs"])
+    except Exception:
+        return None
+
+
+def job_edit_state(*, store: JobStore, job_id: str) -> Dict[str, Any]:
+    """Всё, что нужно сайту, чтобы открыть ролик на монтажном столе как есть.
+
+    `request` — из стора джоб (там он живёт, пока джобу не вычистил TTL; тогда
+    None, и сайт берёт снимок настроек, который бот положил в ссылку). Склейки,
+    клипы и слова — из resume_state (runtime БД переживает TTL стора).
+    """
+    jid = str(job_id or "").strip()
+    st = store.get(jid) if jid else None
+    resume_state, source = _load_job_resume_state(store, jid) if jid else ({}, "")
+    if st is None and not resume_state:
+        raise EditStateUnavailable(jid)
+    request = None
+    if st is not None:
+        req = dict(st.request or {})
+        request = {k: req[k] for k in EDIT_STATE_REQUEST_KEYS if k in req}
+    stage1_asr = resume_state.get("stage1_asr") if isinstance(resume_state.get("stage1_asr"), dict) else None
+    window = _stage1_working_window(stage1_asr) if stage1_asr else None
+    switch = resume_state.get("stage2_switch_timestamps")
+    switch_points = None
+    if isinstance(switch, dict) and isinstance(switch.get("switch_points_abs"), list):
+        switch_points = [float(p) for p in switch["switch_points_abs"]]
+    plan = resume_state.get("stage2_footage_plan")
+    return {
+        "job_id": jid,
+        "status": st.status if st is not None else None,
+        "request": request,
+        "resume_state_source": source,
+        "window": (
+            {"clip_start_abs": window[0], "clip_end_abs": window[1]} if window else None
+        ),
+        "footage_plan": plan if isinstance(plan, dict) else None,
+        "footage_plan_meta": (
+            resume_state.get("stage2_footage_plan_meta")
+            if isinstance(resume_state.get("stage2_footage_plan_meta"), dict)
+            else None
+        ),
+        "switch_points_abs": switch_points,
+        "words": (
+            [
+                {"text": w["text"], "t_start": w["t_start"], "t_end": w["t_end"]}
+                for w in _asr_preview_words_payload(stage1_asr)
+            ]
+            if stage1_asr
+            else []
+        ),
+        "asr": {
+            "available": bool(stage1_asr),
+            "mode": str(resume_state.get("stage1_asr_mode") or ""),
+            "alignment_backend": str(resume_state.get("stage1_alignment_backend") or ""),
+            "reference_text": str(resume_state.get("stage1_asr_reference_text") or ""),
+        },
+    }
+
+
+def clone_asr_preview_from_job(*, store: JobStore, source_job_id: str, clone_key: str) -> Dict[str, Any]:
+    """Готовая asr_preview-джоба со Stage 1 чужой (бот-) джобы — без нового выравнивания.
+
+    Сайт правит слова поверх неё (`apply_asr_words_edit`) и рендерит с
+    `reuse_text_job_id=<эта джоба>`, как после обычной примерки. Источник обязан быть
+    local_ctc: только такой Stage 1 рендер сайта примет без пересчёта (cache-compat),
+    иначе правки молча потерялись бы — поэтому это явная ошибка.
+    """
+    src = str(source_job_id or "").strip()
+    key = str(clone_key or "").strip()
+    if not key:
+        # Без ключа клон был общим на все проекты сайта с этим роликом: правка слов в
+        # одном проекте меняла другой. Ключ (пользователь + проект) обязателен.
+        raise ValueError("clone_key is required (site user + project)")
+    resume_state, _source = _load_job_resume_state(store, src) if src else ({}, "")
+    stage1_asr = resume_state.get("stage1_asr")
+    if not isinstance(stage1_asr, dict):
+        raise EditStateUnavailable(src)
+    mode = str(resume_state.get("stage1_asr_mode") or "")
+    if mode != "local_ctc" or str(resume_state.get("stage1_alignment_backend") or "") != "local_ctc":
+        raise ValueError(
+            f"source job {src} stage1 is {mode or 'unknown'!r}, the site reuses only local_ctc"
+        )
+    window = _stage1_working_window(stage1_asr)
+    if window is None:
+        raise ValueError(f"source job {src} stage1_asr has no clip window")
+    src_state = store.get(src)
+    src_req = dict(src_state.request or {}) if src_state is not None else {}
+    request_payload = {
+        "job_kind": "asr_preview",
+        "asr_source_job_id": src,
+        "audio_s3_url": str(src_req.get("audio_s3_url") or ""),
+        "target_fragment": str(resume_state.get("stage1_asr_reference_text") or ""),
+        "clip_start_abs": window[0],
+        "clip_end_abs": window[1],
+        "stage1_alignment_backend": "local_ctc",
+    }
+    st, created = store.new_job(
+        request=request_payload, idempotency_key=f"asr-from-job:{src}:{key}"
+    )
+    if not created and st.status == "SUCCEEDED":
+        return {"job_id": st.job_id, "status": st.status, "created": False}
+    resume_state_path = _job_resume_state_path(work_dir=SETTINGS.work_dir, job_id=st.job_id)
+    clone = {k: resume_state[k] for k in _ASR_CLONE_KEYS if k in resume_state}
+    resume_state_path.parent.mkdir(parents=True, exist_ok=True)
+    resume_state_path.write_text(json.dumps(clone, ensure_ascii=False, indent=2), encoding="utf-8")
+    _persist_resume_state_snapshot(
+        store=store, job_id=st.job_id, resume_state_path=resume_state_path, source="asr_clone",
+    )
+    result = _asr_preview_result(stage1_asr=stage1_asr, clip_start_abs=window[0], clip_end_abs=window[1])
+    result["cloned_from"] = src
+    store.set_status(st.job_id, "SUCCEEDED", stage="asr_preview", result=result)
+    log.info("asr_preview_cloned job_id=%s source=%s words=%d", st.job_id, src, len(result["words"]))
+    return {"job_id": st.job_id, "status": "SUCCEEDED", "created": True}
+
+
 # Task names whose first positional arg is the job_id, used by the orphan-reaper
 # below to flip a job to FAILED when its worker dies mid-execution.
 _JOB_ID_FIRST_ARG_TASKS = frozenset({

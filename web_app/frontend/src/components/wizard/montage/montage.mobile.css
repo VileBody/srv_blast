@@ -69,7 +69,7 @@
 .mob .fxt-clip.sel { box-shadow: inset 0 0 0 2px #fff; } /* ui-allow: рамка выбранного — как на десктопе */
 
 /* ── панель инструментов: лента иконок с подписями ── */
-.mm-bar { flex: none; display: flex; gap: 2px; overflow-x: auto; padding: 6px 8px 8px; border-top: 1px solid var(--fxt-line); scrollbar-width: none; background: var(--bg); }
+.mm-bar { flex: none; display: flex; align-items: center; gap: 2px; height: 72px; overflow-x: auto; padding: 0 8px; border-top: 1px solid var(--fxt-line); scrollbar-width: none; background: var(--bg); }
 .mm-bar::-webkit-scrollbar { display: none; }
 .mob .mm-tool { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 64px; height: 56px; padding: 0 6px; border-radius: var(--r10); color: var(--fxt-t80); font-size: 11px; line-height: 14px; white-space: nowrap; } /* ui-allow: подпись инструмента под иконкой, как в CapCut */
 .mob .mm-tool:active { background: var(--fxt-t06); }
@@ -130,14 +130,28 @@
 .mob .mm-hadd:active { background: var(--fxt-t06); color: var(--text); }
 
 /* ── панель замены кадра — на месте нижней панели: отмена · варианты · готово ── */
-.mm-replace-slot { padding: 8px 12px 10px; }
-.mm-replace { flex: 1; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
-.mob .mm-replace-btn { display: flex; align-items: center; justify-content: center; gap: 6px; height: 44px; border-radius: var(--r10); background: var(--fxt-raise); color: var(--text); font-size: 14px; }
+.mm-replace-slot { padding: 0 12px; overflow: hidden; }
+.mm-replace { flex: 1; display: grid; grid-template-columns: 52px 1fr 52px; align-items: center; gap: 8px; }
+.mob .mm-replace-btn { display: grid; place-items: center; width: 52px; height: 52px; border-radius: var(--r10); background: var(--fxt-raise); color: var(--text); }
 .mob .mm-replace-btn.pri { background: var(--accent-strong); }
 .mob .mm-replace-btn:disabled { opacity: .45; }
 .mob .mm-replace-btn:active { transform: scale(.97); }
-.mm-replace-var { display: flex; align-items: center; height: 44px; border-radius: var(--r10); background: var(--fxt-raise); }
-.mob .mm-replace-var button { display: grid; place-items: center; width: 40px; height: 44px; color: var(--text); }
+.mm-replace-var { display: flex; align-items: center; justify-content: center; height: 52px; border-radius: var(--r10); background: var(--fxt-raise); }
+.mob .mm-replace-var button { display: grid; place-items: center; width: 52px; height: 52px; color: var(--text); }
 .mob .mm-replace-var button:disabled { opacity: .3; }
 .mm-replace-var .cnt { min-width: 56px; text-align: center; top: 0; font-size: 14px; }
 .mm-replace-var .cnt small { color: var(--fxt-t40); font-size: 14px; }
+
+/* лента инструментов шире экрана: затухание у края, пока её можно листать */
+.mm-bar[data-fade-r] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); } /* ui-allow: чёрный здесь — маска прозрачности, не цвет */
+.mm-bar[data-fade-l] { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); } /* ui-allow: чёрный здесь — маска прозрачности, не цвет */
+.mm-bar[data-fade-l][data-fade-r] { -webkit-mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); } /* ui-allow: чёрный здесь — маска прозрачности, не цвет */
+
+/* разовая подсказка над таймлайном: как работать с этой зоной */
+.mm-intro { position: absolute; left: 12px; right: 12px; bottom: 84px; z-index: 20; display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: var(--r15); background: var(--fxt-pop); box-shadow: inset 0 0 0 1px var(--fxt-line2), 0 16px 40px rgba(5, 1, 15, .55); animation: mm-sheet-in .28s var(--fxt-ease); } /* ui-allow: тень подсказки в цвет фона */
+.mm-intro ul { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+.mm-intro li { display: flex; gap: 10px; align-items: flex-start; font-size: 14px; line-height: 20px; color: var(--fxt-t80); }
+.mm-intro li svg { margin-top: 2px; color: var(--accent-light); }
+.mm-intro li .tx { top: 0; }
+.mob .mm-intro-ok { align-self: stretch; height: 44px; border-radius: var(--r10); background: var(--accent-strong); color: var(--text); font-size: 14px; }
+@media (prefers-reduced-motion: reduce) { .mm-intro { animation: none; } }

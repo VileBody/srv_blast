@@ -5246,6 +5246,28 @@ def build_all_via_gemini_one_call(
         json.dumps(footage_payload.model_dump(mode="json"), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    # «Докрутить на сайте»: склейки и клипы этого ролика живут вместе с джобой
+    # (resume_state → runtime БД через снимок llm_success), а не только в логах,
+    # которые чистятся через 72 часа. Форма — ровно план раскадровки
+    # (`storyboard_plan.build_plan`), который рендер принимает как footage_plan.
+    # Только запись: оркестратор этот ключ не читает, reuse/кэш его не переносят.
+    from mlcore.storyboard_plan import build_plan as _build_storyboard_plan
+
+    resume_state["stage2_footage_plan"] = _build_storyboard_plan(
+        clip_start_abs=float(clip_start_abs),
+        clip_end_abs=float(clip_end_abs),
+        switch_points_abs=list(switch_payload.switch_points_abs),
+        selection=footage_payload,
+    )
+    resume_state["stage2_footage_plan_meta"] = {
+        "bg_mode": _bg_mode_picker,
+        "rotation_theme": rotation_theme_override,
+        "rotation_tags_group": rotation_group_override,
+        # план воспроизводим кадр в кадр только на точном слоте (тема + группа),
+        # пиннутом плане или выборе пикера; у сплошного фона клипы — заглушки
+        "exact_slot": bool(rotation_theme_override and rotation_group_override),
+    }
+    _save_resume_state(resume_state_path, logger=logger, state=resume_state)
 
     _emit(progress_cb, "llm_merge")
     logger.info("stage3_merge_start")

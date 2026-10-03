@@ -56,8 +56,11 @@ def _new_app(*, paid: bool = False, balance: int = 5, free_limit: int = 5):
     app.store = _Store()
     app.credits_db = _Credits(paid=paid, balance=balance)
     app.settings = SimpleNamespace(
+        web_handoff_enabled=False,
+        generation_subscription_required=False,
         initial_credits=free_limit,
         rust_gen_bot_default_enabled=False,
+        tg_force_free_funnel_chat_ids=frozenset(),
     )
     return app
 

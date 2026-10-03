@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import type { ProjectCoverTrack } from '../../lib/types';
-import { wavePeaks } from '../wizard/useWavePeaks';
+import { peakLevels } from '../wizard/trackPeaks';
 
 function isPlaceholder(url?: string | null): boolean {
   return !url || url.endsWith('/cover-placeholder.svg');
@@ -41,20 +41,12 @@ function readStored(trackId: string): Wave | null {
   }
 }
 
+/** Волна по громкости с сервера — сам трек ради обложки не качается (раньше качался целиком). */
 async function decodeWave(trackId: string): Promise<Wave | null> {
-  const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!AudioCtx) return null;
-  const response = await fetch(api.trackAudioUrl(trackId), { credentials: 'include' });
-  if (!response.ok) return null;
-  const context = new AudioCtx();
-  try {
-    const buffer = await context.decodeAudioData(await response.arrayBuffer());
-    const wave = { peaks: wavePeaks(buffer, BARS).map((v) => Math.round(v * 100) / 100), duration: buffer.duration };
-    try { localStorage.setItem(storageKey(trackId), JSON.stringify(wave)); } catch { /* хранилище недоступно — посчитаем в следующий раз */ }
-    return wave;
-  } finally {
-    void context.close();
-  }
+  const peaks = await api.trackPeaks(trackId);
+  const wave = { peaks: peakLevels(peaks, 0, peaks.duration, BARS).map((v) => Math.round(v * 100) / 100), duration: peaks.duration };
+  try { localStorage.setItem(storageKey(trackId), JSON.stringify(wave)); } catch { /* хранилище недоступно — посчитаем в следующий раз */ }
+  return wave;
 }
 
 /** Волна трека; null — ещё считается или файл не раскодировался (тогда ровная линия, без выдумки). */

@@ -1,8 +1,9 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { useModalCount } from '../ui/Modal';
 import { NotchedInput } from '../ui/NotchedInput';
 import { useToast } from '../../contexts/ToastContext';
 
@@ -25,6 +26,14 @@ export function ProfileSetupGate({ open }: { open: boolean }) {
     onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ['me'] }); },
     onError: (error) => push({ variant: 'error', title: error instanceof Error ? error.message : t('simple.error') })
   });
+
+  // Считается в useModalCount, как kit/Dialog: подсказки визарда молчат, а квиз и безлимит
+  // воронки (FunnelHost) ждут, пока профиль заполнят, а не ложатся поверх обязательного шага.
+  useEffect(() => {
+    if (!open) return undefined;
+    useModalCount.getState().inc();
+    return () => useModalCount.getState().dec();
+  }, [open]);
 
   if (!open) return null;
 

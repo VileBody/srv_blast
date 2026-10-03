@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { importWithReload } from '../lib/chunkReload';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,12 +23,14 @@ import { useAsrPreview } from '../components/wizard/useAsrPreview';
 import { WizardCanvas, WizardHeaderCard } from '../components/wizard/WizardFrame';
 import { demoTrackUrl } from '../dev/demoTrack';
 import { useToast } from '../contexts/ToastContext';
+import { useFunnelUi } from '../stores/funnelUi';
+import { trackTitleOf } from '../components/funnel/useFunnel';
 import { useWizardStore } from '../stores/wizardStore';
 import { useCombos } from '../components/wizard/montage/combos';
 import { useFxTimelineOpen } from '../components/wizard/timelineGuides';
 
 // Монтажный стол — тяжёлый полноэкранный экран «Пула»: грузится, когда его открыли
-const MontageTable = lazy(() => import('../components/wizard/montage/MontageTable').then((m) => ({ default: m.MontageTable })));
+const MontageTable = lazy(() => importWithReload(() => import('../components/wizard/montage/MontageTable')).then((m) => ({ default: m.MontageTable })));
 
 function apiErrorText(error: unknown): string | undefined {
   if (!(error instanceof ApiError)) return undefined;
@@ -50,6 +53,9 @@ function apiErrorText(error: unknown): string | undefined {
 
 /* Этап «Пул» вынесен в components/wizard/SlicePanel.tsx (Figma W19/W33) */
 
+/** вайбы, для которых лёгкие копии клипов уже заказаны в этой вкладке */
+const prewarmed = new Set<string>();
+
 export function WizardPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
@@ -61,6 +67,20 @@ export function WizardPage() {
   const projectId = useWizardStore((state) => state.projectId);
   const setProjectId = useWizardStore((state) => state.setProjectId);
   const state = useWizardStore();
+  const openUnlimited = useFunnelUi((ui) => ui.openUnlimited);
+  // Вайб выбран на «Фоне» — сервер сразу начинает готовить лёгкие копии его клипов: к «Пулу»
+  // превью кадров открываются без ожидания. Один раз на вайб и отрывок; это ускорение,
+  // поэтому сбой не мешает работе — подбор на «Пуле» всё равно подготовит свои клипы сам.
+  useEffect(() => {
+    if (!state.timingFrom || !state.timingTo) return;
+    for (const group of state.background.footage) {
+      const key = `${group}|${state.timingFrom}|${state.timingTo}`;
+      if (prewarmed.has(key)) continue;
+      prewarmed.add(key);
+      void api.prewarmMedia({ group, clipFrom: state.timingFrom, clipTo: state.timingTo })
+        .catch((error: unknown) => { prewarmed.delete(key); console.warn('media prewarm failed', group, error); });
+    }
+  }, [state.background.footage, state.timingFrom, state.timingTo]);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
   const projectsQuery = useQuery({ queryKey: ['projects'], queryFn: api.projects });
   const wizardSessionQuery = useQuery({ queryKey: ['wizard-session'], queryFn: api.wizardSession });
@@ -180,7 +200,8 @@ export function WizardPage() {
     // reset стирал их вместе с настройками батча, и «+» на втором батче уводил
     // человека обратно на загрузку файла — хотя ProjectDetailPage.addBatch
     // рассчитывает найти их в сторе и открыть сразу этап «Фон».
-    onSuccess: (data) => { push({ variant: 'success', title: t('wizard.page.genStarted') }); state.newBatch(projectId); state.ackCarriedOver(); navigate(data.redirectTo); },
+    // шапка опрашивает активную генерацию редко, пока её нет, — сообщаем о новой сразу
+    onSuccess: (data) => { push({ variant: 'success', title: t('wizard.page.genStarted') }); void queryClient.invalidateQueries({ queryKey: ['active-job'] }); state.newBatch(projectId); state.ackCarriedOver(); navigate(data.redirectTo); },
     // 402 — упёрлись в лимит роликов: причина + путь к решению, а не общий «не удалось»
     onError: (error) => {
       const limitReached = error instanceof ApiError && error.status === 402;
@@ -190,6 +211,23 @@ export function WizardPage() {
       if (asrPending) {
         push({ variant: 'info', title: t('wizard.page.asrPendingTitle'), text: t('wizard.page.asrPendingText') });
         return;
+      }
+      // Воронка: бесплатные ролики кончились — открываем безлимит на этот трек; квота трека
+      // кончилась — обновляем лимиты, окно перезарядки всплывёт у кружка лимитов.
+      const limit = limitReached ? (error.detail as { detail?: { code?: string; unlimitedOffer?: boolean } })?.detail : undefined;
+      if (limit?.code === 'credits_exhausted' && limit.unlimitedOffer) {
+        openUnlimited({
+          source: 'gate',
+          projectId: projectId ?? undefined,
+          trackId: state.track?.id,
+          audioHash: state.track?.audioHash,
+          trackTitle: trackTitleOf(state.track?.filename)
+        });
+        return;
+      }
+      if (limit?.code && ['cooldown', 'daily_limit', 'track_batch_cap'].includes(limit.code)) {
+        void queryClient.invalidateQueries({ queryKey: ['funnel-state'] });
+        void queryClient.invalidateQueries({ queryKey: ['me'] });
       }
       push({
         variant: 'error',
@@ -368,6 +406,15 @@ export function WizardPage() {
   useEffect(() => { setTimelineFlag(tableOpen && stage === 5); }, [tableOpen, stage, setTimelineFlag]);
   // ушли с «Пула» — стол закрыт: возврат на «Пул» не должен сам открывать его поверх
   useEffect(() => { if (stage !== 5) setTableOpen(false); }, [stage]);
+  // «Докрутить на сайте»: ролик из бота открывается сразу на монтажном столе (флаг разовый)
+  const openTableOnLoad = useWizardStore((s) => s.openTableOnLoad);
+  const consumeOpenTable = useWizardStore((s) => s.consumeOpenTable);
+  useEffect(() => {
+    if (!openTableOnLoad || stage !== 5) return;
+    consumeOpenTable();
+    setPoolIndex(0);
+    setTableOpen(true);
+  }, [openTableOnLoad, stage, consumeOpenTable]);
   useEffect(() => () => setTimelineFlag(false), [setTimelineFlag]);
   const safePoolIndex = Math.min(poolIndex, Math.max(0, combos.length - 1));
   const poolCombo = combos[safePoolIndex];
