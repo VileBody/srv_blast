@@ -83,49 +83,88 @@ export function useFragmentAudio() {
   const track = useWizardStore((state) => state.track);
   const timingFrom = useWizardStore((state) => state.timingFrom);
   const timingTo = useWizardStore((state) => state.timingTo);
-  const [playing, setPlaying] = useState(false);
+  /*
+   * Состояние берём из событий самого <audio>, а не ставим «играет» сразу после play():
+   * раньше при отклонённом play() (копия трека ещё готовится, сеть, политика автоплея)
+   * интерфейс считал, что трек играет, — кнопка пряталась, тишина, второй клик «ставил на
+   * паузу» то, что не играло. Выглядело так, будто кнопка не работает вовсе.
+   */
+  const [status, setStatus] = useState<'idle' | 'loading' | 'playing'>('idle');
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  /** запуск, ждущий метаданных (сик до них браузер может проигнорировать) — один на плеер */
+  const pendingRef = useRef<(() => void) | null>(null);
+  /** где остановиться: конец отрывка, если он задан */
+  const endRef = useRef<number | null>(null);
   const url = usePlaybackUrl(track);
 
-  // Смена трека и уход со страницы обязаны глушить звук: иначе музыка играет «из ниоткуда»
-  useEffect(() => {
-    audioRef.current?.pause();
-    audioRef.current = null;
-    setPlaying(false);
-  }, [url]);
-  useEffect(() => () => {
-    audioRef.current?.pause();
-    audioRef.current = null;
-  }, []);
-
-  const toggle = () => {
-    if (!url) return;
-    if (!audioRef.current) {
-      audioRef.current = new Audio(url);
-      audioRef.current.onended = () => setPlaying(false);
-    }
+  const dropPending = () => {
     const audio = audioRef.current;
-    if (playing) {
-      audio.pause();
-      setPlaying(false);
-      return;
-    }
-    const from = timingToSeconds(timingFrom);
-    const to = timingToSeconds(timingTo);
-    // Играем ровно отрывок, который уедет в ролик, а не трек целиком
-    audio.ontimeupdate = to !== null && (from === null || to > from)
-      ? () => {
-          if (audio.currentTime >= to) {
-            audio.pause();
-            setPlaying(false);
-            audio.ontimeupdate = null;
-          }
-        }
-      : null;
-    audio.currentTime = from ?? 0;
-    void audio.play();
-    setPlaying(true);
+    if (audio && pendingRef.current) audio.removeEventListener('loadedmetadata', pendingRef.current);
+    pendingRef.current = null;
   };
 
-  return { available: Boolean(url), playing, toggle };
+  const stop = () => {
+    // без снятия ожидающего запуска медленная сеть доигрывала бы его после стопа
+    dropPending();
+    audioRef.current?.pause();
+    setStatus('idle');
+  };
+
+  const release = () => {
+    stop();
+    audioRef.current = null;
+  };
+
+  // Смена трека и уход со страницы обязаны глушить звук: иначе музыка играет «из ниоткуда»
+  useEffect(() => release, [url]);
+  // другой отрывок — прежний запуск больше не про него
+  useEffect(() => stop, [timingFrom, timingTo]);
+
+  const ensureAudio = (src: string) => {
+    if (audioRef.current) return audioRef.current;
+    const audio = new Audio(src);
+    audio.preload = 'auto';
+    const mine = () => audioRef.current === audio;
+    audio.addEventListener('playing', () => { if (mine()) setStatus('playing'); });
+    // буферизация посреди отрывка — показываем ожидание, а не «играет» в тишине
+    audio.addEventListener('waiting', () => { if (mine()) setStatus((s) => (s === 'idle' ? s : 'loading')); });
+    audio.addEventListener('pause', () => { if (mine()) setStatus('idle'); });
+    audio.addEventListener('ended', () => { if (mine()) setStatus('idle'); });
+    audio.addEventListener('timeupdate', () => {
+      // Играем ровно отрывок, который уедет в ролик, а не трек целиком
+      const end = endRef.current;
+      if (mine() && end !== null && audio.currentTime >= end) audio.pause();
+    });
+    audio.addEventListener('error', () => {
+      if (!mine()) return;
+      // сломанный элемент не переиспользуем: следующий клик попробует заново (копия могла дособраться)
+      dropPending();
+      audioRef.current = null;
+      setStatus('idle');
+    });
+    audioRef.current = audio;
+    return audio;
+  };
+
+  const start = () => {
+    if (!url) return;
+    const audio = ensureAudio(url);
+    const from = timingToSeconds(timingFrom);
+    const to = timingToSeconds(timingTo);
+    endRef.current = to !== null && (from === null || to > from) ? to : null;
+    setStatus('loading');
+    const run = () => {
+      pendingRef.current = null;
+      audio.currentTime = from ?? 0;
+      audio.play().catch(() => { if (audioRef.current === audio) setStatus('idle'); });
+    };
+    dropPending();
+    if (audio.readyState >= 1) { run(); return; }
+    pendingRef.current = run;
+    audio.addEventListener('loadedmetadata', run, { once: true });
+  };
+
+  const toggle = () => (status === 'idle' ? start() : stop());
+
+  return { available: Boolean(url), playing: status === 'playing', loading: status === 'loading', toggle };
 }

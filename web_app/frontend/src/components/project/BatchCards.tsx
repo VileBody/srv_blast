@@ -194,14 +194,16 @@ export function GenerationRow({ video, onPost, footer }: { video: VideoVersion; 
   const rawReason = failed && isAdmin ? failureReason(video.error) : null;
   return (
     <div className={cn('shrink-0 rounded-[15px] bg-panel', posted && 'opacity-70')}>
-    <div className="relative flex h-[60px] items-center pl-[28px] pr-[24px]">
-      <span className="flex w-[110px] shrink-0 items-center gap-[8px] truncate text-[16px] leading-none text-text">
+    {/* На телефоне поля и колонка номера уже: при 110px под номер и полях 28/24 на чипы
+        оставалось ~120px, и источник обрезался до «Гор…» даже у коротких названий. */}
+    <div className="relative flex h-[60px] items-center pl-[28px] pr-[24px] max-md:pl-[16px] max-md:pr-[16px]">
+      <span className="flex w-[110px] shrink-0 items-center gap-[8px] truncate text-[16px] leading-none text-text max-md:w-auto">
         <span className="truncate">{t('projectDetail.videoN', { n: video.index })}</span>
         {posted && <span className="h-[6px] w-[6px] shrink-0 rounded-full bg-success" aria-hidden="true" />}
       </span>
       <div
         ref={chips.ref}
-        className="no-scrollbar mx-[20px] flex min-w-0 flex-1 cursor-grab select-none items-center gap-[10px] overflow-x-auto active:cursor-grabbing"
+        className="no-scrollbar mx-[20px] flex min-w-0 flex-1 cursor-grab select-none items-center gap-[10px] overflow-x-auto active:cursor-grabbing max-md:mx-[12px] max-md:gap-[8px]"
         style={{ maskImage: chipsMask, WebkitMaskImage: chipsMask }}
         {...chips.handlers}
       >
@@ -464,6 +466,10 @@ export function GenerationsCard({
   const downloadable = videos.filter((video) => video.downloadUrl);
   const pending = videos.filter((video) => video.status === 'PENDING' || video.status === 'PROCESSING');
   const activePending = pending.find((video) => video.status === 'PROCESSING' || video.stage !== 'waiting_previous') ?? pending[0];
+  const postProgress = postedCount > 0 && ready.length > 0;
+  const postAllHint = postProgress
+    ? t('projectDetail.postAllProgressHint', { done: postedCount, total: ready.length })
+    : t('projectDetail.postAllHint');
   // Браузер блокирует пачку одновременных скачиваний — разносим по времени
   const downloadAll = () => {
     void api.trackEvent('video_download_all', { videos: downloadable.length }).catch(() => {});
@@ -473,23 +479,34 @@ export function GenerationsCard({
   };
   return (
     <section data-limits-dim className="card-2 relative flex min-h-0 flex-1 flex-col overflow-hidden p-[40px] max-md:p-[20px]">
-      <div className="mb-[28px] flex items-center justify-between gap-space-4 max-md:flex-col max-md:items-start max-md:gap-[10px]">
+      <div className="mb-[28px] flex flex-wrap items-center justify-between gap-space-4 max-md:flex-col max-md:items-start max-md:gap-[10px]">
         <h2 className="shrink-0 text-ui-24 font-[400] text-transparent" style={gradLight}>{t('projectDetail.generations')}</h2>
         {/* Figma W36: фокус-кнопка «Выложить все» + TikTok; справа кружок лимита (W47 — поповер) */}
-        <span className="flex shrink-0 items-center gap-[20px] max-md:w-full max-md:gap-[8px]">
+        <span className="flex min-w-0 shrink-0 items-center gap-[12px] max-md:w-full max-md:gap-[8px]">
+          {/* Подписи короткие («Выложить», «Скачать»): с «все» две кнопки и кружок не влезали в
+              узкую колонку и телефон. Что действие про весь батч — в aria-label и подсказке. */}
           <Button
             variant="primary"
             size="sm"
             onClick={() => postAll?.()}
             disabled={!postAll}
             icon={<FigIcon name="pd-tiktok.svg" h={16} />}
+            aria-label={postAllHint}
+            title={postAllHint}
           >
-            {postedCount > 0 && ready.length > 0
+            {postProgress
               ? t('projectDetail.postAllProgress', { done: postedCount, total: ready.length })
               : t('projectDetail.postAll')}
           </Button>
           {/* Скачивание всего батча: раньше ролики можно было забрать только по одному */}
-          <Button size="sm" onClick={downloadAll} disabled={!downloadable.length} icon={<FigIcon name="pd-download.svg" h={14} />}>
+          <Button
+            size="sm"
+            onClick={downloadAll}
+            disabled={!downloadable.length}
+            icon={<FigIcon name="pd-download.svg" h={14} />}
+            aria-label={t('projectDetail.downloadAllHint')}
+            title={t('projectDetail.downloadAllHint')}
+          >
             {t('projectDetail.downloadAll')}
           </Button>
           {/* flex по центру: строчная обёртка садила кружок на базовую линию, ниже кнопок */}

@@ -658,6 +658,7 @@ export function BackgroundWorkZone({ ready, loading, onBack, onNext }: { ready: 
   const [index, setIndex] = useState(0);
   const [broken, setBroken] = useState<Record<string, boolean>>({});
   const fragmentAudio = useFragmentAudio();
+  const previewVideo = useRef<HTMLVideoElement | null>(null);
   const counts = modeCounts(background);
 
   const queryClient = useQueryClient();
@@ -684,6 +685,19 @@ export function BackgroundWorkZone({ ready, loading, onBack, onNext }: { ready: 
   const meta = total
     ? background.mode === 'footage' ? t('wizard.bg.metaFootage', { count: total }) : background.mode === 'photo' ? t('wizard.bg.metaPhoto', { count: total }) : t('wizard.bg.modeColor')
     : '';
+  // Трек пошёл — футаж с первого кадра вместе с ним: ролик и так крутится без звука по кругу,
+  // и раньше по «играть» в кадре ничего не менялось. play() здесь же — если браузер не дал
+  // автоплей, ролик стартует от этого клика. Стоп трека ролик не трогает: дальше он снова
+  // просто крутится без звука, как до нажатия.
+  const togglePreview = () => {
+    const video = previewVideo.current;
+    if (video && !fragmentAudio.playing && !fragmentAudio.loading) {
+      video.currentTime = 0;
+      video.play().catch(() => undefined);
+    }
+    fragmentAudio.toggle();
+  };
+  const audioActive = fragmentAudio.playing || fragmentAudio.loading;
   const tag = example
     ? t('wizard.bg.exampleTag')
     : current
@@ -704,7 +718,7 @@ export function BackgroundWorkZone({ ready, loading, onBack, onNext }: { ready: 
             : <img key={`bg-${current.id}`} className="w12-ambient-bg" src={current.previewUrl} alt="" aria-hidden="true" />)}
           <div className={cn('w12-player', format === '4:3' && 'w12-wide', format === '16:9' && 'w12-cine', fragmentAudio.playing && 'w12-playing')}>
             {current?.previewUrl && !broken[current.id] && (isVideo
-              ? <PreviewVideo key={current.id} className="w12-media-el" src={current.previewUrl} ignoreLowData onError={() => setBroken((b) => ({ ...b, [current.id]: true }))} />
+              ? <PreviewVideo key={current.id} ref={previewVideo} className="w12-media-el" src={current.previewUrl} ignoreLowData onError={() => setBroken((b) => ({ ...b, [current.id]: true }))} />
               : <img key={current.id} className="w12-media-el" src={current.previewUrl} alt="" onError={() => setBroken((b) => ({ ...b, [current.id]: true }))} />)}
             {current && !color && !example && (!current.previewUrl || broken[current.id]) && (
               <div role="status" className="w12-media-el grid place-items-center p-4 text-center text-text-60">{t('wizard.preview.unavailable')}</div>
@@ -723,8 +737,16 @@ export function BackgroundWorkZone({ ready, loading, onBack, onNext }: { ready: 
             {hasContent && !example && <div className="w12-shade" />}
             {tag && <span className="w12-pv-tag">{tag}</span>}
             {hasContent && fragmentAudio.available && (
-              <button type="button" className="w12-pv-play" onClick={fragmentAudio.toggle} aria-label={fragmentAudio.playing ? t('wizard.bg.stopTrack') : t('wizard.bg.playTrack')}>
-                {fragmentAudio.playing ? PAUSE : PLAY}
+              <button
+                type="button"
+                className="w12-pv-play"
+                onClick={togglePreview}
+                aria-pressed={audioActive}
+                aria-busy={fragmentAudio.loading || undefined}
+                aria-label={audioActive ? t('wizard.bg.stopTrack') : t('wizard.bg.playTrack')}
+              >
+                {/* пока трек грузится — крутилка: «пауза» в тишине выглядела как сломанная кнопка */}
+                {fragmentAudio.loading ? <span className="spinner" aria-hidden="true" /> : fragmentAudio.playing ? PAUSE : PLAY}
               </button>
             )}
             {total > 1 && (

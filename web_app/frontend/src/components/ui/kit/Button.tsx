@@ -65,6 +65,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       type={type}
       disabled={disabled}
       aria-busy={loading || undefined}
+      // ActionBar на телефоне растягивает кнопки по ширине — квадрат с иконкой не трогает
+      data-icon-only={iconOnly || undefined}
       className={cn(buttonClass({ variant, size, ready, iconOnly }), loading && 'cursor-progress', className)}
       {...props}
     >
@@ -88,7 +90,7 @@ export function ButtonLink({
   ...props
 }: Omit<Common, 'loading'> & AnchorHTMLAttributes<HTMLAnchorElement>) {
   return (
-    <a className={cn(buttonClass({ variant, size, ready, iconOnly }), className)} {...props}>
+    <a className={cn(buttonClass({ variant, size, ready, iconOnly }), className)} data-icon-only={iconOnly || undefined} {...props}>
       {icon}
       {children && <span>{children}</span>}
       {iconEnd}

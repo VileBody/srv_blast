@@ -3,6 +3,7 @@ import type { FunnelQuestion, FunnelQuota, FunnelRules, FunnelState, RatingReaso
 import { Button, ButtonLink, GLYPH, Icon } from '../ui/kit';
 import { FunnelSheet } from './FunnelSheet';
 import { PitchFlow } from './PitchFlow';
+import { generateNow } from './useFunnel';
 import {
   FN_GLYPH,
   MethodologyAction,
@@ -11,8 +12,10 @@ import {
   QuizQuestion,
   RatingScale,
   ReasonPills,
+  TripwireOffer,
   UnlockActionRow,
   UnlockedTicket,
+  useCountdown,
   type ActionStatus,
   type LadderTier,
   type MethodologyState
@@ -150,6 +153,13 @@ export interface UnlimitedView {
   unlockPending?: boolean;
   /* done */
   quota?: FunnelQuota | null;
+  /**
+   * Генерации на балансе (/api/me): `null` — безлимит по видео, `undefined` — не знаем.
+   * Квота трека на перезарядке ≠ «лимит исчерпан», если генерации ещё есть.
+   */
+  creditsLeft?: number | null;
+  /** открытое окно трипваера: без него купить нельзя (бэк ответит 410) */
+  tripwireOffer?: FunnelState['tripwireOffer'];
   otherTrackTitle?: string | null;
   /* otherTrack: выбранная строка лестницы */
   tier?: LadderTier | null;
@@ -179,6 +189,8 @@ export interface UnlimitedHandlers {
   onTier?: (tier: LadderTier) => void;
   /** купить трипваер на трек этого батча */
   onBuyTripwire?: () => void;
+  /** к тарифам (переход внутри сайта, окно закрывается) */
+  onPlans?: () => void;
 }
 
 export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on: UnlimitedHandlers; titleId?: string }) {
@@ -326,20 +338,7 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
       );
     }
     case 'done':
-      return (
-        <FunnelSheet
-          titleId={titleId}
-          stepKey="done"
-          onClose={on.onClose}
-          title={t('funnel.done.title')}
-          // «собирай бесплатно» — только когда сейчас есть что собрать; иначе время в билете
-          description={t(view.quota && !view.quota.allowed ? 'funnel.done.descriptionWait' : 'funnel.done.description')}
-          // одна длинная кнопка: закрыть — крестик в шапке
-          actions={<Button variant="primary" className="flex-1" onClick={on.onGenerate}>{t('funnel.done.generate')}</Button>}
-        >
-          <UnlockedTicket trackTitle={view.trackTitle} rules={view.rules} quota={view.quota ?? null} />
-        </FunnelSheet>
-      );
+      return <DoneStep titleId={titleId} view={view} on={on} />;
     case 'otherTrack':
       return (
         <FunnelSheet
@@ -358,11 +357,70 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
   }
 }
 
+/**
+ * «Безлимит открыт». Что сказать — по тому, что можно собрать СЕЙЧАС (generateNow):
+ * - квота пускает — «собирай бесплатно»;
+ * - квота на перезарядке, но генерации есть — когда следующий бесплатный батч и сколько
+ *   генераций на балансе, кнопка та же «Собрать ещё» (батч уйдёт за генерации);
+ * - ни квоты, ни генераций — только тогда «собрать не из чего», и тут питч трипваера
+ *   (если окно предложения открыто) или тарифов.
+ */
+function DoneStep({ view, on, titleId }: { view: UnlimitedView; on: UnlimitedHandlers; titleId?: string }) {
+  const { t } = useTranslation();
+  const quota = view.quota ?? null;
+  // квоты нет (не дочитали) или баланс не знаем — не утверждаем, что всё кончилось
+  const mode = !quota || view.creditsLeft === undefined ? 'free' : generateNow(quota, view.creditsLeft);
+  const timer = useCountdown(mode !== 'free' ? quota?.availableAt ?? null : null);
+  const common = { titleId, stepKey: `done-${mode}`, onClose: on.onClose };
+  const ticket = <UnlockedTicket trackTitle={view.trackTitle} rules={view.rules} quota={quota} />;
+  // одна длинная кнопка: закрыть — крестик в шапке
+  const generate = <Button variant="primary" className="flex-1" onClick={on.onGenerate}>{t('funnel.done.generate')}</Button>;
+
+  if (mode === 'free') {
+    return <FunnelSheet {...common} title={t('funnel.done.title')} description={t('funnel.done.description')} actions={generate}>{ticket}</FunnelSheet>;
+  }
+  if (mode === 'credits') {
+    const description = view.creditsLeft === null
+      ? t('funnel.done.descriptionCreditsAny', { time: timer.text })
+      : t('funnel.done.descriptionCredits', { time: timer.text, count: view.creditsLeft ?? 0 });
+    return <FunnelSheet {...common} title={t('funnel.done.title')} description={description} actions={generate}>{ticket}</FunnelSheet>;
+  }
+  const offer = view.tripwireOffer ?? null;
+  const plans = on.onPlans
+    ? <Button variant={offer ? 'secondary' : 'primary'} className={offer ? undefined : 'flex-1'} onClick={on.onPlans}>{t('funnel.done.plans')}</Button>
+    : <ButtonLink variant={offer ? 'secondary' : 'primary'} className={offer ? undefined : 'flex-1'} href="/app/pricing?plan=BLAST">{t('funnel.done.plans')}</ButtonLink>;
+  return (
+    <FunnelSheet
+      {...common}
+      title={t('funnel.done.outTitle')}
+      description={t(offer ? 'funnel.done.outTripwire' : 'funnel.done.outPlans', { time: timer.text })}
+      actions={(
+        <>
+          {plans}
+          {offer && on.onBuyTripwire && (
+            <Button variant="primary" className="flex-1" loading={view.buyPending} onClick={on.onBuyTripwire} icon={<Icon>{FN_GLYPH.bolt}</Icon>}>
+              {t('funnel.done.buy', { price: view.rules.tripwirePriceRub })}
+            </Button>
+          )}
+        </>
+      )}
+    >
+      <div className="flex flex-col gap-[12px]">
+        {ticket}
+        {/* кнопка покупки — в строке действий окна, здесь только что даёт и сколько живёт */}
+        {offer && <TripwireOffer rules={view.rules} expiresAt={offer.expiresAt} />}
+      </div>
+    </FunnelSheet>
+  );
+}
+
 /** Кнопка окна под выбранную строку лестницы: платное — «Купить», бесплатное — собирать дальше. */
 function TierAction({ tier, pending, on }: { tier: LadderTier | null; pending?: boolean; on: UnlimitedHandlers }) {
   const { t } = useTranslation();
   if (tier === 'blast') {
-    return <ButtonLink variant="primary" className="flex-1" href="/app/pricing?plan=BLAST">{t('funnel.other.buy')}</ButtonLink>;
+    return on.onPlans
+      ? <Button variant="primary" className="flex-1" onClick={on.onPlans}>{t('funnel.other.buy')}</Button>
+      : <ButtonLink variant="primary" className="flex-1" href="/app/pricing?plan=BLAST">{t('funnel.other.buy')}</ButtonLink>;
   }
   if (tier === 'tripwire') {
     return <Button variant="primary" className="flex-1" loading={pending} onClick={on.onBuyTripwire}>{t('funnel.other.buy')}</Button>;

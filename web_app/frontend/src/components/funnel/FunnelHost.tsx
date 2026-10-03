@@ -5,17 +5,18 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import type { FunnelState, GenerationJob, RatingReason, VideoRating, VideoVersion } from '../../lib/types';
 import { useToast } from '../../contexts/ToastContext';
-import { bindFunnelUser, funnelSeen, markFunnelSeen, markQuizSkipped, quizSkippedRecently, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
+import { bindFunnelUser, forgetFunnelSeen, funnelSeen, markFunnelSeen, markQuizSkipped, quizSkippedRecently, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
 import { startNextBatch } from '../../stores/wizardStore';
 import { guardDraft } from '../../stores/draftGuard';
 import { FunnelDialog, FunnelSheet } from './FunnelSheet';
 import { QuizPanel, UnlimitedPanel, quizPath, type QuizView, type UnlimitedStep } from './panels';
 import { useAnyVideoWatched } from '../../lib/videoWatch';
-import { FN_GLYPH, VideoRatingRow, type ActionStatus, type LadderTier, type MethodologyState } from './parts';
-import { Button, Icon } from '../ui/kit';
+import { FN_GLYPH, VideoRatingRow, useCountdown, type ActionStatus, type LadderTier, type MethodologyState } from './parts';
+import { Button, GLYPH, Icon } from '../ui/kit';
+import { cn } from '../../lib/cn';
 import { useCoverCount, useModalCount } from '../ui/Modal';
 import { Skeleton } from '../ui/Skeleton';
-import { apiErrorCode, isUnlimitedTrack, trackTitleOf, useFunnelState, useQuizCopy, useTripwirePurchase } from './useFunnel';
+import { apiErrorCode, generateNow, isUnlimitedTrack, trackTitleOf, useEnsureTripwireOffer, useFunnelState, useQuizCopy, useTripwirePurchase } from './useFunnel';
 
 /*
  * Хост модалок воронки (docs/BOT_TO_WEB_FLOW.md, раздел 4). Живёт в AppShell, поэтому
@@ -224,6 +225,9 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const clearBadge = useFunnelUi((state) => state.clearBadge);
   const funnelQuery = useFunnelState();
   const funnel = funnelQuery.data;
+  // Генерации на балансе: «безлимит на перезарядке» ещё не значит «собрать не из чего»
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
+  const creditsLeft = meQuery.data ? meQuery.data.creditsLeft : undefined;
   const ratingsQuery = useQuery({
     queryKey: ['funnel-ratings', ctx.jobId],
     queryFn: () => api.funnelRatings(ctx.jobId ?? ''),
@@ -280,6 +284,15 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
     if (funnel.actions.channel_subscribed) setChannel('done');
     if (funnel.actions.manager_contacted) setManager('done');
   }, [funnel]);
+
+  // Трипваер предлагаем там, где собрать не из чего: безлимит открыт на этом треке, его
+  // квота ждёт, генераций нет; и на экране «безлимит уже на другом треке». Окно
+  // предложения (сутки) открывает сам такой экран — до него купить было нельзя (410).
+  const sameTrack = funnel?.unlimited ? isUnlimitedTrack(funnel.unlimited, { id: ctx.trackId, audioHash: ctx.audioHash }) : null;
+  const stuck = sameTrack !== false && Boolean(funnel?.unlimited?.quota)
+    && creditsLeft !== undefined && generateNow(funnel?.unlimited?.quota, creditsLeft) === 'none';
+  const offerScreen = Boolean(funnel?.unlimited) && (sameTrack === false || stuck);
+  const tripwireOffer = useEnsureTripwireOffer(offerScreen && Boolean(ctx.trackId), ctx.trackId, funnel);
 
   if (unavailable) return null;
   if (!funnel || !plan) {
@@ -354,8 +367,11 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
           managerCode: funnel.links.managerCode,
           unlockPending,
           quota: funnel.unlimited?.quota ?? null,
+          creditsLeft,
+          tripwireOffer,
           otherTrackTitle: funnel.unlimited?.trackTitle,
-          tier,
+          // генерации кончились — на «другом треке» сразу выбрана строка трипваера
+          tier: tier ?? (tripwireOffer && creditsLeft === 0 ? 'tripwire' : null),
           buyPending: tripwire.isPending,
           survey: funnel.survey
         }}
@@ -423,6 +439,10 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
             openTable(ctx.projectId, ctx.jobId);
           },
           onTier: setTier,
+          onPlans: () => {
+            onClose();
+            navigate('/app/pricing?plan=BLAST');
+          },
           onBuyTripwire: () => {
             if (!ctx.trackId) {
               push({ variant: 'error', title: t('funnel.errors.noTrack') });
@@ -497,9 +517,24 @@ export function FunnelHost() {
 }
 
 /**
- * Плашка «Безлимит на трек» в углу (docs/BOT_TO_WEB_FLOW.md, раздел 4): модалку закрыли,
- * не пройдя, — она остаётся под рукой. Только бесплатным и пока безлимит не открыт.
+ * Карточка воронки внизу экрана (docs/BOT_TO_WEB_FLOW.md, раздел 4). Два повода:
+ * - `unlimited` — модалку безлимита закрыли, не пройдя: вход в неё остаётся под рукой;
+ * - `tripwire` — безлимит открыт, но собрать не из чего (квота ждёт, генераций нет), а окно
+ *   предложения трипваера открыто: таймер до бесплатного батча и вход в покупку.
+ * Только бесплатным. Крестик сворачивает карточку в круглую кнопку (помним по поводу),
+ * а не убирает вход совсем.
+ *
+ * Геометрия — поля страницы: на десктопе в правом нижнем углу с отступом .app-content,
+ * на телефоне во всю ширину с её полями и над полосой жестов (index.css, .funnel-dock).
  */
+type DockKind = 'unlimited' | 'tripwire';
+
+/** Пути, где низ экрана занят главными действиями страницы — карточку там не ставим. */
+function dockBlocked(pathname: string): boolean {
+  // выкладка в TikTok («Опубликовать») и тарифы (кнопки оплаты у карточек тарифов)
+  return pathname.endsWith('/post') || pathname.startsWith('/app/pricing');
+}
+
 export function FunnelBadge() {
   const { t } = useTranslation();
   const badge = useFunnelUi((state) => state.badge);
@@ -509,35 +544,106 @@ export function FunnelBadge() {
   const location = useLocation();
   const modals = useModalCount((state) => state.count);
   const covers = useCoverCount((state) => state.count);
-  const funnel = useFunnelState(Boolean(badge)).data;
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
+  const funnel = useFunnelState().data;
   const settled = Boolean(funnel && (funnel.hasPaid || funnel.unlimited));
   useEffect(() => {
     if (badge && settled) clearBadge();
   }, [badge, settled, clearBadge]);
-  /*
-   * Плашка фиксирована в правом нижнем углу — там же кнопки «Опубликовать» выкладки в TikTok,
-   * действия модалок и монтажного стола. Под ними её не показываем: она бы их накрыла
-   * (на телефоне особенно) или висела бы поверх диалогов визарда.
-   */
-  const hidden = location.pathname.endsWith('/post') || modals > 0 || covers > 0;
-  const visible = Boolean(badge && funnel && !settled && !open && !hidden);
-  // Пока плашка видна, на телефоне у содержимого есть запас снизу (index.css): последние
+
+  const unlimited = funnel?.unlimited ?? null;
+  const quota = unlimited?.quota ?? null;
+  const creditsLeft = meQuery.data ? meQuery.data.creditsLeft : undefined;
+  const offer = funnel?.tripwireOffer ?? null;
+  // Трипваер — только когда правда нечем собирать и купить можно (окно открыто, трек известен)
+  const stuck = Boolean(
+    funnel && !funnel.hasPaid && unlimited?.trackId && quota && offer
+    && creditsLeft !== undefined && generateNow(quota, creditsLeft) === 'none'
+  );
+  const kind: DockKind | null = badge && funnel && !settled ? 'unlimited' : stuck ? 'tripwire' : null;
+  const dockKey = kind === 'unlimited' ? `unlimited:${badge?.jobId ?? 'gate'}` : kind === 'tripwire' ? `tripwire:${offer?.expiresAt}` : null;
+  const timer = useCountdown(kind === 'tripwire' ? quota?.availableAt ?? null : null);
+
+  const [collapsedKeys, setCollapsedKeys] = useState<Record<string, boolean>>({});
+  const mini = dockKey ? (collapsedKeys[dockKey] ?? funnelSeen(`dock:mini:${dockKey}`)) : false;
+  const setMini = (on: boolean) => {
+    if (!dockKey) return;
+    if (on) markFunnelSeen(`dock:mini:${dockKey}`);
+    else forgetFunnelSeen(`dock:mini:${dockKey}`);
+    setCollapsedKeys((prev) => ({ ...prev, [dockKey]: on }));
+  };
+
+  // Под модалками и обложками не показываем: карточка висела бы поверх диалогов
+  const hidden = dockBlocked(location.pathname) || modals > 0 || covers > 0;
+  // Визард на десктопе — композиция ровно в экран, «Продолжить» в правом нижнем углу:
+  // карточка легла бы на неё. На телефоне визард прокручивается — там запас снизу.
+  const wizard = location.pathname.startsWith('/app/generate');
+  const visible = Boolean(kind && !open && !hidden);
+  // Пока карточка видна, на телефоне у содержимого есть запас снизу (index.css): последние
   // кнопки страницы прокручиваются выше неё, а не прячутся под ней.
   useEffect(() => {
     if (!visible) return undefined;
-    document.documentElement.setAttribute('data-funnel-badge', '');
+    document.documentElement.setAttribute('data-funnel-badge', mini ? 'mini' : 'card');
     return () => document.documentElement.removeAttribute('data-funnel-badge');
-  }, [visible]);
-  if (!visible || !badge) return null;
+  }, [visible, mini]);
+  if (!visible || !kind) return null;
+
+  const title = kind === 'tripwire'
+    ? t('funnel.dock.tripwireTitle', { price: funnel?.rules.tripwirePriceRub })
+    : t('funnel.dock.unlimitedTitle');
+  const text = kind === 'tripwire' ? t('funnel.dock.tripwireText', { time: timer.text }) : t('funnel.dock.unlimitedText');
+  const glyph = kind === 'tripwire' ? FN_GLYPH.bolt : FN_GLYPH.key;
+  const openDock = () => {
+    if (kind === 'unlimited' && badge) {
+      openUnlimited(badge);
+      return;
+    }
+    if (!unlimited?.trackId) return;
+    // окно «Безлимит открыт» на треке безлимита: там таймер, правила и покупка трипваера
+    openUnlimited({
+      source: 'gate',
+      trackId: unlimited.trackId,
+      audioHash: unlimited.audioHash,
+      trackTitle: unlimited.trackTitle ?? undefined
+    });
+  };
+
   return (
-    <button
-      type="button"
-      onClick={() => openUnlimited(badge)}
-      className="fn-step fixed bottom-[24px] right-[24px] z-sidebar inline-flex h-ctl-sm items-center gap-[6px] rounded-full bg-accent-strong px-[14px] text-ui-14 text-text shadow-soft transition-transform duration-150 active:scale-[.97] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light max-md:bottom-[16px] max-md:right-[16px]"
-    >
-      <Icon>{FN_GLYPH.key}</Icon>
-      {t('funnel.badge')}
-    </button>
+    <div className={cn('funnel-dock fn-step', mini && 'funnel-dock--mini', wizard && 'md:hidden')} role="region" aria-label={title}>
+      {mini ? (
+        <button
+          type="button"
+          onClick={() => setMini(false)}
+          aria-label={title}
+          title={title}
+          className="grid h-ctl w-ctl place-items-center rounded-full bg-accent-strong text-ui-20 text-text shadow-soft transition-transform duration-150 active:scale-[.95] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light"
+        >
+          <Icon>{glyph}</Icon>
+        </button>
+      ) : (
+        <div className="flex items-center gap-[4px] rounded-r15 border border-line-strong bg-card p-[8px] shadow-soft">
+          <button
+            type="button"
+            onClick={openDock}
+            className="group flex min-w-0 flex-1 items-center gap-[12px] rounded-r10 p-[4px] text-left transition-[background-color] duration-150 hover:bg-panel focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light"
+          >
+            <span className="grid h-ctl w-ctl shrink-0 place-items-center rounded-r10 bg-accent-soft text-ui-20 text-accent-light">
+              <Icon>{glyph}</Icon>
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col gap-[2px]">
+              <span className="truncate text-ui-16 text-text">{title}</span>
+              <span className={cn('line-clamp-2 text-ui-14', kind === 'tripwire' ? 'tabular-nums text-accent-light' : 'text-text-60')}>{text}</span>
+            </span>
+            <span className="shrink-0 text-ui-16 text-text-40 transition-[color,transform] duration-150 group-hover:translate-x-[2px] group-hover:text-text">
+              <Icon>{GLYPH.right}</Icon>
+            </span>
+          </button>
+          <Button variant="ghost" size="sm" iconOnly aria-label={t('funnel.dock.collapse')} title={t('funnel.dock.collapse')} onClick={() => setMini(true)}>
+            <Icon>{GLYPH.close}</Icon>
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
 
