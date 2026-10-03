@@ -11,6 +11,7 @@ import { FigIcon } from '../components/ui/FigIcon';
 import { BillingCard } from '../components/billing/BillingCard';
 import { TrackUsageCard } from '../components/billing/TrackUsageCard';
 import { useToast } from '../contexts/ToastContext';
+import { AvatarImg } from '../components/ui/AvatarImg';
 import { SvgMaskIcon } from '../components/layout/SvgMaskIcon';
 import { Modal } from '../components/ui/Modal';
 import { clearUserState } from '../stores/session';
@@ -516,9 +517,12 @@ export function ProfilePage() {
           <span className="absolute inset-0 rounded-full border-2 border-accent-light" aria-hidden="true" />
           <span className="absolute inset-[8px] overflow-hidden rounded-full bg-accent-20">
             {/* свой аватар важнее подтянутого из TikTok; инициал — последний фолбэк */}
-            {avatarSrc
-              ? <img src={avatarSrc} alt="" className="h-full w-full object-cover" />
-              : <span className="flex h-full w-full items-center justify-center text-[32px] font-[400] text-text">{initial}</span>}
+            {/* битая ссылка (протухший TikTok CDN) — инициал вместо пустой рамки */}
+            <AvatarImg
+              src={avatarSrc}
+              className="h-full w-full object-cover"
+              fallback={<span className="flex h-full w-full items-center justify-center text-[32px] font-[400] text-text">{initial}</span>}
+            />
           </span>
           <input type="file" accept="image/*" className="sr-only" onChange={onAvatar} />
         </label>

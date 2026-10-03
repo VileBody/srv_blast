@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '../../lib/api';
+import { AvatarImg } from '../ui/AvatarImg';
 import { currentAppPath } from '../../lib/appPath';
 import { activeJobOptions } from '../../lib/activeJob';
 import { ProfileSetupGate } from './ProfileSetupGate';
@@ -73,10 +74,13 @@ const AVATAR_CLASS = 'flex h-[60px] w-[60px] items-center justify-center overflo
 
 /** Сам кружок аватара, без ссылки — для мест, где ссылка уже снаружи (пункт меню в шторке). */
 function AvatarFace({ name, avatarUrl }: { name?: string; avatarUrl?: string }) {
-  return avatarUrl ? (
-    <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover p-[2px]" />
-  ) : (
-    <span className="leading-none">{(name ?? 'B').slice(0, 1).toUpperCase()}</span>
+  // битая ссылка (протухший TikTok CDN) — инициал, а не пустой кружок
+  return (
+    <AvatarImg
+      src={avatarUrl}
+      className="h-full w-full rounded-full object-cover p-[2px]"
+      fallback={<span className="leading-none">{(name ?? 'B').slice(0, 1).toUpperCase()}</span>}
+    />
   );
 }
 
