@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { useModalCount } from '../ui/Modal';
 import { NotchedInput } from '../ui/NotchedInput';
 import { useToast } from '../../contexts/ToastContext';
+import { bindGuideUser } from '../guidance/guideMemory';
 
 /**
  * Обязательный шаг «представься» после первого входа.
@@ -20,6 +21,10 @@ export function ProfileSetupGate({ open }: { open: boolean }) {
   const { push } = useToast();
   const [form, setForm] = useState({ name: '', surname: '' });
   const [submitted, setSubmitted] = useState(false);
+  /* Гейт смонтирован в AppShell всегда и раньше <main>, поэтому тут — синхронно в рендере,
+     как bindFunnelUser — привязываем память подсказок к аккаунту до того, как страницы её прочтут. */
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
+  bindGuideUser(meQuery.data?.user.id ?? null);
 
   const saveMutation = useMutation({
     mutationFn: () => api.updateProfile({ name: form.name.trim(), surname: form.surname.trim() }),

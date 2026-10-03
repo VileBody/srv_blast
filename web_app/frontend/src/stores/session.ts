@@ -2,10 +2,9 @@ import { useWizardStore } from './wizardStore';
 import { bindFunnelUser, useFunnelUi } from './funnelUi';
 
 /*
- * Память о подсказках визарда (components/guidance/guideMemory.ts) — per-браузер, но новому
- * аккаунту онбординг нужен заново. Ключ продублирован: модуль подсказок его не экспортирует.
+ * Память о подсказках (components/guidance/guideMemory.ts) тут не чистим: она хранится по id
+ * аккаунта, поэтому новый аккаунт и так видит онбординг, а вернувшийся — не проходит его заново.
  */
-const GUIDES_KEY = 'blast-guides-seen-v1';
 /* Ключи идемпотентности заказов (PricingPage, трипваер) — принадлежат прежнему аккаунту */
 const PAYMENT_ATTEMPT_PREFIXES = ['blast:payment-attempt:', 'blast:tripwire-attempt:'];
 
@@ -22,7 +21,6 @@ export function clearUserState(): void {
   bindFunnelUser(null);
   useFunnelUi.setState({ user: null, open: null, queued: null, later: null, badge: null });
   try {
-    window.localStorage.removeItem(GUIDES_KEY);
     for (let i = window.sessionStorage.length - 1; i >= 0; i -= 1) {
       const key = window.sessionStorage.key(i);
       if (key && PAYMENT_ATTEMPT_PREFIXES.some((prefix) => key.startsWith(prefix))) window.sessionStorage.removeItem(key);
