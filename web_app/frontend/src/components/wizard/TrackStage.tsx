@@ -176,6 +176,8 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
 
   /* перетаскивание по волне: клик ставит окно на лимит, края тянутся, окно двигается целиком */
   const waveRef = useRef<HTMLDivElement>(null);
+  // контейнер прокрутки приближенной волны: его ведёт и зум, и автопрокрутка при перетаскивании
+  const scrollRef = useRef<HTMLDivElement>(null);
   const drag = useRef<null | { kind: 'l' | 'r' } | { kind: 'move'; off: number; len: number }>(null);
   const timeAt = (clientX: number) => {
     const rect = waveRef.current?.getBoundingClientRect();
@@ -189,10 +191,140 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     setCut(start, end);
     return { start, end };
   };
+  /** видимая часть волны: края в пикселях экрана и в секундах трека */
+  const viewport = () => {
+    const box = scrollRef.current?.getBoundingClientRect();
+    const wave = waveRef.current?.getBoundingClientRect();
+    if (!box || !wave || !duration || wave.width <= 0) return null;
+    const toT = (x: number) => Math.max(0, Math.min(duration, ((x - wave.left) / wave.width) * duration));
+    return { left: box.left, right: box.right, t0: toT(box.left), t1: toT(box.right), toX: (sec: number) => wave.left + (sec / duration) * wave.width };
+  };
+  /*
+   * Окно при перетаскивании не уходит за видимую часть приближенной волны: оно упирается в её
+   * край, а волна сама подкручивается под него (автопрокрутка ниже). Раньше окно уезжало за край,
+   * прокрутка стояла на месте, и в кадре оставалась пустая серая волна.
+   * Возвращает новое окно и «нажим» на край: знак — куда крутить, модуль — насколько сильно.
+   */
+  const AUTO_ZONE_PX = 24;
+  const dragStartX = useRef(0);
+  const dragPlan = (clientX: number) => {
+    const d = drag.current;
+    const state = useWizardStore.getState();
+    const curFrom = timingToSeconds(state.timingFrom);
+    const curTo = timingToSeconds(state.timingTo);
+    if (!d || curFrom === null || curTo === null || !duration) return null;
+    const view = viewport();
+    const t0 = view?.t0 ?? 0;
+    const t1 = view?.t1 ?? duration;
+    // нажим считаем, только когда указатель уже сдвинулся к этому краю: схватил ручку у края
+    // и повёл внутрь — волна не должна сорваться в обратную сторону
+    const moved = clientX - dragStartX.current;
+    const pushAt = (x: number) => {
+      if (!view) return 0;
+      if (moved < -2 && x < view.left + AUTO_ZONE_PX) return -Math.min(3, (view.left + AUTO_ZONE_PX - x) / AUTO_ZONE_PX);
+      if (moved > 2 && x > view.right - AUTO_ZONE_PX) return Math.min(3, (x - view.right + AUTO_ZONE_PX) / AUTO_ZONE_PX);
+      return 0;
+    };
+    const raw = timeAt(clientX);
+    // Границы кадра «не дальше, чем сейчас»: если окно уже частично за краем (волну
+    // пролистали вручную), его не дёргает в кадр при захвате — просто дальше наружу не пускаем.
+    if (d.kind !== 'move') {
+      const edgeNow = d.kind === 'l' ? curFrom : curTo;
+      const at = snapTenth(Math.max(Math.min(t0, edgeNow), Math.min(Math.max(t1, edgeNow), raw)));
+      const push = pushAt(clientX);
+      return d.kind === 'l'
+        ? { from: Math.min(at, curTo - MIN_CUT), to: curTo, push }
+        : { from: curFrom, to: Math.max(at, curFrom + MIN_CUT), push };
+    }
+    const wanted = raw - d.off;
+    let start = wanted;
+    let push = pushAt(clientX);
+    // окно короче видимой части — держим его целиком в кадре и давим краем окна, а не указателем
+    if (view && d.len <= t1 - t0) {
+      start = Math.max(Math.min(t0, curFrom), Math.min(Math.max(t1 - d.len, curFrom), wanted));
+      const lead = pushAt(view.toX(wanted));
+      const tail = pushAt(view.toX(wanted + d.len));
+      push = Math.abs(lead) >= Math.abs(tail) ? lead : tail;
+    }
+    start = snapTenth(Math.max(0, Math.min(duration - d.len, start)));
+    return { from: start, to: snapTenth(start + d.len), push };
+  };
+  const applyDrag = (clientX: number) => {
+    const plan = dragPlan(clientX);
+    if (plan) setCut(plan.from, plan.to);
+    return plan;
+  };
+  /*
+   * Автопрокрутка: пока окно (или ручка) давит в край видимой части, волна едет в ту же
+   * сторону, а окно — вместе с ней. Крутится, только пока идёт перетаскивание: ручную прокрутку
+   * в остальное время не трогаем. Скорость — от силы нажима, в пикселях за миллисекунду.
+   */
+  const AUTO_SPEED = 0.9;
+  const auto = useRef<{ raf: number; x: number; ts: number } | null>(null);
+  const dragPlanRef = useRef(dragPlan);
+  dragPlanRef.current = dragPlan;
+  const applyDragRef = useRef(applyDrag);
+  applyDragRef.current = applyDrag;
+  const stopAutoScroll = () => {
+    if (auto.current) cancelAnimationFrame(auto.current.raf);
+    auto.current = null;
+  };
+  const autoTick = (ts: number) => {
+    const state = auto.current;
+    const box = scrollRef.current;
+    if (!state || !drag.current || !box) { stopAutoScroll(); return; }
+    const dt = Math.min(48, Math.max(0, ts - state.ts));
+    state.ts = ts;
+    // окно двигает только нажим на край: стоящий указатель без нажима ничего не меняет
+    const push = dragPlanRef.current(state.x)?.push ?? 0;
+    if (push) {
+      const before = box.scrollLeft;
+      box.scrollLeft = before + push * AUTO_SPEED * dt;
+      // волна сдвинулась под неподвижным указателем — окно догоняет её в том же кадре
+      if (box.scrollLeft !== before) applyDragRef.current(state.x);
+    }
+    state.raf = requestAnimationFrame(autoTick);
+  };
+  const startAutoScroll = (clientX: number) => {
+    stopAutoScroll();
+    auto.current = { raf: 0, x: clientX, ts: performance.now() };
+    auto.current.raf = requestAnimationFrame(autoTick);
+  };
+  useEffect(() => stopAutoScroll, []);
+  /** докрутить волну так, чтобы отрезок [a; b] был в кадре (не влезает — его начало) */
+  const reveal = (a: number, b: number, smooth: boolean) => {
+    const box = scrollRef.current;
+    const wave = waveRef.current;
+    if (!box || !wave || !duration || box.scrollWidth <= box.clientWidth + 1) return;
+    const boxRect = box.getBoundingClientRect();
+    const waveRect = wave.getBoundingClientRect();
+    const toContent = (sec: number) => waveRect.left - boxRect.left + box.scrollLeft + (sec / duration) * waveRect.width;
+    const margin = Math.min(32, box.clientWidth * 0.1);
+    const xa = toContent(Math.min(a, b)) - margin;
+    const xb = toContent(Math.max(a, b)) + margin;
+    let left = box.scrollLeft;
+    if (xb - xa > box.clientWidth || xa < left) left = xa;
+    else if (xb > left + box.clientWidth) left = xb - box.clientWidth;
+    left = Math.max(0, Math.min(box.scrollWidth - box.clientWidth, left));
+    if (Math.abs(left - box.scrollLeft) < 1) return;
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    box.scrollTo({ left, behavior: smooth && !reduce ? 'smooth' : 'auto' });
+  };
+  /** после отпускания, тапа, стрелок и ввода в поля: окно (или сдвинутый край) остаётся в кадре */
+  const revealCut = (kind: 'l' | 'r' | 'move', smooth: boolean) => {
+    const state = useWizardStore.getState();
+    const a = timingToSeconds(state.timingFrom);
+    const b = timingToSeconds(state.timingTo);
+    if (a === null || b === null) return;
+    if (kind === 'l') reveal(a, a, smooth);
+    else if (kind === 'r') reveal(b, b, smooth);
+    else reveal(a, b, smooth);
+  };
   /*
    * Палец на приближенной волне: протяжка листает волну (её скроллит сам браузер —
    * touch-action: pan-x, см. data-pan), а окно ставит только тап без сдвига. Раньше любое
    * касание сразу ставило новое окно и стирало текст отрывка — пролистать волну было нельзя.
+   * Ручки окна тянутся и пальцем (у них touch-action: none) — с той же автопрокруткой.
    */
   const tap = useRef<null | { pointerId: number; x: number; y: number }>(null);
   const TAP_SLOP_PX = 8;
@@ -211,10 +343,18 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
       const { start, end } = placeWindowAt(at);
       drag.current = { kind: 'move', off: at - start, len: end - start };
     }
+    dragStartX.current = event.clientX;
+    startAutoScroll(event.clientX);
     if (playing === 'cut') stop();
   };
-  const onWaveUp = (event: PointerEvent<HTMLDivElement>) => {
+  const endDrag = () => {
+    const d = drag.current;
     drag.current = null;
+    stopAutoScroll();
+    if (d) revealCut(d.kind, true);
+  };
+  const onWaveUp = (event: PointerEvent<HTMLDivElement>) => {
+    endDrag();
     const pending = tap.current;
     tap.current = null;
     if (!pending || pending.pointerId !== event.pointerId) return;
@@ -222,21 +362,16 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     const at = timeAt(event.clientX);
     if (selected && at >= from && at <= to) return;
     placeWindowAt(at);
+    revealCut('move', true);
     if (playing === 'cut') stop();
   };
-  const onWaveCancel = () => { drag.current = null; tap.current = null; };
+  const onWaveCancel = () => { endDrag(); tap.current = null; };
   const onWaveMove = (event: PointerEvent<HTMLDivElement>) => {
     const pending = tap.current;
     if (pending && pending.pointerId === event.pointerId && Math.hypot(event.clientX - pending.x, event.clientY - pending.y) > TAP_SLOP_PX) tap.current = null;
-    const d = drag.current;
-    if (!d || !event.currentTarget.hasPointerCapture(event.pointerId) || from === null || to === null) return;
-    const at = snapTenth(timeAt(event.clientX));
-    if (d.kind === 'l') setCut(Math.min(at, to - MIN_CUT), to);
-    else if (d.kind === 'r') setCut(from, Math.max(at, from + MIN_CUT));
-    else if (d.kind === 'move') {
-      const start = snapTenth(Math.max(0, Math.min(duration - d.len, timeAt(event.clientX) - d.off)));
-      setCut(start, snapTenth(start + d.len));
-    }
+    if (!drag.current || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    if (auto.current) auto.current.x = event.clientX;
+    applyDrag(event.clientX);
   };
   const nudge = (edge: 'l' | 'r', event: KeyboardEvent<HTMLSpanElement>) => {
     const dir = ({ ArrowLeft: -1, ArrowRight: 1 } as Record<string, number>)[event.key];
@@ -245,6 +380,8 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     const step = (event.shiftKey ? 1 : 0.1) * dir;
     if (edge === 'l') setCut(snapTenth(Math.max(0, Math.min(from + step, to - MIN_CUT))), to);
     else setCut(from, snapTenth(Math.min(duration, Math.max(to + step, from + MIN_CUT))));
+    // край, который двигают стрелками, не уходит за видимую часть приближенной волны
+    revealCut(edge, false);
   };
 
   /* поля «Начало / Конец»: «0:40», «40», «0:40.5»; ошибку показывают рамкой, не стирают */
@@ -259,6 +396,8 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     setDraft((d) => ({ ...d, [which]: undefined }));
     if (which === 'from') setCut(snapTenth(value), to ?? snapTenth(Math.min(duration, value + maxSegmentSeconds)));
     else setCut(from ?? snapTenth(Math.max(0, value - maxSegmentSeconds)), snapTenth(value));
+    // окно, заданное с клавиатуры, докручиваем в кадр приближенной волны
+    revealCut('move', true);
   };
   const field = (which: 'from' | 'to') => (
     <label className="w12-tf">
@@ -295,7 +434,6 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     });
   }, [peaksHi, barCount]);
   // при смене зума окно отрывка держим в центре видимой части
-  const scrollRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const box = scrollRef.current;
     if (!box || !duration) return;

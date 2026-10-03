@@ -560,6 +560,7 @@
       "chooseDrop": "Choose the drop timing",
       "customDrop": "Custom",
       "customDropShort": "Custom",
+      "dropBest": "Most likely drop",
       "chooseType": "Choose FX type:",
       "whatIs": "What is the «{{label}}» FX",
       "add": "Add FX",

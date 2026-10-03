@@ -283,8 +283,10 @@ export function StageHooks() {
               aria-pressed={hooks.dropTime === normalizeDropTime(drop.time)}
               onClick={() => { setDropError(null); setCustomDrop(false); setHooks({ dropTime: normalizeDropTime(drop.time) }); }}
             >
+              {/* Только время; процент уверенности убран (шумел, на телефоне ломал чип в две строки).
+                  Лучшему кандидату — маленькая звезда справа от времени. */}
               <span className="w12-l w12-num">{dropLabel(drop.time)}</span>
-              <small className="w12-num">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small>
+              {drop.best && <span className="w12-drop-star" role="img" aria-label={t('wizard.fx.dropBest')} title={t('wizard.fx.dropBest')}>★</span>}
             </button>
           ))}
           {customDrop ? (
