@@ -49,6 +49,8 @@ const pad = (n: number) => String(n).padStart(2, '0');
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 // время в подписях стола — тот же вид, что на всём визарде (мм:сс.сс), а не кадры: «.12» читали как сотые
 const tc = (t: number) => formatTimePrecise(t);
+/** тач-экран без наведения: «по ховеру» там не срабатывает никогда */
+const COARSE_POINTER = typeof window !== 'undefined' && window.matchMedia?.('(hover: none)').matches;
 const eOut = (p: number) => 1 - Math.pow(1 - p, 4);
 const zoomScale = () => Number.parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
 const eIO = (p: number) => p < 0.5 ? 8 * p ** 4 : 1 - Math.pow(-2 * p + 2, 4) / 2;
@@ -419,8 +421,10 @@ function TileMedia({ preview }: { preview: LibPreview }) {
   const [ref, visible, seen] = useInView<HTMLSpanElement>();
   // медленная сеть / экономия трафика: пример не стартует сам — играет по наведению или тапу
   const lowData = useLowData();
-  // «на твоём ролике» оживает только под курсором: остальные плитки — неподвижный кадр
-  const [hot, setHot] = useState(false);
+  // «на твоём ролике» оживает только под курсором: остальные плитки — неподвижный кадр.
+  // На тач-экране наведения нет (тап добавляет эффект) — там видимая плитка играет сама, как раньше.
+  const [hovered, setHot] = useState(false);
+  const hot = hovered || COARSE_POINTER;
   const hover = (play: boolean) => (e: React.SyntheticEvent<HTMLSpanElement>) => {
     setHot(play);
     const video = e.currentTarget.querySelector('video');

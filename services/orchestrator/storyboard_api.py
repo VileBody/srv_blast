@@ -23,6 +23,7 @@ import tempfile
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -134,6 +135,9 @@ ANALYSIS_CACHE_MAX = int(os.environ.get("HOOK_ANALYSIS_CACHE_MAX") or 64)
 ANALYSIS_CACHE_TTL_S = float(os.environ.get("HOOK_ANALYSIS_CACHE_TTL_S") or 6 * 3600)
 _ANALYSIS_LOCK = threading.Lock()
 _ANALYSIS_CACHE: "OrderedDict[tuple[str, float, float], tuple[float, Any]]" = OrderedDict()
+# идущие анализы: FX и «Пул» на холодном кэше часто просят одно окно почти одновременно —
+# второй ждёт первый, а не качает и не считает трек заново
+_ANALYSIS_INFLIGHT: "dict[tuple[str, float, float], Future]" = {}
 
 
 def _analyze_window_uncached(*, audio_s3_url: str, clip_start_abs: float, clip_end_abs: float) -> Any:
@@ -158,15 +162,31 @@ def analyze_window(*, audio_s3_url: str, clip_start_abs: float, clip_end_abs: fl
             _ANALYSIS_CACHE.move_to_end(key)
             # копия: потребитель не должен портить общий результат
             return copy.deepcopy(hit[1])
-    # ошибки не кэшируем: следующий вызов посчитает заново
-    result = _analyze_window_uncached(
-        audio_s3_url=audio_s3_url, clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs,
-    )
+        pending = _ANALYSIS_INFLIGHT.get(key)
+        owner = pending is None
+        if owner:
+            pending = Future()
+            _ANALYSIS_INFLIGHT[key] = pending
+    if not owner:
+        # тот же анализ уже идёт: ждём его (ошибка первого всплывает и здесь)
+        return copy.deepcopy(pending.result())
+    try:
+        result = _analyze_window_uncached(
+            audio_s3_url=audio_s3_url, clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs,
+        )
+    except BaseException as exc:
+        # ошибки не кэшируем: следующий вызов посчитает заново
+        pending.set_exception(exc)
+        with _ANALYSIS_LOCK:
+            _ANALYSIS_INFLIGHT.pop(key, None)
+        raise
     with _ANALYSIS_LOCK:
         _ANALYSIS_CACHE[key] = (now, result)
         _ANALYSIS_CACHE.move_to_end(key)
         while len(_ANALYSIS_CACHE) > ANALYSIS_CACHE_MAX:
             _ANALYSIS_CACHE.popitem(last=False)
+        _ANALYSIS_INFLIGHT.pop(key, None)
+    pending.set_result(result)
     return copy.deepcopy(result)
 
 

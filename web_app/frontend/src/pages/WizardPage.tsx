@@ -9,7 +9,7 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
-import { backgroundUnits, hasTrackInput, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER, subtitleTextProblem } from '../stores/wizardStore';
+import { backgroundUnits, footagePlaneOf, hasTrackInput, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER, subtitleTextProblem } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { useStoryboardBusy } from '../components/wizard/storyboardData';
 import { LabWorkZone, useFxLab, useLegacyHooksToVariants } from '../components/wizard/FxLab';
@@ -74,6 +74,9 @@ export function WizardPage() {
   useEffect(() => {
     if (!state.timingFrom || !state.timingTo) return;
     for (const group of state.background.footage) {
+      // клипы раскадровки есть только у вайбов: фильмы и коллекции «Пул» не раскладывает,
+      // а их прогрев сервер (подбор по плану вайбов) отклонил бы ошибкой
+      if (footagePlaneOf(state.background, group) !== 'vibes') continue;
       const key = `${group}|${state.timingFrom}|${state.timingTo}`;
       if (prewarmed.has(key)) continue;
       prewarmed.add(key);
