@@ -602,7 +602,7 @@ export function WizardPage() {
     </WizardCanvas>
     {stage === 5 && tableOpen && (
       <Suspense fallback={null}>
-        <MontageTable index={safePoolIndex} onIndex={setPoolIndex} onClose={() => setTableOpen(false)} onGenerate={() => { const reason = blocker(); if (reason) return reason; void next(); return null; }} />
+        <MontageTable index={safePoolIndex} onIndex={setPoolIndex} onClose={() => setTableOpen(false)} busy={busy} onGenerate={() => { const reason = blocker(); if (reason) return reason; void next(); return null; }} />
       </Suspense>
     )}
     </div>
