@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { safeAppPath } from '../../lib/appPath';
 import { cn } from '../../lib/cn';
 import { FigIcon } from './FigIcon';
 
@@ -17,24 +18,37 @@ import { FigIcon } from './FigIcon';
  * получал «Подключен» и безлимит, которого на самом деле нет. Проверка стоит здесь, в
  * единственной кнопке, а не на четырёх экранах, которые её используют.
  */
+/**
+ * Адрес старта OAuth. `returnPath` — куда бэк вернёт после колбэка (только `/app…`, бэк
+ * перепроверяет); без него — в профиль. Экран выкладки передаёт себя, иначе человек терял
+ * проект/батч/ролик, который как раз собирался выложить.
+ */
+export function tiktokConnectUrl(returnPath?: string | null): string {
+  const next = safeAppPath(returnPath);
+  return next ? `${api.tiktokAuthUrl()}?next=${encodeURIComponent(next)}` : api.tiktokAuthUrl();
+}
+
 export function TiktokButton({
   connected,
   onClick,
   className,
-  size = 'md'
+  size = 'md',
+  returnPath
 }: {
   connected: boolean;
   onClick?: () => void;
   className?: string;
   /** компактная — в строку заголовка на телефоне */
   size?: 'md' | 'sm';
+  /** куда вернуться после подключения (по умолчанию — профиль) */
+  returnPath?: string | null;
 }) {
   const { t } = useTranslation();
   const statusQuery = useQuery({ queryKey: ['tiktok-status'], queryFn: api.tiktokStatus, staleTime: 5 * 60_000 });
   // пока статус не приехал — кнопка неактивна: лучше секунда ожидания, чем мок-подключение
   const configured = statusQuery.data?.configured ?? false;
   const locked = !connected && !configured;
-  const connect = () => { window.location.href = api.tiktokAuthUrl(); };
+  const connect = () => { window.location.href = tiktokConnectUrl(returnPath); };
   return (
     <button
       type="button"
