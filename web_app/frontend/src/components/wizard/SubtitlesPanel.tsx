@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
+import { nearestHuePercent } from '../../lib/huePosition';
 import { MediaCard, Rail, useBackdrop } from './BackgroundPanel';
 import { PreviewVideo } from './CatalogPreview';
 import { catalogPosterOf, useInView } from '../../lib/media';
@@ -117,22 +118,6 @@ function SubtitleStyleGuideVisual() {
  * стили лентой карточек (номер = порядок в пуле) и настройки текста выбранного стиля;
  * справа превью субтитров поверх выбранного на «Фоне» кадра и итог шага.
  */
-
-function nearestHuePercent(hex: string): number {
-  const target = Number.parseInt(hex.replace('#', ''), 16);
-  if (!Number.isFinite(target)) return 50;
-  const rgb = (value: number) => [(value >> 16) & 255, (value >> 8) & 255, value & 255];
-  const targetRgb = rgb(target);
-  let best = 50;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (let pct = 0; pct <= 100; pct++) {
-    const candidate = Number.parseInt(hueAt(pct).slice(1), 16);
-    const [r, g, b] = rgb(candidate);
-    const distance = (r - targetRgb[0]) ** 2 + (g - targetRgb[1]) ** 2 + (b - targetRgb[2]) ** 2;
-    if (distance < bestDistance) { best = pct; bestDistance = distance; }
-  }
-  return best;
-}
 
 /** Строка настройки: подпись слева, контрол справа. */
 function SetRow({ label, children }: { label: string; children: ReactNode }) {

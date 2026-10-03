@@ -7,6 +7,7 @@ import { api } from '../../lib/api';
 import { catalogPosterOf, isVideoUrl } from '../../lib/media';
 import { cn } from '../../lib/cn';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
+import { nearestHuePercent } from '../../lib/huePosition';
 import type { Vibe } from '../../lib/types';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { InlineError, queryDown } from '../ui/ErrorState';
@@ -328,10 +329,17 @@ function ColorPicker() {
   const background = useWizardStore((state) => state.background);
   const setBackground = useWizardStore((state) => state.setBackground);
   const setHover = useBgHover((state) => state.set);
-  const [huePct, setHuePct] = useState(50);
-  const hueRef = useRef<HTMLDivElement>(null);
   const value = background.color;
   const custom = Boolean(value && value !== WHITE_BG && value !== BLACK_BG);
+  // позиция ползунка — из сохранённого цвета: раньше на каждом входе на шаг он вставал в 50%
+  const [huePct, setHuePct] = useState(() => (custom && value ? nearestHuePercent(value) : 50));
+  const hueRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // цвет пришёл извне (черновик, вариация) — переставить ползунок; свой же драг не трогаем,
+    // иначе округление до процента дёргало бы ползунок под пальцем
+    if (custom && value && hueAt(huePct).toLowerCase() !== value.toLowerCase()) setHuePct(nearestHuePercent(value));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [custom, value]);
   const pick = (clientX: number) => {
     const rect = hueRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -350,10 +358,11 @@ function ColorPicker() {
           role="slider"
           tabIndex={0}
           aria-label={t('wizard.bg.colorBg')}
-          aria-pressed={custom}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={Math.round(huePct)}
+          // скринридер читает цвет, а не «47 процентов»
+          aria-valuetext={(custom && value ? value : hueAt(huePct)).toUpperCase()}
           style={{ background: HUE_GRADIENT }}
           onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); pick(event.clientX); }}
           onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) pick(event.clientX); }}
@@ -456,6 +465,21 @@ export function StageBackground({ qaGuide }: { qaGuide?: string | null }) {
   const [showOwn, setShowOwn] = useState(false);
   const modeGuideTargetRef = useRef<HTMLDivElement>(null);
   const selectionGuideTargetRef = useRef<HTMLDivElement>(null);
+  // режимы — настоящие табы: панель под ними (пул) подписана активным табом, стрелки ходят по табам
+  const modesId = useId();
+  const modeTabId = (mode: BackgroundMode) => `${modesId}-tab-${mode}`;
+  const modePanelId = `${modesId}-panel`;
+  const modeRefs = useRef<Partial<Record<BackgroundMode, HTMLButtonElement | null>>>({});
+  const onModeKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const at = modes.findIndex((item) => item.value === background.mode);
+    const step = ({ ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 } as Record<string, number>)[event.key];
+    const index = event.key === 'Home' ? 0 : event.key === 'End' ? modes.length - 1 : step === undefined ? -1 : (at + step + modes.length) % modes.length;
+    if (index < 0) return;
+    event.preventDefault();
+    const next = modes[index].value;
+    setBackground({ mode: next });
+    modeRefs.current[next]?.focus();
+  };
 
   const isMedia = background.mode !== 'color';
   const listQuery = background.mode === 'photo' ? photosQuery : vibesQuery;
@@ -498,9 +522,20 @@ export function StageBackground({ qaGuide }: { qaGuide?: string | null }) {
             </div>
           )}
         </div>
-        <div ref={modeGuideTargetRef} className="w12-modes" role="tablist" aria-label={t('wizard.bg.typeAria')}>
+        <div ref={modeGuideTargetRef} className="w12-modes" role="tablist" aria-label={t('wizard.bg.typeAria')} onKeyDown={onModeKey}>
           {modes.map((item) => (
-            <button key={item.value} type="button" role="tab" className="w12-mode" aria-selected={background.mode === item.value} onClick={() => setBackground({ mode: item.value })}>
+            <button
+              key={item.value}
+              ref={(el) => { modeRefs.current[item.value] = el; }}
+              id={modeTabId(item.value)}
+              type="button"
+              role="tab"
+              className="w12-mode"
+              aria-selected={background.mode === item.value}
+              aria-controls={modePanelId}
+              tabIndex={background.mode === item.value ? 0 : -1}
+              onClick={() => setBackground({ mode: item.value })}
+            >
               {item.icon}<span className="w12-l">{t(item.label)}</span>
               <span className={cn('w12-cnt w12-num', !counts[item.value] && 'w12-zero')}>{counts[item.value] || ''}</span>
             </button>
@@ -508,7 +543,7 @@ export function StageBackground({ qaGuide }: { qaGuide?: string | null }) {
         </div>
       </div>
 
-      <div ref={selectionGuideTargetRef} className={cn('w12-pool', tried && !hasBackground && 'w12-invalid')}>
+      <div ref={selectionGuideTargetRef} id={modePanelId} role="tabpanel" aria-labelledby={modeTabId(background.mode)} className={cn('w12-pool', tried && !hasBackground && 'w12-invalid')}>
         <div className="w12-pool-head">
           {background.mode === 'footage' && (
             <>
