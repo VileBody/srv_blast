@@ -663,10 +663,15 @@
 .w12 .w12-fx-var[data-active] .w12-fx-var-main { color: var(--w12-text); }
 .w12 .w12-fx-var-name { min-width: 0; overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; white-space: nowrap; }
 .w12 .w12-chip.w12-chip-sm { flex: none; height: 22px; padding: 0 8px; font-size: 12px; }
-.w12 .w12-fx-add { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px 0 10px; border-radius: 10px; background: var(--w12-field); font-size: 14px; color: var(--w12-text-2); transition: background-color .15s ease, color .15s ease; }
-.w12 .w12-fx-add:hover { background: var(--w12-field-2); color: var(--w12-text); }
-.w12 .w12-fx-add svg.w12-i { width: 15px; height: 15px; color: var(--w12-accent); stroke-width: 2; }
-.w12 .w12-fx-add small { font-size: 12px; color: var(--w12-text-3); }
+.w12 .w12-fx-add { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 10px; border-radius: 10px; background: transparent; border: 1px dashed var(--w12-line-2); font-size: 14px; color: var(--w12-text-3); transition: background-color .15s ease, color .15s ease, border-color .15s ease; }
+/* «+ Вариант» — второстепенное действие: пунктирный контур без заливки и без акцента, чтобы
+   его не принимали за главную кнопку (главное после выбора типа — примеры в рабочей зоне) */
+.w12 .w12-fx-add:hover { background: rgba(246, 245, 253, .04); border-color: var(--w12-line-2); color: var(--w12-text-2); }
+.w12 .w12-fx-add svg.w12-i { width: 14px; height: 14px; color: var(--w12-text-3); stroke-width: 2; }
+.w12 .w12-fx-add small { font-size: 12px; color: var(--w12-text-3); opacity: .8; }
+/* вариантов ещё нет — вместо «+» ссылка к примерам: без рамки, просто строка */
+.w12 .w12-fx-add.w12-fx-goto { border-color: transparent; padding-left: 2px; color: var(--w12-text-2); }
+.w12 .w12-fx-add.w12-fx-goto:hover { background: transparent; color: var(--w12-text); }
 /* рабочая зона */
 .w12 .w12-tl-btn { box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
 .w12 .w12-tl-btn svg.w12-i { width: 16px; height: 16px; stroke-width: 1.4; }
@@ -686,9 +691,23 @@
 .w12 .w12-fx-step { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 6px 10px; border-radius: 10px; background: rgba(246, 245, 253, .06); text-align: left; transition: background-color .15s ease, box-shadow .15s ease; }
 .w12 .w12-fx-step:hover { background: rgba(246, 245, 253, .1); }
 .w12 .w12-fx-step[aria-selected="true"] { background: var(--w12-accent-soft); box-shadow: inset 0 0 0 1px var(--w12-accent-line); }
-.w12 .w12-fx-step small { font-size: 10px; line-height: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--w12-text-3); }
+.w12 .w12-fx-step small { font-size: 12px; line-height: 14px; color: var(--w12-text-3); }
 .w12 .w12-fx-step span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; line-height: 18px; color: var(--w12-text); }
 .w12 .w12-fx-step span.w12-off { color: var(--w12-text-3); }
+/* «Дальше ✓» над доком: появляется, когда человек перестал листать примеры на заполненной вкладке */
+.w12 .w12-fx-next { position: absolute; right: 0; bottom: calc(100% + 8px); display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 10px; border-radius: 10px; background: var(--w12-accent-strong); color: var(--w12-text); font-size: 14px; white-space: nowrap; box-shadow: 0 8px 22px rgba(5, 1, 15, .45); animation: w12-fx-next-in .22s var(--w12-ease); transition: background-color .15s ease, transform .12s var(--w12-ease); }
+.w12 .w12-fx-next:hover { background: var(--w12-accent); }
+.w12 .w12-fx-next:active { transform: scale(.97); }
+.w12 .w12-fx-next svg { flex: none; }
+/* Point сидит на 1px выше центра — текст в контроле опускаем */
+.w12 .w12-fx-next-l { position: relative; top: 1px; }
+@keyframes w12-fx-next-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+/* раскрыли тип хука — док коротко подсвечивается: «примеры здесь» */
+.w12 .w12-fx-dock[data-attn] { animation: w12-fx-attn 1.4s var(--w12-ease); }
+@keyframes w12-fx-attn { 0%, 100% { box-shadow: 0 0 0 0 rgba(139, 111, 230, 0); } 30% { box-shadow: 0 0 0 3px rgba(139, 111, 230, .55); } }
+@media (prefers-reduced-motion: reduce) {
+  .w12 .w12-fx-next, .w12 .w12-fx-dock[data-attn] { animation: none; }
+}
 .w12 .w12-fx-mod { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; font-size: 13px; color: var(--w12-text-3); }
 .w12 .w12-seg-btn.w12-seg-text { width: auto; height: 28px; padding: 0 10px; font-size: 12px; }
 .w12 .w12-seg-btn[aria-pressed="true"] { background: var(--w12-accent-soft); color: var(--w12-text); box-shadow: inset 0 0 0 1px var(--w12-accent-line); }

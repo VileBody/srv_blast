@@ -13,12 +13,19 @@ import { create } from 'zustand';
 interface GuideLiveState {
   dismissed: Record<string, boolean>;
   setDismissed: (id: string, value: boolean) => void;
+  /** «действие подсказки сделано» (useGuideAction) — тоже для соседних компонентов */
+  acted: Record<string, boolean>;
+  setActed: (id: string, value: boolean) => void;
 }
 
 export const useGuideLiveStore = create<GuideLiveState>((set) => ({
   dismissed: {},
   setDismissed: (id, value) => set((state) => (
     state.dismissed[id] === value ? state : { dismissed: { ...state.dismissed, [id]: value } }
+  )),
+  acted: {},
+  setActed: (id, value) => set((state) => (
+    state.acted[id] === value ? state : { acted: { ...state.acted, [id]: value } }
   ))
 }));
 

@@ -16,7 +16,12 @@ export function guidesStorageKey(userId: string): string {
   return `${LEGACY_STORAGE_KEY}:${userId}`;
 }
 
-type GuideRecord = { seen?: boolean; idleUsed?: boolean };
+/**
+ * seen — подсказку показывали; idleUsed — разовая реактивация по простою истрачена;
+ * acted — человек сделал действие, о котором она говорит (см. useGuideAction): следующая
+ * подсказка цепочки ждёт именно его, а не только закрытия этой.
+ */
+type GuideRecord = { seen?: boolean; idleUsed?: boolean; acted?: boolean };
 type GuideMemory = Record<string, GuideRecord>;
 
 let guideUser: string | null = null;

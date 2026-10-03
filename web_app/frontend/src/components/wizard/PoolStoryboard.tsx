@@ -12,6 +12,7 @@ import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useFxLab } from './FxLab';
 import { useStripFollow } from './useStripFollow';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
+import { useGuideAction, useGuideActed } from '../guidance/useGuideAction';
 import { StoryboardGuideVisual, StoryboardReplaceGuideVisual } from './timelineGuides';
 import './PoolStoryboard.css';
 
@@ -275,9 +276,10 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
     seekTo(bounds[edit.k] + 0.001);
   };
   // отмена в т.ч. пока варианты ещё грузятся: поздний ответ не должен снова открыть замену
-  const cancelEdit = () => { if (!edit) return; abandonEdit(); setEdit(null); };
+  const cancelEdit = () => { if (!edit) return; abandonEdit(); setEdit(null); markReplaceActed(); };
   const doneEdit = () => {
     if (!edit || !video) return;
+    markReplaceActed();
     const chosen = edit.candidates[edit.pos];
     if (chosen) setStoryboardVideo({ ...video, pins: { ...video.pins, [edit.k]: chosen.fileName } });
     editReq.current += 1;
@@ -290,6 +292,7 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   };
   const shuffle = async () => {
     if (!video || !cuts || edit || shuffling !== null || status.loading) return;
+    markReplaceActed();
     const seedKey = seedKeyFor(batchKey, video.index, shuffleOf(video.seedKey) + 1);
     // Остальные видео того же вайба закреплены целиком: не меняются и не отдают свои клипы.
     const others = Object.values(storyboard.videos).filter((v) => v.group === video.group && v.index !== video.index);
@@ -351,17 +354,26 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   const clip = video?.clips[s];
   const pinned = video ? Object.keys(video.pins).length : 0;
   /* ── подсказки 3–4 серии «Пула»: после «Распредели видео» (соседняя панель — поэтому
-        её ЖИВОЙ dismissed), только когда у видео на экране есть раскадровка. Замена кадра
-        ждёт действия: пока ни один кадр не закреплён, после простоя она вернётся. ── */
+        её ЖИВОЙ dismissed и сделанное действие), только когда у видео на экране есть
+        раскадровка. Каждая ждёт действия предыдущей (useGuideAction): раскадровка — что
+        человек потрогал ролик (стрелки, кадры, play), замена — что он прошёл замену кадра
+        до конца («Готово»/отмена) или перемешал кадры. Замена кадра к тому же после простоя
+        вернётся, пока ни один кадр не закреплён. ── */
   const frameGuideRef = useRef<HTMLDivElement>(null);
   const dockGuideRef = useRef<HTMLDivElement>(null);
   const fxLab = useFxLab();
   const distributeGuideDismissed = useGuideLiveDismissed(poolGuideId('distribute', fxLab));
-  const sbReady = Boolean(video && clip) && !edit && distributeGuideDismissed;
+  const distributeActed = useGuideActed(poolGuideId('distribute', fxLab));
+  // очередь раскадровки дошла; в режиме замены подсказки молчат, но действие засчитывается
+  const sbTurn = Boolean(video && clip) && distributeGuideDismissed && distributeActed;
+  const sbReady = sbTurn && !edit;
   const [replaceGuideDismissed, setReplaceGuideDismissed] = useGuideDismiss(poolGuideId('replace', fxLab), sbReady && pinned === 0, false);
   const [frameGuideDismissed, setFrameGuideDismissed] = useGuideDismiss(poolGuideId('storyboard', fxLab), false);
+  const [frameActed] = useGuideAction(poolGuideId('storyboard', fxLab), sbTurn, { targetRef: frameGuideRef, onAct: () => { if (!frameGuideDismissed) setFrameGuideDismissed(true); } });
+  const replaceTurn = sbTurn && frameGuideDismissed && frameActed;
+  const [, markReplaceActed] = useGuideAction(poolGuideId('replace', fxLab), replaceTurn, { onAct: () => { if (!replaceGuideDismissed) setReplaceGuideDismissed(true); } });
   const showFrameGuide = sbReady && !frameGuideDismissed;
-  const showReplaceGuide = sbReady && frameGuideDismissed && !replaceGuideDismissed;
+  const showReplaceGuide = sbReady && replaceTurn && !replaceGuideDismissed;
   useMarkGuideSeen(poolGuideId('storyboard', fxLab), showFrameGuide);
   useMarkGuideSeen(poolGuideId('replace', fxLab), showReplaceGuide);
 
