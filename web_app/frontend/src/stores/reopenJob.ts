@@ -33,15 +33,18 @@ function planClips(plan: Record<string, unknown>): PlanClip[] {
   return Array.isArray(plan.clips) ? (plan.clips as PlanClip[]) : [];
 }
 
-/** Адрес визарда этого батча. Без трека в stageData — обычный «ещё один батч» по проекту. */
-export function openJobOnTable(job: Pick<GenerationJob, 'projectId' | 'stageData'>): string {
+/**
+ * Адрес визарда этого батча. Без трека в stageData — обычный «ещё один батч» по проекту.
+ * `openTable: false` — «Собрать заново» после сбоя: те же настройки на «Пуле», без стола.
+ */
+export function openJobOnTable(job: Pick<GenerationJob, 'projectId' | 'stageData'>, options?: { openTable?: boolean }): string {
   const raw = (job.stageData ?? {}) as Record<string, unknown>;
   const track = raw.track as SavedTrack | null | undefined;
   const lyrics = typeof raw.lyrics === 'string' ? raw.lyrics : '';
   // Без трека и текста настраивать нечего (такой сабмит бэк не принял бы) — обычный новый батч.
   if (!track?.id || !hasTrackInput({ track, lyrics })) return startNextBatch(job.projectId);
 
-  useWizardStore.getState().reopenFromJob(job.projectId, raw);
+  useWizardStore.getState().reopenFromJob(job.projectId, raw, options);
   restoreStoryboard(raw);
   return `/app/generate?project=${encodeURIComponent(job.projectId)}`;
 }

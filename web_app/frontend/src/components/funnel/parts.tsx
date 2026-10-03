@@ -179,25 +179,51 @@ export function QuizQuestion({
 
 /* ------------------------------------------------------------------ методичка */
 
-export type MethodologyState = 'idle' | 'sending' | 'sent' | 'link' | 'needBot' | 'error';
+/**
+ * Состояния методички:
+ * - `needBot` — бот ответил «не может писать первым» (человек не запускал @бота): даём ссылку;
+ * - `botOpened` — ссылку открыли: просим нажать «Получить» ещё раз;
+ * - `error` — сбой отправки, повтор может помочь;
+ * - `unavailable` — отправка не настроена на сервере (503): повтор не поможет, просто идём дальше.
+ */
+export type MethodologyState = 'idle' | 'sending' | 'sent' | 'link' | 'needBot' | 'botOpened' | 'error' | 'unavailable';
+
+/** «@blast808bot» из ссылки t.me/blast808bot — чтобы человек видел, какого бота открыть. */
+export function botHandleOf(botLink?: string): string | null {
+  if (!botLink) return null;
+  const match = /t\.me\/([A-Za-z0-9_]{3,})/.exec(botLink);
+  return match ? `@${match[1]}` : null;
+}
 
 /**
- * Методичка — одна кнопка в строке действий: «Получить», после отправки окно идёт
- * дальше само (хост). Ссылка-файл и «открой бота» — та же кнопка в другом виде.
+ * Методичка — кнопки строки действий: «Получить», после отправки окно идёт дальше само
+ * (хост). Ссылка-файл и «открой бота» — та же главная кнопка в другом виде.
+ *
+ * Окно никогда не запирает: при любом исходе, кроме «отправили», рядом есть «Дальше»/
+ * «Закрыть» (`onContinue`). Раньше при сбое оставалась одна «Получить», и человек с
+ * ненастроенной отправкой (503) упирался в неё без выхода.
  */
 export function MethodologyAction({
   state,
   url,
   botLink,
   onGet,
-  onOpened
+  onOpened,
+  onBotOpened,
+  onContinue,
+  continueLabel
 }: {
   state: MethodologyState;
   url?: string | null;
   botLink?: string;
   onGet: () => void;
-  /** человек открыл файл или бота — дальше */
+  /** человек открыл файл — дальше */
   onOpened: () => void;
+  /** человек открыл бота — остаёмся на шаге, чтобы он нажал «Получить» ещё раз */
+  onBotOpened: () => void;
+  /** выйти без методички: «Закрыть» в модалке квиза, «Дальше» в безлимите */
+  onContinue: () => void;
+  continueLabel: string;
 }) {
   const { t } = useTranslation();
   if (state === 'link' && url) {
@@ -207,17 +233,29 @@ export function MethodologyAction({
       </ButtonLink>
     );
   }
+  const exit = <Button variant="secondary" onClick={onContinue}>{continueLabel}</Button>;
   if (state === 'needBot' && botLink) {
     return (
-      <ButtonLink variant="primary" href={botLink} target="_blank" rel="noreferrer" onClick={onOpened} icon={<Icon>{FN_GLYPH.send}</Icon>}>
-        {t('funnel.methodology.openBot')}
-      </ButtonLink>
+      <>
+        {exit}
+        <ButtonLink variant="primary" href={botLink} target="_blank" rel="noreferrer" onClick={onBotOpened} icon={<Icon>{FN_GLYPH.send}</Icon>}>
+          {t('funnel.methodology.openBot')}
+        </ButtonLink>
+      </>
     );
   }
+  // повтор бессмыслен: отправка не настроена на сервере — главная кнопка ведёт дальше
+  if (state === 'unavailable') {
+    return <Button variant="primary" onClick={onContinue}>{continueLabel}</Button>;
+  }
+  const retry = state === 'error' || state === 'botOpened' || state === 'needBot';
   return (
-    <Button variant="primary" loading={state === 'sending' || state === 'sent'} onClick={onGet}>
-      {t('funnel.methodology.get')}
-    </Button>
+    <>
+      {retry && exit}
+      <Button variant="primary" loading={state === 'sending' || state === 'sent'} onClick={onGet}>
+        {t('funnel.methodology.get')}
+      </Button>
+    </>
   );
 }
 

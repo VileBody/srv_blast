@@ -6,6 +6,7 @@ import { PitchFlow } from './PitchFlow';
 import {
   FN_GLYPH,
   MethodologyAction,
+  botHandleOf,
   PitchLadder,
   QuizQuestion,
   RatingScale,
@@ -48,6 +49,7 @@ export function QuizPanel({
   onAnswer,
   onSkip,
   onMethodology,
+  onBotOpened,
   onClose,
   titleId
 }: {
@@ -55,6 +57,8 @@ export function QuizPanel({
   onAnswer: (answerId: string) => void;
   onSkip: () => void;
   onMethodology: () => void;
+  /** ссылку на бота открыли — ждём повторного «Получить» */
+  onBotOpened: () => void;
   onClose: () => void;
   titleId?: string;
 }) {
@@ -67,9 +71,20 @@ export function QuizPanel({
         title={t('funnel.quiz.doneTitle')}
         description={view.bridge ?? undefined}
         onClose={onClose}
-        actions={<MethodologyAction state={view.methodology} url={view.url} botLink={view.botLink} onGet={onMethodology} onOpened={onClose} />}
+        actions={(
+          <MethodologyAction
+            state={view.methodology}
+            url={view.url}
+            botLink={view.botLink}
+            onGet={onMethodology}
+            onOpened={onClose}
+            onBotOpened={onBotOpened}
+            onContinue={onClose}
+            continueLabel={t('common.close')}
+          />
+        )}
       >
-        <MethodologyStatus state={view.methodology} />
+        <MethodologyStatus state={view.methodology} botLink={view.botLink} />
       </FunnelSheet>
     );
   }
@@ -89,11 +104,20 @@ export function QuizPanel({
   );
 }
 
+const METHODOLOGY_NOTES: Partial<Record<MethodologyState, string>> = {
+  needBot: 'funnel.methodology.needBot',
+  botOpened: 'funnel.methodology.botOpened',
+  error: 'funnel.methodology.error',
+  unavailable: 'funnel.methodology.unavailable'
+};
+
 /** Строка о методичке под мостиком — только когда есть что сказать (бот не запущен, сбой). */
-function MethodologyStatus({ state }: { state: MethodologyState }) {
+function MethodologyStatus({ state, botLink }: { state: MethodologyState; botLink?: string }) {
   const { t } = useTranslation();
-  if (state !== 'needBot' && state !== 'error') return null;
-  return <p className={state === 'error' ? 'text-ui-14 text-warning' : 'text-ui-14 text-text-60'}>{t(`funnel.methodology.${state}`)}</p>;
+  const key = METHODOLOGY_NOTES[state];
+  if (!key) return null;
+  const warn = state === 'error' || state === 'unavailable';
+  return <p className={warn ? 'text-ui-14 text-warning' : 'text-ui-14 text-text-60'}>{t(key, { bot: botHandleOf(botLink) ?? t('funnel.methodology.botFallback') })}</p>;
 }
 
 /* ------------------------------------------------------------------ безлимит (модалка B) */
@@ -141,6 +165,8 @@ export interface UnlimitedHandlers {
   onReasons: (next: RatingReason[]) => void;
   onAnswer: (answerId: string) => void;
   onMethodology: () => void;
+  /** ссылку на бота за методичкой открыли — ждём повторного «Получить» */
+  onMethodologyBotOpened: () => void;
   onNext: () => void;
   /** пропустить квиз вместе с методичкой — сразу к следующему шагу окна */
   onSkipQuiz?: () => void;
@@ -228,18 +254,22 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
           {...common}
           title={t('funnel.quiz.doneTitle')}
           description={view.bridge ?? undefined}
-          actions={
-            <>
-              {/* Ручка методички падает или бот не запущен (и ссылки на него нет): без «Дальше»
-                  до действий и безлимита было бы не дойти */}
-              {(view.methodology === 'error' || view.methodology === 'needBot') && (
-                <Button variant="secondary" onClick={on.onNext}>{t('funnel.next')}</Button>
-              )}
-              <MethodologyAction state={view.methodology ?? 'idle'} url={view.methodologyUrl} botLink={view.botLink} onGet={on.onMethodology} onOpened={on.onNext} />
-            </>
-          }
+          // Ручка методички падает или бот не запущен: «Дальше» есть всегда, иначе до
+          // действий и безлимита было бы не дойти
+          actions={(
+            <MethodologyAction
+              state={view.methodology ?? 'idle'}
+              url={view.methodologyUrl}
+              botLink={view.botLink}
+              onGet={on.onMethodology}
+              onOpened={on.onNext}
+              onBotOpened={on.onMethodologyBotOpened}
+              onContinue={on.onNext}
+              continueLabel={t('funnel.next')}
+            />
+          )}
         >
-          <MethodologyStatus state={view.methodology ?? 'idle'} />
+          <MethodologyStatus state={view.methodology ?? 'idle'} botLink={view.botLink} />
         </FunnelSheet>
       );
     case 'pitch':

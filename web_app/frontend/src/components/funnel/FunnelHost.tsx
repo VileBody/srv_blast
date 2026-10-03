@@ -89,6 +89,10 @@ function retryRatings(failures: number, error: unknown): boolean {
 /**
  * Методичка одной кнопкой: отправили в Telegram — окно само идёт дальше (`onSent`),
  * а где она, говорит тост. Ссылка на файл и «открой бота» — та же кнопка в другом виде.
+ *
+ * Бот не может написать первым (`sent: false`) — показываем, какого бота открыть, и после
+ * перехода по ссылке ждём повторного «Получить». 503 `methodology_unavailable` — отправка
+ * не настроена на сервере: повтор не поможет, окно просто отпускает дальше.
  */
 function useMethodology(onSent: () => void) {
   const { t } = useTranslation();
@@ -107,11 +111,14 @@ function useMethodology(onSent: () => void) {
           setState('sent');
           push({ variant: 'success', title: t('funnel.methodology.sentToast') });
           sentRef.current();
-        } else { setBotLink(res.botLink); setState('needBot'); }
+        } else if (res.botLink) { setBotLink(res.botLink); setState('needBot'); }
+        // бэк обязан дать ссылку на бота вместе с sent:false — без неё это сбой, а не «открой бота»
+        else setState('error');
       })
-      .catch(() => setState('error'));
+      .catch((error: unknown) => setState(apiErrorCode(error) === 'methodology_unavailable' ? 'unavailable' : 'error'));
   }, [push, t]);
-  return { state, url, botLink, get };
+  const botOpened = useCallback(() => setState('botOpened'), []);
+  return { state, url, botLink, get, botOpened };
 }
 
 /**
@@ -175,7 +182,7 @@ function QuizModal({ jobId, onClose, onDismiss }: { jobId?: string; onClose: () 
   if (!view || nothing) return null;
   return (
     <FunnelDialog open onClose={skip} labelledBy={titleId}>
-      <QuizPanel titleId={titleId} view={view} onAnswer={quiz.answer} onSkip={skip} onMethodology={methodology.get} onClose={skip} />
+      <QuizPanel titleId={titleId} view={view} onAnswer={quiz.answer} onSkip={skip} onMethodology={methodology.get} onBotOpened={methodology.botOpened} onClose={skip} />
     </FunnelDialog>
   );
 }
@@ -357,6 +364,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
           onReasons: (next) => reasonTargets.forEach((id) => saveRating(id, allRatings[id]?.score ?? 1, next)),
           onAnswer: quiz.answer,
           onMethodology: methodology.get,
+          onMethodologyBotOpened: methodology.botOpened,
           onNext: next,
           onSkipQuiz: () => {
             markQuizSkipped();

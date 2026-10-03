@@ -1520,6 +1520,7 @@
     "reasonUnknown": "Rendering stopped without a diagnostic message.",
     "openReady": "Open completed videos",
     "retry": "Build again",
+    "retryFail": "Couldn't open this batch's settings. Reload the page and try again.",
     "asideTitle": "What is happening now",
     "closeTabTitle": "You can close this tab",
     "closeTabText": "We will ping you on Telegram once the videos are ready — one by one and a summary for the batch.",
@@ -1917,8 +1918,11 @@
       "doneTitle": "Here is the playbook"
     },
     "methodology": {
-      "needBot": "Open the Blast bot and it will send it to you.",
-      "error": "Couldn't send it. Try again.",
+      "needBot": "Open the {{bot}} bot and tap «Start» — then it will send the guide to the chat.",
+      "botOpened": "Started the bot? Tap «Get it» again and the guide will arrive in the chat.",
+      "unavailable": "Sending the guide isn't working right now. You can move on — nothing else depends on it.",
+      "botFallback": "Blast",
+      "error": "Couldn't send it. Try again or come back to it later.",
       "open": "Download",
       "openBot": "Open bot",
       "get": "Get it",
