@@ -9,7 +9,7 @@ import type { VideoVersion } from './types';
  */
 const KINDS = new Set([
   'timeout', 'busy', 'lost', 'render', 'footage', 'lyrics', 'source', 'color',
-  'previous', 'cancelled', 'service', 'unknown'
+  'previous', 'cancelled', 'service', 'storyboard', 'drop', 'hook', 'build', 'unknown'
 ]);
 
 /** i18n-ключ человеческой причины падения ролика. */

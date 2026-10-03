@@ -8,6 +8,8 @@ import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { BatchLayout, GenerationsCard, ProcessingAside, ProgressTrack, TrackCard } from '../components/project/BatchCards';
 import { useQuizOnGeneration, useVideoRatings } from '../components/funnel/FunnelHost';
 import { failureKey, useIsAdmin } from '../lib/failure';
+import { guardDraft } from '../stores/draftGuard';
+import { useToast } from '../contexts/ToastContext';
 
 /** Средняя длительность рендера одной вариации — из неё считаем «осталось NN минут». */
 const MINUTES_PER_VIDEO = 3;
@@ -40,6 +42,7 @@ export function ProcessingPage() {
   const { t } = useTranslation();
   const { jobId } = useParams();
   const navigate = useNavigate();
+  const { push } = useToast();
 
   const jobQuery = useQuery({
     queryKey: ['job', jobId],
@@ -115,6 +118,24 @@ export function ProcessingPage() {
     if (allDone && project && !failed) navigate(`/app/projects/${project.id}`, { replace: true });
   }, [allDone, failed, project, navigate]);
 
+  /*
+   * «Собрать заново»: тот же батч (job.stageData — ровно то, что ушло в сабмит) сразу на
+   * «Пуле», со всеми настройками — трек, отрывок, текст, фон, субтитры, хуки, раздача.
+   * Раньше кнопка вела на /app/generate?project=…, а там после сабмита лежал уже чистый
+   * «следующий батч» (newBatch) — человек попадал на первый шаг и собирал всё заново.
+   */
+  const rebuild = () => {
+    if (!job) return;
+    const key = (job.stageData?.final as { idempotencyKey?: unknown } | undefined)?.idempotencyKey;
+    // модуль тянет раскладку «Пула» — грузим по требованию, как «Открыть таймлайн»
+    import('../stores/reopenJob')
+      .then(({ openJobOnTable }) => guardDraft(
+        { projectId: job.projectId, idempotencyKey: typeof key === 'string' ? key : undefined },
+        () => navigate(openJobOnTable(job, { openTable: false }))
+      ))
+      .catch(() => push({ variant: 'error', title: t('processing.retryFail') }));
+  };
+
   const total = videos.length || job?.versions || 0;
   const minutesLeft = Math.max(1, Math.ceil((total - done.length) * MINUTES_PER_VIDEO));
 
@@ -189,7 +210,7 @@ export function ProcessingPage() {
 
             <div className="mt-auto flex flex-col gap-[10px] pt-[28px]">
               {job?.projectId && (
-                <Button variant="primary" size="lg" className="w-full" onClick={() => navigate(`/app/generate?project=${job.projectId}`)}>
+                <Button variant="primary" size="lg" className="w-full" onClick={rebuild}>
                   {t('processing.retry')}
                 </Button>
               )}

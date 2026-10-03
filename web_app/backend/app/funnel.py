@@ -16,8 +16,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import json
 import logging
 import os
+import urllib.error
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
 from urllib.parse import quote
@@ -269,19 +271,56 @@ def check_channel_member(tg_id: int) -> bool:
 
 
 def send_methodology(tg_id: int) -> dict[str, Any]:
-    """Методичка: прямой ссылкой, если она задана, иначе — документом от публичного бота."""
+    """Методичка: прямой ссылкой, если она задана, иначе — документом от публичного бота.
+
+    `mt.METHODOLOGY_FILE_ID` — file_id Telegram, а file_id привязан к боту, который его
+    получил: это @blast808bot (его же шлёт `tg_bot_public` на `TG_BOT_TOKEN`). Поэтому
+    `WEB_PUBLIC_BOT_TOKEN` обязан быть токеном ИМЕННО этого бота — с чужим токеном Telegram
+    ответит 400 «wrong file identifier», и это сбой конфигурации, а не «открой бота».
+    """
     if METHODOLOGY_URL:
         return {"url": METHODOLOGY_URL, "sent": False}
     if RUNTIME.backend != "production":
         return {"url": None, "sent": True}
     token = os.getenv("WEB_PUBLIC_BOT_TOKEN", "").strip()
     if not token:
+        log.error("funnel.methodology: WEB_PUBLIC_BOT_TOKEN is not configured — methodology cannot be sent")
         raise FunnelError("methodology_unavailable", "Отправка методички не настроена.", 503)
-    result = telegram_bot._api("sendDocument", {"chat_id": int(tg_id), "document": mt.METHODOLOGY_FILE_ID}, token=token)
-    if result.get("ok"):
+    code, description = _send_methodology_document(int(tg_id), token)
+    if code is None:
         return {"url": None, "sent": True}
-    # Публичного бота человек не запускал — первым бот написать не может.
-    return {"url": None, "sent": False, "botLink": f"https://t.me/{PUBLIC_BOT_USERNAME}"}
+    # 403 «bot can't initiate conversation / blocked» и 400 «chat not found»: человек не
+    # запускал публичного бота (или заблокировал его) — первым бот написать не может.
+    if telegram_bot._is_permanent(code, description):
+        log.info("funnel.methodology: user has not started the public bot code=%s description=%s", code, description)
+        return {"url": None, "sent": False, "botLink": f"https://t.me/{PUBLIC_BOT_USERNAME}"}
+    # Всё остальное — не про человека: битый/чужой file_id, неверный токен, сеть, 5xx.
+    log.error("funnel.methodology: sendDocument failed code=%s description=%s", code, description)
+    raise FunnelError("methodology_send_failed", "Не получилось отправить методичку, попробуй ещё раз.", 502)
+
+
+def _send_methodology_document(chat_id: int, token: str) -> tuple[Any, str]:
+    """sendDocument методички. (None, "") — доставлено, иначе (код, описание Telegram).
+
+    urllib бросает HTTPError на любой 4xx/5xx, а тело — обычный JSON Bot API с причиной:
+    раньше исключение улетало наверх 500-кой, и ветка «открой бота» была недостижима.
+    """
+    try:
+        result = telegram_bot._api(
+            "sendDocument", {"chat_id": chat_id, "document": mt.METHODOLOGY_FILE_ID}, token=token
+        )
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001 — тело не JSON: решаем только по коду
+            body = {}
+        return body.get("error_code") or exc.code, str(body.get("description") or "")
+    except Exception as exc:  # noqa: BLE001 — сеть/таймаут/прокси
+        # В тексте исключения может оказаться URL Bot API вместе с токеном — пишем только тип.
+        return "network", type(exc).__name__
+    if result.get("ok"):
+        return None, ""
+    return result.get("error_code"), str(result.get("description") or "")
 
 
 # ------------------------------------------------------------------ безлимит

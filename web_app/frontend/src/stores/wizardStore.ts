@@ -689,7 +689,7 @@ interface WizardStore extends WizardStateData {
    * отправил в сабмит) — сразу на «Пуле» с открытым монтажным столом. Раскадровку
    * дособирает stores/reopenJob.ts.
    */
-  reopenFromJob: (projectId: string, data: Record<string, unknown>) => void;
+  reopenFromJob: (projectId: string, data: Record<string, unknown>, options?: { openTable?: boolean }) => void;
   /** разовый флаг: WizardPage открывает монтажный стол и сбрасывает его; в localStorage не едет */
   openTableOnLoad: boolean;
   consumeOpenTable: () => void;
@@ -955,7 +955,7 @@ export const useWizardStore = create<WizardStore>()(
         reachedIndex: STAGE_ORDER.length - 1,
         openTableOnLoad: true
       })),
-      reopenFromJob: (projectId, raw) => set(() => {
+      reopenFromJob: (projectId, raw, options) => set(() => {
         // В отличие от restoreSession — без проверки «в браузере свежее»: человек сам
         // попросил открыть этот батч, текущий черновик заменяется целиком.
         const data = dataFromStageData(projectId, raw);
@@ -973,7 +973,9 @@ export const useWizardStore = create<WizardStore>()(
           carriedOverInputs: false,
           stage: 5,
           reachedIndex: STAGE_ORDER.length - 1,
-          openTableOnLoad: true
+          // «Собрать заново» после сбоя ведёт на «Пул» без стола: человеку нужно
+          // просто перезапустить тот же батч, а не докручивать монтаж.
+          openTableOnLoad: options?.openTable ?? true
         };
       }),
       consumeOpenTable: () => set({ openTableOnLoad: false }),

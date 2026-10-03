@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
+import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
+import { SITE_METHODOLOGY_URL } from '../../lib/resources';
 import type { FunnelQuestion, FunnelQuota, FunnelRules, RatingReason } from '../../lib/types';
 import { Button, ButtonLink, GLYPH, Icon, Pill } from '../ui/kit';
 
@@ -179,25 +181,47 @@ export function QuizQuestion({
 
 /* ------------------------------------------------------------------ методичка */
 
-export type MethodologyState = 'idle' | 'sending' | 'sent' | 'link' | 'needBot' | 'error';
+/**
+ * Состояния методички:
+ * - `needBot` — бот ответил «не может писать первым» (человек не запускал @бота): даём ссылку;
+ * - `botOpened` — ссылку открыли: просим нажать «Получить» ещё раз;
+ * - `error` — сбой отправки, повтор может помочь;
+ * - `unavailable` — отправка не настроена на сервере (503): повтор не поможет, просто идём дальше.
+ */
+export type MethodologyState = 'idle' | 'sending' | 'sent' | 'link' | 'needBot' | 'botOpened' | 'error' | 'unavailable';
+
+/** «@blast808bot» из ссылки t.me/blast808bot — чтобы человек видел, какого бота открыть. */
+export function botHandleOf(botLink?: string): string | null {
+  if (!botLink) return null;
+  const match = /t\.me\/([A-Za-z0-9_]{3,})/.exec(botLink);
+  return match ? `@${match[1]}` : null;
+}
 
 /**
- * Методичка — одна кнопка в строке действий: «Получить», после отправки окно идёт
- * дальше само (хост). Ссылка-файл и «открой бота» — та же кнопка в другом виде.
+ * Методичка — кнопки строки действий: «Получить», после отправки окно идёт дальше само
+ * (хост). Ссылка-файл и «открой бота» — та же главная кнопка в другом виде.
+ *
+ * Бот прислать не смог (не запущен, сбой, отправка не настроена) — главной кнопкой
+ * становится та же методичка на сайте (PDF с экрана генерации): шаг завершается всегда.
+ * Раньше при сбое оставалась одна «Получить», и человек с ненастроенной отправкой (503)
+ * упирался в неё без выхода. Вторая кнопка — путь через бота (открыть его / повторить).
  */
 export function MethodologyAction({
   state,
   url,
   botLink,
   onGet,
-  onOpened
+  onOpened,
+  onBotOpened
 }: {
   state: MethodologyState;
   url?: string | null;
   botLink?: string;
   onGet: () => void;
-  /** человек открыл файл или бота — дальше */
+  /** человек открыл файл (ссылку из бэка или методичку на сайте) — дальше */
   onOpened: () => void;
+  /** человек открыл бота — остаёмся на шаге, чтобы он нажал «В Telegram» ещё раз */
+  onBotOpened: () => void;
 }) {
   const { t } = useTranslation();
   if (state === 'link' && url) {
@@ -207,17 +231,42 @@ export function MethodologyAction({
       </ButtonLink>
     );
   }
+  if (state === 'idle' || state === 'sending' || state === 'sent' || state === 'link') {
+    return (
+      <Button variant="primary" loading={state === 'sending' || state === 'sent'} onClick={onGet}>
+        {t('funnel.methodology.get')}
+      </Button>
+    );
+  }
+  const site = (
+    <ButtonLink
+      variant="primary"
+      href={SITE_METHODOLOGY_URL}
+      target="_blank"
+      rel="noreferrer"
+      onClick={() => { void api.trackEvent('guide_opened', { source: 'funnel', reason: state }); onOpened(); }}
+      icon={<Icon>{GLYPH.download}</Icon>}
+    >
+      {t('funnel.methodology.openSite')}
+    </ButtonLink>
+  );
+  // отправка не настроена на сервере: повтор не поможет — только методичка на сайте
+  if (state === 'unavailable') return site;
   if (state === 'needBot' && botLink) {
     return (
-      <ButtonLink variant="primary" href={botLink} target="_blank" rel="noreferrer" onClick={onOpened} icon={<Icon>{FN_GLYPH.send}</Icon>}>
-        {t('funnel.methodology.openBot')}
-      </ButtonLink>
+      <>
+        <ButtonLink variant="secondary" href={botLink} target="_blank" rel="noreferrer" onClick={onBotOpened} icon={<Icon>{FN_GLYPH.send}</Icon>}>
+          {t('funnel.methodology.openBot')}
+        </ButtonLink>
+        {site}
+      </>
     );
   }
   return (
-    <Button variant="primary" loading={state === 'sending' || state === 'sent'} onClick={onGet}>
-      {t('funnel.methodology.get')}
-    </Button>
+    <>
+      <Button variant="secondary" onClick={onGet}>{t('funnel.methodology.retryBot')}</Button>
+      {site}
+    </>
   );
 }
 
