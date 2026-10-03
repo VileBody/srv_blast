@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
-import { formatTimePrecise } from '../../../lib/timeFormat';
+import { formatTimePrecise, formatTimeRange } from '../../../lib/timeFormat';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
@@ -2003,7 +2003,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
       {phone ? mobileHeader : <header className="fxt-top mt-top">
         <div className="mt-top-l">
           <button type="button" className="fxt-back" onClick={onClose} data-tip={tr('wizard.montage.toPoolKey')}><Glyph name="back" size={18} /><span className="tx">{tr('wizard.montage.pool')}</span></button>
-          <div className="fxt-proj"><b className="tx">{track?.filename ?? tr('wizard.montage.track')}</b><span className="tx num">{timingFrom} – {timingTo}</span></div>
+          <div className="fxt-proj"><b className="tx">{track?.filename ?? tr('wizard.montage.track')}</b><span className="tx num">{formatTimeRange(start, start + dur)}</span></div>
         </div>
         <div className="mt-vid">
           <div className="mt-arrows">

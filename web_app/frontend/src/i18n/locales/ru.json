@@ -1309,7 +1309,7 @@
       },
       "historySkipVideo": "ролик {{n}}",
       "historySkipCuts": "склейки и дроп",
-      "historySkipped": "Не всё: {{list}} правили позже — их не трогаю",
+      "historySkipped": "Не всё: {{list}} правили позже — оставил как есть",
       "historySkippedAll": "Ничего не изменилось: {{list}} правили позже"
     }
   },
