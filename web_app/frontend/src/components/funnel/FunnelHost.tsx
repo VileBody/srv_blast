@@ -651,7 +651,7 @@ export function FunnelRailEntry() {
         aria-label={`${dock.title}. ${dock.text}`}
         className="funnel-rail-btn"
       >
-        <Icon style={{ width: 30, height: 30 }}>{dock.glyph}</Icon>
+        <Icon style={{ width: 34, height: 34 }}>{dock.glyph}</Icon>
       </button>
       {hint ? (
         <DockHint className="funnel-rail-pop" />

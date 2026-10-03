@@ -961,7 +961,7 @@ input, textarea, [contenteditable] { caret-color: var(--accent-light); }
   }
   /* Вход в безлимит на десктопе — ключ с фиолетовым пилом в сайдбаре (FunnelRailEntry);
      на телефоне это последняя карточка в ленте страницы (FunnelBadge). */
-  .funnel-rail { position: relative; margin-bottom: var(--space-5); }
+  .funnel-rail { position: relative; }
   /* та же ячейка, что пункты навигации (.sidebar-nav .sidebar-icon), но иконка — акцентная */
   .funnel-rail-btn { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 15px; color: var(--accent-light); transition: background-color var(--t-fast), color var(--t-fast); }
   .funnel-rail-btn:hover, .funnel-rail-btn:focus-visible { background: var(--accent-soft); color: var(--text); }

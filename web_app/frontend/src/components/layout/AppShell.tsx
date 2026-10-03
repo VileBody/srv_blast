@@ -133,10 +133,10 @@ function Sidebar({ activeJobId, userName, avatarUrl }: { activeJobId?: string; u
             />
           </NavLink>
         ))}
+        {/* вход в безлимит — рядом с разделами, той же ячейкой, но акцентный */}
+        <FunnelRailEntry />
       </nav>
       <div className="flex-1" />
-      {/* вход в безлимит: ключ с пилом над переключателем языка */}
-      <FunnelRailEntry />
       <LanguageSwitcher className="mb-space-4" />
       <Avatar name={userName} avatarUrl={avatarUrl} />
     </aside>
