@@ -188,16 +188,16 @@ export function FunnelShowcasePage() {
           <State label="Методичка отправляется">
             <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'sending' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
           </State>
-          <State label="Бот не запущен: просим открыть бота">
+          <State label="Бот не запущен: открыть бота или методичку на сайте">
             <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'needBot', botLink: 'https://t.me/blast808bot' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
           </State>
           <State label="Бота открыли: ждём повторного «Получить»">
             <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'botOpened', botLink: 'https://t.me/blast808bot' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
           </State>
-          <State label="Сбой отправки: повтор или «Закрыть»">
+          <State label="Сбой отправки: методичка на сайте или повтор в Telegram">
             <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'error' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
           </State>
-          <State label="Отправка не настроена (503): только «Закрыть»">
+          <State label="Отправка не настроена (503): только методичка на сайте">
             <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'unavailable' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
           </State>
         </Group>

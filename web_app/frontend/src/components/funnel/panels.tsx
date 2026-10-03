@@ -79,8 +79,6 @@ export function QuizPanel({
             onGet={onMethodology}
             onOpened={onClose}
             onBotOpened={onBotOpened}
-            onContinue={onClose}
-            continueLabel={t('common.close')}
           />
         )}
       >
@@ -254,8 +252,8 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
           {...common}
           title={t('funnel.quiz.doneTitle')}
           description={view.bridge ?? undefined}
-          // Ручка методички падает или бот не запущен: «Дальше» есть всегда, иначе до
-          // действий и безлимита было бы не дойти
+          // Ручка методички падает или бот не запущен: главной становится методичка на
+          // сайте, и её открытие ведёт дальше — до действий и безлимита дойти можно всегда
           actions={(
             <MethodologyAction
               state={view.methodology ?? 'idle'}
@@ -264,8 +262,6 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
               onGet={on.onMethodology}
               onOpened={on.onNext}
               onBotOpened={on.onMethodologyBotOpened}
-              onContinue={on.onNext}
-              continueLabel={t('funnel.next')}
             />
           )}
         >

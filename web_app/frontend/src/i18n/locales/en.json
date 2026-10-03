@@ -1560,6 +1560,10 @@
       "previous": "Not built: the batch stopped at the previous video.",
       "cancelled": "The generation was cancelled.",
       "service": "The build service is temporarily unavailable. Try again a bit later.",
+      "storyboard": "The Pool storyboard didn't match this video's settings. Check the clips on the Pool step and build again.",
+      "drop": "The drop timing didn't fit the fragment. Pick the drop again on the FX step and rebuild.",
+      "hook": "The build didn't accept the selected hook or effect. Pick another one on the FX step or try again later.",
+      "build": "The video failed while preparing the project — its credits have been returned. Try again; if it repeats, contact support with the batch number.",
       "unknown": "The video could not be built — its credits have been returned."
     }
   },
@@ -1918,13 +1922,15 @@
       "doneTitle": "Here is the playbook"
     },
     "methodology": {
-      "needBot": "Open the {{bot}} bot and tap «Start» — then it will send the guide to the chat.",
-      "botOpened": "Started the bot? Tap «Get it» again and the guide will arrive in the chat.",
-      "unavailable": "Sending the guide isn't working right now. You can move on — nothing else depends on it.",
+      "needBot": "The {{bot}} bot will send it to the chat once you start it. Or open the guide right here.",
+      "botOpened": "Started the bot? Tap «To Telegram» and we'll send it again. Or open the guide right here.",
+      "unavailable": "We can't send it to Telegram right now, so the guide opens right here.",
       "botFallback": "Blast",
-      "error": "Couldn't send it. Try again or come back to it later.",
+      "error": "Couldn't send it to Telegram. Open the guide here or try again.",
       "open": "Download",
       "openBot": "Open bot",
+      "openSite": "Open PDF",
+      "retryBot": "To Telegram",
       "get": "Get it",
       "sentToast": "The guide is in Telegram, in the bot chat"
     },
