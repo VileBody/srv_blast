@@ -41,7 +41,9 @@
     "back": "Back",
     "close": "Close",
     "play": "Play",
-    "pause": "Pause"
+    "pause": "Pause",
+    "closeDialog": "Close dialog",
+    "logoutFailed": "Couldn't sign out"
   },
   "legal": {
     "policyTitle": "Privacy policy",
@@ -1289,7 +1291,8 @@
     "deleteText": "Your profile, projects, drafts, uploaded files, and generation history will be deleted.",
     "deleteConfirm": "This cannot be undone. Paid services and generated materials cannot be restored.",
     "deleteAction": "Delete account",
-    "deleteFailed": "Could not delete the account"
+    "deleteFailed": "Could not delete the account",
+    "avatarFailed": "Couldn't update the avatar"
   },
   "pricing": {
     "title": "Expand your options",
