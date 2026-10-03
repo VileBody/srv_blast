@@ -309,6 +309,11 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
           onAnswer: quiz.answer,
           onMethodology: methodology.get,
           onNext: next,
+          onSkipQuiz: () => {
+            // квиз и методичка идут парой: пропуск ведёт сразу за методичку
+            const methodologyAt = steps.indexOf('methodology');
+            setIndex(methodologyAt >= 0 ? methodologyAt + 1 : index + 1);
+          },
           onChannelOpen: () => setChannel((s) => (s === 'done' ? s : 'todo')),
           onChannelCheck: () => {
             setChannel('checking');
