@@ -15,9 +15,9 @@ import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
-import { fxLabGuideId, LabTypeList, useFxLab, useFxLabTourProgress } from './FxLab';
+import { fxLabGuideId, LabTypeList, useFxLab, useFxLabStore, useFxLabTourProgress } from './FxLab';
 import {
-  ChipRow, configuredPreviewId, EffectPreview, HOOK_TYPES, hookSteps, SlowShutterExtendToggle, StyleScopeToggle, selectedStyles, toggleStyle
+  ChipRow, configuredPreviewId, EffectPreview, HOOK_TYPES, HookTypeHead, hookSteps, SlowShutterExtendToggle, StyleScopeToggle, selectedStyles, toggleStyle
 } from './hookCatalog';
 
 
@@ -136,7 +136,6 @@ function HookTypeGuideVisual() {
 
 export function StageHooks() {
   const { t } = useTranslation();
-  const chip = useChip();
   const hooks = useWizardStore((state) => state.hooks);
   const setHooks = useWizardStore((state) => state.setHooks);
   const clearHook = useWizardStore((state) => state.clearHook);
@@ -161,6 +160,10 @@ export function StageHooks() {
   const dropGuideId = fxLab ? fxLabGuideId('drop') : 'hook-drop';
   // Вариантов прототипа в hooks.kind нет — «тип ещё не выбран» там = ни одного варианта.
   const labVariantCount = useWizardStore((state) => state.fxVariants.filter((v) => !v.draft).length);
+  // Раскрытие типа в режиме вариантов больше не заводит пустой вариант (он появляется на
+  // первом выборе) — поэтому шаг «тип» закрывает само раскрытие, иначе подсказка висела бы
+  // поверх дока, где этот первый выбор и делается.
+  const labExpanded = useFxLabStore((state) => state.expanded);
   const [typeGuideDismissed, setTypeGuideDismissed] = useGuideDismiss(typeGuideId, Boolean(hooks.dropTime) && (fxLab ? labVariantCount === 0 : !hooks.kind), false);
   const [dropGuideDismissed, setDropGuideDismissed] = useGuideDismiss(dropGuideId, !hooks.dropTime && !typeGuideDismissed, true);
   const showDropGuide = !dropGuideDismissed;
@@ -172,11 +175,14 @@ export function StageHooks() {
   // (сменил, а не пришёл с уже выбранным) — шаг 1 пройден; завёл первый вариант — шаг 2.
   const prevDropRef = useRef(hooks.dropTime);
   const prevVariantCountRef = useRef(labVariantCount);
+  const prevExpandedRef = useRef(labExpanded);
   useEffect(() => {
     if (fxLab && showDropGuide && hooks.dropTime && hooks.dropTime !== prevDropRef.current) setDropGuideDismissed(true);
     if (fxLab && showTypeGuide && labVariantCount > prevVariantCountRef.current) setTypeGuideDismissed(true);
+    if (fxLab && showTypeGuide && labExpanded && labExpanded !== prevExpandedRef.current) setTypeGuideDismissed(true);
     prevDropRef.current = hooks.dropTime;
     prevVariantCountRef.current = labVariantCount;
+    prevExpandedRef.current = labExpanded;
   });
   useScrollGuideIntoView(showDropGuide, dropGuideTargetRef);
   useScrollGuideIntoView(showTypeGuide, typeGuideTargetRef);
@@ -191,9 +197,13 @@ export function StageHooks() {
     queryKey: ['drops', track?.id, timingFrom, timingTo],
     queryFn: () => api.drops(track!.id, timingFrom, timingTo),
     enabled: meQuery.isSuccess && Boolean(meQuery.data.capabilities?.analyzedDrops) && Boolean(track) && clipReady,
+    // анализ трека для того же окна не меняется — без staleTime он гонялся на каждый вход в FX.
+    // Ключ и staleTime те же, что у сетки битов «Проверки субтитров»: кэш общий.
+    staleTime: 5 * 60_000
   });
   const [customDrop, setCustomDrop] = useState(false);
-  const [dropError, setDropError] = useState(false);
+  // «12» — это не «дроп вне отрывка», а неполная запись: причины разные, и чинятся по-разному
+  const [dropError, setDropError] = useState<'format' | 'outside' | null>(null);
   const [hint, setHint] = useState<HookKind | null>(null);
   // Список типов листается сам: края тают там, где за ними есть ещё строки
   const [typeFade, setTypeFade] = useState({ top: false, bottom: false });
@@ -263,7 +273,7 @@ export function StageHooks() {
               type="button"
               className="w12-drop-opt"
               aria-pressed={hooks.dropTime === normalizeDropTime(drop.time)}
-              onClick={() => { setDropError(false); setCustomDrop(false); setHooks({ dropTime: normalizeDropTime(drop.time) }); }}
+              onClick={() => { setDropError(null); setCustomDrop(false); setHooks({ dropTime: normalizeDropTime(drop.time) }); }}
             >
               <span className="w12-l w12-num">{drop.time}</span>
               <small className="w12-num">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small>
@@ -283,15 +293,15 @@ export function StageHooks() {
                 // раньше пустое значение просто игнорировалось и старый дроп молча оставался
                 // в сторе — стереть тайминг из интерфейса было нечем.
                 if (!value) {
-                  setDropError(false);
+                  setDropError(null);
                   setHooks({ dropTime: '' });
                   setCustomDrop(false);
                   return;
                 }
-                const seconds = dropToSeconds(value);
-                const valid = seconds !== null && clipFromS !== null && clipToS !== null && seconds >= clipFromS && seconds <= clipToS;
-                setDropError(!valid);
-                if (valid) setHooks({ dropTime: value });
+                const seconds = /^\d{2}:\d{2}(?::\d{2})?$/.test(value) ? dropToSeconds(value) : null;
+                const inClip = seconds !== null && clipFromS !== null && clipToS !== null && seconds >= clipFromS && seconds <= clipToS;
+                setDropError(seconds === null ? 'format' : inClip ? null : 'outside');
+                if (inClip) setHooks({ dropTime: value });
                 setCustomDrop(false);
               }}
               onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
@@ -302,7 +312,8 @@ export function StageHooks() {
             </button>
           )}
         </div>
-        {(dropError || storedDropOutside) && <p role="alert" className="w12-miss">{t('wizard.fx.dropOutsideClip')}</p>}
+        {dropError === 'format' && <p role="alert" className="w12-miss">{t('wizard.fx.dropBadFormat')}</p>}
+        {(dropError === 'outside' || (!dropError && storedDropOutside)) && <p role="alert" className="w12-miss">{t('wizard.fx.dropOutsideClip')}</p>}
       </div>
 
       <ActionGuideOverlay
@@ -333,30 +344,16 @@ export function StageHooks() {
                 const locked = !hooks.dropTime && item.kind !== 'none';
                 return (
                   <div key={item.kind} className={cn('w12-fx-type', (active || configured) && 'w12-on', active && 'w12-open', locked && 'w12-locked')}>
-                    <button
-                      type="button"
-                      disabled={locked}
-                      className="w12-fx-head"
+                    <HookTypeHead
+                      item={item}
+                      locked={locked}
+                      pressed={active || configured}
                       // Повторный клик по выбранному/настроенному типу снимает его: раньше хук,
                       // раз попав в подсветку, отцепиться уже не мог и уезжал в генерацию.
-                      onClick={() => { if (active || configured) clearHook(item.kind); else setHooks({ kind: item.kind }); }}
-                      aria-pressed={active || configured}
-                    >
-                      <SvgMaskIcon src={item.icon} className="w12-fx-ic" style={{ width: item.iconW, height: item.iconH }} />
-                      <span className="w12-fx-name w12-l">{chip(HOOK_LABELS[item.kind])}</span>
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        className="w12-help-dot"
-                        onMouseEnter={() => setHint(item.kind)}
-                        onMouseLeave={() => setHint(null)}
-                        onClick={(e) => { e.stopPropagation(); setHint(hint === item.kind ? null : item.kind); }}
-                        aria-label={t('wizard.fx.whatIs', { label: chip(HOOK_LABELS[item.kind]) })}
-                      >
-                        <span className="w12-l">?</span>
-                      </span>
-                    </button>
-                    {hint === item.kind && <span className="w12-fx-hint">{t(item.hint)}</span>}
+                      onToggle={() => { if (active || configured) clearHook(item.kind); else setHooks({ kind: item.kind }); }}
+                      hintOpen={hint === item.kind}
+                      onHint={(open) => setHint(open ? item.kind : null)}
+                    />
                   </div>
                 );
               })}

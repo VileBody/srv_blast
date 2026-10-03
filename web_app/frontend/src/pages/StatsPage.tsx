@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useZoomToFit } from '../lib/useZoomToFit';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { cn } from '../lib/cn';
 import { FigIcon } from '../components/ui/FigIcon';
@@ -265,14 +265,29 @@ function ParamChip({ icon, label }: { icon: 'bg' | 'sub'; label: string }) {
  * «проверить нельзя» или где не хватает роликов. То есть вердикт «проверить нельзя»
  * напрямую превращается в план следующего батча — за этим он и нужен.
  */
-function IterationPanel({ analysis, onCreate, creating, disabled }: {
+/** Потолок роликов в одной итерации — тот же, что `IterationPayload.videosToGenerate` (le=50) на бэке. */
+const ITERATION_MAX_VIDEOS = 50;
+
+function IterationPanel({ analysis, onCreate, creating, disabled, creditsLeft }: {
   analysis?: IterationAnalysis | null;
   onCreate: (count: number, dimension: AnalysisDimension) => void;
   creating: boolean;
   disabled: boolean;
+  /** остаток роликов по тарифу из /api/me; null — безлимит */
+  creditsLeft: number | null;
 }) {
   const { t } = useTranslation();
-  const [count, setCount] = useState(5);
+  /* «+» без потолка давал набрать больше, чем позволяет тариф, — и итерация падала уже на
+     сервере. Потолок — остаток по тарифу (но не больше лимита бэка на одну итерацию). */
+  const max = Math.max(1, Math.min(ITERATION_MAX_VIDEOS, creditsLeft ?? ITERATION_MAX_VIDEOS));
+  const [picked, setPicked] = useState(5);
+  // остаток мог уменьшиться после выбора — показываем и отправляем уже урезанное число
+  const count = Math.min(picked, max);
+  const atMax = count >= max;
+  const noCredits = creditsLeft !== null && creditsLeft <= 0;
+  const maxHint = creditsLeft !== null && creditsLeft < ITERATION_MAX_VIDEOS
+    ? t('stats.videoCountPlanLimit', { count: max })
+    : t('stats.videoCountIterationLimit', { count: max });
   const leading = leadingDimension(analysis);
   const test = nextToTest(analysis);
   const fixLabel = leading && leading.leader
@@ -282,7 +297,7 @@ function IterationPanel({ analysis, onCreate, creating, disabled }: {
   const stepBtn = 'flex h-[25px] w-[25px] shrink-0 items-center justify-center rounded-[8px] bg-[#f6f5fd] text-[20px] leading-none transition hover:brightness-95';
   return (
     <div className="h-[279px] min-w-0 flex-1 rounded-r15 bg-grad-soft-10 p-[28px]">
-      <button type="button" disabled={disabled || creating} onClick={() => onCreate(count, test?.dimension ?? 'subtitles')} className="group flex items-center gap-[12px] text-[24px] font-[400] leading-[29px] text-transparent transition disabled:cursor-not-allowed disabled:opacity-55" style={gradLight}>
+      <button type="button" disabled={disabled || creating || noCredits} title={noCredits ? t('stats.videoCountNoCredits') : undefined} onClick={() => onCreate(count, test?.dimension ?? 'subtitles')} className="group flex items-center gap-[12px] text-[24px] font-[400] leading-[29px] text-transparent transition disabled:cursor-not-allowed disabled:opacity-55" style={gradLight}>
         {t('stats.iterationTitle')}
         <FigIcon name="home-arrow.svg" h={16} className="transition-transform group-hover:translate-x-[3px]" />
       </button>
@@ -301,13 +316,22 @@ function IterationPanel({ analysis, onCreate, creating, disabled }: {
         </div>
         <div className="mt-[16px] flex h-[25px] items-center gap-[12px]">
           <span className="shrink-0 text-[16px] font-[350] leading-none text-text-80">{t('stats.videoCount')}</span>
-          <button type="button" aria-label={t('wizard.pool.less')} onClick={() => setCount((c) => Math.max(1, c - 1))} className={stepBtn}>
+          <button type="button" aria-label={t('wizard.pool.less')} onClick={() => setPicked(Math.max(1, count - 1))} className={stepBtn}>
             <span className="text-transparent" style={gradMainText}>−</span>
           </button>
           <span className="w-[40px] text-center text-[16px] font-[350] leading-none text-text">{count}</span>
-          <button type="button" aria-label={t('wizard.pool.more')} onClick={() => setCount((c) => c + 1)} className={stepBtn}>
+          <button
+            type="button"
+            aria-label={t('wizard.pool.more')}
+            disabled={atMax}
+            title={atMax ? maxHint : undefined}
+            onClick={() => setPicked(Math.min(max, count + 1))}
+            className={cn(stepBtn, 'disabled:cursor-not-allowed disabled:opacity-45')}
+          >
             <span className="text-transparent" style={gradMainText}>+</span>
           </button>
+          {/* упёрлись в потолок — говорим почему, а не просто глушим «+» */}
+          {atMax && <span className="truncate text-ui-12 leading-none text-text-60" title={maxHint}>{t('stats.videoCountMax', { count: max })}</span>}
         </div>
       </div>
     </div>
@@ -358,10 +382,15 @@ export function StatsPage() {
   const analysis = analysisQuery.data?.analysis;
   // Номер текущей итерации: базовый батч — №1, каждая созданная итерация добавляет свой
   const iterationNumber = (analysisQuery.data?.iterations?.length ?? 0) + 1;
+  const queryClient = useQueryClient();
   const createIteration = useMutation({
     mutationFn: ({ count, dimension }: { count: number; dimension: AnalysisDimension }) =>
       api.createIteration(iterationProject?.id ?? '', { videosToGenerate: count, testParameter: DIMENSION_TEST_PARAM[dimension] }),
     onSuccess: (data) => {
+      // итерация — это новая генерация: сайдбар должен увидеть активную джобу, а лимиты — списание
+      void queryClient.invalidateQueries({ queryKey: ['active-job'] });
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
+      void queryClient.invalidateQueries({ queryKey: ['projects'] });
       push({ variant: 'success', title: t('stats.iterationStarted') });
       navigate(data.redirectTo);
     },
@@ -515,7 +544,9 @@ export function StatsPage() {
                 analysis={analysis}
                 onCreate={(count, dimension) => createIteration.mutate({ count, dimension })}
                 creating={createIteration.isPending}
-                disabled={!iterationProject}
+                // без /api/me не знаем остаток по тарифу — не даём запускать вслепую
+                disabled={!iterationProject || !meQuery.data}
+                creditsLeft={meQuery.data ? meQuery.data.creditsLeft : null}
               />
             </>
           ) : (

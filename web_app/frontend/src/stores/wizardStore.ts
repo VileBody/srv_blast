@@ -1,7 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { SavedTrack } from '../lib/types';
-import { DEFAULT_FOOTAGE_TYPE, normalizeFootageType } from '../data/footageTypes';
+import type { SavedTrack, SubtitleFontCatalog } from '../lib/types';
+import { DEFAULT_FOOTAGE_TYPE, footageTypePlane, normalizeFootageType } from '../data/footageTypes';
+import { findFont, fontBlockedFor, fontStyles, styleIdOf } from '../lib/subtitleText';
 
 export type BackgroundMode = 'footage' | 'photo' | 'color';
 export type HookKind = 'warmup' | 'object' | 'effects' | 'motion' | 'thought' | 'none';
@@ -120,6 +121,38 @@ export function allBackgroundsWide(background: WizardStateData['background']): b
   for (let i = 0; i < background.photo.length; i++) formats.push('4:3');
   if (background.color) formats.push('9:16');
   return formats.length > 0 && formats.every((format) => format === '16:9');
+}
+
+/** Почему настройки текста стиля не примет рендер (те же красные строки, что на шаге «Текст»). */
+export type SubtitleTextProblem =
+  | { style: string; kind: 'font'; blocked: string[] }
+  | { style: string; kind: 'fontUnknown' }
+  | { style: string; kind: 'down' };
+
+/**
+ * Первая невозможная настройка текста среди стилей пула; null — всё примется. Бэк сверяет
+ * то же на отправке (422), но человек должен узнать об этом на шаге, а не после «Сгенерировать».
+ * Без каталога шрифтов (ещё грузится / не загрузился) шрифт не проверить — это проверит бэк.
+ */
+export function subtitleTextProblem(
+  subtitles: Pick<WizardStateData['subtitles'], 'pool' | 'textByStyle'>,
+  background: WizardStateData['background'],
+  catalog: SubtitleFontCatalog | undefined
+): SubtitleTextProblem | null {
+  const wide = allBackgroundsWide(background);
+  for (const style of subtitles.pool) {
+    const settings = textSettingsFor(subtitles, style);
+    const styleId = styleIdOf(style);
+    const pickable = fontStyles(styleId ? [styleId] : [], catalog);
+    if (settings.font && catalog && pickable.length) {
+      const base = findFont(catalog, settings.font);
+      if (!base) return { style, kind: 'fontUnknown' };
+      const blocked = fontBlockedFor(base, pickable);
+      if (blocked.length) return { style, kind: 'font', blocked };
+    }
+    if (settings.position === 'down' && !wide) return { style, kind: 'down' };
+  }
+  return null;
 }
 
 /**
@@ -313,6 +346,12 @@ export interface WizardStateData {
     mode: BackgroundMode;
     footage: string[];
     footageFormats?: Record<string, string>;
+    /**
+     * План подборки (vibes / cine16x9 / films), из которой взят каждый футаж. Выпадающий
+     * список типа — только какая подборка открыта сейчас: выбрал вайбы, переключился на
+     * «Фильмы» — вайбы остаются вайбами (раскадровка, подпись в «Пуле»).
+     */
+    footagePlanes?: Record<string, string>;
     sourceFormat?: string;
     /**
      * Тип футажей (Figma W12, степпер «‹ Личности ›») — измерение, ортогональное группам:
@@ -412,6 +451,163 @@ export function backgroundPills(bg: WizardStateData['background']): BackgroundPi
 
 export function backgroundVariations(bg: WizardStateData['background']): number {
   return bg.sourceVideos.length + bg.footage.length + bg.photo.length + (bg.color ? 1 : 0);
+}
+
+/**
+ * План подборки конкретного футажа. Черновики до footagePlanes плана не помнят: 16:9 —
+ * это коллекции, остальное — подборка, открытая в черновике (так считалось и раньше).
+ */
+export function footagePlaneOf(bg: WizardStateData['background'], group: string): string {
+  const recorded = bg.footagePlanes?.[group];
+  if (recorded) return recorded;
+  if (bg.footageFormats?.[group] === '16:9') return 'cine16x9';
+  return footageTypePlane(bg.footageType);
+}
+
+const FOOTAGE_UNIT_LABEL: Record<string, string> = {
+  vibes: 'wizard.pool.vibeUnit',
+  films: 'wizard.track.poolFilmUnit',
+  cine16x9: 'wizard.track.poolCollectionUnit'
+};
+
+/** Ключ юнита — стабильный (идёт в allocation), подпись собирается через i18n при рендере. */
+export function backgroundUnits(bg: WizardStateData['background']): { key: string; labelKey: string; name: string; icon: 'tag' | 'photo'; noHook: boolean; plane?: string }[] {
+  return [
+    ...bg.sourceVideos.map((plan, index) => ({ key: `upload:${plan.id}`, labelKey: 'wizard.pool.ownVideoUnit', name: `${index + 1} · ${plan.format}`, icon: 'tag' as const, noHook: plan.format === '16:9' })),
+    ...bg.footage.map((vibe) => {
+      const plane = footagePlaneOf(bg, vibe);
+      return {
+        key: `footage:${vibe}`,
+        // подпись — по подборке самого футажа: фильм не «Вайб»
+        labelKey: FOOTAGE_UNIT_LABEL[plane] ?? 'wizard.pool.vibeUnit',
+        name: vibe,
+        icon: 'tag' as const,
+        noHook: (bg.footageFormats?.[vibe] ?? (bg.footageType === 'cine16x9' ? '16:9' : '9:16')) === '16:9',
+        plane
+      };
+    }),
+    ...bg.photo.map((vibe) => ({ key: `photo:${vibe}`, labelKey: 'wizard.pool.photoUnit', name: vibe, icon: 'photo' as const, noHook: true }))
+  ];
+}
+
+export function combinationAt(
+  index: number,
+  bg: [string, number][],
+  subs: [string, number][],
+  hooks: [string, number][],
+  styles: [string, number][],
+  units: ReturnType<typeof backgroundUnits>,
+  hasColor: boolean,
+  colorStyle?: string
+): { bg?: string; sub?: string; hook?: string; style?: string } {
+  const expand = (pairs: [string, number][]) => pairs.flatMap(([key, count]) => Array.from({ length: count }, () => key));
+  const bgList = expand(bg);
+  if (hasColor) bgList.push('__color__');
+  const subList = expand(subs);
+  const hookList = expand(hooks);
+  const styleList = expand(styles);
+  const bgKey = bgList[index];
+  const unit = units.find((candidate) => candidate.key === bgKey);
+  const hookAllowed = Boolean(unit && !unit.noHook);
+  const nonColorIndex = bgList.slice(0, index).filter((key) => key !== '__color__').length;
+  const hookIndex = bgList.slice(0, index).filter((key) => {
+    const previous = units.find((candidate) => candidate.key === key);
+    return previous && !previous.noHook;
+  }).length;
+  return {
+    bg: bgKey,
+    sub: bgKey === '__color__' ? colorStyle : subList[nonColorIndex],
+    hook: hookAllowed ? hookList[hookIndex] : undefined,
+    style: hookAllowed ? styleList[hookIndex] : undefined
+  };
+}
+
+/* ── ролики батча: номер, фон, стиль субтитров, вариант FX — общая раскладка «Пула» и стола ── */
+export interface Combo {
+  index: number;
+  /** номер видео в раскадровке и в рендере (index + 1) */
+  slotIndex: number;
+  /** вайб футажа — у фото, цвета и своих видео его нет */
+  group?: string;
+  /** ключ фона из распределения «Пула»: footage:…, photo:…, upload:…, __color__ */
+  bgKey?: string;
+  bgLabel: string;
+  sub?: string;
+  variant?: FxVariant;
+  /** хук возможен: вертикальное видео (не фото, не цвет, не 16:9) — как hook_allowed рендера */
+  hookAllowed: boolean;
+  /** выход 9:16 (всё, кроме 16:9-футажа и своего видео 16:9) — на нём встаёт рамка */
+  vertical: boolean;
+  /** комбинация целиком — под неё сделаны правки стола (см. renderSigOf) */
+  sig: string;
+}
+
+/** Стабильная строка значения: ключи объектов по алфавиту — порядок полей не меняет хэш. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value as Record<string, unknown>).sort()
+      .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+      .map((key) => `${JSON.stringify(key)}:${stableJson((value as Record<string, unknown>)[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value ?? null);
+}
+
+/** Хэш настройки варианта FX (FNV-1a): правки стола сделаны под конкретные хук/склейку/стиль. */
+export function variantConfigHash(variant: Pick<FxVariant, 'kind' | 'config'>): string {
+  const text = stableJson({ kind: variant.kind, config: variant.config });
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+/**
+ * Подпись для рендера: бэк (render_job → montage.py) сверяет только фон · субтитры · id
+ * варианта. Хэш настройки варианта — фронтовый: по нему правки, сделанные под старую
+ * настройку, не уезжают в генерацию.
+ */
+export function renderSigOf(sig: string): string {
+  return sig.replace(/#[^|#]*$/, '');
+}
+
+/** Ролики батча по распределению — та же раскладка, что у «Комбинаций» и рендера. */
+export function combosOf(state: Pick<WizardStateData, 'background' | 'allocation' | 'fxVariants' | 'subtitles'>): Combo[] {
+  const { background, allocation: alloc, fxVariants, subtitles } = state;
+  const units = backgroundUnits(background);
+  const live = fxVariants.filter((v) => !v.draft);
+  const hookEntries: [string, number][] = live.map((v) => [v.id, alloc.variants?.[v.id] ?? 0]);
+  const colorStyle = background.color ? (background.strobe ? alloc.strobeFont : alloc.colorFont) ?? subtitles.pool[0] : undefined;
+  const total = Math.max(1, alloc.total);
+  return Array.from({ length: total }, (_, i) => {
+    const c = combinationAt(i, Object.entries(alloc.background), Object.entries(alloc.subtitles), hookEntries, [], units, Boolean(background.color), colorStyle);
+    const unit = units.find((u) => u.key === c.bg);
+    const variant = live.find((v) => v.id === c.hook);
+    return {
+      index: i,
+      slotIndex: i + 1,
+      group: c.bg?.startsWith('footage:') ? c.bg.slice('footage:'.length) : undefined,
+      bgKey: c.bg,
+      bgLabel: c.bg === '__color__' ? (background.strobe ? 'Строб' : 'Цвет') : unit?.name ?? c.bg?.split(':')[1] ?? '—',
+      sub: c.sub,
+      variant,
+      // хук рендер ставит только на вертикальное видео (зеркало hook_allowed в render_job)
+      hookAllowed: Boolean(unit && !unit.noHook),
+      vertical: c.bg === '__color__' || Boolean(c.bg?.startsWith('photo:')) || Boolean(unit && !unit.noHook),
+      // поменяли вариант на FX (хук/склейка/стиль) — подпись другая, старые правки не про него
+      sig: [c.bg ?? '', c.sub ?? '', variant?.id ?? ''].join('|') + (variant ? `#${variantConfigHash(variant)}` : '')
+    };
+  });
+}
+
+/** Номера (с нуля) правленых роликов, чьи правки больше не про их комбинацию. */
+export function staleMontageEdits(state: Pick<WizardStateData, 'background' | 'allocation' | 'fxVariants' | 'subtitles' | 'montage'>): number[] {
+  const combos = combosOf(state);
+  return Object.entries(state.montage.videos)
+    .filter(([index, video]) => video.edited && combos[Number(index)]?.sig !== video.sig)
+    .map(([index]) => Number(index));
 }
 
 /**
@@ -595,8 +791,9 @@ export function dataFromStageData(projectId: string | null | undefined, raw: Rec
     // иначе следующий сабмит отфильтровал бы эти правки как нетронутые.
     montage: {
       ...fresh.montage,
-      videos: Object.fromEntries(Object.entries(((raw.montage as { videos?: Record<number, MontageVideo> } | undefined)?.videos) ?? {})
-        .map(([index, video]) => [index, { ...video, transitions: video.transitions ?? {}, styles: video.styles ?? [], edited: true }]))
+      // серверная копия хранит подпись рендера в sig, полную (с хэшем варианта) — в uiSig
+      videos: Object.fromEntries(Object.entries(((raw.montage as { videos?: Record<number, MontageVideo & { uiSig?: string }> } | undefined)?.videos) ?? {})
+        .map(([index, { uiSig, ...video }]) => [index, { ...video, sig: uiSig ?? video.sig, transitions: video.transitions ?? {}, styles: video.styles ?? [], edited: true }]))
     },
     asr: (() => {
       const saved = raw.asr as Partial<AsrPreviewState> | null | undefined;
@@ -627,10 +824,15 @@ export const useWizardStore = create<WizardStore>()(
       )),
       setTrack: (track) => set((state) => (
         // Другой трек = другой дроп: хуки сбрасываются, поэтому и пройденность
-        // откатывается к «Треку». Повторная установка того же трека ничего не трогает.
+        // откатывается к «Треку». Примерка субтитров, склейки, раскадровка, правки стола
+        // и раздача «Пула» посчитаны под старый трек — тоже с чистого листа, иначе они
+        // уехали бы в генерацию нового. Повторная установка того же трека ничего не трогает.
         state.track?.id && track?.id === state.track.id
           ? { track }
-          : { track, hooks: initialData().hooks, reachedIndex: 0 }
+          : {
+            track, hooks: initialData().hooks, reachedIndex: 0, asr: emptyAsr(), timeline: emptyTimeline(),
+            storyboard: emptyStoryboard(), montage: emptyMontage(), allocation: initialData().allocation
+          }
       )),
       setField: (key, value) => set({ [key]: value } as Partial<WizardStore>),
       setBackground: (patch) => set((state) => ({ background: { ...state.background, ...patch } })),
@@ -639,7 +841,13 @@ export const useWizardStore = create<WizardStore>()(
         if (bg.mode === 'color') return state;
         const list = bg.mode === 'footage' ? bg.footage : bg.photo;
         const next = list.includes(vibe) ? list.filter((item) => item !== vibe) : [...list, vibe];
-        return { background: { ...bg, [bg.mode]: next, footageFormats: bg.mode === 'footage' ? { ...bg.footageFormats, [vibe]: format ?? '9:16' } : bg.footageFormats }, allocation: { ...state.allocation, seeded: false, background: {} } };
+        // план — у подборки, открытой в момент выбора: потом список типа могут переключить
+        const footagePlanes = bg.mode === 'footage' ? { ...bg.footagePlanes } : bg.footagePlanes;
+        if (bg.mode === 'footage' && footagePlanes) {
+          if (next.includes(vibe)) footagePlanes[vibe] = footageTypePlane(bg.footageType);
+          else delete footagePlanes[vibe];
+        }
+        return { background: { ...bg, [bg.mode]: next, footageFormats: bg.mode === 'footage' ? { ...bg.footageFormats, [vibe]: format ?? '9:16' } : bg.footageFormats, footagePlanes }, allocation: { ...state.allocation, seeded: false, background: {} } };
       }),
       setHooks: (patch) => set((state) => {
         const { config, ...rest } = patch;
@@ -812,18 +1020,24 @@ export const useWizardStore = create<WizardStore>()(
             }
             : null,
           // Правки стола — только ролики, которые правили руками: остальные рендер
-          // собирает по варианту FX, как раньше.
-          montage: {
-            // Кадров столько, сколько склеек + 1: окна стилей, торчащие за конец (склейки
-            // пересчитались при закрытом столе), подрезаем — рендер их иначе отклонит.
-            videos: Object.fromEntries(Object.entries(state.montage.videos)
-              .filter(([, video]) => video.edited)
-              .map(([index, { sig, kind, config, transitions, styles, sub, frame }]) => {
-                const shots = Array.isArray(state.timeline.cuts) ? state.timeline.cuts.length + 1 : null;
-                const fit = shots === null ? styles : styles.filter((st) => st.a < shots).map((st) => ({ ...st, b: Math.min(st.b, shots) }));
-                return [index, { sig, kind, config, transitions, styles: fit, sub, frame: frame ?? null }];
-              }))
-          },
+          // собирает по варианту FX, как раньше. Правки под другую комбинацию (поменяли
+          // раздачу «Пула» или настройку варианта на FX) не шлём намеренно: бэк ответил бы
+          // 422 «устарели», а «Пул» пишет, у скольких видео они сброшены (staleMontageEdits).
+          montage: (() => {
+            const combos = combosOf(state);
+            return {
+              // Кадров столько, сколько склеек + 1: окна стилей, торчащие за конец (склейки
+              // пересчитались при закрытом столе), подрезаем — рендер их иначе отклонит.
+              videos: Object.fromEntries(Object.entries(state.montage.videos)
+                .filter(([index, video]) => video.edited && combos[Number(index)]?.sig === video.sig)
+                .map(([index, { sig, kind, config, transitions, styles, sub, frame }]) => {
+                  const shots = Array.isArray(state.timeline.cuts) ? state.timeline.cuts.length + 1 : null;
+                  const fit = shots === null ? styles : styles.filter((st) => st.a < shots).map((st) => ({ ...st, b: Math.min(st.b, shots) }));
+                  // uiSig — полная подпись для восстановления черновика с сервера (рендер её не читает)
+                  return [index, { sig: renderSigOf(sig), uiSig: sig, kind, config, transitions, styles: fit, sub, frame: frame ?? null }];
+                }))
+            };
+          })(),
           final: state.final
         };
       }

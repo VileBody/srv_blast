@@ -597,9 +597,17 @@
 .w12 .w12-fx-types { display: flex; flex-direction: column; gap: 8px; }
 .w12 .w12-fx-type { position: relative; border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); transition: border-color .15s ease, opacity .2s ease; }
 .w12 .w12-fx-type.w12-on { border-color: var(--w12-accent-line); }
-.w12 .w12-fx-type.w12-locked { opacity: .45; }
-.w12 .w12-fx-head { width: 100%; height: 62px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 16px; text-align: left; font-size: 16px; color: var(--w12-text); }
-.w12 .w12-fx-head:disabled { cursor: not-allowed; }
+.w12 .w12-fx-type.w12-locked > .w12-fx-head > :not(.w12-fx-help) { opacity: .45; }
+.w12 .w12-fx-head { position: relative; width: 100%; height: 62px; display: flex; align-items: center; gap: 10px; padding: 0 10px 0 16px; text-align: left; font-size: 16px; color: var(--w12-text); }
+/* Строка типа кликабельна целиком через растянутый ::after кнопки-названия, а «?» — отдельная
+   кнопка-соседка поверх него: вложенная кнопка в кнопке не доступна с клавиатуры и гасла вместе
+   с заблокированной строкой. */
+.w12 .w12-fx-toggle { min-width: 0; display: inline-flex; align-items: center; text-align: left; color: inherit; }
+.w12 .w12-fx-toggle::after { content: ''; position: absolute; inset: 0; border-radius: 15px; }
+.w12 .w12-fx-toggle:disabled { cursor: not-allowed; }
+.w12 .w12-fx-toggle:focus-visible { outline: none; }
+.w12 .w12-fx-toggle:focus-visible::after { box-shadow: inset 0 0 0 2px var(--w12-accent-line); }
+.w12 .w12-fx-help { position: relative; z-index: 1; flex: none; }
 .w12 .w12-fx-ic { flex: none; color: var(--w12-text-2); transform: scale(.9); }
 .w12 .w12-fx-type.w12-on .w12-fx-ic { color: var(--w12-accent); }
 .w12 .w12-fx-dots { display: inline-flex; gap: 4px; }
@@ -628,6 +636,8 @@
 .w12 .w12-fx-stage .w12-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--w12-text-3); font-size: 14px; }
 .w12 .w12-fx-media { position: absolute; inset: 0; }
 .w12 .w12-fx-media img, .w12 .w12-fx-media video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover !important; }
+/* «пример недоступен» — по центру плеера, а не полоской под плашками сверху */
+.w12 .w12-fx-media > [role=status] { position: absolute; inset: 0; }
 .w12 .w12-fx-tags { position: absolute; left: 12px; right: 12px; top: 12px; z-index: 4; display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; pointer-events: none; }
 .w12 .w12-fx-tag { display: inline-flex; align-items: center; gap: 6px; min-width: 0; height: 26px; padding: 0 9px; border-radius: 8px; background: rgba(5, 1, 15, .58); backdrop-filter: blur(8px); font-size: 12px; color: var(--w12-text); white-space: nowrap; }
 .w12 .w12-fx-tag-dim { color: var(--w12-text-3); }
@@ -784,3 +794,22 @@
 .w12 .w12-drop-clock { min-width: 3.4em; font-variant-numeric: tabular-nums; transform: translateY(1px); }
 .w12 .w12-drop-left { font-size: 13px; line-height: 18px; color: var(--w12-text-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
 @media (max-width: 767px) { .w12 .w12-drop-left { display: none; } }
+/* «Проверка субтитров»: действия иконками с подсказкой по ховеру и фокусу (сброс правок, повтор распознавания) */
+.w12 .w12-stl-acts { display: inline-flex; align-items: center; gap: 4px; }
+.w12 .w12-stl-act { position: relative; display: inline-flex; }
+.w12 .w12-stl-act .w12-icon-btn { width: 32px; height: 32px; border-radius: 10px; color: var(--w12-text-2); }
+.w12 .w12-stl-act .w12-icon-btn svg.w12-i { width: 16px; height: 16px; }
+.w12 .w12-stl-act .w12-icon-btn:disabled { opacity: .4; background: none; color: var(--w12-text-2); }
+.w12 .w12-stl-act-tip { position: absolute; right: 0; top: calc(100% + 6px); z-index: 6; padding: 6px 10px; border-radius: 10px; background: var(--w12-field-2); border: 1px solid var(--w12-line-2); font-size: 12px; line-height: 16px; color: var(--w12-text); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .15s ease; }
+.w12 .w12-stl-act:hover .w12-stl-act-tip, .w12 .w12-stl-act:focus-within .w12-stl-act-tip { opacity: 1; transition-delay: .2s; }
+/* прогрев: подтверждение «Назад», когда файл уже загружен (назад его стирает) */
+.w12 .w12-warm-confirm { display: inline-flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 4px 10px; font-size: 12px; line-height: 16px; color: var(--w12-text-2); text-align: right; }
+.w12 .w12-warm-confirm .w12-link { font-size: 12px; }
+/* вариант FX удалён: «Вернуть» несколько секунд под списком вариантов типа */
+.w12 .w12-fx-undo { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 10px 10px; padding: 8px 12px; border-radius: 10px; background: var(--w12-field); font-size: 12px; line-height: 16px; color: var(--w12-text-2); }
+.w12 .w12-fx-undo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w12 .w12-fx-undo .w12-link { flex: none; font-size: 12px; }
+/* «Свои видео»: заголовок карточки ролика — кнопка выбора (клавиатура), подтверждение удаления файла */
+.w12 .w12-plan-pick { min-width: 0; text-align: left; color: inherit; border-radius: 6px; }
+.w12 .w12-plan-pick:focus-visible { outline: 2px solid var(--w12-accent-line); outline-offset: 2px; }
+.w12 .w12-split.w12-split-warn { background: var(--w12-warn-soft); color: var(--w12-warn); }

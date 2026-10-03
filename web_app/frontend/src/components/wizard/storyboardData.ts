@@ -3,9 +3,8 @@ import { create } from 'zustand';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { StoryboardCutsResponse } from '../../lib/types';
-import { recipeKeyOf, TimelinePace, TimelineStyleRange, useWizardStore } from '../../stores/wizardStore';
+import { footagePlaneOf, recipeKeyOf, TimelinePace, TimelineStyleRange, useWizardStore } from '../../stores/wizardStore';
 import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
-import { footageTypePlane } from '../../data/footageTypes';
 import type { WizardStateData } from '../../stores/wizardStore';
 
 /*
@@ -134,6 +133,8 @@ export function useRecipeCuts() {
     data: query.data,
     loading: query.isLoading,
     error: query.error as Error | null,
+    /** склейки не пришли (сеть, 5xx) — запросить ещё раз: staleTime Infinity сам не повторит */
+    retry: () => { void query.refetch(); },
     cuts: timeline.key === key && timeline.cuts ? timeline.cuts : query.data?.cuts[timeline.pace] ?? null,
     pace: timeline.pace,
     setPace
@@ -150,6 +151,12 @@ export const useStoryboardBusy = create<{ busy: boolean; setBusy: (busy: boolean
   setBusy: (busy) => set((state) => (state.busy === busy ? state : { busy }))
 }));
 
+/** Секунды с одним знаком под язык интерфейса: «1,5» в русском, «1.5» в английском. */
+export function fmtSec(value: number, lang: string): string {
+  const s = value.toFixed(1);
+  return lang.startsWith('ru') ? s.replace('.', ',') : s;
+}
+
 /** Стабильный seed видео: одинаковые вводные → одинаковый подбор; «перемешать» его сдвигает. */
 export function seedKeyFor(batchKey: string, index: number, shuffle: number): string {
   return `${batchKey}:v${index}:s${shuffle}`;
@@ -165,7 +172,8 @@ export function poolGuideId(id: 'total' | 'distribute' | 'storyboard' | 'replace
 
 /** Раскадровка «Пула» есть только у футажа из вайбов — от неё зависит длина тура «Пула». */
 export function poolStoryboardAvailable(bg: WizardStateData['background']): boolean {
-  return footageTypePlane(bg.footageType) === 'vibes' && bg.footage.length > 0;
+  // по подборке каждого футажа, а не по открытому сейчас списку типа на «Фоне»
+  return bg.footage.some((group) => footagePlaneOf(bg, group) === 'vibes');
 }
 
 /** Тур «Пула»: всего → распределение → [раскадровка → замена кадра] → таймлайн. */

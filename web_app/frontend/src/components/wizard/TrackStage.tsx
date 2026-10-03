@@ -1,11 +1,13 @@
 import { KeyboardEvent, PointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Trans, useTranslation } from 'react-i18next';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { AUDIO_FILE_ACCEPT, isAudioFile } from '../../lib/mediaFiles';
 import { useToast } from '../../contexts/ToastContext';
 import { useWizardStore } from '../../stores/wizardStore';
+import { ActionBar, Button, Dialog } from '../ui/kit';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss } from '../guidance/useGuideDismiss';
 import { formatClock, formatSeconds, parseClock, snapTenth, SEGMENT_SECONDS, toStoreTiming } from './timing';
@@ -40,6 +42,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
   const setField = useWizardStore((state) => state.setField);
   const projectId = useWizardStore((state) => state.projectId);
   const reset = useWizardStore((state) => state.reset);
+  const queryClient = useQueryClient();
   const tried = useTried(1);
   const fileInput = useRef<HTMLInputElement>(null);
   const cutRef = useRef<HTMLDivElement>(null);
@@ -77,6 +80,25 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
         action: limitReached ? { label: t('wizard.track.limitCta'), href: '/app/pricing' } : undefined
       });
     }
+  });
+  /*
+   * «Сбросить» стирает и серверный черновик: иначе после перезагрузки restoreSession
+   * подтянул бы старый трек и выбор обратно (локально пусто — значит, берётся сервер).
+   * Сначала пишем пустой черновик, и только после удачной записи чистим локально —
+   * при сбое ничего не теряем и говорим об этом.
+   */
+  const [confirmReset, setConfirmReset] = useState(false);
+  const resetDraft = useMutation({
+    mutationFn: () => api.saveWizardSession({ projectId, stage: 1, data: {} }),
+    onSuccess: (data) => {
+      queryClient.setQueryData(['wizard-session'], (old: object | undefined) => ({ ...(old ?? {}), session: data.session }));
+      stop();
+      setBlobUrl(null);
+      useLyricsUndo.getState().drop();
+      reset(projectId);
+      setConfirmReset(false);
+    },
+    onError: () => push({ variant: 'error', title: t('wizard.track.resetFail'), text: t('wizard.page.saveFailText') })
   });
   const takeFile = (file?: File | null) => {
     if (!file) return;
@@ -261,6 +283,19 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
 
   return (
     <>
+      <Dialog
+        open={confirmReset}
+        title={t('wizard.track.resetTitle')}
+        onClose={() => { if (!resetDraft.isPending) setConfirmReset(false); }}
+        footer={(
+          <ActionBar>
+            <Button variant="ghost" disabled={resetDraft.isPending} onClick={() => setConfirmReset(false)}>{t('wizard.track.resetCancel')}</Button>
+            <Button variant="primary" loading={resetDraft.isPending} disabled={resetDraft.isPending} onClick={() => resetDraft.mutate()}>{t('wizard.track.resetApply')}</Button>
+          </ActionBar>
+        )}
+      >
+        <p className="text-ui-16 text-text-80">{t('wizard.track.resetText')}</p>
+      </Dialog>
       {/* ── трек ── */}
       <div className="w12-sec">
         <div className="w12-sec-head">
@@ -268,7 +303,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
           <div className="w12-side">
             <span>{creditsLeft === null ? t('wizard.track.availableUnlimited') : t('wizard.track.available', { count: creditsLeft })}</span>
             {track && (
-              <button type="button" className="w12-ghost" onClick={() => { stop(); setBlobUrl(null); useLyricsUndo.getState().drop(); reset(projectId); }}>
+              <button type="button" className="w12-ghost" onClick={() => setConfirmReset(true)}>
                 <Svg>{W12.reset}</Svg><span className="w12-l">{t('wizard.track.reset')}</span>
               </button>
             )}
@@ -306,7 +341,10 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
                     const previous = previousQuery.data.track;
                     if (!previous) return;
                     setTrack(previous);
-                    setBlobUrl(previous.localUrl || null);
+                    // это сохранённый трек, а не файл в памяти: играем лёгкую копию со своего домена
+                    // и берём пики с сервера (по id). Presigned-оригинал в blobUrl качал весь файл,
+                    // а волна упиралась в CORS бакета и рисовалась ровной полосой.
+                    setBlobUrl(null);
                   }}
                 >
                   <span className="w12-l">{t('wizard.track.take')}</span>
@@ -320,7 +358,8 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
               {playing === 'track' ? PAUSE : PLAY}
             </button>
             <span className="w12-name"><b>{track.filename.replace(/\.[^.]+$/, '')}</b><span className="w12-num">{trackMeta}</span></span>
-            <button type="button" className="w12-ghost" onClick={() => fileInput.current?.click()}><span className="w12-l">{upload.isPending ? t('wizard.track.uploading') : t('wizard.track.replace')}</span></button>
+            {/* пока грузится новый трек, второй выбор файла только запутал бы, какой из них победит */}
+            <button type="button" className="w12-ghost" disabled={upload.isPending} onClick={() => fileInput.current?.click()}><span className="w12-l">{upload.isPending ? t('wizard.track.uploading') : t('wizard.track.replace')}</span></button>
           </div>
         )}
       </div>
@@ -331,7 +370,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
           <h2><span className="w12-l">{t('wizard.track.segment')}</span></h2>
           <div className="w12-side">
             <span className={cn('w12-chip', over && 'w12-warn')}><span className="w12-l">{t('wizard.track.segmentCap', { seconds: maxSegmentSeconds })}</span></span>
-            {!paidPlan && <a className="w12-link" href="/app/pricing">{t('wizard.track.segmentUpgrade', { seconds: SEGMENT_SECONDS.paid })}</a>}
+            {!paidPlan && <Link className="w12-link" to="/app/pricing">{t('wizard.track.segmentUpgrade', { seconds: SEGMENT_SECONDS.paid })}</Link>}
           </div>
         </div>
         <div ref={cutRef} className={cn('w12-cut w12-fill', !track && 'w12-off', (backwards || over || (tried && track && !selected)) && 'w12-invalid')}>
@@ -350,7 +389,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
               </div>
               {selected && duration > 0 && (
                 <div className={cn('w12-win', (over || backwards) && 'w12-over')} style={{ left: `${(Math.max(0, from) / duration) * 100}%`, width: `${Math.max(0.5, (Math.max(0, length) / duration) * 100)}%` }}>
-                  <span className="w12-win-label w12-num">{formatClock(from)} – {formatClock(to)} · {formatSeconds(length)} с</span>
+                  <span className="w12-win-label w12-num">{formatClock(from)} – {formatClock(to)} · {t('wizard.track.secondsValue', { value: formatSeconds(length) })}</span>
                   {(['l', 'r'] as const).map((edge) => (
                     <span
                       key={edge}

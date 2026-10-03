@@ -15,8 +15,8 @@ import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import {
-  ChipRow, HOOK_TYPES, HookStep,
-  hookSteps, previewIdFor, selectedStyles
+  ChipRow, FX_PREVIEWS_STALE_MS, HOOK_TYPES, HookStep, HookTypeHead,
+  hookSteps, previewIdFor, selectedStyles, styleLocksFullWindow
 } from './hookCatalog';
 
 // Таймлайн сам берёт каталоги из HookPanel — статический импорт дал бы цикл модулей.
@@ -72,12 +72,23 @@ const STEP_NAME: Record<string, string> = {
 interface LabState {
   activeId: string | null;
   expanded: HookKind | null;
+  /**
+   * Тип раскрыт, а варианта у него ещё нет: док показывает шаги на пустом конфиге, вариант
+   * появляется на первом настоящем выборе. Раньше пустой «— новый» заводился сразу при
+   * раскрытии и потом молча блокировал «Продолжить».
+   */
+  pendingKind: HookKind | null;
+  /** последний удалённый вариант — для «Вернуть» (удаление в один клик, без подтверждения) */
+  removed: { variant: LabVariant; index: number; count: number } | null;
   tab: number;
   select: (id: string) => void;
   toggleType: (kind: HookKind) => void;
-  add: (kind: HookKind, config?: HookConfig) => void;
+  startPending: (kind: HookKind) => void;
+  add: (kind: HookKind, config?: HookConfig, tab?: number) => void;
   copyActive: () => void;
   remove: (id: string) => void;
+  undoRemove: () => void;
+  dismissRemoved: () => void;
   patch: (patch: Partial<HookConfig>) => void;
   setTab: (tab: number) => void;
   setCount: (id: string, n: number) => void;
@@ -110,41 +121,62 @@ const patchVariant = (id: string, patch: Partial<HookConfig>) =>
 export const useFxLabStore = create<LabState>((set, get) => ({
   activeId: null,
   expanded: null,
+  pendingKind: null,
+  removed: null,
   tab: 0,
-  select: (id) => set((s) => { const v = variantsNow().find((x) => x.id === id); return { activeId: id, expanded: v?.kind ?? s.expanded, tab: firstOpenTab(v) }; }),
+  select: (id) => set((s) => { const v = variantsNow().find((x) => x.id === id); return { activeId: id, expanded: v?.kind ?? s.expanded, pendingKind: null, tab: firstOpenTab(v) }; }),
   toggleType: (kind) => {
     const s = get();
-    if (s.expanded === kind) { set({ expanded: null }); return; }
+    if (s.expanded === kind) { set({ expanded: null, pendingKind: null }); return; }
     const first = variantsNow().find((v) => v.kind === kind && !v.draft);
-    if (first) set({ expanded: kind, activeId: first.id, tab: firstOpenTab(first) });
-    else get().add(kind);
+    if (first) set({ expanded: kind, activeId: first.id, pendingKind: null, tab: firstOpenTab(first) });
+    else get().startPending(kind);
   },
-  add: (kind, config = {}) => {
+  startPending: (kind) => set({ expanded: kind, activeId: null, pendingKind: kind, tab: 0 }),
+  add: (kind, config = {}, tab) => {
     const list = variantsNow();
     const v: LabVariant = { id: newId(), kind, config, color: nextColor(list) };
     setVariants([...list, v]);
     setCounts((c) => ({ ...c, [v.id]: 1 }));
-    set({ activeId: v.id, expanded: kind, tab: firstOpenTab(v) });
+    set({ activeId: v.id, expanded: kind, pendingKind: null, tab: tab ?? firstOpenTab(v) });
   },
   copyActive: () => {
     const list = variantsNow();
     const src = list.find((v) => v.id === get().activeId);
     if (!src) return;
-    // Копия: тот же хук, склейка и темп; стиль — выбрать заново (в варианте он один).
-    const config: HookConfig = { ...src.config, effectStyles: [], effectStyle: undefined };
-    const v: LabVariant = { id: newId(), kind: src.kind, config, color: nextColor(list), recipe: src.recipe ? { ...src.recipe, styles: [] } : undefined };
+    // Копия — целиком, со стилем: «Круг · Без склейки · Без стилизации» раньше терял
+    // «Без стилизации» и получал метку «настроить». Отличие человек вносит сам, в копии.
+    const v: LabVariant = { id: newId(), kind: src.kind, config: structuredClone(src.config), color: nextColor(list), recipe: src.recipe ? structuredClone(src.recipe) : undefined };
     setVariants([...list, v]);
     setCounts((c) => ({ ...c, [v.id]: 1 }));
-    set({ activeId: v.id, expanded: v.kind, tab: hookSteps(v.kind).length - 1 });
+    set({ activeId: v.id, expanded: v.kind, pendingKind: null, tab: hookSteps(v.kind).length - 1 });
   },
   remove: (id) => {
     const s = get();
-    const variants = variantsNow().filter((v) => v.id !== id);
+    const list = variantsNow();
+    const index = list.findIndex((v) => v.id === id);
+    if (index < 0) return;
+    const count = useWizardStore.getState().allocation.variants?.[id] ?? 1;
+    const variants = list.filter((v) => v.id !== id);
     setVariants(variants);
     setCounts(({ [id]: _gone, ...rest }) => rest);
     const activeId = s.activeId === id ? (variants.find((v) => v.kind === s.expanded) ?? variants[0])?.id ?? null : s.activeId;
-    set({ activeId });
+    set({ activeId, removed: { variant: list[index], index, count } });
   },
+  undoRemove: () => {
+    const r = get().removed;
+    if (!r) return;
+    const list = variantsNow();
+    if (list.some((v) => v.id === r.variant.id)) { set({ removed: null }); return; }
+    // цвет мог уйти новому варианту — тогда берём свободный, чтобы два варианта не слились
+    const variant = list.some((v) => v.color === r.variant.color) ? { ...r.variant, color: nextColor(list) } : r.variant;
+    const next = [...list];
+    next.splice(Math.min(r.index, next.length), 0, variant);
+    setVariants(next);
+    setCounts((c) => ({ ...c, [variant.id]: r.count }));
+    set({ removed: null, activeId: variant.id, expanded: variant.kind, pendingKind: null, tab: firstOpenTab(variant) });
+  },
+  dismissRemoved: () => set({ removed: null }),
   patch: (patch) => { const id = get().activeId; setVariants(variantsNow().map((v) => (v.id === id ? { ...v, config: { ...v.config, ...patch } } : v))); },
   setTab: (tab) => set({ tab }),
   setCount: (id, n) => setCounts((c) => ({ ...c, [id]: Math.max(0, n) }))
@@ -191,6 +223,8 @@ export function useVariantLabel() {
   };
 }
 
+/** сколько живёт «Вернуть» после удаления варианта */
+const UNDO_MS = 8000;
 const iconOf = (kind: HookKind) => HOOK_TYPES.find((item) => item.kind === kind)!;
 const guideShell = { variant: 'visual' as const, shell: 'track-top' as const };
 
@@ -268,19 +302,28 @@ function FooterGuideVisual() {
 
 export function LabTypeList({ locked }: { locked: boolean }) {
   const { t } = useTranslation();
-  const chip = useChip();
   const lab = useFxLabStore();
   const allVariants = useLabVariants();
   const label = useVariantLabel();
   const [hint, setHint] = useState<HookKind | null>(null);
   useDropStaleDrafts();
   // После перезагрузки варианты на месте, а выбор интерфейса — нет: открываем первый.
+  // Раскрытый тип без варианта (pendingKind) — осознанное состояние, его не перебиваем.
   useEffect(() => {
+    if (lab.pendingKind) return;
     if (lab.activeId && allVariants.some((v) => v.id === lab.activeId)) return;
     const first = allVariants.find((v) => !v.draft);
     if (first) lab.select(first.id);
   }, [allVariants, lab]);
   const openRef = useRef<HTMLDivElement>(null);
+  // «Вернуть» живёт несколько секунд; уход со шага его гасит
+  const removed = lab.removed;
+  useEffect(() => {
+    if (!removed) return undefined;
+    const id = window.setTimeout(() => useFxLabStore.getState().dismissRemoved(), UNDO_MS);
+    return () => window.clearTimeout(id);
+  }, [removed]);
+  useEffect(() => () => useFxLabStore.getState().dismissRemoved(), []);
 
   // Шаг «Варианты»: у раскрытого типа уже есть вариант, а подсказка про тип закрыта.
   const hasOpen = Boolean(lab.expanded && allVariants.some((v) => v.kind === lab.expanded && !v.draft));
@@ -301,28 +344,21 @@ export function LabTypeList({ locked }: { locked: boolean }) {
           return (
             <div key={item.kind} ref={open ? openRef : undefined} className={cn('w12-fx-type', (open || has) && 'w12-on', open && 'w12-open', isLocked && 'w12-locked')}>
               {/* строка типа: иконка · название · «?» рядом с названием · метки вариантов · стрелка справа */}
-              <button type="button" disabled={isLocked} aria-expanded={open} onClick={() => lab.toggleType(item.kind)} className="w12-fx-head">
-                <SvgMaskIcon src={item.icon} className="w12-fx-ic" style={{ width: item.iconW, height: item.iconH }} />
-                <span className="w12-fx-name w12-l">{chip(HOOK_LABELS[item.kind])}</span>
-                <span
-                  role="button"
-                  tabIndex={0}
-                  className="w12-help-dot"
-                  onMouseEnter={() => setHint(item.kind)}
-                  onMouseLeave={() => setHint(null)}
-                  onClick={(e) => { e.stopPropagation(); setHint(hint === item.kind ? null : item.kind); }}
-                  aria-label={t('wizard.fx.whatIs', { label: chip(HOOK_LABELS[item.kind]) })}
-                >
-                  <span className="w12-l">?</span>
-                </span>
+              <HookTypeHead
+                item={item}
+                locked={isLocked}
+                expanded={open}
+                onToggle={() => lab.toggleType(item.kind)}
+                hintOpen={hint === item.kind}
+                onHint={(show) => setHint(show ? item.kind : null)}
+              >
                 {has && (
                   <span className="w12-fx-dots" aria-label={t('wizard.fxv.count', { count: variants.length })}>
                     {variants.slice(0, 5).map((v) => <i key={v.id} className="w12-fx-dot" style={{ background: v.color }} />)}
                   </span>
                 )}
                 <span className="w12-fx-chev" aria-hidden="true"><Svg>{W12.down}</Svg></span>
-              </button>
-              {hint === item.kind && <span className="w12-fx-hint">{t(item.hint)}</span>}
+              </HookTypeHead>
               {open && (
                 <div className="w12-fx-vars">
                   {variants.map((v) => {
@@ -341,11 +377,17 @@ export function LabTypeList({ locked }: { locked: boolean }) {
                       </div>
                     );
                   })}
-                  <button type="button" className="w12-fx-add" onClick={() => (variants.length ? lab.copyActive() : lab.add(item.kind))}>
+                  <button type="button" className="w12-fx-add" onClick={() => (variants.length ? lab.copyActive() : lab.startPending(item.kind))}>
                     <Svg>{W12.plus}</Svg>
                     <span className="w12-l">{t('wizard.fxv.add')}</span>
                     <small>{t('wizard.fxv.addHint')}</small>
                   </button>
+                </div>
+              )}
+              {removed?.variant.kind === item.kind && (
+                <div className="w12-fx-undo" role="status">
+                  <span className="w12-fx-undo-text">{t('wizard.fxv.removedVariant', { label: label(removed.variant) })}</span>
+                  <button type="button" className="w12-link" onClick={lab.undoRemove}>{t('wizard.fxv.undoRemove')}</button>
                 </div>
               )}
             </div>
@@ -369,13 +411,13 @@ export function LabTypeList({ locked }: { locked: boolean }) {
 
 /* ── уточнение выбранного (где действует стиль, длина шлейфа): строка в доке ── */
 
-function LabModifier({ label, value, options, onPick }: { label: string; value: string; options: [string, string][]; onPick: (value: string) => void }) {
+function LabModifier({ label, value, options, onPick, disabledValues, note }: { label: string; value: string; options: [string, string][]; onPick: (value: string) => void; disabledValues?: string[]; note?: string }) {
   return (
     <div className="w12-fx-mod">
       <span>{label}</span>
-      <span className="w12-seg" role="group" aria-label={label}>
+      <span className="w12-seg" role="group" aria-label={label} title={note}>
         {options.map(([val, text]) => (
-          <button key={val || 'std'} type="button" aria-pressed={value === val} onClick={() => onPick(val)} className="w12-seg-btn w12-seg-text">
+          <button key={val || 'std'} type="button" aria-pressed={value === val} disabled={disabledValues?.includes(val)} onClick={() => onPick(val)} className="w12-seg-btn w12-seg-text">
             <span className="w12-l">{text}</span>
           </button>
         ))}
@@ -387,7 +429,7 @@ function LabModifier({ label, value, options, onPick }: { label: string; value: 
 /* ── рабочая зона: пример во всю высоту, настройка — доком внутри него ─────── */
 
 function LabPreview({ previewId }: { previewId?: string }) {
-  const query = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews });
+  const query = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews, staleTime: FX_PREVIEWS_STALE_MS });
   if (!previewId || query.isLoading) return null;
   const effect = query.data?.previews.find((item) => item.id === previewId);
   // cover: пример заполняет рабочую зону целиком, а не висит полосой посередине
@@ -403,7 +445,10 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
   const pillsScroll = useDragScroll();
   const dockRef = useRef<HTMLDivElement>(null);
   const footRef = useRef<HTMLDivElement>(null);
-  const v = allVariants.find((x) => x.id === lab.activeId);
+  const stored = allVariants.find((x) => x.id === lab.activeId);
+  // Тип раскрыт, варианта ещё нет: показываем его шаги на пустом конфиге — вариант родится
+  // на первом выборе (pick / загрузка прогрева), а не при раскрытии.
+  const v: LabVariant | undefined = stored ?? (lab.pendingKind ? { id: `pending-${lab.pendingKind}`, kind: lab.pendingKind, config: {}, color: nextColor(allVariants) } : undefined);
   const steps = v ? hookSteps(v.kind) : [];
   const tab = Math.min(lab.tab, Math.max(0, steps.length - 1));
   const step = steps[tab];
@@ -446,10 +491,24 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
     // Стиль в варианте ровно один: два стиля в одном ролике непонятно, где и как
     // сработают. Нужен другой стиль — это другой вариант («+ Вариант»).
     if (option) setCursor(Math.max(0, options.indexOf(option)));
-    if (step.key === 'effectStyle') { lab.patch({ effectStyles: option ? [option] : [], effectStyle: option }); return; }
+    const patch = (step.key === 'effectStyle' ? { effectStyles: option ? [option] : [], effectStyle: option } : { [step.key]: option }) as Partial<HookConfig>;
+    // первый настоящий выбор заводит вариант; снимать выбор у ещё не созданного нечего
+    if (!stored) { if (option) lab.add(v.kind, patch, tab); return; }
     // без перехода на следующую вкладку: человек может сравнить другие варианты этого шага
-    lab.patch({ [step.key]: option } as Partial<HookConfig>);
+    lab.patch(patch);
   };
+  const styleLocked = styleLocksFullWindow(style);
+
+  // «+» футера копирует текущий вариант, а общий PillsFooter (WizardFrame — вне этой правки)
+  // подписывает его «Перейти к следующему разделу». Пока у футера нет своего пропа подписи,
+  // ставим верную подпись здесь; React её не перетрёт — его проп не меняется между рендерами.
+  const copyLabel = t('wizard.fxv.copyVariant');
+  useEffect(() => {
+    const plus = footRef.current?.querySelector<HTMLButtonElement>('.w12-sum-plus');
+    if (!plus) return;
+    plus.setAttribute('aria-label', copyLabel);
+    plus.title = copyLabel;
+  });
 
   return (
     <aside className="w12-col-aside">
@@ -495,10 +554,14 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
                   })}
                 </div>
                 {step?.key === 'effectStyle' && v.kind !== 'none' && style && (
+                  // ЧБ и подобные рендер всегда тянет на весь ролик: «До дропа» у них заблокировано,
+                  // как в классическом шаге (StyleScopeToggle), — иначе экран обещал бы другое
                   <LabModifier
                     label={t('wizard.fxv.styleScope')}
-                    value={config.effectStyleFull ? 'full' : 'pre'}
+                    value={styleLocked || config.effectStyleFull ? 'full' : 'pre'}
                     options={[['pre', t('wizard.fxv.scopePre')], ['full', t('wizard.fxv.scopeFull')]]}
+                    disabledValues={styleLocked ? ['pre'] : undefined}
+                    note={styleLocked ? t('wizard.fx.scopeLocked') : undefined}
                     onPick={(val) => lab.patch({ effectStyleFull: val === 'full' })}
                   />
                 )}
@@ -511,7 +574,16 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
                   />
                 )}
                 {step && (step.key === 'sound'
-                  ? <WarmupInput key={v.id} value={config} onPatch={(patch) => patchVariant(v.id, patch)} />
+                  ? (
+                    <WarmupInput
+                      key={v.id}
+                      uploadKey={v.id}
+                      value={config}
+                      // у ещё не созданного варианта выбор «звук/видео» живёт в самом вводе, вариант
+                      // заводит готовая загрузка; у созданного — правка именно его (загрузка асинхронна)
+                      onPatch={(patch) => { if (stored) patchVariant(stored.id, patch); else if (patch.sound) lab.add(v.kind, patch, tab); }}
+                    />
+                  )
                   : <ChipRow options={step.options} value={selected} onPick={pick} />)}
               </div>
             </>
@@ -531,7 +603,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
           emptyLabel={t('wizard.fx.add')}
           onPill={(key) => lab.select(key)}
           onPlus={() => lab.copyActive()}
-          plusDisabled={!v}
+          plusDisabled={!stored}
           ready={ready}
           canContinue={canContinue}
           loading={loading}

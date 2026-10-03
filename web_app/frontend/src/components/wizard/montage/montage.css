@@ -38,8 +38,7 @@
 .mt-sub { position: absolute; inset: 0; z-index: 3; pointer-events: none; background: none; }
 .mt-cover { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; background: rgba(5, 1, 15, .62); pointer-events: none; }
 .mt-cover span { font-size: 4.2cqi; letter-spacing: .14em; text-transform: uppercase; color: var(--fxt-t60); transform: translateY(-160%); }
-.mt-next { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 6; display: flex; flex-direction: column; gap: 6px; padding: 8px 12px 9px; border-radius: 11px; background: rgba(8, 5, 20, .6); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); font-size: 12px; color: var(--fxt-t80); pointer-events: none; }
-.mt-next i { display: block; height: 2px; border-radius: 1px; background: var(--accent-light); transform-origin: left center; }
+
 .mt-loop { border-radius: 10px; }
 /* ── «Все ролики»: батч целиком, синхронно ── */
 .mt .mt-gridmain { display: flex; flex-direction: column; gap: 12px; }
@@ -214,3 +213,15 @@ img.mt-fv-cover { object-fit: cover; }
 .mt .fxt-join.under { opacity: 0; pointer-events: none; transform: scale(.6); }
 .mt .fxt-clip.fr.mt-fr.sel .fxt-edge { width: 16px; }
 .mt .fxt-clip.fr.mt-fr.sel .fxt-edge::after { opacity: 1; width: 4px; height: 22px; background: #fff; } /* ui-allow: ручка обрезки — белая, как рамка выбранного */
+/* склейки не посчитались — причина и «Повторить» прямо на дорожке кадров (подсказки дорожек кликов не ловят) */
+.mt-lanemsg { position: absolute; top: 50%; z-index: 3; display: flex; align-items: center; gap: 10px; transform: translateY(-50%); font-size: 12px; line-height: 16px; color: var(--warning); white-space: nowrap; }
+/* генерация уходит: кнопка ждёт со спиннером, повторный клик не запускает второй батч */
+.mt .fxt-primary, .mt .mm-gen { gap: 8px; align-items: center; }
+.mt .mm-gen { display: inline-flex; }
+.mt .fxt-primary:disabled, .mt .mm-gen:disabled { opacity: .6; cursor: wait; filter: none; transform: none; }
+.mt .fxt-primary .spinner, .mt .mm-gen .spinner { width: 14px; height: 14px; }
+.mt-plate-media { position: absolute; inset: 0; }
+/* корень стола получает фокус при открытии (модалка) — без рамки вокруг всего экрана */
+.fxt.mt:focus { outline: none; }
+/* «✓» у стоящего эффекта — тоже кнопка (ставит ещё раз / на выбранную склейку) */
+.mt-on.act { cursor: pointer; }

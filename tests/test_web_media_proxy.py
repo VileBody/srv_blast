@@ -236,3 +236,159 @@ def test_clip_link_looks_like_video_to_the_site() -> None:
     import re
     url = "/api/wizard/media/clip/abc.def/clip.mp4"
     assert re.search(r"\.(mp4|webm|mov|m4v)(?:[?#]|$)", url, re.I)
+
+
+# ── превью каталогов и картинки: стабильный адрес, public immutable ───────────────
+
+def test_catalog_preview_and_poster_are_served_public_immutable(client, monkeypatch) -> None:
+    tc, main, calls = client
+    frames = []
+    monkeypatch.setattr(main.media_proxy, "transcode_frame",
+                        lambda src, dst, at, scale=None: (frames.append((src, at, scale)), dst.write_bytes(JPEG)))
+    track = main.store.ws().saved_tracks[0]
+    url = main.media_proxy.preview_path(main.RUNTIME.session_secret, str(track["localUrl"]), "etag1")
+    assert url == main.media_proxy.preview_path(main.RUNTIME.session_secret, str(track["localUrl"]), "etag1")
+    clip = tc.get(url)
+    assert clip.status_code == 200 and clip.content.startswith(b"FAKEMEDIA")
+    assert clip.headers["cache-control"] == "public, max-age=31536000, immutable"
+    poster = tc.get(url.replace("/clip.mp4", "/poster.jpg"))
+    assert poster.status_code == 200 and poster.content.startswith(JPEG[:2])
+    assert poster.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert calls["transcode"] == 1
+    # копия уже есть — кадр из неё, в её размере (без повторного масштабирования)
+    assert frames[0][1] == main.media_proxy.PREVIEW_POSTER_AT and frames[0][2] is None
+
+
+def test_catalog_poster_before_copy_reads_the_original(client, monkeypatch) -> None:
+    tc, main, calls = client
+    frames = []
+    monkeypatch.setattr(main.media_proxy, "transcode_frame",
+                        lambda src, dst, at, scale=None: (frames.append((src, scale)), dst.write_bytes(JPEG)))
+    track = main.store.ws().saved_tracks[0]
+    url = main.media_proxy.preview_path(main.RUNTIME.session_secret, str(track["localUrl"]), "etag2")
+    assert tc.get(url.replace("/clip.mp4", "/poster.jpg")).status_code == 200
+    assert calls["transcode"] == 0 and frames[0][1] == main.media_proxy.SHORT_SIDE_540
+
+
+def test_catalog_links_are_kind_specific(client) -> None:
+    tc, main, _ = client
+    clip_token = main.media_proxy.sign(main.RUNTIME.session_secret, {"s": "/static/x.mp4"})
+    assert tc.get(f"/api/wizard/media/preview/{clip_token}/clip.mp4").status_code == 404
+    assert tc.get(f"/api/wizard/media/image/{clip_token}/image.png").status_code == 404
+    assert tc.get("/api/wizard/media/preview/forged.token/poster.jpg").status_code == 404
+
+
+def test_clip_is_immutable_but_track_stays_short_lived(client) -> None:
+    tc, main, _ = client
+    track = main.store.ws().saved_tracks[0]
+    token = main.media_proxy.sign(main.RUNTIME.session_secret, {"s": str(track["localUrl"])})
+    clip = tc.get(f"/api/wizard/media/clip/{token}/clip.mp4")
+    assert clip.headers["cache-control"] == "private, max-age=31536000, immutable"
+    # трек — по id трека юзера, адрес не адресует содержимое: сутки, как было
+    assert tc.get(f"/api/wizard/media/track/{track['id']}").headers["cache-control"] == "private, max-age=86400"
+
+
+def test_catalog_image_keeps_its_format(client, monkeypatch) -> None:
+    tc, main, calls = client
+    monkeypatch.setattr(main, "_media_fetch", lambda locator: (lambda path: path.write_bytes(b"PNGSRC")))
+    url = main.media_proxy.image_path(main.RUNTIME.session_secret, "s3://fx/fx_assets/frames/exclude.png", "e1")
+    assert url.endswith("/image.png")
+    r = tc.get(url)
+    assert r.status_code == 200 and r.headers["content-type"] == "image/png"
+    assert r.headers["cache-control"] == "public, max-age=31536000, immutable"
+    assert tc.get(url.replace("image.png", "image.jpg")).status_code == 404
+    assert calls["transcode"] == 1
+
+
+def test_proxy_failure_is_an_error_not_the_original(client, monkeypatch) -> None:
+    """No Fallback: копию сделать не вышло — 502 с причиной, а не редирект на оригинал."""
+    tc, main, _ = client
+
+    def broken(src, dst, args):
+        raise main.media_proxy.MediaProxyError("ffmpeg упал")
+
+    monkeypatch.setattr(main.media_proxy, "transcode", broken)
+    track = main.store.ws().saved_tracks[0]
+    r = tc.get(main.media_proxy.preview_path(main.RUNTIME.session_secret, str(track["localUrl"]), "etag3"))
+    assert r.status_code == 502 and "ffmpeg упал" in r.json()["detail"]
+
+
+def test_object_version_requires_an_etag() -> None:
+    assert mp.object_version('"abc-3"') == "abc-3"
+    with pytest.raises(mp.MediaProxyError):
+        mp.object_version("")
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="нужен ffmpeg")
+def test_catalog_preview_profile_keeps_fps_and_shrinks_landscape(tmp_path: Path) -> None:
+    src = tmp_path / "photo.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=1920x1440:rate=25:duration=2",
+                    "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-shortest", "-c:v", "libx264", "-c:a", "aac",
+                    str(src)], check=True)
+    store = mp.LocalStore(tmp_path / "cache")
+    mp.build_preview(store, "preview/aa/p.mp4", lambda dst: dst.write_bytes(src.read_bytes()))
+    out = store.path("preview/aa/p.mp4")
+    info = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries",
+                           "stream=width,height,r_frame_rate", "-of", "csv=p=0", str(out)],
+                          capture_output=True, text=True).stdout.strip()
+    assert info == "720,540,25/1"  # фото 1920×1440 → 720×540, fps источника
+    atoms = _atoms(out)
+    assert atoms.index("moov") < atoms.index("mdat")
+    audio = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type",
+                            "-of", "csv=p=0", str(out)], capture_output=True, text=True).stdout.strip()
+    assert audio == ""
+    mp.build_preview_poster(store, "preview/aa/p.mp4", "preview/aa/p.mp4.poster.jpg", "unused")
+    assert store.read("preview/aa/p.mp4.poster.jpg")[:2] == JPEG[:2]
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="нужен ffmpeg")
+def test_catalog_image_is_downscaled_with_alpha(tmp_path: Path) -> None:
+    src = tmp_path / "frame.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=black@0.0:size=1080x1920,format=rgba",
+                    "-frames:v", "1", str(src)], check=True)
+    store = mp.LocalStore(tmp_path / "cache")
+    mp.build_image(store, "image/aa/f.png", lambda dst: dst.write_bytes(src.read_bytes()))
+    info = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=width,height,pix_fmt", "-of", "csv=p=0",
+                           str(store.path("image/aa/f.png"))], capture_output=True, text=True).stdout.strip()
+    width, height, pix_fmt = info.split(",")[:3]
+    assert (width, height) == ("720", "1280") and "a" in pix_fmt  # прозрачность рамки сохранена
+
+
+# ── поллинг примерки и кэш анализа дропа ─────────────────────────────────────────
+
+def test_asr_poll_writes_db_only_when_state_changes(client, monkeypatch) -> None:
+    import dataclasses
+    _, main, _ = client
+    flushes = []
+    answers = iter([{"status": "RUNNING"}, {"status": "RUNNING"}, {"status": "COMPLETED", "words": [{"text": "a"}]}])
+
+    class Backend:
+        def asr_preview_state(self, job_id):
+            return next(answers)
+
+    monkeypatch.setattr(main, "RUNTIME", dataclasses.replace(main.RUNTIME, backend="production"))
+    monkeypatch.setattr(main, "_production_backend", lambda: Backend())
+    monkeypatch.setattr(main.persistence, "flush_user", lambda uid: flushes.append(uid))
+    state = {"key": "k", "status": "RUNNING", "jobId": "j1", "words": []}
+    state = main._asr_sync(state)
+    state = main._asr_sync(state)
+    assert flushes == []  # опрос без изменений — без записи
+    state = main._asr_sync(state)
+    assert state["status"] == "COMPLETED" and len(flushes) == 1
+
+
+def test_drop_analysis_is_cached_per_track_and_window(client, monkeypatch) -> None:
+    _, main, _ = client
+    calls = []
+
+    class Backend:
+        def analyze_hook(self, *, audio_s3_url, clip_start_sec, clip_end_sec):
+            calls.append((audio_s3_url, clip_start_sec, clip_end_sec))
+            return {"bpm": 120.0, "drop_candidates": [{"t": clip_start_sec + 1, "confidence": 0.9}]}
+
+    main._DROPS_CACHE.clear()
+    monkeypatch.setattr(main, "_production_backend", lambda: Backend())
+    first = main._cached_hook_analysis("s3://raw/t.mp3", 10.0, 22.0)
+    assert main._cached_hook_analysis("s3://raw/t.mp3", 10.0, 22.0) == first
+    main._cached_hook_analysis("s3://raw/t.mp3", 11.0, 22.0)  # другое окно — свой анализ
+    assert len(calls) == 2

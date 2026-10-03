@@ -12,6 +12,7 @@ import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 from uuid import uuid4
@@ -415,6 +416,8 @@ class AsrStartPayload(BaseModel):
     # Трек визарда, а не «последний загруженный»: человек мог залить новый файл и
     # вернуться к предыдущему — примерка обязана считаться по тому, что уйдёт в рендер.
     trackId: str = ""
+    # «Повторить распознавание»: готовую примерку с тем же ключом посчитать заново
+    force: bool = False
 
 
 class RatePayload(BaseModel):
@@ -1406,23 +1409,46 @@ async def api_cancel_sub(immediate: bool = False) -> dict[str, Any]:
     return {"ok": True, "subscription": sub, "mock": RUNTIME.backend == "mock"}
 
 
-@app.post("/api/payments/retry", tags=["payments"])
-async def api_payment_retry() -> dict[str, Any]:
-    """Повторить списание после неудачной оплаты (в моке — всегда успешно).
+class RetryPaymentPayload(BaseModel):
+    # тот же ключ идемпотентности, что у create-order: повторный клик / ретрай браузера
+    # не должен заводить в банке второй заказ
+    idempotencyKey: str = Field(min_length=32, max_length=128)
 
-    Реальный провайдер здесь вернёт ссылку на оплату; контракт ответа не изменится.
+
+@app.post("/api/payments/retry", tags=["payments"])
+async def api_payment_retry(payload: RetryPaymentPayload) -> dict[str, Any]:
+    """Повторить оплату после неудачного автосписания (в моке — сразу успешно).
+
+    Прод: новый заказ BLAST в Т-банке, фронт уводит на `paymentUrl`. Мок: `paymentUrl` null —
+    оплата уже отмечена.
     """
     if RUNTIME.backend == "production":
+        from .billing_backend import PaymentInitError
+
         data = await _sync_billing_bundle(store.get_user_bundle())
         tier = str(data["subscription"].get("tier") or "")
         if tier != "BLAST":
             raise HTTPException(status_code=409, detail="No BLAST subscription to retry")
-        order = await _billing_backend().create_order(
-            tg_id=_telegram_chat_id(),
-            package_type=tier,
-            email=_billing_email(),
-            recurrent_accepted=True,
-        )
+        try:
+            # раньше сюда не передавался idempotency_key (обязательный аргумент) — кнопка
+            # «Обновить оплату» в проде падала 500-кой
+            order = await _billing_backend().create_order(
+                tg_id=_telegram_chat_id(),
+                package_type=tier,
+                email=_billing_email(),
+                recurrent_accepted=True,
+                idempotency_key=payload.idempotencyKey,
+            )
+        except PaymentInitError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "payment_init_failed", "message": str(exc)},
+            ) from exc
         return {"ok": True, "subscription": data["subscription"], "paymentUrl": order["paymentUrl"], "mock": False}
     sub = store.mark_payment_ok()
     return {"ok": True, "subscription": sub, "paymentUrl": None, "mock": True}
@@ -1742,8 +1768,15 @@ def _clip_preview_url(preview_url: str | None) -> str | None:
     return f"/api/wizard/media/clip/{media_proxy.sign(RUNTIME.session_secret, {'s': locator})}/clip.mp4"
 
 
-def _media_response(store, name: str, request: Request, content_type: str) -> Response:
-    headers = {"Cache-Control": "private, max-age=86400", "Accept-Ranges": "bytes"}
+# Клип и кадр адресуются содержимым (имя копии = хэш оригинала + VERSION прослойки) — один и
+# тот же адрес всегда отдаёт те же байты, перепроверять нечего. Трек — свой у каждого юзера
+# (адрес по id трека), поэтому private и сутки, как было.
+CACHE_CLIP = "private, max-age=31536000, immutable"
+CACHE_TRACK = "private, max-age=86400"
+
+
+def _media_response(store, name: str, request: Request, content_type: str, cache: str) -> Response:
+    headers = {"Cache-Control": cache, "Accept-Ranges": "bytes"}
     if isinstance(store, media_proxy.LocalStore):
         from fastapi.responses import FileResponse
         return FileResponse(store.path(name), media_type=content_type, headers=headers)
@@ -1779,7 +1812,7 @@ def api_media_clip(token: str, request: Request) -> Response:
     if not store.has(name):
         # экран просит клип прямо сейчас — он идёт впереди фонового прогрева
         _await_media(media_proxy.NOW, name, lambda: media_proxy.build_clip(store, name, _media_fetch(locator)))
-    return _media_response(store, name, request, "video/mp4")
+    return _media_response(store, name, request, "video/mp4", CACHE_CLIP)
 
 
 @app.get("/api/wizard/media/clip/{token}/poster.jpg", tags=["wizard"])
@@ -1796,7 +1829,59 @@ def api_media_clip_poster(token: str, request: Request, t: float = 0.0) -> Respo
     if not store.has(poster):
         # свой пул: полоса миниатюр не задерживает клип плеера и не ждёт сжатия клипов целиком
         _await_media(media_proxy.POSTERS, poster, lambda: media_proxy.build_poster(store, clip, poster, at, _media_source(locator)))
-    return _media_response(store, poster, request, "image/jpeg")
+    return _media_response(store, poster, request, "image/jpeg", CACHE_CLIP)
+
+
+# ── превью каталогов (вайбы, фото, стили субтитров, эффекты) и картинки (рамки) ──────
+# Адрес — оригинал + его ETag (см. production_backend.preview_catalog): тот же адрес = те же
+# байты, перезалили оригинал — адрес другой. Поэтому public + immutable: браузер и любой кэш
+# по пути не перекачивают превью при каждом заходе в визард.
+
+def _unsign_catalog(token: str, kind: str) -> tuple[str, str]:
+    try:
+        return media_proxy.unsign_kind(RUNTIME.session_secret, token, kind)
+    except (media_proxy.MediaProxyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/wizard/media/preview/{token}/clip.mp4", tags=["wizard"])
+def api_media_preview(token: str, request: Request) -> Response:
+    """Лёгкая копия превью каталога (≤540 по короткой стороне, fps источника, без звука)."""
+    locator, version = _unsign_catalog(token, "preview")
+    name = media_proxy.preview_name(locator, version)
+    store = _media_store()
+    if not store.has(name):
+        _await_media(media_proxy.NOW, name, lambda: media_proxy.build_preview(store, name, _media_fetch(locator)))
+    return _media_response(store, name, request, "video/mp4", media_proxy.IMMUTABLE_PUBLIC)
+
+
+@app.get("/api/wizard/media/preview/{token}/poster.jpg", tags=["wizard"])
+def api_media_preview_poster(token: str, request: Request) -> Response:
+    """Заставка карточки каталога: видна вместо ролика, пока он не в кадре (и в режиме экономии)."""
+    locator, version = _unsign_catalog(token, "preview")
+    clip = media_proxy.preview_name(locator, version)
+    poster = media_proxy.preview_poster_name(locator, version)
+    store = _media_store()
+    if not store.has(poster):
+        _await_media(media_proxy.POSTERS, poster,
+                     lambda: media_proxy.build_preview_poster(store, clip, poster, _media_source(locator)))
+    return _media_response(store, poster, request, "image/jpeg", media_proxy.IMMUTABLE_PUBLIC)
+
+
+@app.get("/api/wizard/media/image/{token}/image.{ext}", tags=["wizard"])
+def api_media_image(token: str, ext: str, request: Request) -> Response:
+    """Картинка каталога (PNG рамки и т.п.) — уменьшенная копия со своего домена, альфа сохранена."""
+    locator, version = _unsign_catalog(token, "image")
+    try:
+        name = media_proxy.image_name(locator, version)
+    except media_proxy.MediaProxyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if f".{ext}" != Path(name).suffix:
+        raise HTTPException(status_code=404, detail="расширение не совпадает с картинкой")
+    store = _media_store()
+    if not store.has(name):
+        _await_media(media_proxy.NOW, name, lambda: media_proxy.build_image(store, name, _media_fetch(locator)))
+    return _media_response(store, name, request, media_proxy.IMAGE_TYPES[Path(name).suffix], media_proxy.IMMUTABLE_PUBLIC)
 
 
 def _track_media(track_id: str):
@@ -1846,7 +1931,7 @@ async def api_media_prewarm(payload: MediaPrewarmPayload) -> dict[str, Any]:
 def api_media_track(track_id: str, request: Request) -> Response:
     """Трек для прослушки на сайте: AAC 96 кбит/с вместо оригинала (в 3–4 раза легче)."""
     media, name = _track_media(track_id)
-    return _media_response(media, f"{name}.m4a", request, "audio/mp4")
+    return _media_response(media, f"{name}.m4a", request, "audio/mp4", CACHE_TRACK)
 
 
 @app.get("/api/wizard/media/track/{track_id}/peaks", tags=["wizard"])
@@ -1854,7 +1939,37 @@ def api_media_track_peaks(track_id: str) -> Response:
     """Громкость трека каждые 50 мс — волну сайт рисует по ним, не скачивая файл."""
     media, name = _track_media(track_id)
     return Response(media.read(f"{name}.json"), media_type="application/json",
-                    headers={"Cache-Control": "private, max-age=86400"})
+                    headers={"Cache-Control": CACHE_TRACK})
+
+
+# Анализ дропа (оркестратор `/hook/analyze`, ~секунды CPU) детерминирован для пары
+# трек+окно, а сайт зовёт его многократно: каждый вход в FX, сетка битов SubtitleTimeline,
+# возврат назад по шагам. Ключ трека — s3-адрес загрузки (uuid, файл не перезаписывается).
+# TTL — чтобы после выкатки нового анализатора в оркестраторе старые ответы не жили вечно.
+DROPS_CACHE_MAX = 512
+DROPS_CACHE_TTL_S = 6 * 3600.0
+_DROPS_CACHE: "OrderedDict[tuple[str, float, float], tuple[float, dict[str, Any]]]" = OrderedDict()
+_DROPS_CACHE_LOCK = threading.Lock()
+
+
+def _cached_hook_analysis(audio_s3_url: str, start: float, end: float) -> dict[str, Any]:
+    import time
+
+    key = (audio_s3_url, round(float(start), 2), round(float(end), 2))
+    now = time.monotonic()
+    with _DROPS_CACHE_LOCK:
+        hit = _DROPS_CACHE.get(key)
+        if hit and now - hit[0] < DROPS_CACHE_TTL_S:
+            _DROPS_CACHE.move_to_end(key)
+            return hit[1]
+    # ошибки не кэшируем: следующий заход спросит оркестратор заново
+    result = _production_backend().analyze_hook(audio_s3_url=audio_s3_url, clip_start_sec=start, clip_end_sec=end)
+    with _DROPS_CACHE_LOCK:
+        _DROPS_CACHE[key] = (now, result)
+        _DROPS_CACHE.move_to_end(key)
+        while len(_DROPS_CACHE) > DROPS_CACHE_MAX:
+            _DROPS_CACHE.popitem(last=False)
+    return result
 
 
 @app.get("/api/wizard/drops", tags=["wizard"])
@@ -1899,12 +2014,7 @@ async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> 
         return {"status": "NEEDS_TRACK", "bpm": 0, "drops": [], "mock": False}
 
     try:
-        result = await run_in_threadpool(
-            _production_backend().analyze_hook,
-            audio_s3_url=audio_s3_url,
-            clip_start_sec=start,
-            clip_end_sec=end,
-        )
+        result = await run_in_threadpool(_cached_hook_analysis, audio_s3_url, start, end)
     except HTTPException:
         raise
     except Exception as exc:
@@ -2074,12 +2184,16 @@ def _asr_sync(state: dict[str, Any]) -> dict[str, Any]:
     if RUNTIME.backend != "production" or state.get("status") in asr_preview.TERMINAL or not state.get("jobId"):
         return state
     fresh = _production_backend().asr_preview_state(str(state["jobId"]))
-    state = {**state, **fresh}
-    store.set_asr_preview(state)
+    merged = {**state, **fresh}
+    if merged == state:
+        # ничего не поменялось (джоба ещё в очереди/считается) — фронт поллит каждые пару
+        # секунд, и запись воркспейса в БД на каждый опрос была пустой нагрузкой
+        return state
+    store.set_asr_preview(merged)
     # Поллинг — GET, а сброс в БД в middleware висит на мутирующих методах: без явного
     # вызова готовые слова жили бы только до рестарта.
     persistence.flush_user(store.current_user_id())
-    return state
+    return merged
 
 
 @app.post("/api/wizard/asr/start", tags=["wizard"])
@@ -2097,7 +2211,8 @@ async def api_asr_start(payload: AsrStartPayload) -> dict[str, Any]:
     track, start, end, text = inputs
     key = asr_preview.preview_key(str(track["s3Key"]), start, end, text)
     state = _asr_state_for(key)
-    if state["status"] not in {"IDLE", "FAILED"}:
+    redo = payload.force and state["status"] == "COMPLETED"  # идущую не перезапускаем
+    if state["status"] not in {"IDLE", "FAILED"} and not redo:
         try:
             state = await run_in_threadpool(_asr_sync, state)
         except Exception as exc:
@@ -3062,9 +3177,17 @@ def _restore_tiktok_and_start_refresh() -> None:
     telegram_bot.ensure_started()
 
 
+def _tiktok_outcome_redirect(outcome: str, return_path: str | None = None) -> RedirectResponse:
+    """Куда вернуть после OAuth: по умолчанию профиль, а если подключали с экрана выкладки —
+    обратно туда (иначе терялись проект/батч/ролик). Путь уже проверен safe_app_path."""
+    path = security.safe_app_path(return_path) or "/app/profile"
+    return RedirectResponse(f"{_app_url()}{security.with_query_param(path, 'tiktok', outcome)}", status_code=302)
+
+
 def _finish_tiktok_connect(*, handle: str, open_id: str, mock: bool = False,
                            tokens: dict[str, Any] | None = None,
-                           info: dict[str, Any] | None = None) -> RedirectResponse:
+                           info: dict[str, Any] | None = None,
+                           return_path: str | None = None) -> RedirectResponse:
     """Единая точка подключения TikTok: сперва анти-фрод, только потом сохранение.
 
     Проверка стоит ДО записи специально: подключить аккаунт и тут же забанить — значит
@@ -3078,12 +3201,12 @@ def _finish_tiktok_connect(*, handle: str, open_id: str, mock: bool = False,
             analytics.track("tiktok_reuse_blocked", user_id, {"accounts": verdict.get("accounts")})
             return RedirectResponse(f"{_app_url()}/blocked", status_code=302)
         # Реестр недоступен — не подключаем (fail-closed): молча пропустить проверку хуже
-        return RedirectResponse(f"{_app_url()}/app/profile?tiktok=guard_error", status_code=302)
+        return _tiktok_outcome_redirect("guard_error", return_path)
 
     if mock:
         _connect_mock(open_id)
         persistence.flush_user(user_id)
-        return RedirectResponse(f"{_app_url()}/app/profile?tiktok=mock", status_code=302)
+        return _tiktok_outcome_redirect("mock", return_path)
 
     store.connect_tiktok(
         handle=handle,
@@ -3096,22 +3219,32 @@ def _finish_tiktok_connect(*, handle: str, open_id: str, mock: bool = False,
     # Колбэк — GET, а сброс в middleware висит на мутирующих методах: без явного вызова
     # подключение не попало бы в БД до следующей правки чего-нибудь другого.
     persistence.flush_user(user_id)
-    return RedirectResponse(f"{_app_url()}/app/profile?tiktok=connected", status_code=302)
+    return _tiktok_outcome_redirect("connected", return_path)
 
 
 @app.get("/api/tiktok/auth", tags=["tiktok"])
-def api_tiktok_auth(request: Request, reuse: bool = False) -> RedirectResponse:
-    """Старт OAuth: уводим на TikTok. state и PKCE-verifier кладём в серверную сессию."""
+def api_tiktok_auth(request: Request, reuse: bool = False, next: str | None = None) -> RedirectResponse:
+    """Старт OAuth: уводим на TikTok. state и PKCE-verifier кладём в серверную сессию.
+
+    `next` — путь внутри /app, куда вернуть после колбэка (экран выкладки). Чужое/кривое
+    значение отбрасываем в дефолт-профиль: открытого редиректа через OAuth быть не должно.
+    """
+    return_path = security.safe_app_path(next)
     cfg = tiktok_config.load()
     if not _tiktok_ready(cfg):
         if RUNTIME.production:
-            return RedirectResponse(f"{_app_url()}/app/profile?tiktok=not_configured", status_code=302)
-        return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True)
+            return _tiktok_outcome_redirect("not_configured", return_path)
+        return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True,
+                                      return_path=return_path)
 
     state = secrets.token_urlsafe(24)
     verifier, challenge = tiktok_api.new_pkce()
     request.session["tiktok_state"] = state
     request.session["tiktok_verifier"] = verifier
+    if return_path:
+        request.session["tiktok_next"] = return_path
+    else:
+        request.session.pop("tiktok_next", None)
     return RedirectResponse(tiktok_api.build_auth_url(cfg, state, challenge), status_code=302)
 
 
@@ -3119,32 +3252,36 @@ def api_tiktok_auth(request: Request, reuse: bool = False) -> RedirectResponse:
 def api_tiktok_callback(request: Request, code: str | None = None, state: str | None = None,
                         error: str | None = None, reuse: bool = False) -> RedirectResponse:
     """Возврат от TikTok: сверяем state (CSRF), меняем code на токен, тянем профиль."""
+    # путь возврата из сессии, перепроверяем на чтении — сессия не место для слепого доверия
+    return_path = security.safe_app_path(request.session.pop("tiktok_next", None))
     cfg = tiktok_config.load()
     if not _tiktok_ready(cfg):
         if RUNTIME.production:
-            return RedirectResponse(f"{_app_url()}/app/profile?tiktok=not_configured", status_code=302)
-        return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True)
+            return _tiktok_outcome_redirect("not_configured", return_path)
+        return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True,
+                                      return_path=return_path)
 
     if error:
-        return RedirectResponse(f"{_app_url()}/app/profile?tiktok=denied", status_code=302)
+        return _tiktok_outcome_redirect("denied", return_path)
 
     saved_state = request.session.pop("tiktok_state", None)
     verifier = request.session.pop("tiktok_verifier", None)
     if not code or not state or not saved_state or state != saved_state or not verifier:
         # чужой/протухший редирект — токен не запрашиваем
-        return RedirectResponse(f"{_app_url()}/app/profile?tiktok=error", status_code=302)
+        return _tiktok_outcome_redirect("error", return_path)
 
     try:
         tokens = tiktok_api.exchange_code(cfg, code, verifier)
         info = tiktok_api.fetch_user_info(tokens["access_token"])
     except Exception:
-        return RedirectResponse(f"{_app_url()}/app/profile?tiktok=error", status_code=302)
+        return _tiktok_outcome_redirect("error", return_path)
 
     return _finish_tiktok_connect(
         handle=info.get("display_name") or "",
         open_id=tokens.get("open_id") or info.get("open_id") or "",
         tokens=tokens,
         info=info,
+        return_path=return_path,
     )
 
 
