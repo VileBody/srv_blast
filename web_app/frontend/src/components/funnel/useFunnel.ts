@@ -1,4 +1,4 @@
-import { useMemo, useEffect } from 'react';
+import { useMemo, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -79,6 +79,51 @@ export function useQuizCopy() {
 export function quotaLeft(quota: FunnelQuota | null | undefined): { left: number; cap: number } {
   if (!quota) return { left: 0, cap: 0 };
   return { left: quota.allowed ? quota.maxVideos : 0, cap: quota.tripwire ? quota.tripwireBatchCap : quota.batchCap };
+}
+
+/**
+ * Что можно собрать прямо сейчас. Безлимит на трек (квота с перезарядкой) и генерации на
+ * балансе — разные вещи: квота на перезарядке, а генерации остались — это не «лимит
+ * исчерпан», батч уйдёт за генерации (бэк, plan_generation). «Ничего» — только когда
+ * нет ни свободной квоты, ни генераций.
+ * - `free` — квота трека пускает батч сейчас (или трипваер);
+ * - `credits` — квота ждёт, но на балансе есть генерации (`null` — безлимит по видео);
+ * - `none` — собрать не из чего: тут место трипваеру.
+ */
+export type GenerateNow = 'free' | 'credits' | 'none';
+
+export function generateNow(quota: FunnelQuota | null | undefined, creditsLeft: number | null): GenerateNow {
+  if (quota && (quota.allowed || quota.tripwire)) return 'free';
+  if (creditsLeft === null || creditsLeft > 0) return 'credits';
+  return 'none';
+}
+
+/**
+ * Окно трипваера (сутки) открывает только реальный упор. «Собрать не из чего» на экране —
+ * он и есть: просим бэк открыть окно (`/tripwire/offer` сам проверит, что квота трека
+ * правда стоит) и кладём ответ в состояние воронки. Уже открытое не перезапрашиваем;
+ * ответ null — упора нет или предложение закончилось: тогда трипваер не показываем.
+ */
+export function useEnsureTripwireOffer(active: boolean, trackId: string | undefined, funnel: FunnelState | undefined) {
+  const queryClient = useQueryClient();
+  const asked = useRef<string | null>(null);
+  const open = Boolean(funnel?.tripwireOffer);
+  const paid = Boolean(funnel?.hasPaid);
+  const loaded = Boolean(funnel);
+  useEffect(() => {
+    if (!active || !loaded || paid || open) return;
+    const key = trackId ?? '';
+    if (asked.current === key) return;
+    asked.current = key;
+    api.funnelTripwireOffer(trackId)
+      .then(({ tripwireOffer }) => {
+        if (!tripwireOffer) return;
+        queryClient.setQueryData<FunnelState>(['funnel-state'], (prev) => (prev ? { ...prev, tripwireOffer } : prev));
+      })
+      // не открылось — покупку просто не предлагаем, остаются тарифы
+      .catch(() => {});
+  }, [active, loaded, paid, open, trackId, queryClient]);
+  return funnel?.tripwireOffer ?? null;
 }
 
 const TRIPWIRE_ATTEMPT_PREFIX = 'blast:tripwire-attempt:';

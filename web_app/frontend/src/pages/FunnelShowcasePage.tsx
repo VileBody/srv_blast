@@ -97,7 +97,7 @@ const QUOTA_TRIPWIRE: FunnelQuota = { ...QUOTA_OK, tripwire: true, maxVideos: 25
 const noop = () => {};
 const ON: UnlimitedHandlers = {
   onRate: noop, onReasons: noop, onAnswer: noop, onMethodology: noop, onMethodologyBotOpened: noop, onNext: noop, onChannelOpen: noop,
-  onChannelCheck: noop, onManager: noop, onUnlock: noop, onGenerate: noop, onClose: noop
+  onChannelCheck: noop, onManager: noop, onUnlock: noop, onGenerate: noop, onClose: noop, onBuyTripwire: noop, onPlans: noop
 };
 
 const HIGH: UnlimitedStep[] = ['rate', 'quiz', 'methodology', 'pitch', 'actions', 'done'];
@@ -239,8 +239,14 @@ export function FunnelShowcasePage() {
           <State label="Безлимит открыт">
             <UnlimitedPanel view={view('done', { quota: QUOTA_OK })} on={ON} />
           </State>
-          <State label="Безлимит открыт, лимит на сейчас исчерпан">
-            <UnlimitedPanel view={view('done', { quota: QUOTA_COOLDOWN })} on={ON} />
+          <State label="Перезарядка, но генерации на балансе есть: «Собрать ещё»">
+            <UnlimitedPanel view={view('done', { quota: QUOTA_COOLDOWN, creditsLeft: 2 })} on={ON} />
+          </State>
+          <State label="Собрать не из чего: питч трипваера">
+            <UnlimitedPanel view={view('done', { quota: QUOTA_COOLDOWN, creditsLeft: 0, tripwireOffer: { expiresAt: IN(1200), priceRub: 399 } })} on={ON} />
+          </State>
+          <State label="Собрать не из чего, предложение закончилось: тарифы">
+            <UnlimitedPanel view={view('done', { quota: QUOTA_COOLDOWN, creditsLeft: 0, tripwireOffer: null })} on={ON} />
           </State>
           <State label="Безлимит уже на другом треке: ничего не выбрано">
             <UnlimitedPanel view={view('otherTrack', { otherTrackTitle: 'Последний танец' })} on={ON} />

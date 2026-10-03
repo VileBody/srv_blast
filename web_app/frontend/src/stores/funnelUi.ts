@@ -6,8 +6,9 @@ import type { VideoVersion } from '../lib/types';
  * Страницы только открывают модалку — рисует её FunnelHost в AppShell, поэтому она
  * переживает переход «Генерация → Батч» (ProcessingPage сам уводит на страницу батча).
  *
- * Перезарядка и трипваер живут не здесь, а в кружке лимитов (LimitsIndicator): строка
- * «Безлимит на трек» в поповере и окно, которое всплывает у кружка, когда лимит кончился.
+ * Перезарядка живёт в кружке лимитов (LimitsIndicator): строка «Безлимит на трек» в
+ * поповере и окно у кружка, когда собрать не из чего. Трипваер предлагается там же, в окне
+ * «Безлимит открыт», когда ни квоты, ни генераций нет, и карточкой внизу (FunnelBadge).
  *
  * Плашка и «что уже показано» лежат в localStorage под ключом аккаунта: после смены
  * аккаунта в том же браузере чужая плашка не всплывает. Аккаунт сообщает FunnelHost
@@ -181,6 +182,19 @@ export function markFunnelSeen(key: string): void {
     localStorage.setItem(scoped(SEEN_KEY), JSON.stringify(all));
   } catch {
     /* приватный режим — просто покажем ещё раз */
+  }
+}
+
+/** Снять отметку «показано» (например, карточку внизу развернули обратно). */
+export function forgetFunnelSeen(key: string): void {
+  if (!funnelUser) return;
+  try {
+    const all = JSON.parse(localStorage.getItem(scoped(SEEN_KEY)) || '{}') as Record<string, number>;
+    if (!(key in all)) return;
+    delete all[key];
+    localStorage.setItem(scoped(SEEN_KEY), JSON.stringify(all));
+  } catch {
+    /* приватный режим — отметки и не было */
   }
 }
 

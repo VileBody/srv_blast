@@ -2022,6 +2022,14 @@
     "done": {
       "title": "Unlimited is on",
       "description": "Build versions of this track for free. We'll ping you in Telegram when the limit refreshes.",
+      "descriptionCredits_one": "Unlimited is on for this track. The next free unlimited batch is in {{time}}, and meanwhile you still have {{count}} generation on your balance: go ahead.",
+      "descriptionCredits_other": "Unlimited is on for this track. The next free unlimited batch is in {{time}}, and meanwhile you still have {{count}} generations on your balance: go ahead.",
+      "descriptionCreditsAny": "Unlimited is on for this track. The next free unlimited batch is in {{time}}; meanwhile build with the generations on your balance.",
+      "outTitle": "Nothing to build with right now",
+      "outTripwire": "The next free batch is in {{time}}, and your balance is out of generations. Don't want to wait? Remove the limits from the track.",
+      "outPlans": "The next free batch is in {{time}}, and your balance is out of generations. We'll ping you in Telegram when you can build again. More videos right away come with a subscription.",
+      "buy": "Remove limits for {{price}} ₽",
+      "plans": "Plans",
       "generate": "Build more",
       "left": "{{n}} of {{cap}} available",
       "ruleCap": "Up to {{cap}} videos per batch",
@@ -2029,7 +2037,6 @@
       "ruleCooldown_other": "{{count}} hours between batches",
       "ruleDaily_one": "{{count}} batch on day one, then $t(funnel.units.videos, {\"count\": {{videos}} }) a day",
       "ruleDaily_other": "{{count}} batches on day one, then $t(funnel.units.videos, {\"count\": {{videos}} }) a day",
-      "descriptionWait": "Unlimited is on for this track. The limit is used up for now; we'll ping you in Telegram when it refreshes.",
       "nextIn": "next batch in {{time}}"
     },
     "other": {
@@ -2080,6 +2087,13 @@
       "retry": "Retry"
     },
     "badge": "Track unlimited",
+    "dock": {
+      "unlimitedTitle": "Track unlimited",
+      "unlimitedText": "Free, two steps in Telegram",
+      "tripwireTitle": "No waiting for {{price}} ₽",
+      "tripwireText": "Free batch in {{time}}",
+      "collapse": "Collapse"
+    },
     "units": {
       "hours_one": "{{count}} hour",
       "hours_other": "{{count}} hours",
