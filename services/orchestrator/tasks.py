@@ -1705,6 +1705,17 @@ def _hex_is_light(hex_value: str) -> bool:
     return (0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]) > 0.4
 
 
+def f3_allowed_ids() -> Dict[str, frozenset]:
+    """Допустимые id F3 по группам — из overlay (он собирает их из manifest.json, вкл. Kant).
+
+    Своего списка здесь быть не должно: копия отстала от манифеста, и build падал на
+    каждом переходе/стиле Kant (invalid effect_transition='of_invert_flash').
+    """
+    from mlcore.hooks.f3_effect.overlay import F3_EXTRAS, F3_HOOKS, F3_TRANSITIONS
+
+    return {"hook": frozenset(F3_HOOKS), "transition": frozenset(F3_TRANSITIONS), "extra": frozenset(F3_EXTRAS)}
+
+
 def montage_fx_env_values(req: Dict[str, Any]) -> Dict[str, str]:
     """F3_CUT_TRANSITIONS / F3_EXTRA_RANGES для правок монтажного стола.
 
@@ -2204,14 +2215,7 @@ def _build_job_impl(self, job_id: str, *, worker_type: str | None) -> Dict[str, 
     # F3 «Эффект» visual-FX selection pass-through. Set => orchestrator emits
     # full_edit_config["f3"] and project_builder injects the AE overlay JSX.
     # Requires USER_DROP_T (drop anchor); absent ids => no F3 fx.
-    _f3_allowed = {
-        "hook": {"hook_light", "shutter_effect", "flash_slow_shutter", "negative_zoom"},
-        "transition": {"snap_wipe", "minimax", "invert_flash", "extract_flash", "flash_on_cuts", "layer_shake"},
-        "extra": {
-            "xerox", "analog_glitch", "neon_extract", "old_camera",
-            "blackwhite", "crystal_glow", "night_vision", "wave",
-        },
-    }
+    _f3_allowed = f3_allowed_ids()
     for _req_key, _env_key, _group in (
         ("effect_hook", "F3_HOOK", "hook"),
         ("effect_transition", "F3_TRANSITION", "transition"),
