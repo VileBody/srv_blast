@@ -13,6 +13,7 @@ import { useWizardStore, type StoryboardVideo } from '../../../stores/wizardStor
 import { fmtSec, seedKeyFor, useRecipeCuts } from '../storyboardData';
 import { shuffleOf, toVideo, withClip } from '../PoolStoryboard';
 import '../PoolStoryboard.css';
+import { useVideoLoad, VideoLoadingBadge } from '../VideoLoading';
 import { useStripFollow } from '../useStripFollow';
 import type { Combo } from './combos';
 
@@ -66,8 +67,16 @@ function VideoFrame({ url, offset = 0, at, playing, className, style, onFrame }:
     if (!playing && !video.paused) video.pause();
   });
   // обложка — тот же JPEG кадра, что в полосе миниатюр (уже в кэше): пока клип грузится или
-  // сервер ещё готовит его копию, видно нужный кадр, а не чёрный прямоугольник
-  return <video ref={ref} className={className} style={style} src={url} poster={posterOf(url, offset + 0.1) ?? undefined} muted playsInline preload="auto" />;
+  // сервер ещё готовит его копию, видно нужный кадр, а не чёрный прямоугольник. Но обложка —
+  // только заглушка: поверх неё явная загрузка, пока не встал живой кадр (иначе стол выглядел
+  // набором картинок вместо видео).
+  const load = useVideoLoad(ref, url);
+  return (
+    <>
+      <video ref={ref} className={className} style={style} src={url} poster={posterOf(url, offset + 0.1) ?? undefined} muted playsInline preload="auto" />
+      {load !== 'ready' && <VideoLoadingBadge state={load} />}
+    </>
+  );
 }
 
 /** Кадр в вертикали: на весь кадр, по центру на размытом фоне или цвет со стробом. */
