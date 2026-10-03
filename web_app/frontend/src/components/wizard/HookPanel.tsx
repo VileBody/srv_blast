@@ -11,6 +11,7 @@ import { useDragScroll } from './useDragScroll';
 import { PillsFooter } from './WizardFrame';
 import { HookConfig, HookKind, HOOK_LABELS, hookComplete, hookPills, useWizardStore } from '../../stores/wizardStore';
 import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
+import { formatTimeAuto } from '../../lib/timeFormat';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
@@ -44,6 +45,13 @@ function clampDrop(value: string, durationS?: number): string {
   const mm = String(Math.floor(durationS / 60)).padStart(2, '0');
   const ss = String(Math.floor(durationS % 60)).padStart(2, '0');
   return `${mm}:${ss}`;
+}
+
+/* Подпись дропа на чипе: в сторе «мм:сс:сс» (сотые), а показываем общим видом визарда —
+   «00:15» или «00:42.50»; тройку на чипе читали как часы:минуты:секунды. */
+function dropLabel(value: string): string {
+  const seconds = dropToSeconds(value);
+  return seconds === null ? value : formatTimeAuto(seconds);
 }
 
 /** Мини-визуал первой подсказки хука: тайминг дропа — точка на дорожке. */
@@ -275,7 +283,7 @@ export function StageHooks() {
               aria-pressed={hooks.dropTime === normalizeDropTime(drop.time)}
               onClick={() => { setDropError(null); setCustomDrop(false); setHooks({ dropTime: normalizeDropTime(drop.time) }); }}
             >
-              <span className="w12-l w12-num">{drop.time}</span>
+              <span className="w12-l w12-num">{dropLabel(drop.time)}</span>
               <small className="w12-num">{Math.round(drop.confidence * 100)}%{drop.best ? ' ★' : ''}</small>
             </button>
           ))}
@@ -308,7 +316,7 @@ export function StageHooks() {
             />
           ) : (
             <button type="button" className="w12-drop-opt w12-drop-custom" aria-pressed={customActive} onClick={() => setCustomDrop(true)}>
-              <span className="w12-l w12-num">{customActive ? hooks.dropTime : t('wizard.fx.customDropShort')}</span>
+              <span className="w12-l w12-num">{customActive && hooks.dropTime ? dropLabel(hooks.dropTime) : t('wizard.fx.customDropShort')}</span>
             </button>
           )}
         </div>

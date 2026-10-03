@@ -11,6 +11,7 @@ import { timingToSeconds, usePlaybackUrl } from './useFragmentAudio';
 import { retryAsrPreview, useAsrRun } from './useAsrPreview';
 import { peakLevels, useTrackPeaks } from './trackPeaks';
 import { useSubtitleClock } from '../../lib/subtitleClock';
+import { formatTimeCoarse, formatTimePrecise } from '../../lib/timeFormat';
 
 /*
  * Примерка субтитров (этап «Текст»): плеер отрывка + таймлайн слов из ASR.
@@ -56,13 +57,6 @@ const TOOLTIP_DELAY_MS = 350;
 const X0 = 14;
 const PLAYHEAD_TICK_MS = 50;
 
-function fmt(sec: number): string {
-  const s = Math.max(0, sec);
-  const mm = Math.floor(s / 60);
-  const ss = Math.floor(s % 60);
-  const cc = Math.floor((s - Math.floor(s)) * 100);
-  return `${String(mm).padStart(2, '0')}:${String(ss).padStart(2, '0')}:${String(cc).padStart(2, '0')}`;
-}
 
 /** Границы, в которых слово index может лежать, не задевая соседей и окно */
 function bounds(words: AsrWord[], index: number, clipStart: number, clipEnd: number): { min: number; max: number } {
@@ -494,7 +488,7 @@ export function SubtitleTimeline() {
         {ready && (weakWords.length > 0 || asr.notes.includes('window_clamped')) && (
           <div className="w12-stl-notes">
             {asr.notes.includes('window_clamped') && asr.workingEnd !== null && (
-              <TimelineNote eyebrow={t('wizard.subs.timeline.noteWindow')} text={t('wizard.subs.timeline.windowClamped', { at: fmt(asr.workingEnd - clipStart) })} />
+              <TimelineNote eyebrow={t('wizard.subs.timeline.noteWindow')} text={t('wizard.subs.timeline.windowClamped', { at: formatTimePrecise(asr.workingEnd) })} />
             )}
             {weakWords.length > 0 && (
               <TimelineNote eyebrow={t('wizard.subs.timeline.noteWords')} text={t('wizard.subs.timeline.weakWords', { words: weakWords.map((w) => `«${w}»`).join(', ') })} />
@@ -572,7 +566,7 @@ export function SubtitleTimeline() {
                     >
                       {w >= 32 && <span className="w12-l">{word.text}</span>}
                       {hovered === index && !drag && (
-                        <span role="tooltip" className="w12-stl-tip w12-num">{fmt(cur.tStart - clipStart)} – {fmt(cur.tEnd - clipStart)}</span>
+                        <span role="tooltip" className="w12-stl-tip w12-num">{formatTimePrecise(cur.tStart)} – {formatTimePrecise(cur.tEnd)}</span>
                       )}
                       {/* ручки длительности — тянут только край */}
                       <span onPointerDown={onPillDown(index, 'start')} className="w12-stl-edge w12-l-edge" />
@@ -583,7 +577,7 @@ export function SubtitleTimeline() {
                 {/* подписи сетки */}
                 {ticks.map((s) => (
                   <span key={`l${s}`} aria-hidden className={cn('w12-stl-lbl w12-num', X0 + (s - clipStart) * pxPerSec >= 30 && 'w12-mid')} style={{ left: X0 + (s - clipStart) * pxPerSec, top: LABEL_TOP }}>
-                    {gridStep < 1 || beats.length ? fmt(s - clipStart) : fmt(s - clipStart).slice(0, 5)}
+                    {gridStep < 1 || beats.length ? formatTimePrecise(s) : formatTimeCoarse(s)}
                   </span>
                 ))}
                 {/* плейхед: линия с ромбиком, от верха до ползунка; тянется */}
@@ -631,7 +625,7 @@ export function SubtitleTimeline() {
             <span className="w12-dot">{playing ? PAUSE : PLAY}</span>
             <span className="w12-l">{playing ? t('wizard.subs.timeline.pause') : t('wizard.subs.timeline.play')}</span>
           </button>
-          <span className="w12-stl-time w12-num"><span className="w12-l">{fmt(time - clipStart)}</span></span>
+          <span className="w12-stl-time w12-num"><span className="w12-l">{formatTimePrecise(time)}</span></span>
           <button
             type="button"
             className="w12-stl-focus"

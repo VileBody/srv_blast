@@ -11,6 +11,7 @@ import { ActionBar, Button, Dialog } from '../ui/kit';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss } from '../guidance/useGuideDismiss';
 import { formatClock, formatSeconds, parseClock, snapTenth, SEGMENT_SECONDS, toStoreTiming } from './timing';
+import { formatTimeCoarse, formatTimePrecise, formatTimeRange } from '../../lib/timeFormat';
 import { timingToSeconds, usePlaybackUrl } from './useFragmentAudio';
 import { peakLevels, useTrackPeaks } from './trackPeaks';
 import { useWavePeaks } from './useWavePeaks';
@@ -279,7 +280,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
       ? t('wizard.track.segmentOver', { seconds: formatSeconds(length), max: maxSegmentSeconds })
       : tried && track && !selected ? t('wizard.track.needCut') : null;
   const [guideDismissed, setGuideDismissed] = useGuideDismiss('track-timing', Boolean(track) && !cutOk, Boolean(track));
-  const trackMeta = track ? `${formatClock(Math.round(track.durationS))} · ${(track.filename.split('.').pop() ?? 'mp3').toUpperCase()}` : '';
+  const trackMeta = track ? `${formatTimeCoarse(track.durationS)} · ${(track.filename.split('.').pop() ?? 'mp3').toUpperCase()}` : '';
 
   return (
     <>
@@ -330,7 +331,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
                 <span className="w12-txt">
                   <Trans
                     i18nKey="wizard.track.previousRow"
-                    values={{ name: previousQuery.data.track.filename, duration: formatClock(Math.round(previousQuery.data.track.durationS)) }}
+                    values={{ name: previousQuery.data.track.filename, duration: formatTimeCoarse(previousQuery.data.track.durationS) }}
                     components={{ b: <b /> }}
                   />
                 </span>
@@ -389,7 +390,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
               </div>
               {selected && duration > 0 && (
                 <div className={cn('w12-win', (over || backwards) && 'w12-over')} style={{ left: `${(Math.max(0, from) / duration) * 100}%`, width: `${Math.max(0.5, (Math.max(0, length) / duration) * 100)}%` }}>
-                  <span className="w12-win-label w12-num">{formatClock(from)} – {formatClock(to)} · {t('wizard.track.secondsValue', { value: formatSeconds(length) })}</span>
+                  <span className="w12-win-label w12-num">{formatTimeRange(from, to)} · {t('wizard.track.secondsValue', { value: formatSeconds(length) })}</span>
                   {(['l', 'r'] as const).map((edge) => (
                     <span
                       key={edge}
@@ -398,7 +399,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
                       role="slider"
                       tabIndex={0}
                       aria-label={t(edge === 'l' ? 'wizard.track.segStart' : 'wizard.track.segEnd')}
-                      aria-valuetext={formatClock(edge === 'l' ? from : to)}
+                      aria-valuetext={formatTimePrecise(edge === 'l' ? from : to)}
                       aria-valuemin={0}
                       aria-valuemax={Math.round(duration)}
                       aria-valuenow={Math.round(edge === 'l' ? from : to)}
@@ -411,7 +412,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
               {track && !selected && <div className="w12-wave-hint"><span>{t('wizard.track.waveHint')}</span></div>}
             </div>
             <div className="w12-ruler w12-num" aria-hidden="true">
-              {Array.from({ length: rulerTicks }, (_, i) => i / (rulerTicks - 1)).map((k) => <span key={k}>{formatClock(Math.round((duration || 95) * k))}</span>)}
+              {Array.from({ length: rulerTicks }, (_, i) => i / (rulerTicks - 1)).map((k) => <span key={k}>{formatTimeCoarse((duration || 95) * k)}</span>)}
             </div>
             </div>
             </div>
