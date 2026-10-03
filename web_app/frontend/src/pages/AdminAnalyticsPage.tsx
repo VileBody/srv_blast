@@ -114,13 +114,15 @@ export function AdminAnalyticsPage() {
         <div className="flex flex-wrap items-center justify-between gap-space-4">
           <h1 className="text-[32px] font-[400] leading-none text-text">{t('admin.title')}</h1>
           <div className="flex flex-wrap items-center justify-end gap-[12px]">
+            {/* кольцо фокуса как в ките: без него с клавиатуры не видно, где ты в переключателе */}
             <div className="flex items-center gap-[6px] rounded-r10 bg-grad-soft-10 p-[3px]">
               {SOURCES.map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => setSource(item)}
-                  className={`h-[32px] rounded-[8px] px-[14px] text-[14px] leading-none transition focus-visible:outline-none ${
+                  aria-pressed={source === item}
+                  className={`h-[32px] rounded-[8px] px-[14px] text-[14px] leading-none transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light ${
                     source === item ? 'bg-accent text-text' : 'text-text-60 hover:text-text'
                   }`}
                 >
@@ -134,7 +136,8 @@ export function AdminAnalyticsPage() {
                   key={period}
                   type="button"
                   onClick={() => setDays(period)}
-                  className={`h-[36px] rounded-r10 px-[14px] text-[15px] leading-none transition focus-visible:outline-none ${
+                  aria-pressed={days === period}
+                  className={`h-[36px] rounded-r10 px-[14px] text-[15px] leading-none transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light ${
                     days === period ? 'bg-accent text-text' : 'bg-grad-soft-10 text-text-60 hover:text-text'
                   }`}
                 >
