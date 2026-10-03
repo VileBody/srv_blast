@@ -397,3 +397,78 @@ def test_tripwire_track_can_be_opened_without_free_track_slots():
     backend.ensure_user = ensure_user
     assert asyncio.run(backend.can_upload_track(7, "track-b")) is True
     assert asyncio.run(backend.can_upload_track(7, "track-c")) is False
+
+
+class _FakeTripwireDB(_FakePaymentDB):
+    """+ привязка заказов трипваера к треку с правилами claim_tripwire_order."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bound: dict[str, tuple[int, str]] = {}
+
+    def _row(self, order_id: str) -> dict[str, Any]:
+        return next(dict(r) for r in self.intents.values() if r["order_id"] == order_id)
+
+    async def claim_tripwire_order(self, *, order_id: str, tg_id: int, audio_hash: str) -> dict[str, Any]:
+        from services.tg_bot_public.credits_db import TripwireOrderConflict
+
+        if order_id in self.bound:
+            if self.bound[order_id][1] != audio_hash:
+                raise TripwireOrderConflict(order_id=order_id, audio_hash=self.bound[order_id][1])
+            return self._row(order_id)
+        for other, (owner, track) in self.bound.items():
+            row = self._row(other)
+            if (owner, track) == (tg_id, audio_hash) and row["status"] in {"NEW", "INIT_IN_PROGRESS", "CONFIRMED"}:
+                return row
+        self.bound[order_id] = (tg_id, audio_hash)
+        return self._row(order_id)
+
+
+def _tripwire(backend: BillingBackend, *, key: str, track: str = "track-b"):
+    return asyncio.run(backend.create_tripwire_order(
+        tg_id=777, audio_hash=track, return_path="/app", email="user@example.com", idempotency_key=key,
+    ))
+
+
+def test_second_tab_gets_the_same_tripwire_payment_link() -> None:
+    """Регресс: два таба с разными ключами оба проходили has_track_tripwire и оба
+    заказа оплачивались. Теперь второй получает ссылку первого, Init в банке один."""
+    db = _FakeTripwireDB()
+    tbank = _FakeTBank()
+    backend = _backend(db, tbank)
+
+    first = _tripwire(backend, key="tab-one-0000000000000000")
+    second = _tripwire(backend, key="tab-two-0000000000000000")
+
+    assert second == first
+    assert len(tbank.calls) == 1
+    # intent второго таба закрыт явно, а не висит в INIT_IN_PROGRESS
+    assert [m[1] for m in db.marked] == ["INIT_FAILED"]
+    # на другой трек — свой заказ
+    other = _tripwire(backend, key="tab-three-00000000000000", track="track-c")
+    assert other["orderId"] != first["orderId"] and len(tbank.calls) == 2
+
+
+def test_tripwire_key_reused_for_another_track_is_an_explicit_conflict() -> None:
+    db = _FakeTripwireDB()
+    tbank = _FakeTBank()
+    backend = _backend(db, tbank)
+    _tripwire(backend, key="same-key-000000000000000", track="track-b")
+
+    with pytest.raises(PaymentInitError) as caught:
+        _tripwire(backend, key="same-key-000000000000000", track="track-c")
+
+    assert caught.value.code == "payment_idempotency_conflict" and caught.value.status_code == 409
+    assert len(tbank.calls) == 1
+
+
+def test_paid_tripwire_order_blocks_a_second_purchase() -> None:
+    db = _FakeTripwireDB()
+    backend = _backend(db, _FakeTBank())
+    first = _tripwire(backend, key="tab-one-0000000000000000")
+    next(r for r in db.intents.values() if r["order_id"] == first["orderId"])["status"] = "CONFIRMED"
+
+    with pytest.raises(PaymentInitError) as caught:
+        _tripwire(backend, key="tab-two-0000000000000000")
+
+    assert caught.value.code == "tripwire_owned"

@@ -216,3 +216,71 @@ def test_paid_tripwire_track_does_not_need_a_free_track_slot():
     assert asyncio.run(credits.consume_track_slot(7, "track-c")) == "blocked"
     assert (7, "track-c") not in conn.user_tracks
 
+
+
+class _TripwireOrderConn:
+    """Только запросы claim_tripwire_order; «живость» чужого заказа решает сам тест."""
+
+    def __init__(self) -> None:
+        self.bound: dict[str, tuple[int, str]] = {}
+        self.payments: dict[str, dict] = {}
+        self.locks: list[str] = []
+
+    def transaction(self):
+        class _Tx:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, *exc):
+                return False
+
+        return _Tx()
+
+    async def execute(self, sql, *args):
+        if "pg_advisory_xact_lock" in sql:
+            self.locks.append(args[0])
+            return "SELECT 1"
+        if sql.startswith("INSERT INTO track_tripwire_orders"):
+            self.bound.setdefault(args[0], (int(args[1]), args[2]))
+            return "INSERT 0 1"
+        raise AssertionError(f"unexpected execute: {sql}")
+
+    async def fetchval(self, sql, *args):
+        if sql.startswith("SELECT audio_hash FROM track_tripwire_orders"):
+            return self.bound.get(args[0], (None, None))[1]
+        raise AssertionError(f"unexpected fetchval: {sql}")
+
+    async def fetchrow(self, sql, *args):
+        if "JOIN payments" in sql:
+            assert "UPPER(p.status) = 'CONFIRMED'" in sql and "INIT_IN_PROGRESS" in sql
+            for oid, (tg, track) in self.bound.items():
+                live = self.payments[oid]["status"] in {"NEW", "CONFIRMED", "INIT_IN_PROGRESS"}
+                if (tg, track) == (int(args[0]), args[1]) and oid != args[2] and live:
+                    return dict(self.payments[oid])
+            return None
+        if sql.startswith("SELECT order_id, status, payment_url FROM payments"):
+            return dict(self.payments[args[0]]) if args[0] in self.payments else None
+        raise AssertionError(f"unexpected fetchrow: {sql}")
+
+
+def test_claim_tripwire_order_keeps_one_live_order_per_track():
+    import pytest
+
+    conn = _TripwireOrderConn()
+    credits = _slot_db(conn)
+    for oid in ("o1", "o2", "o3"):
+        conn.payments[oid] = {"order_id": oid, "status": "INIT_IN_PROGRESS", "payment_url": ""}
+
+    assert asyncio.run(credits.claim_tripwire_order(order_id="o1", tg_id=7, audio_hash="b"))["order_id"] == "o1"
+    conn.payments["o1"].update(status="NEW", payment_url="https://pay/o1")
+    # второй таб: держит трек o1, свой o2 не привязывается
+    holder = asyncio.run(credits.claim_tripwire_order(order_id="o2", tg_id=7, audio_hash="b"))
+    assert holder == {"order_id": "o1", "status": "NEW", "payment_url": "https://pay/o1"}
+    assert "o2" not in conn.bound
+    assert conn.locks[0] == "tripwire_order:7:b"
+    # ключ (заказ) по треку b нельзя переиспользовать для трека c
+    with pytest.raises(cdb.TripwireOrderConflict):
+        asyncio.run(credits.claim_tripwire_order(order_id="o1", tg_id=7, audio_hash="c"))
+    # отклонённый заказ трек не держит
+    conn.payments["o1"]["status"] = "REJECTED"
+    assert asyncio.run(credits.claim_tripwire_order(order_id="o3", tg_id=7, audio_hash="b"))["order_id"] == "o3"

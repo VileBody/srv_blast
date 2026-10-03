@@ -77,6 +77,21 @@ def verify_partner_password(password: str, stored: str) -> bool:
     return secrets.compare_digest(digest.hex(), hex_digest)
 
 
+# Неоплаченный заказ трипваера считается живым, пока действует ссылка T-Bank (сутки),
+# а застрявший Init — несколько минут: дальше он не должен запирать покупку.
+TRIPWIRE_PENDING_ORDER_HOURS = 24
+TRIPWIRE_INIT_STALE_MINUTES = 10
+
+
+class TripwireOrderConflict(Exception):
+    """Ключ идемпотентности уже привязан к заказу трипваера на другой трек."""
+
+    def __init__(self, *, order_id: str, audio_hash: str) -> None:
+        super().__init__(f"tripwire order {order_id} is already bound to another track")
+        self.order_id = order_id
+        self.audio_hash = audio_hash
+
+
 class _TrackQuotaExhausted(Exception):
     """Internal sentinel: rolls back consume_track_slot when no quota is left."""
 
@@ -2288,16 +2303,67 @@ class CreditsDB:
             )
         return [dict(r) for r in rows]
 
-    async def record_tripwire_order(self, *, order_id: str, tg_id: int, audio_hash: str) -> None:
+    async def claim_tripwire_order(self, *, order_id: str, tg_id: int, audio_hash: str) -> Dict[str, Any]:
+        """Привязать заказ трипваера к треку — не больше одного живого заказа на трек.
+
+        Возвращает строку payments того заказа, который держит трек: свой (`order_id`)
+        или уже живой чужой (два таба с разными ключами идемпотентности) — тогда свой
+        НЕ привязывается, и вызывающий отдаёт человеку ссылку на существующий. Живой =
+        оплачен, либо ждёт оплаты (ссылка ещё действует), либо прямо сейчас в Init.
+        Ключ, уже потраченный на заказ по ДРУГОМУ треку, — TripwireOrderConflict:
+        иначе оплата сняла бы лимиты не с того трека, который человек выбрал."""
+        clean_hash = str(audio_hash or "").strip()
+        if not clean_hash:
+            raise ValueError("tripwire order requires audio_hash")
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO track_tripwire_orders (order_id, tg_id, audio_hash) VALUES ($1, $2, $3) "
-                "ON CONFLICT (order_id) DO NOTHING",
-                order_id,
-                int(tg_id),
-                str(audio_hash),
-            )
+            async with conn.transaction():
+                # Сериализуем заказы по (человек, трек): проверка «нет живого» и запись
+                # привязки — одна критическая секция, два таба не проскочат оба.
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext($1))",
+                    f"tripwire_order:{int(tg_id)}:{clean_hash}",
+                )
+                bound = await conn.fetchval(
+                    "SELECT audio_hash FROM track_tripwire_orders WHERE order_id = $1",
+                    str(order_id),
+                )
+                if bound is not None and str(bound) != clean_hash:
+                    raise TripwireOrderConflict(order_id=str(order_id), audio_hash=str(bound))
+                if bound is None:
+                    other = await conn.fetchrow(
+                        "SELECT p.order_id, p.status, p.payment_url FROM track_tripwire_orders o "
+                        "JOIN payments p ON p.order_id = o.order_id "
+                        "WHERE o.tg_id = $1 AND o.audio_hash = $2 AND o.order_id <> $3 AND ("
+                        " UPPER(p.status) = 'CONFIRMED'"
+                        " OR (UPPER(p.status) IN ('NEW', 'FORM_SHOWED', 'AUTHORIZING', '3DS_CHECKING',"
+                        "  '3DS_CHECKED', 'AUTHORIZED', 'CONFIRMING', 'PENDING')"
+                        "  AND p.created_at > NOW() - make_interval(hours => $4))"
+                        " OR (UPPER(p.status) = 'INIT_IN_PROGRESS'"
+                        "  AND p.updated_at > NOW() - make_interval(mins => $5))"
+                        ") ORDER BY (UPPER(p.status) = 'CONFIRMED') DESC, p.created_at DESC LIMIT 1",
+                        int(tg_id),
+                        clean_hash,
+                        str(order_id),
+                        TRIPWIRE_PENDING_ORDER_HOURS,
+                        TRIPWIRE_INIT_STALE_MINUTES,
+                    )
+                    if other is not None:
+                        return dict(other)
+                    await conn.execute(
+                        "INSERT INTO track_tripwire_orders (order_id, tg_id, audio_hash) VALUES ($1, $2, $3) "
+                        "ON CONFLICT (order_id) DO NOTHING",
+                        str(order_id),
+                        int(tg_id),
+                        clean_hash,
+                    )
+                own = await conn.fetchrow(
+                    "SELECT order_id, status, payment_url FROM payments WHERE order_id = $1",
+                    str(order_id),
+                )
+                if own is None:
+                    raise RuntimeError(f"tripwire order {order_id} has no payment row")
+                return dict(own)
 
     async def get_track_unlimited(self, tg_id: int) -> Optional[Dict[str, Any]]:
         pool = self._pool_or_fail()

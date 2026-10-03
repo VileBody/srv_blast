@@ -521,6 +521,38 @@ class BillingBackend:
             track_hash=audio_hash,
         )
 
+    async def _claim_tripwire_order(self, *, order_id: str, tg_id: int, audio_hash: str) -> dict[str, Any]:
+        from services.tg_bot_public.credits_db import TripwireOrderConflict
+
+        try:
+            return await self._db.claim_tripwire_order(order_id=order_id, tg_id=tg_id, audio_hash=audio_hash)
+        except TripwireOrderConflict as exc:
+            raise PaymentInitError(
+                "payment_idempotency_conflict",
+                "payment idempotency key was already used for a tripwire on another track",
+                status_code=409,
+            ) from exc
+
+    async def _reuse_tripwire_order(self, order_id: str, holder: dict[str, Any], *, created: bool) -> dict[str, str]:
+        """Второй таб: у трека уже есть живой заказ трипваера — отдаём его ссылку, а
+        не заводим вторую оплату. Свой только что созданный intent закрываем явно
+        (INIT_FAILED), чтобы он не висел в INIT_IN_PROGRESS."""
+        if created:
+            await self._db.mark_web_payment_init(
+                order_id, "INIT_FAILED", f"superseded by active tripwire order {holder['order_id']}"
+            )
+        status = str(holder.get("status") or "").strip().upper()
+        if status == "CONFIRMED":
+            raise PaymentInitError("tripwire_owned", "tripwire for this track is already paid", status_code=409)
+        saved_url = str(holder.get("payment_url") or "").strip()
+        if saved_url:
+            return {"orderId": str(holder["order_id"]), "paymentUrl": saved_url}
+        raise PaymentInitError(
+            "payment_init_in_progress",
+            f"tripwire order {holder['order_id']} for this track is being created (status={status or 'UNKNOWN'})",
+            status_code=409,
+        )
+
     async def _init_order(
         self,
         *,
@@ -563,7 +595,9 @@ class BillingBackend:
             )
         if track_hash:
             # До Init в банке: оплата без привязки к треку не смогла бы снять лимиты.
-            await self._db.record_tripwire_order(order_id=order_id, tg_id=int(tg_id), audio_hash=track_hash)
+            holder = await self._claim_tripwire_order(order_id=order_id, tg_id=int(tg_id), audio_hash=track_hash)
+            if str(holder["order_id"]) != order_id:
+                return await self._reuse_tripwire_order(order_id, holder, created=created)
         if not created:
             saved_url = str(intent.get("payment_url") or "").strip()
             if saved_url:
