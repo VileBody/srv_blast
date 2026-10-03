@@ -292,8 +292,7 @@ export function PitchLadder({
 
 /* ------------------------------------------------------------------ шаги разблокировки */
 
-/** error — проверку не удалось провести (сбой Telegram): не «не подписан», просим повторить */
-export type ActionStatus = 'todo' | 'checking' | 'done' | 'missing' | 'error';
+export type ActionStatus = 'todo' | 'checking' | 'done' | 'missing';
 
 export function UnlockActionRow({
   index,

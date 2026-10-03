@@ -239,10 +239,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const [ratings, setRatings] = useState<Record<string, VideoRating>>({});
   const [bridge, setBridge] = useState<string | null>(null);
   const [channel, setChannel] = useState<ActionStatus>('todo');
-  // сервер отказал в безлимите из-за оценки/опроса — подсвечиваем шаг, пока его не сделают
-  const [feedbackRefused, setFeedbackRefused] = useState(false);
-  // «Оценить ролик» / «Пройти опрос» с шага условий: шаг добавляется в план, переходим к нему
-  const [jump, setJump] = useState<UnlimitedStep | null>(null);
+  const [manager, setManager] = useState<ActionStatus>('todo');
   const [unlockPending, setUnlockPending] = useState(false);
   const [tier, setTier] = useState<LadderTier | null>(null);
   const quiz = useQuiz(funnel, (b) => { setBridge(b); setIndex((i) => i + 1); });
@@ -273,6 +270,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   useEffect(() => {
     if (!funnel) return;
     if (funnel.actions.channel_subscribed) setChannel('done');
+    if (funnel.actions.manager_contacted) setManager('done');
   }, [funnel]);
 
   if (unavailable) return null;
@@ -296,11 +294,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const saveRating = (videoId: string, score: number, nextReasons: RatingReason[]) => {
     setRatings((prev) => ({ ...prev, [videoId]: { score, reasons: nextReasons, comment: '' } }));
     saves.run(videoId, () => api.funnelRate({ videoId, jobId: ctx.jobId ?? '', projectId: ctx.projectId ?? '', score, reasons: nextReasons }))
-      .then(() => Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['funnel-ratings', ctx.jobId] }),
-        // оценка — условие безлимита: state.feedback пересчитывает сервер
-        queryClient.invalidateQueries({ queryKey: ['funnel-state'] })
-      ]))
+      .then(() => queryClient.invalidateQueries({ queryKey: ['funnel-ratings', ctx.jobId] }))
       .catch(failed);
   };
 
@@ -322,18 +316,10 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
     return quizGone ? out.filter((step, at) => at < index || (step !== 'quiz' && step !== 'methodology')) : out;
   })();
 
-  if (jump && steps.includes(jump)) {
-    setIndex(steps.indexOf(jump));
-    setJump(null);
-  }
   const step = steps[Math.min(index, steps.length - 1)];
   const trackTitle = ctx.trackTitle ?? funnel.unlimited?.trackTitle ?? '';
+  const managerText = t('funnel.actions.managerMessage', { track: trackTitle, code: funnel.links.managerCode });
   const next = () => setIndex((i) => Math.min(i + 1, steps.length - 1));
-  // Второе условие безлимита: оценка ролика своего батча ИЛИ пройденный опрос. Решает
-  // сервер (state.feedback); локально учитываем только то, что уже ушло на сервер.
-  const feedbackDone = Boolean(funnel.feedback?.done) || funnel.survey.completed
-    || Object.keys(ratingsQuery.data?.ratings ?? {}).length > 0;
-  const feedback: ActionStatus = feedbackDone ? 'done' : feedbackRefused ? 'missing' : 'todo';
 
   return (
     <FunnelDialog open onClose={onClose} labelledBy={titleId}>
@@ -354,9 +340,10 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
           methodologyUrl: methodology.url,
           botLink: methodology.botLink ?? funnel.links.bot,
           channel,
-          feedback,
-          canRate: videos.length > 0,
+          manager,
           channelLink: funnel.links.channel,
+          managerLink: `${funnel.links.manager}?text=${encodeURIComponent(managerText)}`,
+          managerCode: funnel.links.managerCode,
           unlockPending,
           quota: funnel.unlimited?.quota ?? null,
           otherTrackTitle: funnel.unlimited?.trackTitle,
@@ -382,16 +369,15 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
             setChannel('checking');
             api.funnelChannel()
               .then((res) => setChannel(res.subscribed ? 'done' : 'missing'))
-              // сбой проверки (503 channel_check_unavailable, сеть) — не «не подписан»
-              .catch(() => setChannel('error'));
+              .catch(() => setChannel('missing'));
           },
-          onRateVideos: () => {
-            setPlan({ ...plan, rate: true });
-            setJump('rate');
-          },
-          onTakeSurvey: () => {
-            setPlan({ ...plan, quiz: true });
-            setJump('quiz');
+          onManager: () => {
+            setManager('done');
+            // не засчитали переход — возвращаем шаг, чтобы нажать ещё раз
+            api.funnelManager().catch(() => {
+              setManager('todo');
+              failed();
+            });
           },
           onUnlock: () => {
             if (!ctx.trackId) {
@@ -405,21 +391,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
                 clearBadge();
                 setIndex(steps.indexOf('done'));
               })
-              .catch((error) => {
-                // Условия проверяет сервер: показываем, какого шага не хватает
-                const code = apiErrorCode(error);
-                if (code === 'unlock_feedback_missing') {
-                  setFeedbackRefused(true);
-                  push({ variant: 'error', title: t('funnel.errors.unlockFeedback') });
-                  return;
-                }
-                if (code === 'unlock_channel_missing') {
-                  setChannel('missing');
-                  push({ variant: 'error', title: t('funnel.errors.unlockChannel') });
-                  return;
-                }
-                push({ variant: 'error', title: t('funnel.errors.unlock') });
-              })
+              .catch(() => push({ variant: 'error', title: t('funnel.errors.unlock') }))
               .finally(() => setUnlockPending(false));
           },
           onGenerate: () => {

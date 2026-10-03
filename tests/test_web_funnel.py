@@ -51,26 +51,14 @@ def test_unknown_answer_is_rejected(client) -> None:
     assert r.status_code == 422 and r.json()["detail"]["code"] == "survey_unknown_answer"
 
 
-def _complete_survey(tc) -> None:
-    tc.post("/api/funnel/survey", json={"questionId": "q2", "answerId": "no_edit"})
-    tc.post("/api/funnel/survey", json={"questionId": "q3", "answerId": "money"})
-
-
-def _ready_to_unlock(tc) -> None:
-    """Условия безлимита: подписка на канал + пройденный опрос (или оценка ролика)."""
-    tc.post("/api/funnel/actions/channel")
-    _complete_survey(tc)
-
-
-def test_unlock_needs_channel_and_feedback_and_stays_on_one_track(client) -> None:
+def test_unlock_needs_both_actions_and_stays_on_one_track(client) -> None:
     tc, main = client
     track = _track_with_hash(main)
     other = _track_with_hash(main, "o" * 64)
     r = tc.post("/api/funnel/unlock", json={"trackId": track["id"]})
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "unlock_feedback_missing"
-    assert r.json()["detail"]["missing"] == ["channel", "feedback"]
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "unlock_actions_missing"
     assert tc.post("/api/funnel/actions/channel").json() == {"subscribed": True}  # mock: подписка есть
-    _complete_survey(tc)
+    tc.post("/api/funnel/actions/manager")
     state = tc.post("/api/funnel/unlock", json={"trackId": track["id"]}).json()
     assert state["unlimited"]["trackId"] == track["id"]
     assert state["unlimited"]["quota"]["allowed"] is True and state["unlimited"]["quota"]["maxVideos"] == 5
@@ -266,7 +254,8 @@ def test_state_exposes_the_unlimited_track_hash(client) -> None:
     """Трек безлимита сверяется по хэшу: SavedTrack мог пропасть, а безлимит остаётся."""
     tc, main = client
     track = _track_with_hash(main)
-    _ready_to_unlock(tc)
+    tc.post("/api/funnel/actions/channel")
+    tc.post("/api/funnel/actions/manager")
     state = tc.post("/api/funnel/unlock", json={"trackId": track["id"]}).json()
     assert state["unlimited"]["audioHash"] == "h" * 64
     main.store.ws().saved_tracks.clear()
@@ -279,7 +268,8 @@ def test_paid_users_cannot_unlock(client) -> None:
     track = _track_with_hash(main)
     tg = main._funnel_tg_id()
     main.funnel._MEMORY.paid.add(tg)
-    _ready_to_unlock(tc)
+    tc.post("/api/funnel/actions/channel")
+    tc.post("/api/funnel/actions/manager")
     r = tc.post("/api/funnel/unlock", json={"trackId": track["id"]})
     assert r.status_code == 409 and r.json()["detail"]["code"] == "unlimited_paid"
     assert main.funnel._MEMORY.unlimited == {}
@@ -367,7 +357,8 @@ def test_unlock_after_a_starter_batch_does_not_open_the_tripwire_window(client) 
     tg = main._funnel_tg_id()
     repo = main.funnel.repo()
     asyncio.run(repo.record_track_batch(tg_id=tg, audio_hash="h" * 64, job_id="starter", videos=5, mode="credits"))
-    _ready_to_unlock(tc)
+    tc.post("/api/funnel/actions/channel")
+    tc.post("/api/funnel/actions/manager")
     state = tc.post("/api/funnel/unlock", json={"trackId": track["id"]}).json()
     assert state["unlimited"]["quota"]["reason"] == "cooldown"
     assert tc.get("/api/funnel/state").json()["tripwireOffer"] is None
@@ -494,144 +485,3 @@ def test_rating_is_scoped_to_an_own_job_and_its_videos(client) -> None:
     assert r.status_code == 422 and r.json()["detail"]["code"] == "video_not_in_job"
     assert "videoRatings" not in main.store.JOBS["job_z"]
     assert tc.post("/api/funnel/rating", json={"videoId": "v1", "jobId": "job_z", "score": 5}).json() == {"ok": True}
-
-
-# ── условия безлимита и гейт подписки (решение продукта 2026-10) ─────────────
-
-def test_manager_post_alone_no_longer_unlocks(client) -> None:
-    """Голый POST «написал менеджеру» (скрипт) безлимит не открывает: нужна оценка
-    ролика или пройденный опрос — их сервер видит сам."""
-    tc, main = client
-    track = _track_with_hash(main)
-    tc.post("/api/funnel/actions/channel")
-    tc.post("/api/funnel/actions/manager")
-    r = tc.post("/api/funnel/unlock", json={"trackId": track["id"]})
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "unlock_feedback_missing"
-    assert r.json()["detail"]["missing"] == ["feedback"]
-    assert main.funnel._MEMORY.unlimited == {}
-
-
-def test_rating_of_an_own_video_counts_as_feedback(client) -> None:
-    tc, main = client
-    track = _track_with_hash(main)
-    job = {"id": "job_r", "videos": [{"id": "v1"}], "projectId": "p", "userId": main.store.current_user_id()}
-    main.store.JOBS[job["id"]] = job
-    tc.post("/api/funnel/actions/channel")
-    assert tc.get("/api/funnel/state").json()["feedback"] == {"rated": False, "surveyCompleted": False, "done": False}
-    tc.post("/api/funnel/rating", json={"videoId": "v1", "jobId": "job_r", "score": 8})
-    assert tc.get("/api/funnel/state").json()["feedback"]["done"] is True
-    assert tc.post("/api/funnel/unlock", json={"trackId": track["id"]}).status_code == 200
-
-
-def test_rating_without_a_job_does_not_count(client) -> None:
-    """Оценка без батча (не через проверку владения) условием безлимита не считается."""
-    _, main = client
-    tg = 61
-    asyncio.run(main.funnel.repo().save_video_rating(tg, video_id="v", score=9))
-    assert asyncio.run(main.funnel.repo().has_video_rating(tg)) is False
-
-
-def test_unlock_needs_the_channel_even_with_feedback(client) -> None:
-    tc, main = client
-    track = _track_with_hash(main)
-    _complete_survey(tc)
-    r = tc.post("/api/funnel/unlock", json={"trackId": track["id"]})
-    assert r.status_code == 409 and r.json()["detail"]["code"] == "unlock_channel_missing"
-
-
-def test_already_unlocked_users_keep_their_unlimited(client) -> None:
-    """Открывшие безлимит по старым правилам (подписка + менеджер) его не теряют."""
-    tc, main = client
-    track = _track_with_hash(main)
-    tg = main._funnel_tg_id()
-    asyncio.run(main.funnel.repo().unlock_track_unlimited(tg, "h" * 64))
-    state = tc.post("/api/funnel/unlock", json={"trackId": track["id"]})
-    assert state.status_code == 200 and state.json()["unlimited"]["audioHash"] == "h" * 64
-    other = _track_with_hash(main, "o" * 64)
-    r = tc.post("/api/funnel/unlock", json={"trackId": other["id"]})
-    assert r.json()["detail"]["code"] == "unlimited_other_track"
-
-
-def _production_funnel(monkeypatch, main):
-    import dataclasses
-
-    monkeypatch.setattr(main.funnel, "RUNTIME", dataclasses.replace(main.funnel.RUNTIME, backend="production"))
-    monkeypatch.setattr(main.funnel, "repo", lambda: main.funnel._MEMORY)
-
-
-def test_channel_check_fails_closed_without_token(client, monkeypatch) -> None:
-    _, main = client
-    _production_funnel(monkeypatch, main)
-    monkeypatch.delenv("WEB_PUBLIC_BOT_TOKEN", raising=False)
-    before = main.funnel.CHANNEL_CHECK_FAILURES["submit"]
-    with pytest.raises(main.funnel.FunnelError) as exc:
-        asyncio.run(main.funnel.require_channel_for_free(70, "h"))
-    assert exc.value.code == "channel_check_unavailable" and exc.value.status_code == 503
-    assert exc.value.message == main.funnel.CHANNEL_CHECK_UNAVAILABLE_MESSAGE
-    assert main.funnel.CHANNEL_CHECK_FAILURES["submit"] == before + 1
-
-
-def test_channel_check_fails_closed_on_telegram_error(client, monkeypatch) -> None:
-    """getChatMember ответил 4xx (urllib кидает HTTPError) — не пропуск и не «не подписан»."""
-    _, main = client
-    _production_funnel(monkeypatch, main)
-    monkeypatch.setenv("WEB_PUBLIC_BOT_TOKEN", "t")
-
-    def _boom(*a, **kw):
-        raise OSError("HTTP Error 400: Bad Request: member list is inaccessible")
-
-    monkeypatch.setattr(main.funnel.telegram_bot, "_api", _boom)
-    with pytest.raises(main.funnel.FunnelError) as exc:
-        main.funnel.check_channel_member(71)
-    assert exc.value.code == "channel_check_unavailable"
-    monkeypatch.setattr(main.funnel.telegram_bot, "_api", lambda *a, **kw: {"ok": False, "description": "flood"})
-    with pytest.raises(main.funnel.FunnelError):
-        main.funnel.check_channel_member(71)
-    monkeypatch.setattr(main.funnel.telegram_bot, "_api", lambda *a, **kw: {"ok": True, "result": {"status": "left"}})
-    assert main.funnel.check_channel_member(71) is False
-
-
-def test_free_submit_requires_the_channel(client, monkeypatch) -> None:
-    tc, main = client
-    track = _track_with_hash(main)
-    monkeypatch.setattr(main.funnel, "check_channel_member", lambda tg_id, where="": False)
-    jobs_before = len(main.store.JOBS)
-    r = tc.post("/api/wizard/submit", json={"stageData": {"track": track, "lyrics": "la la"}, "videosToGenerate": 1})
-    assert r.status_code == 403
-    detail = r.json()["detail"]
-    assert detail["code"] == "channel_subscription_required" and detail["channel"].startswith("https://t.me/")
-    assert len(main.store.JOBS) == jobs_before  # гейт стоит до заведения джоба
-
-
-def test_free_submit_check_failure_is_retryable_503(client, monkeypatch) -> None:
-    tc, main = client
-    track = _track_with_hash(main)
-
-    def _down(tg_id, where=""):
-        raise main.funnel.FunnelError("channel_check_unavailable", main.funnel.CHANNEL_CHECK_UNAVAILABLE_MESSAGE, 503)
-
-    monkeypatch.setattr(main.funnel, "check_channel_member", _down)
-    r = tc.post("/api/wizard/submit", json={"stageData": {"track": track, "lyrics": "la la"}, "videosToGenerate": 1})
-    assert r.status_code == 503 and r.json()["detail"]["code"] == "channel_check_unavailable"
-
-
-def test_paid_and_tripwire_submits_are_never_gated(client, monkeypatch) -> None:
-    _, main = client
-    funnel = main.funnel
-
-    def _must_not_be_called(*a, **kw):
-        raise AssertionError("подписку платящего не проверяем")
-
-    monkeypatch.setattr(funnel, "check_channel_member", _must_not_be_called)
-    funnel._MEMORY.paid.add(80)
-    asyncio.run(funnel.require_channel_for_free(80, "h"))
-    funnel._MEMORY.tripwire.add((81, "h"))
-    asyncio.run(funnel.require_channel_for_free(81, "h"))
-    with pytest.raises(AssertionError):
-        asyncio.run(funnel.require_channel_for_free(81, "other"))  # трипваер — на другой трек
-
-
-def test_passed_submit_gate_marks_the_channel_step(client, monkeypatch) -> None:
-    _, main = client
-    asyncio.run(main.funnel.require_channel_for_free(82, "h"))  # mock: подписка есть
-    assert main.funnel.ACTION_CHANNEL in main.funnel._MEMORY.actions[82]

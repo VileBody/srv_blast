@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss } from '../guidance/useGuideDismiss';
@@ -38,10 +38,19 @@ export function TextPanel({ ready, loading, timingReady, timingToComplete, onNex
   const [textGuideRequested, setTextGuideRequested] = useState(false);
   // Шаг 1 из 2 этой страницы — «Выдели отрывок» (TrackStage); ждём, когда его ЗАКРОЮТ
   const trackTimingDismissed = useGuideLiveDismissed('track-timing');
+  // Подсказка «впиши текст» ждёт, пока окно отрывка УЛЯЖЕТСЯ: первая («выдели отрывок»)
+  // закрывается сама на первом же выделении, и вторая выскакивала посреди протяжки по волне.
+  const [timingSettled, setTimingSettled] = useState(false);
+  useEffect(() => {
+    setTimingSettled(false);
+    if (!timingReady) return undefined;
+    const timer = window.setTimeout(() => setTimingSettled(true), 1500);
+    return () => window.clearTimeout(timer);
+  }, [timingReady, timingFrom, timingTo]);
   const [guideDismissed, setGuideDismissed] = useGuideDismiss(
     'text-lyrics',
-    timingReady && (timingToComplete || textGuideRequested) && !lyrics.trim(),
-    timingReady && trackTimingDismissed
+    timingReady && timingSettled && (timingToComplete || textGuideRequested) && !lyrics.trim(),
+    timingReady && timingSettled && trackTimingDismissed
   );
 
   const lineCount = lyrics.split('\n').filter((line) => line.trim()).length;
@@ -101,7 +110,7 @@ export function TextPanel({ ready, loading, timingReady, timingToComplete, onNex
       </div>
 
       <ActionGuideOverlay
-        open={timingReady && trackTimingDismissed && !guideDismissed}
+        open={timingReady && timingSettled && trackTimingDismissed && !guideDismissed}
         targetRef={guideTargetRef}
         title={t('wizard.text.guideTitle')}
         text={t('wizard.text.guideText')}
