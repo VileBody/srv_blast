@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
@@ -13,15 +13,17 @@ import { useLowData } from '../../lib/network';
  * из кадра — пауза. В режиме экономии трафика (lib/network) — только заставка, ролик по
  * наведению или тапу.
  */
-export function PreviewVideo({ src, className, onError, draggable, ignoreLowData = false }: {
+export const PreviewVideo = forwardRef<HTMLVideoElement, {
   src: string;
   className?: string;
   onError?: () => void;
   draggable?: boolean;
   /** главный плеер превью: выбранное человеком играет и при экономии трафика */
   ignoreLowData?: boolean;
-}) {
+}>(function PreviewVideo({ src, className, onError, draggable, ignoreLowData = false }, forwarded) {
   const ref = useRef<HTMLVideoElement>(null);
+  // сам элемент — наружу: плеер «Фона» перезапускает ролик вместе с треком
+  useImperativeHandle(forwarded, () => ref.current as HTMLVideoElement, []);
   const lowData = useLowData() && !ignoreLowData;
   const visible = useInView(ref);
   const [asked, setAsked] = useState(false);
@@ -65,7 +67,7 @@ export function PreviewVideo({ src, className, onError, draggable, ignoreLowData
       onError={onError}
     />
   );
-}
+});
 
 export function CatalogMedia({ url, className = '' }: { url?: string; className?: string }) {
   const { t } = useTranslation();
