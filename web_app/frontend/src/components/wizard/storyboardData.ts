@@ -152,6 +152,12 @@ export const useStoryboardBusy = create<{ busy: boolean; setBusy: (busy: boolean
   setBusy: (busy) => set((state) => (state.busy === busy ? state : { busy }))
 }));
 
+/** Секунды с одним знаком под язык интерфейса: «1,5» в русском, «1.5» в английском. */
+export function fmtSec(value: number, lang: string): string {
+  const s = value.toFixed(1);
+  return lang.startsWith('ru') ? s.replace('.', ',') : s;
+}
+
 /** Стабильный seed видео: одинаковые вводные → одинаковый подбор; «перемешать» его сдвигает. */
 export function seedKeyFor(batchKey: string, index: number, shuffle: number): string {
   return `${batchKey}:v${index}:s${shuffle}`;

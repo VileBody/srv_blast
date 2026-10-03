@@ -5,7 +5,7 @@ import { api } from '../../lib/api';
 import { cssZoom } from '../../lib/zoom';
 import type { StoryboardCandidate, StoryboardPickedVideo } from '../../lib/types';
 import { emptyStoryboard, recipeKeyOf, StoryboardVideo, useWizardStore } from '../../stores/wizardStore';
-import { poolGuideId, poolTourTotal, seedKeyFor, useRecipeCuts, useStoryboardBusy } from './storyboardData';
+import { fmtSec, poolGuideId, poolTourTotal, seedKeyFor, useRecipeCuts, useStoryboardBusy } from './storyboardData';
 import { usePlaybackUrl } from './useFragmentAudio';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
@@ -43,8 +43,6 @@ export interface StoryboardChip {
 
 const TD = 0.32;
 const eIO = (p: number) => p < 0.5 ? 8 * p ** 4 : 1 - Math.pow(-2 * p + 2, 4) / 2;
-const secs = (t: number) => `${t.toFixed(1).replace('.', ',')} с`;
-const kadr = (n: number) => n % 10 === 1 && n % 100 !== 11 ? 'кадр' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'кадра' : 'кадров';
 const isSvg = (url: string) => /\.svg(\?|$)/.test(url);
 export const shuffleOf = (seedKey: string) => Number(/:s(\d+)$/.exec(seedKey)?.[1] ?? 0);
 
@@ -76,6 +74,8 @@ const CHECK = 'M5.5 12.5l4.2 4.2L18.5 7.8';
 
 /** edited — у видео есть ручные правки с таймлайна: пилюля «Изменён» закреплена слева над чипами. */
 export function PoolStoryboard({ slots, current, chips, edited }: { slots: StoryboardSlot[]; current: number; chips: StoryboardChip[]; edited?: boolean }) {
+  const { t: tr, i18n } = useTranslation();
+  const secs = (v: number) => tr('wizard.pool.sbSecs', { n: fmtSec(v, i18n.language) });
   const track = useWizardStore((s) => s.track);
   const timingFrom = useWizardStore((s) => s.timingFrom);
   const timingTo = useWizardStore((s) => s.timingTo);
@@ -257,13 +257,13 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
     try {
       const res = await api.storyboardAlternatives({ clipFrom: timingFrom, clipTo: timingTo, cuts, group: video.group, shot: k, seedKey: video.seedKey, exclude: allFiles(), limit: 20 });
       if (id !== editReq.current) return;
-      if (!res.candidates.length) { setEdit(null); setNote({ index: video.index, text: 'У вайба не нашлось других клипов для этого кадра' }); return; }
+      if (!res.candidates.length) { setEdit(null); setNote({ index: video.index, text: tr('wizard.pool.sbNoAlternatives') }); return; }
       setEdit({ k, orig: video, sbKey, candidates: res.candidates, pos: 0, loading: false });
       setStoryboardVideo(withClip(video, k, res.candidates[0]));
     } catch (err) {
       if (id !== editReq.current) return;
       setEdit(null);
-      setNote({ index: video.index, text: (err as Error).message ? `Не удалось подобрать клипы: ${(err as Error).message}` : 'Не удалось подобрать клипы — попробуй ещё раз' });
+      setNote({ index: video.index, text: (err as Error).message ? tr('wizard.pool.sbAltFailed', { msg: (err as Error).message }) : tr('wizard.pool.sbAltFailedRetry') });
     }
   };
   const variant = (dir: number) => {
@@ -310,7 +310,7 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
       const mine = res.videos.find((v) => v.index === video.index);
       if (mine) setStoryboardVideo(toVideo(mine, seedKey, video.pins));
     } catch (err) {
-      if (id === shuffleReq.current) setNote({ index: video.index, text: (err as Error).message ? `Не удалось перемешать: ${(err as Error).message}` : 'Не удалось перемешать — попробуй ещё раз' });
+      if (id === shuffleReq.current) setNote({ index: video.index, text: (err as Error).message ? tr('wizard.pool.sbShuffleFailed', { msg: (err as Error).message }) : tr('wizard.pool.sbShuffleFailedRetry') });
     } finally { if (id === shuffleReq.current) setShuffling(null); }
   };
 
@@ -353,7 +353,6 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   /* ── подсказки 3–4 серии «Пула»: после «Распредели видео» (соседняя панель — поэтому
         её ЖИВОЙ dismissed), только когда у видео на экране есть раскадровка. Замена кадра
         ждёт действия: пока ни один кадр не закреплён, после простоя она вернётся. ── */
-  const { t: tr } = useTranslation();
   const frameGuideRef = useRef<HTMLDivElement>(null);
   const dockGuideRef = useRef<HTMLDivElement>(null);
   const fxLab = useFxLab();
@@ -368,10 +367,10 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
 
   // Ошибка склеек — первой: пока её нет, «Сгенерировать» ждёт, и причина должна быть видна у любого видео.
   const placeholder = !slot ? null
-    : recipe.error ? `Не удалось посчитать склейки: ${recipe.error.message}`
-    : !slot.group ? (slot.reason ?? 'Исходники этого видео подберутся при генерации')
-      : status.error ? `Не удалось подобрать исходники: ${status.error}`
-        : !video ? 'Подбираем исходники…'
+    : recipe.error ? tr('wizard.pool.sbCutsFailed', { msg: recipe.error.message })
+    : !slot.group ? (slot.reason ?? tr('wizard.pool.sbSourcesLater'))
+      : status.error ? tr('wizard.pool.sbPickFailed', { msg: status.error })
+        : !video ? tr('wizard.pool.sbPicking')
           : null;
   // сбой — не тупик: склейки при выбранном темпе держат генерацию, без «Повторить» навсегда
   const retry = !slot ? null : recipe.error ? recipe.retry : slot.group && status.error ? () => setAttempt((n) => n + 1) : null;
@@ -397,7 +396,7 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
             <div className="psb-ph" role={retry ? 'alert' : undefined}>
               <div className="psb-ph-in">
                 <span className="tx">{placeholder}</span>
-                {retry && <button type="button" className="psb-btn" onClick={retry}><Svg d={REROLL} /><span className="tx">Повторить</span></button>}
+                {retry && <button type="button" className="psb-btn" onClick={retry}><Svg d={REROLL} /><span className="tx">{tr('wizard.pool.sbRetry')}</span></button>}
               </div>
             </div>
           )}
@@ -415,12 +414,12 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
           {/* Стрелки кадров — внутри ролика, у краёв: всё управление кадром живёт в самом видео. */}
           {video && shots > 1 && !edit && (
             <>
-              <button type="button" className="psb-arrow psb-glass l" aria-label="Предыдущий кадр" onClick={() => step(-1)}><Arrow dir="l" /></button>
-              <button type="button" className="psb-arrow psb-glass r" aria-label="Следующий кадр" onClick={() => step(1)}><Arrow dir="r" /></button>
+              <button type="button" className="psb-arrow psb-glass l" aria-label={tr('wizard.pool.sbPrevShot')} onClick={() => step(-1)}><Arrow dir="l" /></button>
+              <button type="button" className="psb-arrow psb-glass r" aria-label={tr('wizard.pool.sbNextShot')} onClick={() => step(1)}><Arrow dir="r" /></button>
             </>
           )}
           {video && (
-            <button type="button" className="psb-play psb-glass" aria-label={buffering ? 'Загружается' : playing ? 'Пауза' : 'Воспроизвести'} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
+            <button type="button" className="psb-play psb-glass" aria-label={tr(buffering ? 'wizard.pool.sbLoading' : playing ? 'wizard.pool.sbPause' : 'wizard.pool.sbPlay')} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
               {buffering ? <span className="spinner" aria-hidden="true" /> : playing ? <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 4h3v12H6zM11 4h3v12h-3z" fill="currentColor" /></svg> : <svg viewBox="0 0 20 20" width="20" height="20" aria-hidden="true"><path d="M6 3.5v13l11-6.5L6 3.5Z" fill="currentColor" /></svg>}
             </button>
           )}
@@ -428,32 +427,32 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
             <div ref={dockGuideRef} className="psb-dock psb-glass">
               {edit ? (
                 <div className="psb-dhead edit">
-                  <button type="button" className="psb-btn ico" onClick={cancelEdit} aria-label="Отмена" title="Отмена — вернуть прежний клип · Esc"><Svg d={CROSS} size={14} /></button>
+                  <button type="button" className="psb-btn ico" onClick={cancelEdit} aria-label={tr('wizard.pool.sbCancel')} title={tr('wizard.pool.sbCancelTip')}><Svg d={CROSS} size={14} /></button>
                   <span className="psb-var">
-                    <button type="button" aria-label="Предыдущий вариант" disabled={edit.pos <= 0} onClick={() => variant(-1)}><Arrow dir="l" /></button>
+                    <button type="button" aria-label={tr('wizard.pool.sbPrevVar')} disabled={edit.pos <= 0} onClick={() => variant(-1)}><Arrow dir="l" /></button>
                     <span className="cnt tx">{edit.loading ? '…' : <>{edit.pos + 1} <small>/ {edit.candidates.length}</small></>}</span>
-                    <button type="button" aria-label="Следующий вариант" disabled={edit.loading || edit.pos >= edit.candidates.length - 1} onClick={() => variant(1)}><Arrow dir="r" /></button>
+                    <button type="button" aria-label={tr('wizard.pool.sbNextVar')} disabled={edit.loading || edit.pos >= edit.candidates.length - 1} onClick={() => variant(1)}><Arrow dir="r" /></button>
                   </span>
-                  <button type="button" className="psb-btn pri ico" onClick={doneEdit} disabled={edit.loading} aria-label="Готово" title="Готово — оставить этот клип и закрепить"><Svg d={CHECK} size={15} /></button>
+                  <button type="button" className="psb-btn pri ico" onClick={doneEdit} disabled={edit.loading} aria-label={tr('wizard.pool.sbDone')} title={tr('wizard.pool.sbDoneTip')}><Svg d={CHECK} size={15} /></button>
                 </div>
               ) : (
                 <div className="psb-dhead">
                   <div className="psb-info">
                     <b>
-                      <span className="tx">Кадр {s + 1} из {shots} · {secs(bounds[s + 1] - bounds[s])}</span>
-                      {dropRel !== null && Math.abs(bounds[s] - dropRel) < 0.01 && <span className="psb-badge">дроп</span>}
-                      {video.pins[s] && <button type="button" className="psb-badge pin" onClick={unpin} title="Заменён вручную и закреплён. Нажми, чтобы открепить">закреплён ×</button>}
-                      {video.repeats.includes(s) && <span className="psb-badge warn" title="Вайбу не хватило свежих клипов на весь батч — этот клип есть и в другом видео">повтор</span>}
+                      <span className="tx">{tr('wizard.pool.sbShotOf', { n: s + 1, total: shots, secs: secs(bounds[s + 1] - bounds[s]) })}</span>
+                      {dropRel !== null && Math.abs(bounds[s] - dropRel) < 0.01 && <span className="psb-badge">{tr('wizard.pool.sbDrop')}</span>}
+                      {video.pins[s] && <button type="button" className="psb-badge pin" onClick={unpin} title={tr('wizard.pool.sbPinnedTip')}>{tr('wizard.pool.sbPinned')}</button>}
+                      {video.repeats.includes(s) && <span className="psb-badge warn" title={tr('wizard.pool.sbRepeatTip')}>{tr('wizard.pool.sbRepeat')}</span>}
                     </b>
-                    <small className={editNote ? 'tx psb-note' : 'tx'} role={editNote ? 'status' : undefined}>{editNote ?? (clip.tags.length ? clip.tags.join(' · ') : `${shots} ${kadr(shots)} · закреплено ${pinned}`)}</small>
+                    <small className={editNote ? 'tx psb-note' : 'tx'} role={editNote ? 'status' : undefined}>{editNote ?? (clip.tags.length ? clip.tags.join(' · ') : tr('wizard.pool.sbMeta', { shots: tr('wizard.pool.sbShots', { count: shots }), pinned }))}</small>
                   </div>
-                  <button type="button" className="psb-btn" onClick={() => void shuffle()} disabled={status.loading || shuffling !== null} aria-busy={shuffling === video.index || undefined} aria-label="Перемешать видео" title="Перемешать незакреплённые кадры этого видео"><Svg d={DICE} /></button>
-                  <button type="button" className="psb-btn pri" disabled={shuffling !== null} onClick={() => { setReplaceGuideDismissed(true); void startEdit(); }} aria-label="Заменить кадр" title="Подобрать другой клип для кадра на экране"><Svg d={REROLL} /><span className="tx">Заменить кадр</span></button>
+                  <button type="button" className="psb-btn" onClick={() => void shuffle()} disabled={status.loading || shuffling !== null} aria-busy={shuffling === video.index || undefined} aria-label={tr('wizard.pool.sbShuffleVideo')} title={tr('wizard.pool.sbShuffleTip')}><Svg d={DICE} /></button>
+                  <button type="button" className="psb-btn pri" disabled={shuffling !== null} onClick={() => { setReplaceGuideDismissed(true); void startEdit(); }} aria-label={tr('wizard.pool.sbReplace')} title={tr('wizard.pool.sbReplaceTip')}><Svg d={REROLL} /><span className="tx">{tr('wizard.pool.sbReplace')}</span></button>
                 </div>
               )}
               <div ref={strip.ref} className={`psb-strip${edit ? ' editing' : ''}`} data-fade-l={strip.fadeLeft || undefined} data-fade-r={strip.fadeRight || undefined}>
                 {video.clips.map((c, i) => (
-                  <button key={`${c.fileName}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === s ? ' cur' : ''}`} style={{ flexGrow: bounds[i + 1] - bounds[i] }} aria-label={`Кадр ${i + 1}`} onClick={() => { if (!edit) seekShot(i); }}>
+                  <button key={`${c.fileName}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === s ? ' cur' : ''}`} style={{ flexGrow: bounds[i + 1] - bounds[i] }} aria-label={tr('wizard.pool.sbShot', { n: i + 1 })} onClick={() => { if (!edit) seekShot(i); }}>
                     {c.previewUrl && (isSvg(c.previewUrl) ? <img src={c.previewUrl} alt="" draggable={false} />
                       : posterOf(c.previewUrl, c.previewOffset + 0.1) ? <img src={posterOf(c.previewUrl, c.previewOffset + 0.1)!} alt="" draggable={false} decoding="async" />
                         : <video src={`${c.previewUrl}#t=${c.previewOffset + 0.1}`} muted playsInline preload="metadata" />)}

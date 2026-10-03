@@ -4,12 +4,13 @@
    раскадровки «Пула» — стрелки, «Заменить кадр», варианты, «Готово» закрепляет. */
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { createPortal } from 'react-dom';
+import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
 import { isVideoUrl, posterOf } from '../../../lib/media';
 import type { StoryboardCandidate } from '../../../lib/types';
 import { useWizardStore, type StoryboardVideo } from '../../../stores/wizardStore';
-import { seedKeyFor, useRecipeCuts } from '../storyboardData';
+import { fmtSec, seedKeyFor, useRecipeCuts } from '../storyboardData';
 import { shuffleOf, toVideo, withClip } from '../PoolStoryboard';
 import '../PoolStoryboard.css';
 import { useStripFollow } from '../useStripFollow';
@@ -91,7 +92,6 @@ const LOCK = 'M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6z';
 // подписи «Отмена/Готово» не помещались в кнопки дока рядом со счётчиком — знаки вместо слов
 const CROSS = 'M7 7l10 10M17 7L7 17';
 const CHECK = 'M5.5 12.5l4.2 4.2L18.5 7.8';
-const secs = (t: number) => `${t.toFixed(1).replace('.', ',')} с`;
 
 /**
  * Выбор кадров прямо в превью ролика — механика и вызовы раскадровки «Пула»: варианты
@@ -116,6 +116,8 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
   slot?: HTMLElement | null;
 }) {
   const shots = Math.max(1, bounds.length - 1);
+  const { t, i18n } = useTranslation();
+  const secs = (v: number) => t('wizard.pool.sbSecs', { n: fmtSec(v, i18n.language) });
   const timingFrom = useWizardStore((s) => s.timingFrom);
   const timingTo = useWizardStore((s) => s.timingTo);
   const batchKey = useWizardStore((s) => s.final.idempotencyKey);
@@ -157,13 +159,13 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
       const res = await api.storyboardAlternatives({ clipFrom: timingFrom, clipTo: timingTo, cuts: recipe.cuts, group: video.group, shot: k, seedKey: video.seedKey, exclude: allFiles, limit: 20 });
       if (id !== editReq.current) return;
       if (useWizardStore.getState().storyboard.key !== sbKey) { setEdit(null); onEdit(null); return; }
-      if (!res.candidates.length) { setEdit(null); onEdit(null); onError?.('У вайба не нашлось других клипов для этого кадра'); return; }
+      if (!res.candidates.length) { setEdit(null); onEdit(null); onError?.(t('wizard.pool.sbNoAlternatives')); return; }
       setEdit({ k, orig: video, sbKey, candidates: res.candidates, pos: 0, loading: false });
       setStoryboardVideo(withClip(video, k, res.candidates[0]));
     } catch (error) {
       if (id !== editReq.current) return;
       setEdit(null); onEdit(null);
-      onError?.(error instanceof Error && error.message ? `Не удалось подобрать клипы: ${error.message}` : 'Не удалось подобрать клипы — попробуй ещё раз');
+      onError?.(error instanceof Error && error.message ? t('wizard.pool.sbAltFailed', { msg: error.message }) : t('wizard.pool.sbAltFailedRetry'));
     }
   };
   const variant = (d: number) => {
@@ -207,7 +209,7 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
       const mine = res.videos.find((v) => v.index === video.index);
       if (mine) { setStoryboardVideo(toVideo(mine, seedKey, video.pins)); onChanged?.(); }
     } catch (error) {
-      if (id === shuffleReq.current) onError?.(error instanceof Error && error.message ? `Не удалось перемешать: ${error.message}` : 'Не удалось перемешать — попробуй ещё раз');
+      if (id === shuffleReq.current) onError?.(error instanceof Error && error.message ? t('wizard.pool.sbShuffleFailed', { msg: error.message }) : t('wizard.pool.sbShuffleFailedRetry'));
     } finally { if (id === shuffleReq.current) setBusy(false); }
   };
   const step = (d: number) => { if (!edit) onSeek((k + d + shots) % shots); };
@@ -216,7 +218,7 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
     if (!request || request.n === lastRequest.current) return;
     lastRequest.current = request.n;
     // занятый док не молчит: иначе тап по инструменту на телефоне выглядел бы мёртвым
-    if (busy) { onError?.('Кадры ещё перемешиваются — подожди секунду'); return; }
+    if (busy) { onError?.(t('wizard.pool.sbShuffleBusy')); return; }
     if (edit) return;
     if (request.kind === 'edit') void startEdit(); else void shuffle();
   }, [request]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -244,14 +246,14 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
   if (compact && edit && !slot) return null;
   if (compact && edit && slot) {
     return createPortal(
-      <div className="mm-replace" role="group" aria-label={`Замена кадра ${edit.k + 1}`}>
-        <button type="button" className="mm-replace-btn" aria-label="Отмена — вернуть прежний кадр" onClick={cancel}><I d={CROSS} size={18} /></button>
+      <div className="mm-replace" role="group" aria-label={t('wizard.pool.sbReplacing', { n: edit.k + 1 })}>
+        <button type="button" className="mm-replace-btn" aria-label={t('wizard.pool.sbCancelShot')} onClick={cancel}><I d={CROSS} size={18} /></button>
         <div className="mm-replace-var">
-          <button type="button" aria-label="Предыдущий вариант" disabled={edit.pos <= 0} onClick={() => variant(-1)}><Arrow dir="l" /></button>
-          <span className="cnt num tx">{edit.loading ? 'Подбираем…' : <>{edit.pos + 1}<small> / {edit.candidates.length}</small></>}</span>
-          <button type="button" aria-label="Следующий вариант" disabled={edit.loading || edit.pos >= edit.candidates.length - 1} onClick={() => variant(1)}><Arrow dir="r" /></button>
+          <button type="button" aria-label={t('wizard.pool.sbPrevVar')} disabled={edit.pos <= 0} onClick={() => variant(-1)}><Arrow dir="l" /></button>
+          <span className="cnt num tx">{edit.loading ? t('wizard.pool.sbFinding') : <>{edit.pos + 1}<small> / {edit.candidates.length}</small></>}</span>
+          <button type="button" aria-label={t('wizard.pool.sbNextVar')} disabled={edit.loading || edit.pos >= edit.candidates.length - 1} onClick={() => variant(1)}><Arrow dir="r" /></button>
         </div>
-        <button type="button" className="mm-replace-btn pri" aria-label="Готово — оставить этот кадр" onClick={done} disabled={edit.loading}><I d={CHECK} size={20} /></button>
+        <button type="button" className="mm-replace-btn pri" aria-label={t('wizard.pool.sbDoneShot')} onClick={done} disabled={edit.loading}><I d={CHECK} size={20} /></button>
       </div>,
       slot
     );
@@ -260,39 +262,39 @@ export function FrameDock({ combo, video, frames, bounds, k, onSeek, onEdit, dro
     <>
       {shots > 1 && !edit && !compact && (
         <>
-          <button type="button" className="psb-arrow psb-glass l" aria-label="Предыдущий кадр" onClick={() => step(-1)}><Arrow dir="l" /></button>
-          <button type="button" className="psb-arrow psb-glass r" aria-label="Следующий кадр" onClick={() => step(1)}><Arrow dir="r" /></button>
+          <button type="button" className="psb-arrow psb-glass l" aria-label={t('wizard.pool.sbPrevShot')} onClick={() => step(-1)}><Arrow dir="l" /></button>
+          <button type="button" className="psb-arrow psb-glass r" aria-label={t('wizard.pool.sbNextShot')} onClick={() => step(1)}><Arrow dir="r" /></button>
         </>
       )}
       <div ref={dockRef} className="psb-dock psb-glass mt-dock">
         {edit ? (
           <div className="psb-dhead edit">
-            <button type="button" className="psb-btn ico" onClick={cancel} aria-label="Отмена" title="Отмена — вернуть прежний · Esc"><I d={CROSS} size={14} /></button>
+            <button type="button" className="psb-btn ico" onClick={cancel} aria-label={t('wizard.pool.sbCancel')} title={t('wizard.pool.sbCancelTip')}><I d={CROSS} size={14} /></button>
             <span className="psb-var">
-              <button type="button" aria-label="Предыдущий вариант" disabled={edit.pos <= 0} onClick={() => variant(-1)}><Arrow dir="l" /></button>
+              <button type="button" aria-label={t('wizard.pool.sbPrevVar')} disabled={edit.pos <= 0} onClick={() => variant(-1)}><Arrow dir="l" /></button>
               <span className="cnt tx">{edit.loading ? '…' : <>{edit.pos + 1} <small>/ {edit.candidates.length}</small></>}</span>
-              <button type="button" aria-label="Следующий вариант" disabled={edit.loading || edit.pos >= edit.candidates.length - 1} onClick={() => variant(1)}><Arrow dir="r" /></button>
+              <button type="button" aria-label={t('wizard.pool.sbNextVar')} disabled={edit.loading || edit.pos >= edit.candidates.length - 1} onClick={() => variant(1)}><Arrow dir="r" /></button>
             </span>
-            <button type="button" className="psb-btn pri ico" onClick={done} disabled={edit.loading} aria-label="Готово" title="Готово — оставить и закрепить · Enter"><I d={CHECK} size={15} /></button>
+            <button type="button" className="psb-btn pri ico" onClick={done} disabled={edit.loading} aria-label={t('wizard.pool.sbDone')} title={t('wizard.pool.sbDoneTip')}><I d={CHECK} size={15} /></button>
           </div>
         ) : (
           <div className="psb-dhead">
             <div className="psb-info">
               <b>
-                <span className="tx">Кадр {k + 1} из {shots} · {secs((bounds[k + 1] ?? 0) - (bounds[k] ?? 0))}</span>
-                {atDrop && <span className="psb-badge">дроп</span>}
-                {video.pins[k] && <button type="button" className="psb-badge pin" onClick={() => unpin(k)} title="Выбран вручную. Нажми, чтобы открепить">закреплён ×</button>}
-                {video.repeats.includes(k) && <span className="psb-badge warn" title="Вайбу не хватило свежих клипов на весь батч — этот клип есть и в другом видео">повтор</span>}
+                <span className="tx">{t('wizard.pool.sbShotOf', { n: k + 1, total: shots, secs: secs((bounds[k + 1] ?? 0) - (bounds[k] ?? 0)) })}</span>
+                {atDrop && <span className="psb-badge">{t('wizard.pool.sbDrop')}</span>}
+                {video.pins[k] && <button type="button" className="psb-badge pin" onClick={() => unpin(k)} title={t('wizard.pool.sbPickedTip')}>{t('wizard.pool.sbPinned')}</button>}
+                {video.repeats.includes(k) && <span className="psb-badge warn" title={t('wizard.pool.sbRepeatTip')}>{t('wizard.pool.sbRepeat')}</span>}
               </b>
-              <small className="tx">{combo.bgLabel} · закреплено {pinned} из {shots}</small>
+              <small className="tx">{t('wizard.pool.sbDockMeta', { bg: t(`chip.${combo.bgLabel}`, { defaultValue: combo.bgLabel }), pinned, shots })}</small>
             </div>
-            <button type="button" className="psb-btn" onClick={() => void shuffle()} disabled={busy} aria-busy={busy || undefined} aria-label="Перемешать" title="Перемешать незакреплённые кадры ролика"><I d={DICE} /></button>
-            <button type="button" className="psb-btn pri" onClick={() => void startEdit()} disabled={busy}><I d={REROLL} /><span className="tx">Заменить кадр</span></button>
+            <button type="button" className="psb-btn" onClick={() => void shuffle()} disabled={busy} aria-busy={busy || undefined} aria-label={t('wizard.pool.sbShuffle')} title={t('wizard.pool.sbShuffleTip')}><I d={DICE} /></button>
+            <button type="button" className="psb-btn pri" onClick={() => void startEdit()} disabled={busy} title={t('wizard.pool.sbReplaceTip')}><I d={REROLL} /><span className="tx">{t('wizard.pool.sbReplace')}</span></button>
           </div>
         )}
         {!compact && <div ref={strip.ref} className={`psb-strip${edit ? ' editing' : ''}`} data-fade-l={strip.fadeLeft || undefined} data-fade-r={strip.fadeRight || undefined}>
           {frames.map((f, i) => (
-            <button key={`${f.id}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === k ? ' cur mt-cur' : ''}`} style={{ flexGrow: (bounds[i + 1] ?? 0) - (bounds[i] ?? 0) }} aria-label={`Кадр ${i + 1}`} onClick={() => { if (!edit) onSeek(i); }}>
+            <button key={`${f.id}:${i}`} type="button" className={`psb-seg${edit?.k === i ? ' sel' : ''}${i === k ? ' cur mt-cur' : ''}`} style={{ flexGrow: (bounds[i + 1] ?? 0) - (bounds[i] ?? 0) }} aria-label={t('wizard.pool.sbShot', { n: i + 1 })} onClick={() => { if (!edit) onSeek(i); }}>
               <FrameView frame={f} thumb />
               {drop !== null && Math.abs((bounds[i] ?? -1) - drop) < 0.02 && <i className="dm" />}
               {video.pins[i] && <span className="lk"><I d={LOCK} size={9} /></span>}

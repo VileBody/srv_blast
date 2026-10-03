@@ -7,7 +7,7 @@ import effectsRegistry from '../../../data/effects-registry.json';
 import { HookConfig, HookKind, MontageVideo, TimelinePace, TimelineRecipe, TimelineStyleRange, textSettingsFor, useWizardStore } from '../../../stores/wizardStore';
 import { KANT_STYLES, styleIdOf } from '../../../lib/subtitleText';
 import { EFFECT_HOOKS, MOTIONS, NO_GLUE, OBJECTS, THOUGHTS, previewIdFor } from '../hookCatalog';
-import { PACES, useRecipeCuts } from '../storyboardData';
+import { PACES, fmtSec, useRecipeCuts } from '../storyboardData';
 import { secondsToDropTime, usePlaybackUrl } from '../useFragmentAudio';
 import { peakLevels, useTrackPeaks } from '../trackPeaks';
 import { usePhone } from '../../../lib/usePhone';
@@ -17,6 +17,7 @@ import { SubtitleCanvas, type SubtitleCanvasProps } from '../SubtitleCanvas';
 import { StoryboardReplaceGuideVisual, TimelineEntryGuideVisual } from '../timelineGuides';
 import { useGuideDismiss, useMarkGuideSeen } from '../../guidance/useGuideDismiss';
 import { useTranslation } from 'react-i18next';
+import { useChip } from '../../../i18n/useChip';
 import { ActionGuideOverlay } from '../../guidance/ActionGuideOverlay';
 import '../FxTimeline.css';
 import './montage.css';
@@ -45,13 +46,21 @@ const X0 = 20;
 const pad = (n: number) => String(n).padStart(2, '0');
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const tc = (t: number) => { const f = Math.floor(Math.max(0, t) * FPS + 1e-6); return `${pad(Math.floor(f / FPS / 60))}:${pad(Math.floor(f / FPS) % 60)}.${pad(f % FPS)}`; };
-const secs = (t: number) => `${t.toFixed(1).replace('.', ',')} с`;
-const kadr = (n: number) => n % 10 === 1 && n % 100 !== 11 ? 'кадр' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'кадра' : 'кадров';
-const rolik = (n: number) => n % 10 === 1 && n % 100 !== 11 ? 'ролик' : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? 'ролика' : 'роликов';
 const eOut = (p: number) => 1 - Math.pow(1 - p, 4);
 const zoomScale = () => Number.parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
 const eIO = (p: number) => p < 0.5 ? 8 * p ** 4 : 1 - Math.pow(-2 * p + 2, 4) / 2;
-const clipTitle = (id: string) => { const n = Number(/(\d+)(\.mp4)?$/.exec(id)?.[1] ?? 0); return id.startsWith('photo-') ? `фото ${n}` : `клип ${n}`; };
+// внутренние подписи хука «Прогрев» (не из каталога): показываются через перевод, см. useFxName
+const OWN_VIDEO = '__own_video__';
+const OWN_SOUND = '__own_sound__';
+/**
+ * Название эффекта на языке интерфейса. Сами подписи в сторе остаются русскими — по ним
+ * матчит бэк и effects-registry; переводим только показ (словарь chip, как на шаге FX).
+ */
+function useFxName() {
+  const { t } = useTranslation();
+  const chip = useChip();
+  return (label?: string) => (!label ? '' : label === OWN_VIDEO ? t('wizard.montage.ownVideo') : label === OWN_SOUND ? t('wizard.montage.ownSound') : chip(label));
+}
 
 /* ── тонкие глифы (один язык на всю библиотеку и дорожки) ── */
 const C = (x: number, y: number, r: number, a = '') => `<circle cx="${x}" cy="${y}" r="${r}" ${a}/>`;
@@ -106,15 +115,19 @@ const GLYPH: Record<string, string> = {
   [NO_GLUE]: 't_none', 'Щелчок': 't_snap', 'Минимакс': 't_minimax', 'Экстракт': 't_extract', 'Инверт': 't_invert', 'Вспышка': 't_flash',
   'Ксерокс': 'xerox', 'Глитч': 'glitch', 'Неон': 'neon', 'Старая камера': 'oldcam', 'Ч/Б': 'bw', 'Crystal Glow': 'crystal', 'Night Vision': 'night', 'Wave': 'wave'
 };
-const META: Record<string, string> = {
-  'Молния': 'вспышка на дропе', 'Затвор': 'шторка на дропе', 'Слоу-шаттер': 'от дропа · тянется вправо', 'Негатив зум': 'инверсия и зум на дропе',
-  'Свайп': 'интро в такт до дропа', 'Тап': 'интро в такт до дропа', 'Зум': 'интро в такт до дропа', 'Задержи': 'интро в такт до дропа', 'Голова': 'интро в такт до дропа',
-  'Панчлайн': 'голос поверх трека', 'Пропущенное слово': 'голос поверх трека', 'Эхо': 'голос поверх трека', 'Вопрос': 'голос поверх трека', 'Инверсия': 'голос поверх трека',
-  'Круг': 'форма на склейке до дропа', 'Квадрат': 'форма на склейке до дропа', 'Ромб': 'форма на склейке до дропа', 'Звезда-5': 'форма на склейке до дропа', 'Звезда-10': 'форма на склейке до дропа',
-  [NO_GLUE]: 'жёсткая склейка', 'Щелчок': 'шторка слева направо', 'Минимакс': 'влёт с зумом', 'Экстракт': 'выезд снизу', 'Инверт': 'негатив на стыке', 'Вспышка': 'белая вспышка',
-  'Ксерокс': 'жёсткий контраст и зерно', 'Глитч': 'цифровые сбои и сдвиги', 'Неон': 'светящиеся насыщенные цвета', 'Старая камера': 'сепия, виньетка, плёнка',
-  'Ч/Б': 'выжженные чёрные', 'Crystal Glow': 'мягкое свечение', 'Night Vision': 'прибор ночного видения', 'Wave': 'синий тон и волна'
-};
+/*
+ * Подписи эффектов. Свои — в локали (wizard.montage.meta.<подпись>); у эффектов реестра
+ * (montage-поля, например пресеты Kant) подпись есть только по-русски — её и показываем в ru.
+ */
+const META: Record<string, string> = {};
+function useMetaOf() {
+  const { t, i18n } = useTranslation();
+  return (label: string) => {
+    const key = `wizard.montage.meta.${label}`;
+    if (i18n.exists(key)) return t(key);
+    return i18n.language.startsWith('ru') ? META[label] ?? '' : '';
+  };
+}
 /*
  * Эффекты, заведённые в реестр со своими полями стола (montageGroup / montageGlyph / meta) —
  * например, пресеты Kant: глиф и подпись берутся из реестра, без правки этих таблиц.
@@ -156,7 +169,7 @@ const HOOK_CATS: { kind: HookCatalogKind; label: string; icon: string; key: keyo
 const MOTION_LEAD: Record<string, [number, boolean]> = { 'Свайп': [4.304, false], 'Тап': [4.304, true], 'Зум': [4.204, false], 'Задержи': [4.304, true], 'Голова': [4.004, false] };
 function hookLabel(kind: HookKind | undefined, config: HookConfig | undefined): string | undefined {
   if (!kind || !config) return undefined;
-  if (kind === 'warmup') return config.sound ? (config.warmupKind === 'video' ? 'Своё видео' : 'Свой звук') : undefined;
+  if (kind === 'warmup') return config.sound ? (config.warmupKind === 'video' ? OWN_VIDEO : OWN_SOUND) : undefined;
   const cat = HOOK_CATS.find((c) => c.kind === kind);
   return cat?.key ? (config[cat.key] as string | undefined) : undefined;
 }
@@ -168,7 +181,8 @@ function slowShutterEnd(extend: SlowExtend, drop: number, dur: number, bounds: n
   if (extend === 'after_drop:3') { const after = bounds.slice(1, -1).filter((b) => b > drop + 1e-3); return Math.max(base, after.length >= 3 ? after[2] : dur); }
   return Math.min(dur, base);
 }
-const SLOW_EXTENDS: [SlowExtend, string][] = [['', 'Стандарт'], ['after_drop:3', '3 кадра'], ['to_end', 'До конца']];
+/** вариант длины слоу-шаттера → ключ подписи (wizard.montage.*) */
+const SLOW_EXTENDS: [SlowExtend, string][] = [['', 'slowStd'], ['after_drop:3', 'slow3'], ['to_end', 'slowEnd']];
 function hookSpan(kind: HookKind, config: HookConfig, drop: number, dur: number, bpm: number, bounds: number[]): [number, number] | null {
   if (kind === 'effects') {
     if (config.effectHook === 'Слоу-шаттер') return [drop, slowShutterEnd((config.effectHookExtend ?? '') as SlowExtend, drop, dur, bounds)];
@@ -206,6 +220,8 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
   sub?: SubProps; w: number; h: number; className?: string; children?: ReactNode;
 }) {
   const [subError, setSubError] = useState<string | null>(null);
+  const { t: tr } = useTranslation();
+  const fxName = useFxName();
   const shots = Math.max(1, bounds.length - 1);
   const fNow = frameIndex(bounds, t);
   const since = t - (bounds[fNow] ?? 0);
@@ -239,11 +255,11 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
           if (!visible && !ahead) return null;
           if (ahead && !visible) return frame ? <FrameView key={`${frame.id}:${i}`} frame={frame} t={t} at={0} playing={false} className="shot" style={{ zIndex: 0, opacity: 0 }} /> : null;
           const style = { zIndex: i === fNow ? 2 : 1, ...shotStyle(i) };
-          if (!frame) return <div key={`ph${i}`} className="fxt-ph" style={{ ...style, background: `linear-gradient(145deg, hsl(${(i * 53 + 260) % 360} 45% 22%), hsl(${(i * 53 + 305) % 360} 35% 10%))` }}><span>КАДР {pad(i + 1)}</span></div>;
+          if (!frame) return <div key={`ph${i}`} className="fxt-ph" style={{ ...style, background: `linear-gradient(145deg, hsl(${(i * 53 + 260) % 360} 45% 22%), hsl(${(i * 53 + 305) % 360} 35% 10%))` }}><span>{tr('wizard.montage.shotPh', { n: pad(i + 1) })}</span></div>;
           return <FrameView key={`${frame.id}:${i}`} frame={frame} t={t} at={t - (bounds[i] ?? 0)} playing={playing && i === fNow} className="shot on" style={style} />;
         })}
       </div>
-      {cover && <div className="mt-cover"><span>{fx.hookLabel}</span></div>}
+      {cover && <div className="mt-cover"><span>{fxName(fx.hookLabel)}</span></div>}
       {/* рамка ролика — поверх всего, как в рендере (PNG-маска на весь кадр) */}
       {fx.frameUrl && <img className="mt-frame" src={fx.frameUrl} alt="" draggable={false} />}
       <div className="fxt-ov fxt-flash" style={{ opacity: flash }} />
@@ -328,6 +344,7 @@ function PlateMedia({ url }: { url: string }) {
  * плитки сами тянутся на таймлайн.
  */
 function TileRow({ children }: { children: ReactNode }) {
+  const { t: tr } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ left: true, right: true });
   const sync = useCallback(() => {
@@ -346,9 +363,9 @@ function TileRow({ children }: { children: ReactNode }) {
   const by = (dir: 1 | -1) => { const el = ref.current; el?.scrollBy({ left: dir * el.clientWidth * 0.8, behavior: 'smooth' }); };
   return (
     <div className="mt-fxrow" data-fade-l={!edges.left || undefined} data-fade-r={!edges.right || undefined}>
-      <button type="button" className="mt-fxrow-btn l" data-off={edges.left || undefined} aria-label="Предыдущие" tabIndex={-1} onClick={() => by(-1)}><Glyph name="back" size={16} sw={1.8} /></button>
+      <button type="button" className="mt-fxrow-btn l" data-off={edges.left || undefined} aria-label={tr('wizard.montage.prevTiles')} tabIndex={-1} onClick={() => by(-1)}><Glyph name="back" size={16} sw={1.8} /></button>
       <div ref={ref} className="mt-fxtiles" onScroll={sync}>{children}</div>
-      <button type="button" className="mt-fxrow-btn r" data-off={edges.right || undefined} aria-label="Следующие" tabIndex={-1} onClick={() => by(1)}><Glyph name="fwd" size={16} sw={1.8} /></button>
+      <button type="button" className="mt-fxrow-btn r" data-off={edges.right || undefined} aria-label={tr('wizard.montage.nextTiles')} tabIndex={-1} onClick={() => by(1)}><Glyph name="fwd" size={16} sw={1.8} /></button>
     </div>
   );
 }
@@ -357,6 +374,7 @@ function TileRow({ children }: { children: ReactNode }) {
 export interface LibPreview { url?: string | null; sim?: (size: { w: number; h: number }, paused: boolean) => ReactNode; state?: 'loading' | 'error' }
 const TILE = { w: 180, h: 320 };
 function TileMedia({ preview }: { preview: LibPreview }) {
+  const { t: tr } = useTranslation();
   const [ref, visible, seen] = useInView<HTMLSpanElement>();
   // медленная сеть / экономия трафика: пример не стартует сам — играет по наведению или тапу
   const lowData = useLowData();
@@ -370,10 +388,10 @@ function TileMedia({ preview }: { preview: LibPreview }) {
       {seen && (preview.url
         ? <LazyVideo src={preview.url} visible={visible} lowData={lowData} />
         : preview.sim?.(TILE, !visible))}
-      {seen && !preview.url && preview.sim && <span className="mt-fxtile-tag">на твоём ролике</span>}
+      {seen && !preview.url && preview.sim && <span className="mt-fxtile-tag">{tr('wizard.montage.onYourVideo')}</span>}
       {preview.state === 'loading' && <span className="mt-fxtile-none"><span className="spinner" aria-hidden="true" /></span>}
-      {preview.state === 'error' && <span className="mt-fxtile-none">Примеры не загрузились</span>}
-      {!preview.state && !preview.url && !preview.sim && <span className="mt-fxtile-none">Пример ещё не отрендерен</span>}
+      {preview.state === 'error' && <span className="mt-fxtile-none">{tr('wizard.montage.previewsFailed')}</span>}
+      {!preview.state && !preview.url && !preview.sim && <span className="mt-fxtile-none">{tr('wizard.montage.previewMissing')}</span>}
     </span>
   );
 }
@@ -431,16 +449,17 @@ function useTooltips(root: React.RefObject<HTMLElement | null>) {
 }
 
 /* ── группы библиотеки: переходы и стилизации раскладываются так же, как хуки ── */
-interface Group { id: string; label: string; icon: string; items: string[] }
+/** название группы — wizard.montage.groups.<id> */
+interface Group { id: string; icon: string; items: string[] }
 const GLUE_GROUPS: Group[] = withRegistryItems([
-  { id: 'shake', label: 'Шейки', icon: 'shake', items: [] },
-  { id: 'oneshot', label: 'Ваншоты', icon: 'oneshot', items: [] },
-  { id: 'flash', label: 'Флеши', icon: 't_flash', items: ['Вспышка', 'Инверт'] },
-  { id: 'overlay', label: 'Оверлеи', icon: 'overlay', items: [] },
-  { id: 'wipe', label: 'Шторки', icon: 't_snap', items: ['Щелчок'] },
-  { id: 'zoom', label: 'Зумы', icon: 't_minimax', items: ['Минимакс'] },
-  { id: 'push', label: 'Сдвиги', icon: 't_extract', items: ['Экстракт'] },
-  { id: 'glitchcut', label: 'Глитчи', icon: 'glitch', items: [] }
+  { id: 'shake', icon: 'shake', items: [] },
+  { id: 'oneshot', icon: 'oneshot', items: [] },
+  { id: 'flash', icon: 't_flash', items: ['Вспышка', 'Инверт'] },
+  { id: 'overlay', icon: 'overlay', items: [] },
+  { id: 'wipe', icon: 't_snap', items: ['Щелчок'] },
+  { id: 'zoom', icon: 't_minimax', items: ['Минимакс'] },
+  { id: 'push', icon: 't_extract', items: ['Экстракт'] },
+  { id: 'glitchcut', icon: 'glitch', items: [] }
 ], effectsRegistry.glue as RegistryFx[]);
 /*
  * Переходы в том же порядке и тех же группах, что во вкладке «Переходы» библиотеки: окно
@@ -455,18 +474,18 @@ const GLUE_OPTIONS: PopOption[] = (() => {
   for (const g of GLUE_GROUPS.filter((x) => x.items.length)) {
     for (const label of g.items) {
       if (!known.has(label) || placed.has(label)) continue;
-      out.push({ id: label, label, glyph: label, group: g.label, groupIcon: g.icon });
+      out.push({ id: label, label, glyph: label, group: g.id, groupIcon: g.icon });
       placed.add(label);
     }
   }
-  for (const label of GLUES) if (!placed.has(label)) out.push({ id: label, label, glyph: label, group: 'Другие' });
+  for (const label of GLUES) if (!placed.has(label)) out.push({ id: label, label, glyph: label, group: 'other' });
   return out;
 })();
 const STYLE_GROUPS: Group[] = withRegistryItems([
-  { id: 'color', label: 'Цвет', icon: 'bw', items: ['Ч/Б', 'Неон', 'Night Vision'] },
-  { id: 'film', label: 'Плёнка и фактура', icon: 'oldcam', items: ['Старая камера', 'Ксерокс'] },
-  { id: 'distort', label: 'Искажение', icon: 'wave', items: ['Глитч', 'Wave'] },
-  { id: 'light', label: 'Свет', icon: 'crystal', items: ['Crystal Glow'] }
+  { id: 'color', icon: 'bw', items: ['Ч/Б', 'Неон', 'Night Vision'] },
+  { id: 'film', icon: 'oldcam', items: ['Старая камера', 'Ксерокс'] },
+  { id: 'distort', icon: 'wave', items: ['Глитч', 'Wave'] },
+  { id: 'light', icon: 'crystal', items: ['Crystal Glow'] }
 ], effectsRegistry.style as RegistryFx[]);
 
 /* ── библиотека ── */
@@ -483,24 +502,27 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
   /** телефон: тап по плитке ставит её (CapCut) — перетаскивать на дорожку пальцем неудобно */
   tapAdd?: boolean;
 }) {
+  const { t: tr } = useTranslation();
+  const fxName = useFxName();
+  const metaOf = useMetaOf();
   /*
    * Плитка — группа, а не фокусируемый div вокруг кнопки (вложенные интерактивы скринридер
    * читал кашей): с клавиатуры и скринридера ставит одна кнопка «+» (у стоящего — «✓»,
    * aria-pressed, жмётся так же), мышь тянет плитку, на телефоне тап по плитке.
    */
   const actBtn = (item: LibItem, on: boolean) => (
-    <button type="button" data-act className={`${on ? 'mt-on' : 'fxt-mini'} act`} aria-pressed={on} aria-label={`Добавить «${item.label}»`} onClick={() => onAdd(item)}>
+    <button type="button" data-act className={`${on ? 'mt-on' : 'fxt-mini'} act`} aria-pressed={on} aria-label={tr('wizard.montage.add', { name: fxName(item.label) })} onClick={() => onAdd(item)}>
       <Glyph name={on ? 'check' : 'plus'} size={14} sw={on ? 2 : 1.8} />
     </button>
   );
   const tile = (item: LibItem) => {
     const on = used(item);
     return (
-      <div key={`${item.kind}:${item.label}`} role="group" aria-label={item.label} className={`mt-fxtile${on ? ' on' : ''}`} data-tip={META[item.label] || undefined}
+      <div key={`${item.kind}:${item.label}`} role="group" aria-label={fxName(item.label)} className={`mt-fxtile${on ? ' on' : ''}`} data-tip={metaOf(item.label) || undefined}
         onPointerDown={(e) => { if (!tapAdd && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
         onClick={tapAdd ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}>
         <TileMedia preview={previewOf(item)} />
-        <span className="nm"><b>{item.label}</b></span>
+        <span className="nm"><b>{fxName(item.label)}</b></span>
         {actBtn(item, on)}
       </div>
     );
@@ -509,11 +531,11 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
   const row = (item: LibItem, lead: ReactNode, meta?: string, disabled = false) => {
     const on = used(item);
     return (
-      <div key={`${item.kind}:${item.label}`} role="group" aria-label={item.label} aria-disabled={disabled || undefined} className={`fxt-item${on ? ' on' : ''}${disabled ? ' off' : ''}`}
+      <div key={`${item.kind}:${item.label}`} role="group" aria-label={fxName(item.label)} aria-disabled={disabled || undefined} className={`fxt-item${on ? ' on' : ''}${disabled ? ' off' : ''}`}
         onPointerDown={(e) => { if (!tapAdd && !disabled && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
         onClick={tapAdd && !disabled ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}>
         {lead}
-        <span className="nm"><b>{item.label}</b><small>{meta ?? META[item.label] ?? ''}</small></span>
+        <span className="nm"><b>{fxName(item.label)}</b><small>{meta ?? metaOf(item.label)}</small></span>
         {!disabled && <span className="acts">{actBtn(item, on)}</span>}
       </div>
     );
@@ -524,24 +546,24 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
       <div key={g.id} className="fxt-acc" data-open={Boolean(open[g.id])}>
         <button type="button" className="fxt-acc-h" aria-expanded={Boolean(open[g.id])} onClick={() => setOpen(g.id)}>
           <span className={`fxt-ic k-${kind} sm${inUse ? ' on' : ''}`}><Glyph name={g.icon} size={14} /></span>
-          <span className="name">{g.label}{g.items.length > 0 && <span className="c">{g.items.length}</span>}</span>
-          {inUse && <span className="was">в этом ролике</span>}
-          {!g.items.length && <span className="mt-soon">скоро</span>}
+          <span className="name">{tr(`wizard.montage.groups.${g.id}`)}{g.items.length > 0 && <span className="c">{g.items.length}</span>}</span>
+          {inUse && <span className="was">{tr('wizard.montage.inThisVideo')}</span>}
+          {!g.items.length && <span className="mt-soon">{tr('wizard.montage.soon')}</span>}
           <span className="chev"><Glyph name="chev" size={16} /></span>
         </button>
         {open[g.id] && (
           g.items.length
             ? items(g.items.map((label) => ({ kind, label })))
-            : <p className="mt-lib-note mt-empty"><span className="tx">Группа под новые {kind === 'trans' ? 'переходы' : 'стилизации'}: они появятся здесь, как только лягут в каталог эффектов.</span></p>
+            : <p className="mt-lib-note mt-empty"><span className="tx">{tr(kind === 'trans' ? 'wizard.montage.emptyGroupTrans' : 'wizard.montage.emptyGroupStyle')}</span></p>
         )}
       </div>
     );
   });
-  const tabs: [LibKind, string, number][] = [['hook', 'Хуки', HOOK_CATS.reduce((n, c) => n + c.options.length, 0)], ['style', 'Стилизации', STYLES.length], ['trans', 'Переходы', GLUES.length], ['text', 'Субтитры', SUB_STYLES.length], ['frame', 'Рамки', frames.length]];
+  const tabs: [LibKind, string, number][] = [['hook', tr('wizard.montage.tabHooks'), HOOK_CATS.reduce((n, c) => n + c.options.length, 0)], ['style', tr('wizard.montage.tabStyles'), STYLES.length], ['trans', tr('wizard.montage.tabTrans'), GLUES.length], ['text', tr('wizard.montage.tabSubs'), SUB_STYLES.length], ['frame', tr('wizard.montage.tabFrames'), frames.length]];
   return (
-    <section className="fxt-panel fxt-lib" aria-label="Библиотека">
+    <section className="fxt-panel fxt-lib" aria-label={tr('wizard.montage.library')}>
       <div className="fxt-lib-h">
-        <h2><span className="tx">Библиотека</span></h2>
+        <h2><span className="tx">{tr('wizard.montage.library')}</span></h2>
         <div className="fxt-tabs" role="tablist">
           {tabs.map(([id, label, count]) => (
             <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
@@ -553,7 +575,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
       <div className="fxt-lib-b">
         {tab === 'text' && (
           <>
-            <div className="mt-plates" role="radiogroup" aria-label="Стиль субтитров ролика">
+            <div className="mt-plates" role="radiogroup" aria-label={tr('wizard.montage.subStyleGroup')}>
               {SUB_STYLES.map((s) => (
                 <button key={s.id} type="button" role="radio" aria-checked={subStyle === s.name} aria-label={s.name} className="mt-plate" onClick={() => onPickSub(s.name)} data-tip={s.name}>
                   {/* на проде пример стиля — видео (как на шаге «Текст»), в моке — svg; живёт только в видимой области */}
@@ -569,12 +591,12 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
           <div key={cat.kind} className="fxt-acc" data-open={Boolean(open[cat.kind])}>
             <button type="button" className="fxt-acc-h" aria-expanded={Boolean(open[cat.kind])} onClick={() => setOpen(cat.kind)}>
               <span className={`fxt-ic k-hook sm${activeHookKind === cat.kind ? ' on' : ''}`}><Glyph name={cat.icon} size={14} /></span>
-              <span className="name">{cat.label}{cat.options.length > 0 && <span className="c">{cat.options.length}</span>}</span>
-              {activeHookKind === cat.kind && <span className="was">в этом ролике</span>}
+              <span className="name">{fxName(cat.label)}{cat.options.length > 0 && <span className="c">{cat.options.length}</span>}</span>
+              {activeHookKind === cat.kind && <span className="was">{tr('wizard.montage.inThisVideo')}</span>}
               <span className="chev"><Glyph name="chev" size={16} /></span>
             </button>
             {open[cat.kind] && (cat.kind === 'warmup'
-              ? <div className="fxt-grid">{row({ kind: 'hook', label: 'Свой звук или видео', hookKind: 'warmup' }, <Ic kind="hook" label="warmup" />, 'загружается на шаге FX', true)}</div>
+              ? <div className="fxt-grid">{row({ kind: 'hook', label: tr('wizard.montage.ownWarmup'), hookKind: 'warmup' }, <Ic kind="hook" label="warmup" />, tr('wizard.montage.ownWarmupMeta'), true)}</div>
               : items(cat.options.map((label) => ({ kind: 'hook' as const, label, hookKind: cat.kind }))))}
           </div>
         ))}
@@ -583,8 +605,8 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
             <div className="fxt-acc mt-plain">
               <button type="button" className="fxt-acc-h" aria-pressed={used({ kind: 'trans', label: NO_GLUE })} onClick={() => onAdd({ kind: 'trans', label: NO_GLUE })}>
                 <span className={`fxt-ic k-trans sm${used({ kind: 'trans', label: NO_GLUE }) ? ' on' : ''}`}><Glyph name="t_none" size={14} /></span>
-                <span className="name">{NO_GLUE}<span className="c">жёсткая склейка</span></span>
-                {used({ kind: 'trans', label: NO_GLUE }) ? <span className="was">в этом ролике</span> : <span className="mt-plainact">на все склейки</span>}
+                <span className="name">{fxName(NO_GLUE)}<span className="c">{metaOf(NO_GLUE)}</span></span>
+                {used({ kind: 'trans', label: NO_GLUE }) ? <span className="was">{tr('wizard.montage.inThisVideo')}</span> : <span className="mt-plainact">{tr('wizard.montage.onAllCuts')}</span>}
               </button>
             </div>
             {groups(GLUE_GROUPS, 'trans')}
@@ -594,8 +616,8 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
         {tab === 'frame' && (
           <>
             {/* плашки — кадр этого ролика с рамкой поверх: видно, как она ляжет именно на него */}
-            <div className="mt-plates mt-frames" role="radiogroup" aria-label="Рамка ролика">
-              {[{ id: '', label: 'Без рамки', previewUrl: '' }, ...frames].map((f) => {
+            <div className="mt-plates mt-frames" role="radiogroup" aria-label={tr('wizard.montage.frameGroup')}>
+              {[{ id: '', label: tr('wizard.montage.noFrame'), previewUrl: '' }, ...frames].map((f) => {
                 const on = (frameId ?? '') === f.id;
                 return (
                   <button key={f.id || 'none'} type="button" role="radio" aria-checked={on} aria-label={f.label} className="mt-plate mt-frame-plate" disabled={Boolean(frameNote) && Boolean(f.id)} onClick={() => onPickFrame(f.id || null)} data-tip={f.label}>
@@ -623,6 +645,8 @@ function PickPopover({ title, options, current, left, bottom, preview, onApply, 
   title: string; options: PopOption[]; current: string; left: number; bottom: number;
   preview: (id: string) => ReactNode; onApply: (id: string) => void; footer?: ReactNode; stateLabel: string;
 }) {
+  const { t: tr } = useTranslation();
+  const fxName = useFxName();
   const [shown, setShown] = useState(current);
   const pending = useRef<string | null>(null);
   const timer = useRef(0);
@@ -664,10 +688,10 @@ function PickPopover({ title, options, current, left, bottom, preview, onApply, 
     <div className="fxt-pop fxt-cutpop" role="dialog" aria-label={title} style={{ left, bottom }} onPointerDown={(e) => e.stopPropagation()}>
       <div className="mstage" style={{ width: 169, height: 300 }}>
         {preview(shown)}
-        <div className="mtop"><span className="nm tx">{cur?.label}{cur?.group && <i className="grp"> · {cur.group}</i>}</span><span className="c tx num">{idx + 1}/{options.length}</span></div>
-        <button type="button" className="mnav l" aria-label="Предыдущий" data-tip="Предыдущий · ←" onClick={() => browse(-1)}><Glyph name="back" size={16} sw={2} /></button>
-        <button type="button" className="mnav r" aria-label="Следующий" data-tip="Следующий · →" onClick={() => browse(1)}><Glyph name="fwd" size={16} sw={2} /></button>
-        <span className={`mstate${settled ? ' on' : ''}`}>{settled && <Glyph name="check" size={12} sw={2} />}<span className="tx">{settled ? stateLabel : 'Пример'}</span></span>
+        <div className="mtop"><span className="nm tx">{fxName(cur?.label)}{cur?.group && <i className="grp"> · {tr(`wizard.montage.groups.${cur.group}`)}</i>}</span><span className="c tx num">{idx + 1}/{options.length}</span></div>
+        <button type="button" className="mnav l" aria-label={tr('wizard.montage.prev')} data-tip={tr('wizard.montage.prevKey')} onClick={() => browse(-1)}><Glyph name="back" size={16} sw={2} /></button>
+        <button type="button" className="mnav r" aria-label={tr('wizard.montage.next')} data-tip={tr('wizard.montage.nextKey')} onClick={() => browse(1)}><Glyph name="fwd" size={16} sw={2} /></button>
+        <span className={`mstate${settled ? ' on' : ''}`}>{settled && <Glyph name="check" size={12} sw={2} />}<span className="tx">{settled ? stateLabel : tr('wizard.montage.example')}</span></span>
       </div>
       <h3>{title}</h3>
       <div ref={listRef} className="opts" role="listbox" aria-label={title}>
@@ -675,12 +699,12 @@ function PickPopover({ title, options, current, left, bottom, preview, onApply, 
           <Fragment key={o.id}>
           {o.group && o.group !== options[i - 1]?.group && (
             <div className="fxt-opt-group" role="presentation">
-              {o.groupIcon && <Glyph name={o.groupIcon} size={12} />}<span className="tx">{o.group}</span>
+              {o.groupIcon && <Glyph name={o.groupIcon} size={12} />}<span className="tx">{tr(`wizard.montage.groups.${o.group}`)}</span>
             </div>
           )}
           <button type="button" role="option" data-opt={o.id} className={`fxt-opt${o.id === shown && o.id !== current ? ' browsed' : ''}`} aria-selected={o.id === current} aria-pressed={o.id === current} onClick={() => pick(o.id)}>
             {o.url !== undefined ? <Thumb url={o.url} size={26} /> : <Ic kind="trans" label={o.glyph ?? o.label} on={o.id === current} size={26} />}
-            <span className="tx">{o.label}</span>{o.id === current && <span className="ck"><Glyph name="check" size={16} sw={2} /></span>}
+            <span className="tx">{fxName(o.label)}</span>{o.id === current && <span className="ck"><Glyph name="check" size={16} sw={2} /></span>}
           </button>
           </Fragment>
         ))}
@@ -698,6 +722,11 @@ function PickPopover({ title, options, current, left, bottom, preview, onApply, 
 export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false }: { index: number; onIndex: (i: number) => void; onClose: () => void; onGenerate: () => string | null; busy?: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null);
   useTooltips(rootRef);
+  const { t: tr, i18n } = useTranslation();
+  const fxName = useFxName();
+  const chip = useChip();
+  const secs = (v: number) => tr('wizard.montage.secs', { n: fmtSec(v, i18n.language) });
+  const clipTitle = (id: string) => tr(id.startsWith('photo-') ? 'wizard.montage.photoN' : 'wizard.montage.clipN', { n: Number(/(\d+)(\.mp4)?$/.exec(id)?.[1] ?? 0) });
   // модальный стол: фокус — внутрь при открытии и обратно на кнопку, что его открыла, при закрытии
   useEffect(() => {
     const back = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -816,7 +845,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     // дроп общий для батча и двигает склейки — в историю идут все ролики, склейки и сам дроп
     remember(allIdx, { timeline: true, drop: true });
     setWizardHooks({ dropTime: secondsToDropTime(start + v) });
-    say(`Дроп ${tc(start + drop)} → ${tc(start + v)} — хук и склейки для всех роликов`);
+    say(tr('wizard.montage.dropMoved', { from: tc(start + drop), to: tc(start + v) }));
   };
   const hookRange = hookRangeFor(vfx);
   const fxEdit = (fn: (v: VideoFx) => VideoFx) => editVideos([combo.index], fn);
@@ -955,7 +984,6 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   const [editK, setEditK] = useState<number | null>(null);
   const dockRef = useRef<HTMLDivElement>(null);
   // Тур стола (общая память подсказок): кадры в превью → дорожки ролика.
-  const { t: tr } = useTranslation();
   const [framesGuideDismissed, setFramesGuideDismissed] = useGuideDismiss('table-frames', false);
   const [lanesGuideDismissed, setLanesGuideDismissed] = useGuideDismiss('table-lanes', false);
   useEffect(() => {
@@ -1159,13 +1187,13 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
         const uid = Math.max(0, ...styles.map((s) => s.uid)) + 1;
         setStyles([...styles, { uid, style: label, lane, a: frame, b: frame + 1 }]);
         setSel({ type: 'style', uid });
-        say(`${label} — кадр ${frame + 1}. Тяни края, чтобы растянуть`);
+        say(tr('wizard.montage.styleAdded', { name: fxName(label), n: frame + 1 }));
         return;
       }
     }
-    say('На этом кадре уже два стиля — это максимум');
+    say(tr('wizard.montage.twoStylesMax'));
   };
-  const noCutsNote = () => say('У статичного цвета нет склеек — переход на нём не встанет');
+  const noCutsNote = () => say(tr('wizard.montage.staticNoCuts'));
   const setTransition = (i: number, label: string) => { if (staticColor && label !== NO_GLUE) { noCutsNote(); return; } remember(); setTimeline({ transitions: { ...vfx.transitions, [i]: label } }); };
   const popEdited = useRef<number | null>(null);
   const setCutTransition = (i: number, label: string) => {
@@ -1178,15 +1206,15 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     remember();
     setTimeline({ transitions: Object.fromEntries(cuts.map((_, i) => [i, label])) });
     setHooks({ config: { effectGlue: label } });
-    say(`${label} — на всех склейках`);
+    say(tr('wizard.montage.onAllCutsToast', { name: fxName(label) }));
   };
-  const setSub = (name: string) => { pickSub(name); say(`Субтитры ролика: ${name}`); };
-  const frameLabel = (id: string | null) => (id ? frameCatalog.find((f) => f.id === id)?.label ?? id : 'без рамки');
+  const setSub = (name: string) => { pickSub(name); say(tr('wizard.montage.subPicked', { name })); };
+  const frameLabel = (id: string | null) => (id ? frameCatalog.find((f) => f.id === id)?.label ?? id : tr('wizard.montage.noFrameLower'));
   const pickFrame = (id: string | null) => {
-    if (id && !combo.vertical) { say('Рамка ставится только на вертикальное видео — на 16:9 её обрезало бы'); return; }
+    if (id && !combo.vertical) { say(tr('wizard.montage.frameVerticalOnly')); return; }
     remember();
     fxEdit((v) => ({ ...v, frame: id }));
-    say(`Рамка ролика: ${frameLabel(id)}`);
+    say(tr('wizard.montage.framePicked', { name: frameLabel(id) }));
   };
   // «Во все N»: только туда, где бэк правку примет, — и честно сколько из батча её получили
   const toAll = (fn: (v: VideoFx) => VideoFx, msg: string, only?: number[]) => {
@@ -1195,10 +1223,10 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
       const c = combos[i];
       return c && !rejects(c, fn(cur[i]?.sig === c.sig ? cur[i] : defaultsFor(c)));
     });
-    if (!ok.length) { say('Ни в один ролик батча это не встанет'); return; }
+    if (!ok.length) { say(tr('wizard.montage.noneEligible')); return; }
     remember(ok);
     editVideos(ok, fn);
-    say(ok.length === total ? `${msg} — во всех ${total} ${rolik(total)}` : `${msg} — применено к ${ok.length} из ${total}`);
+    say(ok.length === total ? tr('wizard.montage.appliedAll', { msg, n: total }) : tr('wizard.montage.appliedSome', { msg, k: ok.length, n: total }));
   };
   /** Хук ролика целиком (тип и его поля) поверх ролика v — склейка и стили v остаются его. */
   const withHookOf = (src: VideoFx) => (v: VideoFx): VideoFx => {
@@ -1210,32 +1238,32 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   const hookIdx = combos.filter((c) => c.hookAllowed).map((c) => c.index);
   // рамка нарисована под 9:16 — «Во все» ставит её только вертикальным роликам
   const verticalIdx = combos.filter((c) => c.vertical).map((c) => c.index);
-  const allPill = (onClick: () => void, count = total) => count > 1 ? <button type="button" className="fxt-pill mt-all" data-tip={`Поставить то же самое во все ${count} ${rolik(count)} батча`} onClick={onClick}><span className="tx">Во все {count}</span></button> : null;
+  const allPill = (onClick: () => void, count = total) => count > 1 ? <button type="button" className="fxt-pill mt-all" data-tip={tr('wizard.montage.allTip', { n: count })} onClick={onClick}><span className="tx">{tr('wizard.montage.allN', { n: count })}</span></button> : null;
   const addHook = (item: LibItem) => {
     const cat = HOOK_CATS.find((c) => c.kind === item.hookKind);
     if (!cat?.key) return;
-    if (drop === null) { say('Сначала выбери дроп на шаге FX — хук встаёт на него'); return; }
-    if (!combo.hookAllowed) { say('Хук ставится только на вертикальное видео — на фото, цвете и 16:9 его не будет'); return; }
+    if (drop === null) { say(tr('wizard.montage.needDrop')); return; }
+    if (!combo.hookAllowed) { say(tr('wizard.montage.hookVerticalOnly')); return; }
     const prev = activeHookLabel && activeHookLabel !== item.label ? activeHookLabel : null;
     const carry: Partial<HookConfig> = kind === cat.kind ? {} : { effectGlue: config.effectGlue, effectStyle: config.effectStyle, effectStyles: config.effectStyles };
     remember();
     setHooks({ kind: cat.kind, config: { ...carry, [cat.key]: item.label } as Partial<HookConfig> });
     setSel({ type: 'hook' });
-    say(prev ? `Хук заменён: ${prev} → ${item.label}` : `${item.label} встал на дроп ${tc(drop)}`);
+    say(prev ? tr('wizard.montage.hookReplaced', { from: fxName(prev), to: fxName(item.label) }) : tr('wizard.montage.hookPlaced', { name: fxName(item.label), at: tc(drop) }));
   };
   const targetFrame = () => (sel?.type === 'frame' ? sel.i : frameAt(tRef.current));
   const addFromLib = (item: LibItem) => {
     if (item.kind === 'text') return setSub(item.label);
     if (item.kind === 'hook') return addHook(item);
     if (item.kind === 'style') return addStyle(item.label, targetFrame());
-    if (sel?.type === 'cut') { setTransition(sel.i, item.label); say(`Склейка ${sel.i + 1}: ${item.label}`); } else setTransitionAll(item.label);
+    if (sel?.type === 'cut') { setTransition(sel.i, item.label); say(tr('wizard.montage.cutSet', { n: sel.i + 1, name: fxName(item.label) })); } else setTransitionAll(item.label);
   };
   const del = () => {
     if (!sel) return;
-    if (sel.type === 'hook' && kind !== 'none') { remember(); setHooks({ kind: 'none', config: { effectGlue: config.effectGlue, effectStyles: config.effectStyles, effectStyle: config.effectStyle } }); say('Хук снят — переходы и стили остались'); }
+    if (sel.type === 'hook' && kind !== 'none') { remember(); setHooks({ kind: 'none', config: { effectGlue: config.effectGlue, effectStyles: config.effectStyles, effectStyle: config.effectStyle } }); say(tr('wizard.montage.hookRemoved')); }
     else if (sel.type === 'style') { remember(); setStyles(styles.filter((s) => s.uid !== sel.uid)); }
     else if (sel.type === 'cut') setTransition(sel.i, NO_GLUE);
-    else if (sel.type === 'frame' && sbVideo?.pins[sel.i]) { unpin(sel.i); say(`Кадр ${sel.i + 1} откреплён`); return; }
+    else if (sel.type === 'frame' && sbVideo?.pins[sel.i]) { unpin(sel.i); say(tr('wizard.montage.shotUnpinned', { n: sel.i + 1 })); return; }
     else return;
     setSel(null);
   };
@@ -1267,10 +1295,10 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   const libTarget = (item: LibItem, x: number, y: number): PlaceTarget | null => {
     const ln = laneAt(x, y); if (!ln) return null;
     const v = clamp(xt(cvX(x)), 0, dur - 0.001);
-    if (item.kind === 'src') { const f = frameAt(v); return { lane: 'frames', a: bounds[f], b: bounds[f + 1], label: `кадр ${f + 1}` }; }
-    if (item.kind === 'text') return { lane: 'subs', a: 0, b: dur, label: 'стиль субтитров ролика' };
-    if (item.kind === 'hook') { if (drop === null) return null; const cat = HOOK_CATS.find((c) => c.kind === item.hookKind); if (!cat?.key) return null; const span = hookSpan(cat.kind, { ...config, [cat.key]: item.label }, drop, dur, bpm, bounds); return span ? { lane: 'hook', a: span[0], b: span[1], label: 'на дроп' } : null; }
-    if (item.kind === 'style') { const f = frameAt(v); const pref: 0 | 1 = ln === 's1' ? 1 : 0; for (const L of [pref, (1 - pref) as 0 | 1]) if (styleFree(L, f, f + 1)) return { lane: `s${L}`, a: bounds[f], b: bounds[f + 1] }; return { lane: `s${pref}`, a: bounds[f], b: bounds[f + 1], bad: true, label: 'Уже два стиля' }; }
+    if (item.kind === 'src') { const f = frameAt(v); return { lane: 'frames', a: bounds[f], b: bounds[f + 1], label: tr('wizard.montage.placeShot', { n: f + 1 }) }; }
+    if (item.kind === 'text') return { lane: 'subs', a: 0, b: dur, label: tr('wizard.montage.placeSubs') };
+    if (item.kind === 'hook') { if (drop === null) return null; const cat = HOOK_CATS.find((c) => c.kind === item.hookKind); if (!cat?.key) return null; const span = hookSpan(cat.kind, { ...config, [cat.key]: item.label }, drop, dur, bpm, bounds); return span ? { lane: 'hook', a: span[0], b: span[1], label: tr('wizard.montage.placeDrop') } : null; }
+    if (item.kind === 'style') { const f = frameAt(v); const pref: 0 | 1 = ln === 's1' ? 1 : 0; for (const L of [pref, (1 - pref) as 0 | 1]) if (styleFree(L, f, f + 1)) return { lane: `s${L}`, a: bounds[f], b: bounds[f + 1] }; return { lane: `s${pref}`, a: bounds[f], b: bounds[f + 1], bad: true, label: tr('wizard.montage.placeTwoStyles') }; }
     if (!cuts.length) return null;
     let k = 0; cuts.forEach((c, i) => { if (Math.abs(c - v) < Math.abs(cuts[k] - v)) k = i; });
     return { join: k };
@@ -1351,7 +1379,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
         document.body.style.cursor = ''; setGhost(null); setPlace(null);
         if (!d.live) return;
         const target = libTarget(d.item, e.clientX, e.clientY); if (!target) return;
-        if ('join' in target) { setTransition(target.join, d.item.label); setSel({ type: 'cut', i: target.join }); say(`Склейка ${target.join + 1}: ${d.item.label}`); return; }
+        if ('join' in target) { setTransition(target.join, d.item.label); setSel({ type: 'cut', i: target.join }); say(tr('wizard.montage.cutSet', { n: target.join + 1, name: fxName(d.item.label) })); return; }
         if (target.bad) return;
         if (d.item.kind === 'text') setSub(d.item.label);
         else if (d.item.kind === 'hook') addHook(d.item);
@@ -1459,29 +1487,29 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
 
   /* ── подписи выделения ── */
   const selInfo = () => {
-    if (!sel) return <span className="muted">Выбери кадр, склейку или эффект на дорожке</span>;
+    if (!sel) return <span className="muted">{tr('wizard.montage.selNone')}</span>;
     if (sel.type === 'frame') {
       const clip = clips[sel.i]; const pinned = Boolean(srcPins[sel.i]);
-      return <><span className="mt-thumb mt-selthumb"><FrameView frame={clip} thumb /></span><span className="nm">Кадр {pad(sel.i + 1)}</span><span className="meta num">{clip?.color ? (clip.strobe ? 'строб' : 'цвет') : clip ? clipTitle(clip.id) : '—'} · {secs(bounds[sel.i + 1] - bounds[sel.i])}</span>
+      return <><span className="mt-thumb mt-selthumb"><FrameView frame={clip} thumb /></span><span className="nm">{tr('wizard.montage.shotTitle', { n: pad(sel.i + 1) })}</span><span className="meta num">{clip?.color ? tr(clip.strobe ? 'wizard.montage.strobe' : 'wizard.montage.colour') : clip ? clipTitle(clip.id) : '—'} · {secs(bounds[sel.i + 1] - bounds[sel.i])}</span>
         
-        {pinned && <button type="button" className="fxt-pill" data-tip="Заменён вручную — при пересборке «Пула» не поменяется. Нажми, чтобы открепить" onClick={() => unpin(sel.i)}><Glyph name="lock" size={13} /><span className="tx">Закреплён ×</span></button>}</>;
+        {pinned && <button type="button" className="fxt-pill" data-tip={tr('wizard.montage.pinnedTip')} onClick={() => unpin(sel.i)}><Glyph name="lock" size={13} /><span className="tx">{tr('wizard.montage.pinned')}</span></button>}</>;
     }
-    if (sel.type === 'cut') { const label = transitionAt(sel.i); return <><Ic kind="trans" label={label} size={24} /><span className="nm">Склейка {sel.i + 1} → {sel.i + 2}</span><span className="meta">{label}</span><button type="button" className="fxt-pill" onClick={() => setTransitionAll(label)}><span className="tx">Ко всем склейкам</span></button>{allPill(() => cutToAll(sel.i))}</>; }
-    if (sel.type === 'hook' && hookRange && activeHookLabel) return <><Ic kind="hook" label={activeHookLabel} size={24} /><span className="nm">{activeHookLabel}</span><span className="meta num">{hookRange[1] <= (dropView ?? 0) + 1e-3 ? 'заканчивается на дропе' : 'стартует с дропа'} {tc(start + (dropView ?? 0))} · {secs(hookRange[1] - hookRange[0])} · тяни или ← → по битам</span>{kind === 'effects' && config.effectHook === 'Слоу-шаттер' && <div className="fxt-seg" role="group" aria-label="Длина слоу-шаттера">{SLOW_EXTENDS.map(([opt, lab]) => <button key={opt || 'std'} type="button" aria-pressed={(config.effectHookExtend ?? '') === opt} onClick={() => setSlowExtend(opt)}><span className="tx">{lab}</span></button>)}</div>}{allPill(hookToAll, hookIdx.length)}<button type="button" className="fxt-icon" aria-label="Снять хук" data-tip="Снять хук · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>;
-    if (sel.type === 'style') { const s = styles.find((x) => x.uid === sel.uid); if (!s) return null; return <><Ic kind="style" label={s.style} size={24} /><span className="nm">{s.style}</span><span className="meta num">{s.b - s.a > 1 ? `кадры ${s.a + 1}–${s.b}` : `кадр ${s.a + 1}`} · {secs(bounds[s.b] - bounds[s.a])}</span><button type="button" className="fxt-pill" onClick={() => styleWhole(s)}><span className="tx">На весь отрывок</span></button>{allPill(() => styleToAll(s))}<button type="button" className="fxt-icon" aria-label="Удалить" data-tip="Удалить · Delete" onClick={del}><Glyph name="trash" size={17} /></button></>; }
-    if (sel.type === 'sub') { const s = subs[sel.i]; return s ? <><Ic kind="trans" label="text" size={24} /><span className="nm">«{s.text}»</span><span className="meta num">{tc(s.a)} → {tc(s.b)} · {secs(s.b - s.a)}{s.focus ? ' · фокус-слово' : ''}</span><button type="button" className="fxt-pill" data-tip="Двойной клик по слову делает то же · F" onClick={() => toggleAsrFocus(s.idx)}><span className="tx">{s.focus ? 'Снять фокус' : 'Фокус-слово'}</span></button></> : null; }
+    if (sel.type === 'cut') { const label = transitionAt(sel.i); return <><Ic kind="trans" label={label} size={24} /><span className="nm">{tr('wizard.montage.cutTitle', { a: sel.i + 1, b: sel.i + 2 })}</span><span className="meta">{fxName(label)}</span><button type="button" className="fxt-pill" onClick={() => setTransitionAll(label)}><span className="tx">{tr('wizard.montage.toAllCuts')}</span></button>{allPill(() => cutToAll(sel.i))}</>; }
+    if (sel.type === 'hook' && hookRange && activeHookLabel) return <><Ic kind="hook" label={activeHookLabel} size={24} /><span className="nm">{fxName(activeHookLabel)}</span><span className="meta num">{tr(hookRange[1] <= (dropView ?? 0) + 1e-3 ? 'wizard.montage.hookEndsAtDrop' : 'wizard.montage.hookStartsAtDrop')} {tc(start + (dropView ?? 0))} · {secs(hookRange[1] - hookRange[0])} · {tr('wizard.montage.hookDragHint')}</span>{kind === 'effects' && config.effectHook === 'Слоу-шаттер' && <div className="fxt-seg" role="group" aria-label={tr('wizard.montage.slowLength')}>{SLOW_EXTENDS.map(([opt, lab]) => <button key={opt || 'std'} type="button" aria-pressed={(config.effectHookExtend ?? '') === opt} onClick={() => setSlowExtend(opt)}><span className="tx">{tr(`wizard.montage.${lab}`)}</span></button>)}</div>}{allPill(hookToAll, hookIdx.length)}<button type="button" className="fxt-icon" aria-label={tr('wizard.montage.removeHook')} data-tip={tr('wizard.montage.removeHookKey')} onClick={del}><Glyph name="trash" size={17} /></button></>;
+    if (sel.type === 'style') { const s = styles.find((x) => x.uid === sel.uid); if (!s) return null; return <><Ic kind="style" label={s.style} size={24} /><span className="nm">{fxName(s.style)}</span><span className="meta num">{s.b - s.a > 1 ? tr('wizard.montage.shotsRange', { a: s.a + 1, b: s.b }) : tr('wizard.montage.placeShot', { n: s.a + 1 })} · {secs(bounds[s.b] - bounds[s.a])}</span><button type="button" className="fxt-pill" onClick={() => styleWhole(s)}><span className="tx">{tr('wizard.montage.wholeClip')}</span></button>{allPill(() => styleToAll(s))}<button type="button" className="fxt-icon" aria-label={tr('wizard.montage.delete')} data-tip={tr('wizard.montage.deleteKey')} onClick={del}><Glyph name="trash" size={17} /></button></>; }
+    if (sel.type === 'sub') { const s = subs[sel.i]; return s ? <><Ic kind="trans" label="text" size={24} /><span className="nm">«{s.text}»</span><span className="meta num">{tc(s.a)} → {tc(s.b)} · {secs(s.b - s.a)}{s.focus ? ` · ${tr('wizard.montage.focusWord')}` : ''}</span><button type="button" className="fxt-pill" data-tip={tr('wizard.montage.focusTip')} onClick={() => toggleAsrFocus(s.idx)}><span className="tx">{tr(s.focus ? 'wizard.montage.unfocus' : 'wizard.montage.makeFocus')}</span></button></> : null; }
     return null;
   };
 
   /* общие действия выделения — десктопная строка и телефонная панель зовут одни и те же */
   const setSlowExtend = (opt: SlowExtend) => { if ((config.effectHookExtend ?? '') === opt) return; remember(); setHooks({ config: { effectHookExtend: opt } }); };
-  const hookToAll = () => { if (activeHookLabel) toAll(withHookOf(vfx), activeHookLabel, hookIdx); };
-  const cutToAll = (i: number) => { const label = transitionAt(i); toAll((v) => ({ ...v, transitions: { ...v.transitions, [i]: label } }), `Склейка ${i + 1}: ${label}`); };
+  const hookToAll = () => { if (activeHookLabel) toAll(withHookOf(vfx), fxName(activeHookLabel), hookIdx); };
+  const cutToAll = (i: number) => { const label = transitionAt(i); toAll((v) => ({ ...v, transitions: { ...v.transitions, [i]: label } }), tr('wizard.montage.cutSet', { n: i + 1, name: fxName(label) })); };
   const styleWhole = (s: TimelineStyleRange) => {
-    if (!styleFree(s.lane, 0, shots, s.uid)) { say('На этой дорожке мешает другой стиль — перенеси его на «Стиль 2»'); return; }
+    if (!styleFree(s.lane, 0, shots, s.uid)) { say(tr('wizard.montage.laneBlocked')); return; }
     remember(); setStyles(styles.map((x) => x.uid === s.uid ? { ...x, a: 0, b: shots } : x));
   };
-  const styleToAll = (s: TimelineStyleRange) => toAll((v) => ({ ...v, styles: [...v.styles.filter((o) => o.lane !== s.lane || o.b <= s.a || o.a >= s.b), { ...s, uid: Math.max(0, ...v.styles.map((o) => o.uid)) + 1 }] }), s.style);
+  const styleToAll = (s: TimelineStyleRange) => toAll((v) => ({ ...v, styles: [...v.styles.filter((o) => o.lane !== s.lane || o.b <= s.a || o.a >= s.b), { ...s, uid: Math.max(0, ...v.styles.map((o) => o.uid)) + 1 }] }), fxName(s.style));
   // темп общий для батча и пересобирает кадры всех роликов — в историю идут все и склейки
   const changePace = (pace: TimelinePace) => {
     if (recipe.pace === pace) return;
@@ -1489,7 +1517,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     recipe.setPace(pace); setSel(null); setPop(null);
   };
   const paceGlyph = (k: number) => { const n = [3, 5, 7][k]; let d = ''; for (let j = 1; j < n; j++) d += `M${(2 + j * 20 / n).toFixed(1)} 8v8`; return `<rect x="2" y="7" width="20" height="10" rx="2.5"/><path d="${d}"/>`; };
-  const paceTip = (pace: TimelinePace) => { const n = recipe.data?.cuts[pace].length; const label = { sparse: 'Реже', auto: 'Авто — как посчитал рендер по темпу', dense: 'Чаще' }[pace]; return n !== undefined ? `${label} · ${n + 1} ${kadr(n + 1)} · для всех роликов` : label; };
+  const paceLabel = (pace: TimelinePace) => tr({ sparse: 'wizard.montage.paceSparse', auto: 'wizard.montage.paceAuto', dense: 'wizard.montage.paceDense' }[pace]);
+  const paceTip = (pace: TimelinePace) => { const n = recipe.data?.cuts[pace].length; const label = pace === 'auto' ? tr('wizard.montage.paceAutoTip') : paceLabel(pace); return n !== undefined ? tr('wizard.montage.paceTip', { label, shots: tr('wizard.montage.shots', { count: n + 1 }) }) : label; };
   const used = useCallback((item: LibItem) => item.kind === 'src' ? clips.some((c) => c.id === item.label)
     : item.kind === 'text' ? vfx.sub === item.label
       : item.kind === 'hook' ? activeHookLabel === item.label
@@ -1514,7 +1543,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   /* ── подписи роликов ── */
   const videoLabel = (c: Combo) => {
     const v = fxOf(c.index);
-    return [c.bgLabel, v.sub ?? c.sub ?? '—', hookLabel(v.kind, v.config) ?? 'без хука'].join(' · ');
+    const hook = hookLabel(v.kind, v.config);
+    return [chip(c.bgLabel), v.sub ?? c.sub ?? '—', hook ? fxName(hook) : tr('wizard.montage.noHook')].join(' · ');
   };
   const stageFxFor = (c: Combo): StageFx => { const v = fxOf(c.index); return { transitionAt: transitionAtFor(v), styles: v.styles, hookKind: v.kind, hookLabel: hookLabel(v.kind, v.config), hookRange: hookRangeFor(v), frameUrl: frameUrlOf(v.frame) }; };
   const subFor = (c: Combo) => subProps(fxOf(c.index).sub ?? c.sub, !c.vertical);
@@ -1544,29 +1574,29 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
                 {phone && (
         <div className="mm-heads">
           <div className="mm-h r" />
-          <div className="mm-h f"><span className="fxt-ic k-frame sm"><Glyph name="film" size={13} /></span><span className="tx">Кадры</span></div>
-          <div className="mm-h hk"><span className="fxt-ic k-hook sm"><Glyph name="effects" size={13} /></span><span className="tx">Хук</span></div>
+          <div className="mm-h f"><span className="fxt-ic k-frame sm"><Glyph name="film" size={13} /></span><span className="tx">{tr('wizard.montage.laneShots')}</span></div>
+          <div className="mm-h hk"><span className="fxt-ic k-hook sm"><Glyph name="effects" size={13} /></span><span className="tx">{tr('wizard.montage.laneHook')}</span></div>
           <div className="mm-h st">
-            <span className="fxt-ic k-style sm"><Glyph name="crystal" size={13} /></span><span className="tx">Стиль</span>
-            {!lane2 && <button type="button" className="mm-hadd" aria-label="Добавить вторую дорожку стиля" onClick={() => setLane2Open(true)}><Glyph name="plus" size={14} sw={2} /></button>}
+            <span className="fxt-ic k-style sm"><Glyph name="crystal" size={13} /></span><span className="tx">{tr('wizard.montage.laneStyle')}</span>
+            {!lane2 && <button type="button" className="mm-hadd" aria-label={tr('wizard.montage.addLane2')} onClick={() => setLane2Open(true)}><Glyph name="plus" size={14} sw={2} /></button>}
           </div>
           {lane2 && (
             <div className="mm-h st">
-              <span className="fxt-ic k-style sm"><Glyph name="crystal" size={13} /></span><span className="tx">Стиль 2</span>
-              {!styles.some((x) => x.lane === 1) && <button type="button" className="mm-hadd" aria-label="Убрать вторую дорожку стиля" onClick={() => setLane2Open(false)}><Glyph name="close" size={11} sw={2} /></button>}
+              <span className="fxt-ic k-style sm"><Glyph name="crystal" size={13} /></span><span className="tx">{tr('wizard.montage.laneStyle2')}</span>
+              {!styles.some((x) => x.lane === 1) && <button type="button" className="mm-hadd" aria-label={tr('wizard.montage.removeLane2')} onClick={() => setLane2Open(false)}><Glyph name="close" size={11} sw={2} /></button>}
             </div>
           )}
-          <div className="mm-h sb"><span className="fxt-ic k-trans sm"><Glyph name="text" size={13} /></span><span className="tx">Текст</span></div>
-          <div className="mm-h au"><span className="fxt-ic k-trans sm"><Glyph name="audio" size={13} /></span><span className="tx">Биты</span></div>
+          <div className="mm-h sb"><span className="fxt-ic k-trans sm"><Glyph name="text" size={13} /></span><span className="tx">{tr('wizard.montage.laneText')}</span></div>
+          <div className="mm-h au"><span className="fxt-ic k-trans sm"><Glyph name="audio" size={13} /></span><span className="tx">{tr('wizard.montage.laneBeats')}</span></div>
         </div>
                 )}
                   <div className="fxt-ruler">
                     {ticks.map(({ v, maj }) => <span key={v}><i className={`fxt-tick${maj ? ' maj' : ''}`} style={{ left: tx(v) }} />{maj && <span className="fxt-tlab num" style={{ left: tx(v) }}>{pad(Math.floor((start + v) / 60))}:{pad(Math.round(start + v) % 60)}</span>}</span>)}
-                    {dropView !== null && <div className="fxt-dropflag num" style={{ left: tx(dropView) }}><span>Дроп {tc(start + dropView)}</span></div>}
+                    {dropView !== null && <div className="fxt-dropflag num" style={{ left: tx(dropView) }}><span>{tr('wizard.montage.dropFlag', { at: tc(start + dropView) })}</span></div>}
                   </div>
                   <div ref={(el) => { laneRefs.current.frames = el; }} className={`fxt-lane l-frames mt-l-src${place && 'lane' in place && place.lane === 'frames' ? ' over' : ''}`}>
-                    {!phone && recipe.loading && <span className="fxt-hint" style={{ left: x0 + 8 }}>Считаем склейки по темпу трека…</span>}
-                    {!phone && recipe.error && !recipe.loading && <span className="mt-lanemsg" role="alert" style={{ left: x0 + 8 }}><span className="tx">Не удалось посчитать склейки</span><button type="button" className="fxt-pill" onClick={recipe.retry}><span className="tx">Повторить</span></button></span>}
+                    {!phone && recipe.loading && <span className="fxt-hint" style={{ left: x0 + 8 }}>{tr('wizard.montage.cutsLoading')}</span>}
+                    {!phone && recipe.error && !recipe.loading && <span className="mt-lanemsg" role="alert" style={{ left: x0 + 8 }}><span className="tx">{tr('wizard.montage.cutsFailed')}</span><button type="button" className="fxt-pill" onClick={recipe.retry}><span className="tx">{tr('wizard.montage.retry')}</span></button></span>}
                     {!recipe.loading && Array.from({ length: shots }, (_, i) => {
                       const x = tx(bounds[i]); const w = tx(bounds[i + 1]) - x; const clip = clips[i]; const pinned = Boolean(srcPins[i]);
                       return (
@@ -1576,7 +1606,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
                           {clip?.color && <span className={`mt-film mt-filmc${clip.strobe ? ' strobe' : ''}`} style={{ background: clip.color }} />}
                           {i > 0 && <i className="fxt-edge l" data-cut={i - 1} />}
                           <span className="n num">{pad(i + 1)}</span>
-                          {pinned && <span className="mt-pin" data-tip="Закреплён вручную"><Glyph name="lock" size={10} sw={2.2} /></span>}
+                          {pinned && <span className="mt-pin" data-tip={tr('wizard.montage.pinnedByHand')}><Glyph name="lock" size={10} sw={2.2} /></span>}
                           {w > 86 && <span className="d num">{secs(bounds[i + 1] - bounds[i])}</span>}
                           {i < shots - 1 && <i className="fxt-edge r" data-cut={i} />}
                         </div>
@@ -1585,7 +1615,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
                     {!recipe.loading && !staticColor && cuts.map((c, i) => {
                       const label = transitionAt(i);
                       return (
-                        <button key={`j${i}`} type="button" className={`fxt-join${label === NO_GLUE ? ' none' : ''}${sel?.type === 'frame' && (sel.i === i || sel.i === i + 1) ? ' under' : ''}${sel?.type === 'cut' && sel.i === i ? ' sel' : ''}${place && 'join' in place && place.join === i ? ' target' : ''}`} style={{ left: tx(c) }} aria-label={`Склейка ${i + 1}: ${label}`}
+                        <button key={`j${i}`} type="button" className={`fxt-join${label === NO_GLUE ? ' none' : ''}${sel?.type === 'frame' && (sel.i === i || sel.i === i + 1) ? ' under' : ''}${sel?.type === 'cut' && sel.i === i ? ' sel' : ''}${place && 'join' in place && place.join === i ? ' target' : ''}`} style={{ left: tx(c) }} aria-label={tr('wizard.montage.cutSet', { n: i + 1, name: fxName(label) })}
                           onClick={(e) => { setSel({ type: 'cut', i }); popEdited.current = null; if (phone) { setSheet('trans'); return; } seek(Math.max(0, c - 0.5)); const z = zoomScale(); const r = e.currentTarget.getBoundingClientRect(); setPop({ type: 'cut', i, x: (r.left + r.width / 2) / z, y: r.top / z }); }}>
                           {label === NO_GLUE ? <Glyph name="plus" size={12} sw={2} /> : <Ic kind="trans" label={label} on size={24} />}
                         </button>
@@ -1594,25 +1624,25 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
                   </div>
                   <div ref={(el) => { laneRefs.current.hook = el; }} className={`fxt-lane l-hook${place && 'lane' in place && place.lane === 'hook' ? ' over' : ''}`}>
                     {hookRange && activeHookLabel
-                      ? (() => { const x = tx(hookRange[0]); const w = Math.max(18, tx(hookRange[1]) - x); return <><div className={`fxt-clip hk${sel?.type === 'hook' ? ' sel' : ''}${dragDrop !== null ? ' drag' : ''}`} style={{ left: x, width: w }} data-tip="Тяни — сдвинуть дроп (прилипает к битам) · ← → по битам"><Glyph name={GLYPH[activeHookLabel]} size={13} />{w >= 80 && <span className="lab">{activeHookLabel}</span>}{config.effectHook === 'Слоу-шаттер' && kind === 'effects' && <i className="fxt-edge r" data-hookedge="r" data-tip="Тяни: стандарт · 3 кадра · до конца" />}</div>{w < 80 && <span className="fxt-outlab" style={{ left: x + w + 8 }}>{activeHookLabel}</span>}</>; })()
-                      : <span className="fxt-hint" style={{ left: tx(drop ?? 0) + 10 }}>{drop === null ? 'Выбери дроп на шаге FX — хук встанет на него' : 'Без хука — перетащи хук из библиотеки, он встанет на дроп'}</span>}
+                      ? (() => { const x = tx(hookRange[0]); const w = Math.max(18, tx(hookRange[1]) - x); return <><div className={`fxt-clip hk${sel?.type === 'hook' ? ' sel' : ''}${dragDrop !== null ? ' drag' : ''}`} style={{ left: x, width: w }} data-tip={tr('wizard.montage.hookBodyTip')}><Glyph name={GLYPH[activeHookLabel]} size={13} />{w >= 80 && <span className="lab">{fxName(activeHookLabel)}</span>}{config.effectHook === 'Слоу-шаттер' && kind === 'effects' && <i className="fxt-edge r" data-hookedge="r" data-tip={tr('wizard.montage.slowEdgeTip')} />}</div>{w < 80 && <span className="fxt-outlab" style={{ left: x + w + 8 }}>{fxName(activeHookLabel)}</span>}</>; })()
+                      : <span className="fxt-hint" style={{ left: tx(drop ?? 0) + 10 }}>{tr(drop === null ? 'wizard.montage.hookNeedsDrop' : 'wizard.montage.hookEmpty')}</span>}
                   </div>
                   {(lane2 ? [0, 1] as const : [0] as const).map((L) => (
                     <div key={L} ref={(el) => { laneRefs.current[`s${L}`] = el; }} className={`fxt-lane l-s${L}${place && 'lane' in place && place.lane === `s${L}` ? ' over' : ''}`}>
-                      {!styles.some((s) => s.lane === L) && <span className="fxt-hint" style={{ left: x0 + 8 }}>{L ? 'Второй стиль поверх первого — до двух на кадр' : 'Перетащи стиль — он ляжет по границам кадров'}</span>}
+                      {!styles.some((s) => s.lane === L) && <span className="fxt-hint" style={{ left: x0 + 8 }}>{tr(L ? 'wizard.montage.lane2Tip' : 'wizard.montage.style1Empty')}</span>}
                       {styles.filter((s) => s.lane === L && s.b <= shots).map((s) => {
                         const x = tx(bounds[s.a]); const w = tx(bounds[s.b]) - x;
                         return (
                           <div key={s.uid} className={`fxt-clip st${sel?.type === 'style' && sel.uid === s.uid ? ' sel' : ''}`} data-uid={s.uid} style={{ left: x + 1, width: w - 2 }}>
-                            <i className="fxt-edge l" data-side="l" /><Glyph name={GLYPH[s.style]} size={13} /><span className="lab">{s.style}</span><i className="fxt-edge r" data-side="r" />
+                            <i className="fxt-edge l" data-side="l" /><Glyph name={GLYPH[s.style]} size={13} /><span className="lab">{fxName(s.style)}</span><i className="fxt-edge r" data-side="r" />
                           </div>
                         );
                       })}
                     </div>
                   ))}
                   <div ref={(el) => { laneRefs.current.subs = el; }} className={`fxt-lane l-subs${place && 'lane' in place && place.lane === 'subs' ? ' over' : ''}`}>
-                    {!subs.length && <span className="fxt-hint" style={{ left: x0 + 8 }}>Субтитры появятся после примерки на шаге «Текст»</span>}
-                    {subs.map((s, i) => { const x = tx(Math.max(0, s.a)); const w = tx(Math.min(dur, s.b)) - x; return <div key={`s${i}`} className={`fxt-clip sb mt-word${s.focus ? ' focus' : ''}${sel?.type === 'sub' && sel.i === i ? ' sel' : ''}${t >= s.a && t < s.b ? ' cur' : ''}`} data-sub={i} style={{ left: x + 1, width: Math.max(2, w - 2) }} title={`${s.text}${s.focus ? ' · фокус-слово' : ''} — тяни, края поджимают, двойной клик — фокус`} onDoubleClick={() => toggleAsrFocus(s.idx)}>{w > 22 && <i className="fxt-edge l" data-wedge="l" />}<span className="lab">{s.focus ? '★ ' : ''}{s.text}</span>{w > 22 && <i className="fxt-edge r" data-wedge="r" />}</div>; })}
+                    {!subs.length && <span className="fxt-hint" style={{ left: x0 + 8 }}>{tr('wizard.montage.subsEmpty')}</span>}
+                    {subs.map((s, i) => { const x = tx(Math.max(0, s.a)); const w = tx(Math.min(dur, s.b)) - x; return <div key={`s${i}`} className={`fxt-clip sb mt-word${s.focus ? ' focus' : ''}${sel?.type === 'sub' && sel.i === i ? ' sel' : ''}${t >= s.a && t < s.b ? ' cur' : ''}`} data-sub={i} style={{ left: x + 1, width: Math.max(2, w - 2) }} title={tr('wizard.montage.wordTip', { text: s.focus ? `${s.text} · ${tr('wizard.montage.focusWord')}` : s.text })} onDoubleClick={() => toggleAsrFocus(s.idx)}>{w > 22 && <i className="fxt-edge l" data-wedge="l" />}<span className="lab">{s.focus ? '★ ' : ''}{s.text}</span>{w > 22 && <i className="fxt-edge r" data-wedge="r" />}</div>; })}
                   </div>
                   <div className="fxt-lane l-audio">
                     {wavePeaksSeg && (
@@ -1636,11 +1666,11 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   const nearestCut = () => { if (!cuts.length) return -1; let k = 0; cuts.forEach((c, i) => { if (Math.abs(c - t) < Math.abs(cuts[k] - t)) k = i; }); return k; };
   const replaceStyle = (uid: number, label: string) => {
     remember(); setStyles(styles.map((x) => (x.uid === uid ? { ...x, style: label } : x)));
-    say(`Стиль заменён: ${label}`);
+    say(tr('wizard.montage.styleReplaced', { name: fxName(label) }));
   };
   const sheetAdd = (item: LibItem) => {
     if (item.kind === 'style' && sel?.type === 'style') return replaceStyle(sel.uid, item.label);
-    if (item.kind === 'trans' && sel?.type === 'cut') { setTransition(sel.i, item.label); say(`Склейка ${sel.i + 1}: ${item.label}`); return; }
+    if (item.kind === 'trans' && sel?.type === 'cut') { setTransition(sel.i, item.label); say(tr('wizard.montage.cutSet', { n: sel.i + 1, name: fxName(item.label) })); return; }
     addFromLib(item);
   };
   const nudgeWord = (i: number, d: number) => {
@@ -1670,79 +1700,79 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   // собирается под новые склейки) тап раньше ничего не делал
   const dockReady = Boolean(sbVideo) && clips.length === shots && !recipe.loading;
   const srcOff = dockReady ? null
-    : sbVideo ? 'Кадры ещё подбираются — подожди пару секунд'
-      : combo.bgKey?.startsWith('photo:') ? 'Фото подберутся при генерации'
-        : combo.bgKey?.startsWith('upload:') ? 'Своё видео пойдёт клипами встык — кадры не заменяются'
-          : combo.bgKey === '__color__' ? 'У цвета нет кадров-клипов'
-            : 'Кадры этого ролика подберутся при генерации';
-  const transOff = staticColor ? 'У статичного цвета нет склеек — переход на нём не встанет'
-    : recipe.loading ? 'Склейки ещё считаются — подожди пару секунд'
-      : !cuts.length ? 'В ролике нет склеек' : null;
-  const hookOff = combo.hookAllowed ? null : 'Хук ставится только на вертикальное видео — на фото, цвете и 16:9 его нет';
-  const frameOff = combo.vertical ? null : 'Рамка ставится только на вертикальное видео — на 16:9 её обрезало бы';
-  const allTool = (run: () => void, count = total) => (count > 1 ? [tool('every', 'grid', `Во все ${count}`, run)] : []);
+    : tr(sbVideo ? 'wizard.montage.srcPending'
+      : combo.bgKey?.startsWith('photo:') ? 'wizard.montage.srcPhoto'
+        : combo.bgKey?.startsWith('upload:') ? 'wizard.montage.srcUpload'
+          : combo.bgKey === '__color__' ? 'wizard.montage.srcColor'
+            : 'wizard.montage.srcLater');
+  const transOff = staticColor ? tr('wizard.montage.staticNoCuts')
+    : recipe.loading ? tr('wizard.montage.cutsPending')
+      : !cuts.length ? tr('wizard.montage.noCuts') : null;
+  const hookOff = combo.hookAllowed ? null : tr('wizard.montage.hookVerticalOnly');
+  const frameOff = combo.vertical ? null : tr('wizard.montage.frameVerticalOnly');
+  const allTool = (run: () => void, count = total) => (count > 1 ? [tool('every', 'grid', tr('wizard.montage.allN', { n: count }), run)] : []);
   const tools = (() => {
     if (!sel) {
       return [
-        tool('src', 'reroll', 'Кадр', () => { setSel({ type: 'frame', i: fNow }); askDock('edit'); }, { off: srcOff }),
-        tool('trans', 't_snap', 'Переход', () => { setSel({ type: 'cut', i: Math.max(0, nearestCut()) }); setSheet('trans'); }, { off: transOff }),
-        tool('style', 'crystal', 'Стиль', () => setSheet('style')),
-        tool('hook', 'effects', 'Хук', () => setSheet('hook'), { off: hookOff }),
-        tool('text', 'text', 'Текст', () => setSheet('text')),
-        tool('frame', 'frames', 'Рамка', () => setSheet('frame'), { off: frameOff }),
-        tool('pace', 'audio', 'Темп', () => setSheet('pace')),
-        tool('grid', 'grid', 'Все ролики', () => { setView('grid'); setSel(null); })
+        tool('src', 'reroll', tr('wizard.montage.toolShot'), () => { setSel({ type: 'frame', i: fNow }); askDock('edit'); }, { off: srcOff }),
+        tool('trans', 't_snap', tr('wizard.montage.toolTrans'), () => { setSel({ type: 'cut', i: Math.max(0, nearestCut()) }); setSheet('trans'); }, { off: transOff }),
+        tool('style', 'crystal', tr('wizard.montage.toolStyle'), () => setSheet('style')),
+        tool('hook', 'effects', tr('wizard.montage.toolHook'), () => setSheet('hook'), { off: hookOff }),
+        tool('text', 'text', tr('wizard.montage.toolText'), () => setSheet('text')),
+        tool('frame', 'frames', tr('wizard.montage.toolFrame'), () => setSheet('frame'), { off: frameOff }),
+        tool('pace', 'audio', tr('wizard.montage.toolPace'), () => setSheet('pace')),
+        tool('grid', 'grid', tr('wizard.montage.toolGrid'), () => { setView('grid'); setSel(null); })
       ];
     }
-    const back = <button key="back" type="button" className="mm-tool mm-back" aria-label="Снять выделение" onClick={() => setSel(null)}><Glyph name="back" size={22} /></button>;
+    const back = <button key="back" type="button" className="mm-tool mm-back" aria-label={tr('wizard.montage.deselect')} onClick={() => setSel(null)}><Glyph name="back" size={22} /></button>;
     if (sel.type === 'frame') {
       const i = sel.i;
       return [back,
-        tool('re', 'reroll', 'Заменить', () => askDock('edit'), { off: srcOff }),
-        tool('mix', 'chain', 'Перемешать', () => askDock('shuffle'), { off: srcOff }),
-        ...(srcPins[i] ? [tool('unpin', 'lock', 'Открепить', () => { unpin(i); say(`Кадр ${i + 1} откреплён`); })] : []),
-        ...(i < shots - 1 && !staticColor ? [tool('tr', 't_snap', 'Переход', () => { setSel({ type: 'cut', i }); setSheet('trans'); })] : []),
-        tool('st', 'crystal', 'Стиль', () => setSheet('style'))];
+        tool('re', 'reroll', tr('wizard.montage.toolReplace'), () => askDock('edit'), { off: srcOff }),
+        tool('mix', 'chain', tr('wizard.montage.toolShuffle'), () => askDock('shuffle'), { off: srcOff }),
+        ...(srcPins[i] ? [tool('unpin', 'lock', tr('wizard.montage.toolUnpin'), () => { unpin(i); say(tr('wizard.montage.shotUnpinned', { n: i + 1 })); })] : []),
+        ...(i < shots - 1 && !staticColor ? [tool('tr', 't_snap', tr('wizard.montage.toolTrans'), () => { setSel({ type: 'cut', i }); setSheet('trans'); })] : []),
+        tool('st', 'crystal', tr('wizard.montage.toolStyle'), () => setSheet('style'))];
     }
     if (sel.type === 'cut') {
       const i = sel.i;
       return [back,
-        tool('tr', 't_snap', 'Переход', () => setSheet('trans')),
-        tool('all', 'chain', 'Ко всем', () => setTransitionAll(transitionAt(i))),
+        tool('tr', 't_snap', tr('wizard.montage.toolTrans'), () => setSheet('trans')),
+        tool('all', 'chain', tr('wizard.montage.toolToAll'), () => setTransitionAll(transitionAt(i))),
         ...allTool(() => cutToAll(i)),
-        tool('off', 't_none', 'Убрать', () => { setTransition(i, NO_GLUE); say(`Склейка ${i + 1}: без перехода`); }, { off: transitionAt(i) === NO_GLUE ? 'На этой склейке и так без перехода' : null })];
+        tool('off', 't_none', tr('wizard.montage.toolRemove'), () => { setTransition(i, NO_GLUE); say(tr('wizard.montage.cutNoTrans', { n: i + 1 })); }, { off: transitionAt(i) === NO_GLUE ? tr('wizard.montage.alreadyNoTrans') : null })];
     }
     if (sel.type === 'style') {
       const s = styles.find((x) => x.uid === sel.uid);
-      return [back, tool('re', 'crystal', 'Заменить', () => setSheet('style')),
-        ...(s ? [tool('whole', 'film', 'На весь', () => styleWhole(s)), ...allTool(() => styleToAll(s))] : []),
-        tool('del', 'trash', 'Удалить', del, { danger: true })];
+      return [back, tool('re', 'crystal', tr('wizard.montage.toolReplace'), () => setSheet('style')),
+        ...(s ? [tool('whole', 'film', tr('wizard.montage.toolWhole'), () => styleWhole(s)), ...allTool(() => styleToAll(s))] : []),
+        tool('del', 'trash', tr('wizard.montage.delete'), del, { danger: true })];
     }
     if (sel.type === 'hook') {
       const slow = kind === 'effects' && config.effectHook === 'Слоу-шаттер';
       const ext = (config.effectHookExtend ?? '') as SlowExtend;
       const nextExt = SLOW_EXTENDS[(SLOW_EXTENDS.findIndex(([o]) => o === ext) + 1) % SLOW_EXTENDS.length];
       return [back,
-        tool('l', 'back', 'Бит назад', () => hookToBeat(false), { off: drop === null ? 'Сначала выбери дроп на шаге FX' : null }),
-        tool('r', 'fwd', 'Бит вперёд', () => hookToBeat(true), { off: drop === null ? 'Сначала выбери дроп на шаге FX' : null }),
-        tool('re', 'effects', 'Сменить', () => setSheet('hook')),
-        ...(slow ? [tool('ext', 'slowshutter', nextExt[1], () => setSlowExtend(nextExt[0]))] : []),
+        tool('l', 'back', tr('wizard.montage.toolBeatBack'), () => hookToBeat(false), { off: drop === null ? tr('wizard.montage.pickDropFirst') : null }),
+        tool('r', 'fwd', tr('wizard.montage.toolBeatFwd'), () => hookToBeat(true), { off: drop === null ? tr('wizard.montage.pickDropFirst') : null }),
+        tool('re', 'effects', tr('wizard.montage.toolChange'), () => setSheet('hook')),
+        ...(slow ? [tool('ext', 'slowshutter', tr(`wizard.montage.${nextExt[1]}`), () => setSlowExtend(nextExt[0]))] : []),
         ...(activeHookLabel ? allTool(hookToAll, hookIdx.length) : []),
-        tool('del', 'trash', 'Удалить', del, { danger: true, off: kind === 'none' ? 'У ролика нет хука' : null })];
+        tool('del', 'trash', tr('wizard.montage.delete'), del, { danger: true, off: kind === 'none' ? tr('wizard.montage.noHookToRemove') : null })];
     }
     const i = sel.i; const w = subs[i];
     return [back,
-      tool('focus', 'check', w?.focus ? 'Снять фокус' : 'Фокус', () => { if (w) toggleAsrFocus(w.idx); }),
-      tool('l', 'back', '−0,05 с', () => nudgeWord(i, -0.05)),
-      tool('r', 'fwd', '+0,05 с', () => nudgeWord(i, 0.05)),
-      tool('text', 'text', 'Стиль текста', () => setSheet('text'))];
+      tool('focus', 'check', tr(w?.focus ? 'wizard.montage.unfocus' : 'wizard.montage.toolFocus'), () => { if (w) toggleAsrFocus(w.idx); }),
+      tool('l', 'back', tr('wizard.montage.nudgeBack'), () => nudgeWord(i, -0.05)),
+      tool('r', 'fwd', tr('wizard.montage.nudgeFwd'), () => nudgeWord(i, 0.05)),
+      tool('text', 'text', tr('wizard.montage.toolTextStyle'), () => setSheet('text'))];
   })();
-  const sheetTitle = sheet === 'trans' ? (sel?.type === 'cut' ? `Переход · склейка ${sel.i + 1}` : 'Переход')
-    : sheet === 'style' ? (sel?.type === 'style' ? 'Заменить стиль' : `Стиль на кадр ${(sel?.type === 'frame' ? sel.i : fNow) + 1}`)
-      : sheet === 'hook' ? 'Хук на дроп' : sheet === 'text' ? 'Текст' : sheet === 'frame' ? 'Рамка' : 'Темп нарезки';
+  const sheetTitle = sheet === 'trans' ? (sel?.type === 'cut' ? tr('wizard.montage.sheetTransCut', { n: sel.i + 1 }) : tr('wizard.montage.toolTrans'))
+    : sheet === 'style' ? (sel?.type === 'style' ? tr('wizard.montage.sheetReplaceStyle') : tr('wizard.montage.sheetStyleOn', { n: (sel?.type === 'frame' ? sel.i : fNow) + 1 }))
+      : sheet === 'hook' ? tr('wizard.montage.sheetHook') : sheet === 'text' ? tr('wizard.montage.laneText') : sheet === 'frame' ? tr('wizard.montage.toolFrame') : tr('wizard.montage.sheetPace');
   const mobileHeader = (
     <header className="mm-top">
-      <button type="button" className="mm-ic" aria-label={view === 'grid' ? 'Назад к ролику' : 'К «Пулу» — правки сохраняются'} onClick={view === 'grid' ? () => setView('table') : onClose}>
+      <button type="button" className="mm-ic" aria-label={tr(view === 'grid' ? 'wizard.montage.backToVideo' : 'wizard.montage.toPool')} onClick={view === 'grid' ? () => setView('table') : onClose}>
         <Glyph name={view === 'grid' ? 'back' : 'close'} size={20} />
       </button>
       <button type="button" className="mm-vid" aria-haspopup="listbox" aria-expanded={switchOpen} onClick={() => setSwitchOpen((o) => !o)}>
@@ -1751,15 +1781,15 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
         {isEdited(combo) && <i className="mt-dot" />}
         <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><path d="m3.5 6 4.5 4 4.5-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
-      <button type="button" className="mm-gen" disabled={busy} aria-busy={busy || undefined} onClick={() => { const blocked = onGenerate(); if (blocked) say(blocked); }}>{busy && <span className="spinner" aria-hidden="true" />}<span className="tx">Готово · {total}</span></button>
+      <button type="button" className="mm-gen" disabled={busy} aria-busy={busy || undefined} onClick={() => { const blocked = onGenerate(); if (blocked) say(blocked); }}>{busy && <span className="spinner" aria-hidden="true" />}<span className="tx">{tr('wizard.montage.done', { n: total })}</span></button>
       {switchOpen && (
-        <div className="fxt-vsw-menu mt-vmenu mm-vmenu" role="listbox" aria-label="Ролики батча">
+        <div className="fxt-vsw-menu mt-vmenu mm-vmenu" role="listbox" aria-label={tr('wizard.montage.batchVideos')}>
           {combos.map((c) => (
             <button key={c.index} type="button" role="option" aria-selected={c.index === index} className="fxt-vsw-item" onClick={() => { onIndex(c.index); setSwitchOpen(false); setView('table'); setSel(null); }}>
               <span className="mt-vthumb"><FrameView frame={clipsOf(c)[0]} thumb /></span>
               <span className="mt-vn num tx">{c.index + 1}</span>
               <span className="lb tx">{videoLabel(c)}</span>
-              {isEdited(c) && <span className="mt-edited tx">изменён</span>}
+              {isEdited(c) && <span className="mt-edited tx">{tr('wizard.montage.edited')}</span>}
             </button>
           ))}
         </div>
@@ -1768,7 +1798,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   );
   const mobileMain = (
     <main ref={mainRef} className="mm-main">
-      <section ref={pvRef} className="mm-pv" aria-label="Превью">
+      <section ref={pvRef} className="mm-pv" aria-label={tr('wizard.montage.preview')}>
         <Stage frames={clips} bounds={bounds} t={t} playing={playing} fx={{ transitionAt, styles, hookKind: kind, hookLabel: activeHookLabel, hookRange, frameUrl: frameUrlOf(vfx.frame) }} sub={subFor(combo)} w={stageSize.w} h={stageSize.h}>
           {sbVideo && clips.length === shots && (
             <FrameDock combo={combo} video={sbVideo} frames={clips} bounds={bounds} k={editK ?? (sel?.type === 'frame' ? sel.i : fNow)} drop={drop} compact request={dockReq} slot={replaceSlot}
@@ -1779,65 +1809,65 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
       </section>
       <div className="mm-transport">
         <span className="mm-time num"><b>{tc(t)}</b><span>&nbsp;/ {tc(dur)}</span></span>
-        <button type="button" className="mm-play" aria-label={buffering ? 'Загружается' : playing ? 'Пауза' : 'Воспроизвести'} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>{buffering ? <span className="spinner" aria-hidden="true" /> : <Glyph name={playing ? 'pause' : 'play'} size={22} />}</button>
+        <button type="button" className="mm-play" aria-label={tr(buffering ? 'wizard.montage.loading' : playing ? 'wizard.montage.pause' : 'wizard.montage.play')} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>{buffering ? <span className="spinner" aria-hidden="true" /> : <Glyph name={playing ? 'pause' : 'play'} size={22} />}</button>
         <div className="mm-hist">
-          <button type="button" className="mm-ic" aria-label="Отменить" disabled={!canUndo} onClick={undo}><Glyph name="undo" size={20} /></button>
-          <button type="button" className="mm-ic" aria-label="Вернуть" disabled={!canRedo} onClick={redo}><Glyph name="redo" size={20} /></button>
+          <button type="button" className="mm-ic" aria-label={tr('wizard.montage.undo')} disabled={!canUndo} onClick={undo}><Glyph name="undo" size={20} /></button>
+          <button type="button" className="mm-ic" aria-label={tr('wizard.montage.redo')} disabled={!canRedo} onClick={redo}><Glyph name="redo" size={20} /></button>
         </div>
       </div>
-      <section ref={tlRef} className="mm-tl" aria-label="Таймлайн">
+      <section ref={tlRef} className="mm-tl" aria-label={tr('wizard.montage.timeline')}>
         <div ref={scrollRef} className="fxt-scroll mm-scroll" onScroll={onPhoneScroll}>{canvas}</div>
         <i className="mm-playhead" aria-hidden="true" />
         {/* на телефоне подсказки дорожек скрыты — загрузку и сбой склеек показываем над таймлайном */}
-        {recipe.loading && <div className="mm-tlmsg" role="status"><span className="spinner" aria-hidden="true" /><span className="tx">Считаем склейки по темпу трека…</span></div>}
-        {recipe.error && !recipe.loading && <div className="mm-tlmsg err" role="alert"><span className="tx">Не удалось посчитать склейки</span><button type="button" className="fxt-pill" onClick={recipe.retry}><span className="tx">Повторить</span></button></div>}
+        {recipe.loading && <div className="mm-tlmsg" role="status"><span className="spinner" aria-hidden="true" /><span className="tx">{tr('wizard.montage.cutsLoading')}</span></div>}
+        {recipe.error && !recipe.loading && <div className="mm-tlmsg err" role="alert"><span className="tx">{tr('wizard.montage.cutsFailed')}</span><button type="button" className="fxt-pill" onClick={recipe.retry}><span className="tx">{tr('wizard.montage.retry')}</span></button></div>}
       </section>
       {editK !== null
         ? <div ref={setReplaceSlot} className="mm-bar mm-replace-slot" />
-        : <nav ref={(el) => { barRef.current = el; if (el) syncBar(); }} className="mm-bar" aria-label="Инструменты" data-fade-l={barFade.l || undefined} data-fade-r={barFade.r || undefined} onScroll={syncBar}>{tools}</nav>}
+        : <nav ref={(el) => { barRef.current = el; if (el) syncBar(); }} className="mm-bar" aria-label={tr('wizard.montage.tools')} data-fade-l={barFade.l || undefined} data-fade-r={barFade.r || undefined} onScroll={syncBar}>{tools}</nav>}
       {!mobIntroDismissed && editK === null && !sheet && (
         <div className="mm-intro" role="note">
           <ul>
-            <li><Glyph name="chain" size={16} /><span className="tx">Листай дорожки пальцем — под линией по центру двигается время. Два пальца — масштаб</span></li>
-            <li><Glyph name="check" size={16} /><span className="tx">Тапни кадр, склейку, стиль или слово — внизу появятся его действия. Края выбранного тянутся</span></li>
-            <li><Glyph name="fwd" size={16} /><span className="tx">Панель инструментов листается вбок</span></li>
+            <li><Glyph name="chain" size={16} /><span className="tx">{tr('wizard.montage.intro1')}</span></li>
+            <li><Glyph name="check" size={16} /><span className="tx">{tr('wizard.montage.intro2')}</span></li>
+            <li><Glyph name="fwd" size={16} /><span className="tx">{tr('wizard.montage.intro3')}</span></li>
           </ul>
-          <button type="button" className="mm-intro-ok" onClick={() => setMobIntroDismissed(true)}><span className="tx">Понятно</span></button>
+          <button type="button" className="mm-intro-ok" onClick={() => setMobIntroDismissed(true)}><span className="tx">{tr('wizard.montage.gotIt')}</span></button>
         </div>
       )}
       {sheet && (
         <div className="mm-sheet" role="dialog" aria-label={sheetTitle}>
           <div className="mm-sheet-h">
             <b className="tx">{sheetTitle}</b>
-            <button type="button" className="mm-ic" aria-label="Готово" onClick={() => setSheet(null)}><Glyph name="check" size={20} sw={2} /></button>
+            <button type="button" className="mm-ic" aria-label={tr('wizard.montage.sheetDone')} onClick={() => setSheet(null)}><Glyph name="check" size={20} sw={2} /></button>
           </div>
           <div className="mm-sheet-b">
             {sheet === 'pace' ? (
               <div className="mm-pace">
-                <div className="fxt-seg" role="group" aria-label="Частота склеек">
+                <div className="fxt-seg" role="group" aria-label={tr('wizard.montage.paceGroup')}>
                   {PACES.map((pace, k) => (
                     <button key={pace} type="button" aria-pressed={recipe.pace === pace} onClick={() => changePace(pace)}>
                       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true" dangerouslySetInnerHTML={{ __html: paceGlyph(k) }} />
-                      <b className="tx">{{ sparse: 'Реже', auto: 'Авто', dense: 'Чаще' }[pace]}</b>
-                      {recipe.data && <small className="tx">{recipe.data.cuts[pace].length + 1} {kadr(recipe.data.cuts[pace].length + 1)}</small>}
+                      <b className="tx">{paceLabel(pace)}</b>
+                      {recipe.data && <small className="tx">{tr('wizard.montage.shots', { count: recipe.data.cuts[pace].length + 1 })}</small>}
                     </button>
                   ))}
                 </div>
-                <p className="mm-note tx">Темп меняет склейки во всех роликах батча. «Авто» — как посчитает рендер по темпу трека.</p>
-                <button type="button" className="fxt-pill" aria-pressed={snap} onClick={() => setSnap((v) => !v)}><Glyph name="magnet" size={16} /><span className="tx">{snap ? 'Прилипание к битам включено' : 'Прилипание к битам выключено'}</span></button>
+                <p className="mm-note tx">{tr('wizard.montage.paceNote')}</p>
+                <button type="button" className="fxt-pill" aria-pressed={snap} onClick={() => setSnap((v) => !v)}><Glyph name="magnet" size={16} /><span className="tx">{tr(snap ? 'wizard.montage.snapOn' : 'wizard.montage.snapOff')}</span></button>
               </div>
             ) : (
               <>
                 {/* действия выделенного — те же, что в строке выделения на десктопе */}
                 {sheet === 'trans' && sel?.type === 'cut' && (
                   <div className="mm-sheet-acts">
-                    {cuts.length > 1 && <button type="button" className="fxt-pill" onClick={() => setTransitionAll(transitionAt(sel.i))}><span className="tx">«{transitionAt(sel.i)}» — на все склейки</span></button>}
+                    {cuts.length > 1 && <button type="button" className="fxt-pill" onClick={() => setTransitionAll(transitionAt(sel.i))}><span className="tx">{tr('wizard.montage.allCutsPill', { name: fxName(transitionAt(sel.i)) })}</span></button>}
                     {allPill(() => cutToAll(sel.i))}
                   </div>
                 )}
                 {sheet === 'style' && sel?.type === 'style' && (() => {
                   const s = styles.find((x) => x.uid === sel.uid);
-                  return s ? <div className="mm-sheet-acts"><button type="button" className="fxt-pill" onClick={() => styleWhole(s)}><span className="tx">На весь отрывок</span></button>{allPill(() => styleToAll(s))}</div> : null;
+                  return s ? <div className="mm-sheet-acts"><button type="button" className="fxt-pill" onClick={() => styleWhole(s)}><span className="tx">{tr('wizard.montage.wholeClip')}</span></button>{allPill(() => styleToAll(s))}</div> : null;
                 })()}
                 {sheet === 'hook' && activeHookLabel && hookIdx.length > 1 && <div className="mm-sheet-acts">{allPill(hookToAll, hookIdx.length)}</div>}
                 <Library tab={sheet} setTab={(k) => setSheet(k === 'src' ? null : k)} open={open} setOpen={toggleOpen} used={used} activeHookKind={kind}
@@ -1845,9 +1875,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
                   onAdd={sheetAdd} onDragStart={() => undefined} tapAdd
                   previewOf={previewOf}
                   frames={frameCatalog} frameId={vfx.frame} onPickFrame={pickFrame}
-                  frameNote={combo.vertical ? undefined : 'Это видео 16:9 — рамка нарисована под вертикальный кадр и на нём не ставится'}
+                  frameNote={combo.vertical ? undefined : tr('wizard.montage.frameWide')}
                   frameBase={clips[0] ? <FrameView frame={clips[0]} thumb /> : null}
-                  frameAll={vfx.frame ? allPill(() => toAll((v) => ({ ...v, frame: vfx.frame ?? null }), `Рамка: ${frameLabel(vfx.frame ?? null)}`, verticalIdx), verticalIdx.length) : null} />
+                  frameAll={vfx.frame ? allPill(() => toAll((v) => ({ ...v, frame: vfx.frame ?? null }), tr('wizard.montage.frameAllMsg', { name: frameLabel(vfx.frame ?? null) }), verticalIdx), verticalIdx.length) : null} />
               </>
             )}
           </div>
@@ -1857,32 +1887,32 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   );
 
   return createPortal(
-    <div ref={rootRef} className={`fxt mt${phone ? ' mob' : ''}`} data-format="9:16" role="dialog" aria-modal="true" aria-label="Монтажный стол" tabIndex={-1}>
+    <div ref={rootRef} className={`fxt mt${phone ? ' mob' : ''}`} data-format="9:16" role="dialog" aria-modal="true" aria-label={tr('wizard.montage.dialog')} tabIndex={-1}>
       {phone ? mobileHeader : <header className="fxt-top mt-top">
         <div className="mt-top-l">
-          <button type="button" className="fxt-back" onClick={onClose} data-tip="К «Пулу» — правки сохраняются · Esc"><Glyph name="back" size={18} /><span className="tx">Пул</span></button>
-          <div className="fxt-proj"><b className="tx">{track?.filename ?? 'Трек'}</b><span className="tx num">{timingFrom} – {timingTo}</span></div>
+          <button type="button" className="fxt-back" onClick={onClose} data-tip={tr('wizard.montage.toPoolKey')}><Glyph name="back" size={18} /><span className="tx">{tr('wizard.montage.pool')}</span></button>
+          <div className="fxt-proj"><b className="tx">{track?.filename ?? tr('wizard.montage.track')}</b><span className="tx num">{timingFrom} – {timingTo}</span></div>
         </div>
         <div className="mt-vid">
           <div className="mt-arrows">
-            <button type="button" className="mt-arrow" aria-label="Прошлый ролик" data-tip="Прошлый ролик · [" onClick={() => goVideo(-1)}><Glyph name="back" size={16} sw={2} /></button>
-            <button type="button" className="mt-arrow" aria-label="Следующий ролик" data-tip="Следующий ролик · ]" onClick={() => goVideo(1)}><Glyph name="fwd" size={16} sw={2} /></button>
+            <button type="button" className="mt-arrow" aria-label={tr('wizard.montage.prevVideo')} data-tip={tr('wizard.montage.prevVideoKey')} onClick={() => goVideo(-1)}><Glyph name="back" size={16} sw={2} /></button>
+            <button type="button" className="mt-arrow" aria-label={tr('wizard.montage.nextVideo')} data-tip={tr('wizard.montage.nextVideoKey')} onClick={() => goVideo(1)}><Glyph name="fwd" size={16} sw={2} /></button>
           </div>
           <div className="fxt-vsw">
             <button type="button" className="fxt-vsw-main" aria-haspopup="listbox" aria-expanded={switchOpen} onClick={() => setSwitchOpen((o) => !o)}>
               <span className="mt-vn num tx">{index + 1}<span className="of">/{total}</span></span>
               <span className="lb tx">{videoLabel(combo)}</span>
-              {isEdited(combo) && <i className="mt-dot" data-tip="Есть ручные правки" />}
+              {isEdited(combo) && <i className="mt-dot" data-tip={tr('wizard.montage.hasEdits')} />}
               <svg className="chev" viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true"><path d="m3.5 6 4.5 4 4.5-4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </button>
             {switchOpen && (
-              <div className="fxt-vsw-menu mt-vmenu" role="listbox" aria-label="Ролики батча">
+              <div className="fxt-vsw-menu mt-vmenu" role="listbox" aria-label={tr('wizard.montage.batchVideos')}>
                 {combos.map((c) => (
                   <button key={c.index} type="button" role="option" aria-selected={c.index === index} aria-current={c.index === index} className="fxt-vsw-item" onClick={() => { onIndex(c.index); setSwitchOpen(false); setView('table'); }}>
                     <span className="mt-vthumb"><FrameView frame={clipsOf(c)[0]} thumb /></span>
                     <span className="mt-vn num tx">{c.index + 1}</span>
                     <span className="lb tx">{videoLabel(c)}</span>
-                    {isEdited(c) && <span className="mt-edited tx">изменён</span>}
+                    {isEdited(c) && <span className="mt-edited tx">{tr('wizard.montage.edited')}</span>}
                   </button>
                 ))}
               </div>
@@ -1890,12 +1920,12 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
           </div>
         </div>
         <div className="mt-top-r">
-          <div className="fxt-seg" role="group" aria-label="Вид">
-            <button type="button" aria-pressed={view === 'table'} onClick={() => setView('table')}><Glyph name="table" size={16} /><span className="tx">Ролик</span></button>
-            <button type="button" aria-pressed={view === 'grid'} onClick={() => { setView('grid'); setPop(null); setSel(null); }}><Glyph name="grid" size={16} /><span className="tx">Все ролики</span></button>
+          <div className="fxt-seg" role="group" aria-label={tr('wizard.montage.view')}>
+            <button type="button" aria-pressed={view === 'table'} onClick={() => setView('table')}><Glyph name="table" size={16} /><span className="tx">{tr('wizard.montage.viewVideo')}</span></button>
+            <button type="button" aria-pressed={view === 'grid'} onClick={() => { setView('grid'); setPop(null); setSel(null); }}><Glyph name="grid" size={16} /><span className="tx">{tr('wizard.montage.toolGrid')}</span></button>
           </div>
-          <button type="button" className="fxt-icon" aria-label="Горячие клавиши" data-tip="Горячие клавиши" onClick={() => setKeysOpen((v) => !v)}><Glyph name="keys" size={20} /></button>
-          <button type="button" className="fxt-primary" disabled={busy} aria-busy={busy || undefined} onClick={() => { const blocked = onGenerate(); if (blocked) say(blocked); }}>{busy && <span className="spinner" aria-hidden="true" />}<span className="tx">Сгенерировать {total}</span></button>
+          <button type="button" className="fxt-icon" aria-label={tr('wizard.montage.hotkeys')} aria-expanded={keysOpen} data-tip={tr('wizard.montage.hotkeys')} onClick={() => setKeysOpen((v) => !v)}><Glyph name="keys" size={20} /></button>
+          <button type="button" className="fxt-primary" disabled={busy} aria-busy={busy || undefined} onClick={() => { const blocked = onGenerate(); if (blocked) say(blocked); }}>{busy && <span className="spinner" aria-hidden="true" />}<span className="tx">{tr('wizard.montage.generate', { n: total })}</span></button>
         </div>
       </header>}
 
@@ -1903,14 +1933,14 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
         <main ref={mainRef} className="fxt-main mt-gridmain">
           <div className="mt-grid" style={{ gridTemplateColumns: `repeat(${gridCell.cols}, ${gridCell.w}px)` }}>
             {combos.map((c) => (
-              <button key={c.index} type="button" className={`mt-cell${c.index === index ? ' cur' : ''}`} onClick={() => { onIndex(c.index); setView('table'); }} aria-label={`Открыть ролик ${c.index + 1}`}>
+              <button key={c.index} type="button" className={`mt-cell${c.index === index ? ' cur' : ''}`} onClick={() => { onIndex(c.index); setView('table'); }} aria-label={tr('wizard.montage.openVideo', { n: c.index + 1 })}>
                 <Stage frames={clipsOf(c)} bounds={bounds} t={t} playing={playing} fx={stageFxFor(c)} sub={subFor(c)} w={gridCell.w} h={gridCell.h} />
                 <span className="mt-cap"><b className="num tx">{c.index + 1}</b><span className="tx">{videoLabel(c)}</span>{isEdited(c) && <i className="mt-dot" />}</span>
               </button>
             ))}
           </div>
           <div className="mt-gridbar">
-            <button type="button" className="fxt-icon mt-gplay" aria-label={playing ? 'Пауза' : 'Играть все'} onClick={() => setPlaying((v) => !v)}><Glyph name={playing ? 'pause' : 'play'} size={18} /></button>
+            <button type="button" className="fxt-icon mt-gplay" aria-label={tr(playing ? 'wizard.montage.pause' : 'wizard.montage.playAll')} onClick={() => setPlaying((v) => !v)}><Glyph name={playing ? 'pause' : 'play'} size={18} /></button>
             <div className="mt-gprog"><i style={{ width: `${(t / dur) * 100}%` }} /></div>
             <span className="tx num mt-gtime">{tc(t)} / {tc(dur)}</span>
           </div>
@@ -1922,14 +1952,14 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
             onAdd={addFromLib} onDragStart={onLibDragStart}
             previewOf={previewOf}
             frames={frameCatalog} frameId={vfx.frame} onPickFrame={pickFrame}
-            frameNote={combo.vertical ? undefined : 'Это видео 16:9 — рамка нарисована под вертикальный кадр и на нём не ставится'}
+            frameNote={combo.vertical ? undefined : tr('wizard.montage.frameWide')}
             frameBase={clips[0] ? <FrameView frame={clips[0]} thumb /> : null}
-            frameAll={vfx.frame ? allPill(() => toAll((v) => ({ ...v, frame: vfx.frame ?? null }), `Рамка: ${frameLabel(vfx.frame ?? null)}`, verticalIdx), verticalIdx.length) : null} />
+            frameAll={vfx.frame ? allPill(() => toAll((v) => ({ ...v, frame: vfx.frame ?? null }), tr('wizard.montage.frameAllMsg', { name: frameLabel(vfx.frame ?? null) }), verticalIdx), verticalIdx.length) : null} />
 
-          <section className="fxt-panel fxt-pv" aria-label="Превью">
+          <section className="fxt-panel fxt-pv" aria-label={tr('wizard.montage.preview')}>
             <Stage frames={clips} bounds={bounds} t={t} playing={playing} fx={{ transitionAt, styles, hookKind: kind, hookLabel: activeHookLabel, hookRange, frameUrl: frameUrlOf(vfx.frame) }} sub={subFor(combo)} w={stageSize.w} h={stageSize.h}>
-              <div className="fxt-chip"><Glyph name="film" size={12} /><span className="tx">Ролик {index + 1} из {total} · {combo.bgLabel}</span></div>
-              {editK === null && <button type="button" className="fxt-play" aria-label={buffering ? 'Загружается' : playing ? 'Пауза' : 'Воспроизвести'} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
+              <div className="fxt-chip"><Glyph name="film" size={12} /><span className="tx">{tr('wizard.montage.chipVideo', { n: index + 1, total, bg: chip(combo.bgLabel) })}</span></div>
+              {editK === null && <button type="button" className="fxt-play" aria-label={tr(buffering ? 'wizard.montage.loading' : playing ? 'wizard.montage.pause' : 'wizard.montage.play')} aria-busy={buffering || undefined} aria-pressed={playing} onClick={() => setPlaying((v) => !v)}>
                 {buffering ? <span className="spinner" aria-hidden="true" /> : <Glyph name={playing ? 'pause' : 'play'} size={20} />}
               </button>}
               {sbVideo && clips.length === shots && (
@@ -1938,21 +1968,21 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
                   onEdit={(k) => { setEditK(k); if (k !== null && !framesGuideDismissed) setFramesGuideDismissed(true); }} onChanged={markEdited} onError={say} />
               )}
               {!sbVideo && combo.bgKey && !combo.bgKey.startsWith('footage:') && combo.bgKey !== '__color__' && (
-                <div className="mt-srcnote"><span className="tx">{combo.bgKey.startsWith('photo:') ? 'Фото подберутся при генерации' : 'Своё видео пойдёт клипами встык'}</span></div>
+                <div className="mt-srcnote"><span className="tx">{tr(combo.bgKey.startsWith('photo:') ? 'wizard.montage.srcPhoto' : 'wizard.montage.srcUploadNote')}</span></div>
               )}
 
             </Stage>
           </section>
 
-          <section ref={tlRef} className="fxt-panel fxt-tl" aria-label="Таймлайн">
+          <section ref={tlRef} className="fxt-panel fxt-tl" aria-label={tr('wizard.montage.timeline')}>
             <div className="fxt-bar">
-              <button type="button" className="fxt-icon" aria-label="Отменить" data-tip="Отменить · Ctrl+Z" disabled={!canUndo} onClick={undo}><Glyph name="undo" size={18} /></button>
-              <button type="button" className="fxt-icon" aria-label="Вернуть" data-tip="Вернуть · Ctrl+Shift+Z" disabled={!canRedo} onClick={redo}><Glyph name="redo" size={18} /></button>
+              <button type="button" className="fxt-icon" aria-label={tr('wizard.montage.undo')} data-tip={tr('wizard.montage.undoKey')} disabled={!canUndo} onClick={undo}><Glyph name="undo" size={18} /></button>
+              <button type="button" className="fxt-icon" aria-label={tr('wizard.montage.redo')} data-tip={tr('wizard.montage.redoKey')} disabled={!canRedo} onClick={redo}><Glyph name="redo" size={18} /></button>
               <span className="fxt-sep" />
               <div className="fxt-sel">{selInfo()}</div>
               <span className="fxt-sep" />
               <div className="fxt-pace">
-                <div className="fxt-seg" role="group" aria-label="Частота склеек">
+                <div className="fxt-seg" role="group" aria-label={tr('wizard.montage.paceGroup')}>
                   {PACES.map((pace, k) => (
                     <button key={pace} type="button" aria-pressed={recipe.pace === pace} aria-label={paceTip(pace)} data-tip={paceTip(pace)} onClick={() => changePace(pace)}>
                       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true" dangerouslySetInnerHTML={{ __html: paceGlyph(k) }} />
@@ -1960,22 +1990,22 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
                   ))}
                 </div>
               </div>
-              <button type="button" className="fxt-icon" aria-label="Прилипание" aria-pressed={snap} data-tip="Прилипание к битам и дропу" onClick={() => setSnap((v) => !v)}><Glyph name="magnet" size={18} /></button>
+              <button type="button" className="fxt-icon" aria-label={tr('wizard.montage.snap')} aria-pressed={snap} data-tip={tr('wizard.montage.snapTip')} onClick={() => setSnap((v) => !v)}><Glyph name="magnet" size={18} /></button>
               <div className="fxt-zoom">
-                <button type="button" className="fxt-icon" aria-label="Уменьшить масштаб" onClick={() => setZoom((z) => clamp(z / 1.4, 1, 6))}><Glyph name="minus" size={16} /></button>
-                <input type="range" min={1} max={6} step={0.05} value={zoom} aria-label="Масштаб таймлайна" onChange={(e) => setZoom(Number(e.target.value))} />
-                <button type="button" className="fxt-icon" aria-label="Увеличить масштаб" onClick={() => setZoom((z) => clamp(z * 1.4, 1, 6))}><Glyph name="plus" size={16} /></button>
+                <button type="button" className="fxt-icon" aria-label={tr('wizard.montage.zoomOut')} onClick={() => setZoom((z) => clamp(z / 1.4, 1, 6))}><Glyph name="minus" size={16} /></button>
+                <input type="range" min={1} max={6} step={0.05} value={zoom} aria-label={tr('wizard.montage.zoomRange')} onChange={(e) => setZoom(Number(e.target.value))} />
+                <button type="button" className="fxt-icon" aria-label={tr('wizard.montage.zoomIn')} onClick={() => setZoom((z) => clamp(z * 1.4, 1, 6))}><Glyph name="plus" size={16} /></button>
               </div>
             </div>
             <div className="fxt-body">
               <div className="fxt-heads">
                 <div className="rh" />
-                {laneHead('h-frames mt-h-src', 'film', 'frame', 'Исходники', sbVideo && Object.keys(sbVideo.pins).length ? <span className="mt-lcount num" data-tip="Закреплено вручную"><Glyph name="lock" size={11} sw={2} />{Object.keys(sbVideo.pins).length}</span> : undefined)}
-                {laneHead('h-hook', 'effects', 'hook', 'Хук')}
-                {laneHead('h-s0', 'crystal', 'style', 'Стиль 1', !lane2 ? <button type="button" className="mt-laneadd" aria-label="Добавить второй стиль" data-tip="Второй стиль поверх первого — до двух на кадр" onClick={() => setLane2Open(true)}><Glyph name="plus" size={13} sw={2} /></button> : undefined)}
-                {lane2 && laneHead('h-s1', 'crystal', 'style', 'Стиль 2', !styles.some((x) => x.lane === 1) ? <button type="button" className="mt-laneadd" aria-label="Убрать дорожку второго стиля" data-tip="Убрать дорожку" onClick={() => setLane2Open(false)}><Glyph name="close" size={12} sw={2} /></button> : undefined)}
-                {laneHead('h-subs', 'text', 'trans', 'Субтитры', vfx.sub ? <span className="mt-lcount" data-tip="Стиль субтитров ролика — меняется во вкладке «Текст»">{vfx.sub}</span> : undefined)}
-                {laneHead('h-audio', 'audio', 'trans', 'Биты')}
+                {laneHead('h-frames mt-h-src', 'film', 'frame', tr('wizard.montage.laneSources'), sbVideo && Object.keys(sbVideo.pins).length ? <span className="mt-lcount num" data-tip={tr('wizard.montage.pinnedCount')}><Glyph name="lock" size={11} sw={2} />{Object.keys(sbVideo.pins).length}</span> : undefined)}
+                {laneHead('h-hook', 'effects', 'hook', tr('wizard.montage.laneHook'))}
+                {laneHead('h-s0', 'crystal', 'style', tr('wizard.montage.laneStyle1'), !lane2 ? <button type="button" className="mt-laneadd" aria-label={tr('wizard.montage.addLane2')} data-tip={tr('wizard.montage.lane2Tip')} onClick={() => setLane2Open(true)}><Glyph name="plus" size={13} sw={2} /></button> : undefined)}
+                {lane2 && laneHead('h-s1', 'crystal', 'style', tr('wizard.montage.laneStyle2'), !styles.some((x) => x.lane === 1) ? <button type="button" className="mt-laneadd" aria-label={tr('wizard.montage.removeLane2')} data-tip={tr('wizard.montage.removeLane')} onClick={() => setLane2Open(false)}><Glyph name="close" size={12} sw={2} /></button> : undefined)}
+                {laneHead('h-subs', 'text', 'trans', tr('wizard.montage.tabSubs'), vfx.sub ? <span className="mt-lcount" data-tip={tr('wizard.montage.subsLaneTip')}>{vfx.sub}</span> : undefined)}
+                {laneHead('h-audio', 'audio', 'trans', tr('wizard.montage.laneBeats'))}
               </div>
               <div ref={scrollRef} className="fxt-scroll" onWheel={(e) => { if (e.ctrlKey || e.metaKey) { setZoom((z) => clamp(z * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 1, 6)); } else if (zoom > 1 && Math.abs(e.deltaY) > Math.abs(e.deltaX) && scrollRef.current) scrollRef.current.scrollLeft += e.deltaY; }}>
                 {canvas}
@@ -1986,19 +2016,19 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
       )}
 
       <div className={`fxt-toast mt-toast${toast ? ' show' : ''}`} role="status" aria-live="polite" aria-atomic="true"><span className="tx">{toast}</span></div>
-      {editedCount > 0 && view === 'grid' && <div className="mt-gridnote"><span className="tx">С ручными правками: {editedCount} из {total}. На «Пуле» их не пересоберёт смена распределения — только предупредит</span></div>}
+      {editedCount > 0 && view === 'grid' && <div className="mt-gridnote"><span className="tx">{tr('wizard.montage.gridNote', { n: editedCount, total })}</span></div>}
 
-      {ghost && <div className="fxt-ghost" style={{ left: ghost.x, top: ghost.y }}>{ghost.item.kind === 'src' ? <Thumb url={ghost.item.url} size={28} /> : <Ic kind={ghost.item.kind === 'text' ? 'trans' : ghost.item.kind as 'hook'} label={ghost.item.kind === 'text' ? 'text' : ghost.item.label} on size={26} />}<span className="tx">{ghost.item.kind === 'src' ? clipTitle(ghost.item.label) : ghost.item.label}</span></div>}
+      {ghost && <div className="fxt-ghost" style={{ left: ghost.x, top: ghost.y }}>{ghost.item.kind === 'src' ? <Thumb url={ghost.item.url} size={28} /> : <Ic kind={ghost.item.kind === 'text' ? 'trans' : ghost.item.kind as 'hook'} label={ghost.item.kind === 'text' ? 'text' : ghost.item.label} on size={26} />}<span className="tx">{ghost.item.kind === 'src' ? clipTitle(ghost.item.label) : fxName(ghost.item.label)}</span></div>}
 
       {pop && view === 'table' && pop.i < cuts.length && (() => {
         const vw = window.innerWidth / zoomScale();
         const left = clamp(pop.x - 132, 8, vw - 272); const bottom = Math.max(8, window.innerHeight / zoomScale() - pop.y + 10);
         if (pop.type === 'cut') {
-          return <PickPopover title={`Переход на склейке ${pop.i + 1}`} stateLabel={`На склейке ${pop.i + 1}`} left={left} bottom={bottom}
+          return <PickPopover title={tr('wizard.montage.popTitle', { n: pop.i + 1 })} stateLabel={tr('wizard.montage.popState', { n: pop.i + 1 })} left={left} bottom={bottom}
             options={GLUE_OPTIONS} current={transitionAt(pop.i)}
             preview={(id) => <LoopStage frames={clips} bounds={bounds} at={cuts[pop.i]} dur={dur} fx={{ transitionAt: (k) => (k === pop.i ? id : transitionAt(k)), styles: [], hookRange: null }} />}
             onApply={(id) => setCutTransition(pop.i, id)}
-            footer={<button type="button" className="fxt-pill" onClick={() => { setTransitionAll(transitionAt(pop.i)); setPop(null); }}><span className="tx">Текущий ко всем склейкам</span></button>} />;
+            footer={<button type="button" className="fxt-pill" onClick={() => { setTransitionAll(transitionAt(pop.i)); setPop(null); }}><span className="tx">{tr('wizard.montage.popAll')}</span></button>} />;
         }
         return null;
       })()}
@@ -2029,8 +2059,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
       />
 
       {keysOpen && (
-        <div className="fxt-pop" style={{ right: 16, top: 64, width: 300 }} onPointerDown={(e) => e.stopPropagation()}>
-          {[['Играть / пауза', 'Пробел'], ['Прошлый / следующий ролик', '[ ]'], ['На кадр назад / вперёд', '← →'], ['К прошлой / следующей склейке', '↑ ↓'], ['Удалить / открепить', 'Delete'], ['Отменить / вернуть', 'Ctrl+Z / Ctrl+Shift+Z'], ['Масштаб', 'Ctrl + колесо'], ['Назад к «Пулу»', 'Esc']].map(([a, b]) => (
+        <div className="fxt-pop" role="dialog" aria-label={tr('wizard.montage.hotkeys')} style={{ right: 16, top: 64, width: 300 }} onPointerDown={(e) => e.stopPropagation()}>
+          {[[tr('wizard.montage.keys.playPause'), tr('wizard.montage.keys.space')], [tr('wizard.montage.keys.videos'), '[ ]'], [tr('wizard.montage.keys.frames'), '← →'], [tr('wizard.montage.keys.cuts'), '↑ ↓'], [tr('wizard.montage.keys.del'), 'Delete'], [tr('wizard.montage.keys.undo'), 'Ctrl+Z / Ctrl+Shift+Z'], [tr('wizard.montage.keys.zoom'), tr('wizard.montage.keys.zoomKey')], [tr('wizard.montage.keys.back'), 'Esc']].map(([a, b]) => (
             <div key={a} className="mt-keyrow"><span className="tx">{a}</span><kbd className="tx">{b}</kbd></div>
           ))}
         </div>
