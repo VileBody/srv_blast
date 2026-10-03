@@ -13,7 +13,7 @@ export const useModalCount = create<{ count: number; inc: () => void; dec: () =>
   dec: () => set((s) => ({ count: Math.max(0, s.count - 1) }))
 }));
 
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+export const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export function Modal({
   open,
