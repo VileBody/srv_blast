@@ -45,7 +45,10 @@ export function HandoffPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { push } = useToast();
-  const [failure, setFailure] = useState<Failure | null>(null);
+  // Голый /go без токена — сразу «ссылка устарела», без запроса: ходить не с чем.
+  const [failure, setFailure] = useState<Failure | null>(() => (token ? null : 'expired'));
+  // «Попробовать ещё раз» — повтор запроса, а не перезагрузка: один раз, дальше только вход
+  const [retries, setRetries] = useState(0);
   // В браузере другой аккаунт или аккаунт без Telegram: входим по ссылке только после
   // ответа человека (force — сменить / войти отдельно, link — привязать Telegram).
   const [answer, setAnswer] = useState<Answer>({});
@@ -56,7 +59,8 @@ export function HandoffPage() {
   const started = useRef<string | null>(null);
 
   useEffect(() => {
-    const attempt = JSON.stringify(answer);
+    if (!token) return;
+    const attempt = JSON.stringify({ answer, retries });
     if (started.current === attempt) return;
     started.current = attempt;
     // чей черновик был в браузере до входа по ссылке (до входа /api/me спросить нельзя)
@@ -150,9 +154,12 @@ export function HandoffPage() {
         else if (code === 'handoff_link_account') {
           setLinkLabel(linkAccountLabel(error));
           setFailure('linkAccount');
-        } else setFailure(error instanceof ApiError && error.status === 410 ? 'expired' : 'error');
+        } else if (error instanceof ApiError && [400, 404, 410, 422].includes(error.status)) {
+          // протухшая или битая ссылка: повтор ответил бы тем же
+          setFailure('expired');
+        } else setFailure('error');
       });
-  }, [token, answer, navigate, queryClient, push, t]);
+  }, [token, answer, retries, navigate, queryClient, push, t]);
 
   const reply = (next: Answer) => {
     setFailure(null);
@@ -204,12 +211,12 @@ export function HandoffPage() {
               {t(failure === 'expired' ? 'handoff.expiredText' : 'handoff.errorText')}
             </p>
             <div className="mt-[32px] flex flex-wrap justify-center gap-[12px]">
-              {failure === 'error' && (
-                <Button variant="primary" size="lg" onClick={() => location.reload()}>
+              {failure === 'error' && retries < 1 && (
+                <Button variant="primary" size="lg" onClick={() => { setFailure(null); setRetries((n) => n + 1); }}>
                   {t('simple.refresh')}
                 </Button>
               )}
-              <Link className={buttonClass({ variant: failure === 'error' ? 'secondary' : 'primary', size: 'lg' })} to="/login">
+              <Link className={buttonClass({ variant: failure === 'error' && retries < 1 ? 'secondary' : 'primary', size: 'lg' })} to="/login">
                 {t('handoff.toLogin')}
               </Link>
             </div>
