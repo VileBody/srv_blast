@@ -10,6 +10,33 @@ import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { api } from '../../lib/api';
 import { Button, Pager } from '../ui/kit';
 
+/**
+ * Скачать файл, не трогая вкладку SPA. Атрибут `download` у кросс-доменной ссылки (S3)
+ * браузер игнорирует, и программный клик по <a> уводил саму вкладку на mp4; к тому же
+ * следующий клик отменял ещё не ответившую навигацию — из пачки доезжал один ролик.
+ * Чужой домен — через скрытый iframe: бэк подписывает ссылку с Content-Disposition:
+ * attachment (production_backend.download_url), и каждый iframe качает свой файл.
+ * Свой домен (dev/моки) — обычная ссылка с `download`, тут атрибут работает.
+ */
+function downloadInBackground(url: string) {
+  const target = new URL(url, window.location.href);
+  if (target.origin === window.location.origin) {
+    const link = document.createElement('a');
+    link.href = target.href;
+    link.download = '';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return;
+  }
+  const frame = document.createElement('iframe');
+  frame.style.display = 'none';
+  frame.src = target.href;
+  document.body.appendChild(frame);
+  // iframe нужен только чтобы стартовать загрузку; минуты хватает с запасом
+  window.setTimeout(() => frame.remove(), 60_000);
+}
+
 /*
  * Общая оболочка батча: W36 (готовый батч) и W51 (идёт генерация) — ОДИН макет.
  * Слева шапка трека (батч-пилюли ↔ прогресс-бар) + «Генерации», справа превью + «К проектам».
@@ -197,15 +224,23 @@ export function GenerationRow({ video, onPost, footer }: { video: VideoVersion; 
       {/* download работает только для своего домена: у кросс-доменного S3-URL браузер
           атрибут игнорирует и открывает ролик во вкладке. Чтобы скачивание было настоящим,
           объекты в S3 должны отдаваться с Content-Disposition: attachment. */}
-      <a
-        href={video.downloadUrl ?? '#'}
-        download=""
-        onClick={() => { if (video.downloadUrl) void api.trackEvent('video_downloaded', { videoId: video.id }).catch(() => {}); }}
-        aria-label={t('common.download')}
-        className={`ml-[12px] shrink-0 transition-opacity hover:opacity-70 ${video.downloadUrl ? '' : 'pointer-events-none opacity-40'}`}
-      >
-        <FigIcon name="pd-download.svg" h={20} />
-      </a>
+      {video.downloadUrl ? (
+        <a
+          href={video.downloadUrl}
+          download=""
+          onClick={() => { void api.trackEvent('video_downloaded', { videoId: video.id }).catch(() => {}); }}
+          aria-label={t('common.download')}
+          className="ml-[12px] shrink-0 transition-opacity hover:opacity-70"
+        >
+          <FigIcon name="pd-download.svg" h={20} />
+        </a>
+      ) : (
+        // ссылки ещё нет — настоящая disabled-кнопка: `href="#"` с pointer-events-none
+        // оставался в табе и по Enter прыгал на верх страницы
+        <button type="button" disabled aria-label={t('common.download')} className="ml-[12px] shrink-0 cursor-not-allowed opacity-40">
+          <FigIcon name="pd-download.svg" h={20} />
+        </button>
+      )}
     </div>
       {/* причина видна сразу, а не только во всплывающей подсказке (на телефоне её не навести) */}
       {failed && (
@@ -263,7 +298,7 @@ export function TrackCard({
           <button
             type="button"
             onClick={onMakeCurrent}
-            className="shrink-0 whitespace-nowrap rounded-[15px] border border-accent-light px-[14px] py-[6px] text-[14px] leading-none text-text-80 transition hover:text-text focus-visible:outline-none"
+            className="shrink-0 whitespace-nowrap rounded-[15px] border border-accent-light px-[14px] py-[6px] text-[14px] leading-none text-text-80 transition hover:text-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light"
           >
             {t('projectDetail.makeCurrent')}
           </button>
@@ -421,14 +456,7 @@ export function GenerationsCard({
   const downloadAll = () => {
     void api.trackEvent('video_download_all', { videos: downloadable.length }).catch(() => {});
     downloadable.forEach((video, index) => {
-      setTimeout(() => {
-        const link = document.createElement('a');
-        link.href = video.downloadUrl as string;
-        link.download = '';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-      }, index * 350);
+      setTimeout(() => downloadInBackground(video.downloadUrl as string), index * 350);
     });
   };
   return (
