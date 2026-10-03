@@ -358,7 +358,10 @@ export function LabTypeList({ locked }: { locked: boolean }) {
   const dockDismissed = useGuideLiveDismissed(fxLabGuideId('dock'));
   const dockActed = useGuideActed(fxLabGuideId('dock'));
   const progress = useFxLabTourProgress();
-  const variantsTurn = hasOpen && dockDismissed && dockActed;
+  // Док может показывать вариант другого типа, чем раскрытый (раскрыли пустой тип, а
+  // довели вариант соседнего) — шаг всё равно наступает: вариант доведён до конца.
+  const hasActive = Boolean(lab.activeId && allVariants.some((v) => v.id === lab.activeId && !v.draft));
+  const variantsTurn = (hasOpen || hasActive) && dockDismissed && dockActed;
   const [variantsGuideDismissed, setVariantsGuideDismissed] = useGuideDismiss(fxLabGuideId('variants'), false);
   const showVariantsGuide = variantsTurn && !variantsGuideDismissed;
   useMarkGuideSeen(fxLabGuideId('variants'), showVariantsGuide);
