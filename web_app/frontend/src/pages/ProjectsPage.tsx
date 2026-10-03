@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -78,12 +79,28 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onCloseMenu, onRename, o
   const { t } = useTranslation();
   const cardRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  /* Меню — в портале поверх страницы: внутри карточки его резали её overflow-hidden и
+     горизонтальная лента проектов (на телефоне карточка 112px — видно было пол-пункта). */
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!menuOpen) { setMenuPos(null); return undefined; }
+    const place = () => {
+      const r = toggleRef.current?.getBoundingClientRect();
+      if (r) setMenuPos({ top: r.bottom + 6, right: Math.max(8, window.innerWidth - r.right) });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => { window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); };
+  }, [menuOpen]);
 
   // меню закрывается кликом мимо карточки и по Escape (фокус — обратно на «⋯», чтобы не терялся)
   useEffect(() => {
     if (!menuOpen) return;
     const onPointer = (event: PointerEvent) => {
-      if (!cardRef.current?.contains(event.target as Node)) onCloseMenu();
+      const target = event.target as Node;
+      if (!cardRef.current?.contains(target) && !menuRef.current?.contains(target)) onCloseMenu();
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
@@ -108,7 +125,9 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onCloseMenu, onRename, o
     >
       <Link
         to={`/app/projects/${project.id}`}
-        className="flex min-h-0 flex-1 flex-col rounded-r15 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-light"
+        // max-md:!… — телефонный хак index.css (`[class~="min-h-0"] { flex: 0 0 auto }`) иначе
+        // схлопывает ссылку до контента, а с ней в 0 уходит обложка с волной (как у блока обложки ниже)
+        className="flex min-h-0 flex-1 flex-col rounded-r15 max-md:!min-h-0 max-md:!flex-1 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-light"
       >
         {/* обложка: отступ 14 слева/сверху, уходит за правый край (bleed 38px) и перекрыта фейдом в цвет карты */}
         <div className="relative ml-[14px] mr-[-38px] mt-[14px] min-h-0 flex-1 max-md:!min-h-0 max-md:!flex-1 max-md:ml-[10px] max-md:mt-[10px]">
@@ -139,8 +158,8 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onCloseMenu, onRename, o
       >
         ⋯
       </button>
-      {menuOpen && (
-        <div className="absolute right-[24px] top-[62px] z-[3] w-[196px] overflow-hidden rounded-r10 bg-field-hover py-[6px] shadow-soft">
+      {menuOpen && menuPos && createPortal(
+        <div ref={menuRef} className="fixed z-[200] w-[196px] overflow-hidden rounded-r10 bg-field-hover py-[6px] shadow-soft" style={{ top: menuPos.top, right: menuPos.right }}>
           {[
             { label: t('projects.rename'), run: onRename },
             { label: project.archived ? t('projects.unarchive') : t('projects.archive'), run: onArchive },
@@ -155,7 +174,8 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onCloseMenu, onRename, o
               {item.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
