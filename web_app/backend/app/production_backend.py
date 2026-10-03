@@ -375,8 +375,11 @@ class ProductionBackend:
         return dict(response.json())
 
     def storyboard_selector(self, group_name: str) -> dict[str, str]:
-        """Точный слот (theme, tags_group) вайба — тот же, что уходит в рендер."""
-        selector = dict(self.config.selector_by_mode.get("footage", {}).get(group_name) or {})
+        """Точный слот (theme, tags_group) вайба — тот же, что уходит в рендер.
+
+        Ищем только среди вайбов: раскадровка есть только у них, а карта по имени
+        отдала бы одноимённый фильм или коллекцию."""
+        selector = self._footage_selector_in_plane(group_name, "vibes")
         if not selector.get("rotationTheme") or not selector.get("rotationTagsGroup"):
             raise ProductionBackendError(f"exact rotation selector required for footage {group_name!r}")
         return selector

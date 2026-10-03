@@ -205,6 +205,13 @@ def attach_to_variations(variations: list[dict[str, Any]], storyboard: dict[str,
             raise StoryboardError(
                 f"Раскадровка устарела: у видео {index} поменялся фон — соберите исходники заново на шаге «Пул»"
             )
+        plane = bg.get("footagePlane")
+        if plane is not None and plane != "vibes":
+            # раскадровку «Пул» собирает только вайбам; у фильма/коллекции другой пул
+            # клипов — план оттуда не про этот футаж (черновики без плана — как раньше)
+            raise StoryboardError(
+                f"Раскадровка есть только у вайбов, а видео {index} — из подборки {plane!r}: соберите исходники заново на шаге «Пул»"
+            )
         plan = entry["plan"]
         if segment is None or abs(float(plan.get("clip_start_abs", -1)) - segment["from"]) > 1e-3 \
                 or abs(float(plan.get("clip_end_abs", -1)) - segment["to"]) > 1e-3:

@@ -47,6 +47,7 @@ def _config(module: Any, *, stage1_backend: str = "gemini"):
                 "name": "Неон",
                 "previewUrl": "s3://assets/previews/neon.mp4",
                 "score": 1.0,
+                "selector": {"rotationTheme": "visual", "rotationTagsGroup": "neon", "renderPreset": "vertical"},
             },
         ),
         photo_catalog=(

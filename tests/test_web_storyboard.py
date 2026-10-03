@@ -116,6 +116,20 @@ def test_attach_refuses_a_plan_for_other_cuts(monkeypatch) -> None:
                                 {"from": 10.0, "to": 20.0}, None)
 
 
+def test_attach_refuses_a_plan_for_a_non_vibe_plane(monkeypatch) -> None:
+    """Батч смешивает вайбы и фильмы: план «Пула» есть только у вайбов."""
+    sb = _sb(monkeypatch)
+    film = _variation(1, "Неон")
+    film["background"]["footagePlane"] = "films"
+    with pytest.raises(sb.StoryboardError, match="только у вайбов"):
+        sb.attach_to_variations([film], {"videos": [_entry(1, "Неон")]}, {"from": 10.0, "to": 20.0}, TL)
+
+    vibe = _variation(1, "Неон")
+    vibe["background"]["footagePlane"] = "vibes"
+    sb.attach_to_variations([vibe], {"videos": [_entry(1, "Неон")]}, {"from": 10.0, "to": 20.0}, TL)
+    assert vibe["background"]["footagePlan"]["clips"][0]["file_name"] == "a.mp4"
+
+
 # ── production ────────────────────────────────────────────────────────────────
 
 def test_footage_plan_reaches_the_orchestrator(monkeypatch) -> None:
@@ -268,3 +282,21 @@ def test_recipe_cuts_refuse_what_the_render_would_not_honour(monkeypatch) -> Non
         sb.recipe_cuts({"pace": "dense", "cuts": [8.0, 12.0]}, seg)
     with pytest.raises(sb.StoryboardError, match="другого отрывка"):
         sb.recipe_cuts({"pace": "dense", "cuts": [14.0, 12.0]}, seg)
+
+
+def test_storyboard_selector_is_pinned_to_vibes(monkeypatch) -> None:
+    """Одноимённый фильм не должен подменить вайб в подборе «Пула»."""
+    import dataclasses
+
+    from tests.test_web_mixed_footage_planes import _two_plane_config
+
+    module = _module(monkeypatch)
+    backend = _backend(module, _two_plane_config(module))
+    assert backend.storyboard_selector("Неон")["rotationTagsGroup"] == "neon"
+
+    films_only = dataclasses.replace(
+        backend.config, footage_catalog=tuple(i for i in backend.config.footage_catalog if i["plane"] == "films"),
+    )
+    backend = _backend(module, films_only)
+    with pytest.raises(module.ProductionBackendError, match="not found in plane 'vibes'"):
+        backend.storyboard_selector("Неон")
