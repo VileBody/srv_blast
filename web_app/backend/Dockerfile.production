@@ -14,6 +14,8 @@ RUN python -m pip install --upgrade pip && \
     python -m pip install -r requirements.txt
 
 COPY web_app/backend/ ./
+# прогрев лёгких копий превью каталогов — деплой запускает его в фоне после старта (см. deploy_web_production.sh)
+COPY scripts/prewarm_web_previews.py /app/scripts/prewarm_web_previews.py
 COPY web_app/frontend/src/data/effects-registry.json /app/web_app/frontend/src/data/effects-registry.json
 # движок раскладки субтитров + каталог/замеры шрифтов: сайт сверяет настройки текста
 # с теми же правилами, что и сборка (web_app/backend/app/subtitle_text.py)
