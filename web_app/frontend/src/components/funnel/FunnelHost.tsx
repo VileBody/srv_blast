@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
 import type { FunnelState, GenerationJob, RatingReason, VideoRating, VideoVersion } from '../../lib/types';
 import { useToast } from '../../contexts/ToastContext';
 import { bindFunnelUser, funnelSeen, markFunnelSeen, markQuizSkipped, quizSkippedRecently, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
@@ -73,6 +73,15 @@ function useSerialSaves() {
     });
   }, [bump]);
   return { run, pending: (id: string) => Boolean(inFlight[id]) };
+}
+
+/**
+ * Оценки без привязанного Telegram бэк отдаёт 409 (решение бэка: воронка живёт в боте).
+ * Повтор ответил бы тем же — не ретраим; прочие сбои — как по умолчанию (до трёх раз).
+ */
+function retryRatings(failures: number, error: unknown): boolean {
+  if (error instanceof ApiError && error.status === 409) return false;
+  return failures < 3;
 }
 
 /* ------------------------------------------------------------------ квиз */
@@ -209,7 +218,8 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const ratingsQuery = useQuery({
     queryKey: ['funnel-ratings', ctx.jobId],
     queryFn: () => api.funnelRatings(ctx.jobId ?? ''),
-    enabled: Boolean(ctx.jobId)
+    enabled: Boolean(ctx.jobId),
+    retry: retryRatings
   });
   // Ролики — из батча: у плашки после перезагрузки их нет (ссылки подписанные, не храним),
   // а в контексте с оценки 7+ — только готовые на тот момент. Ключ общий со страницей
@@ -559,7 +569,9 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
   const ratingsQuery = useQuery({
     queryKey: ['funnel-ratings', job?.id],
     queryFn: () => api.funnelRatings(job?.id ?? ''),
-    enabled: Boolean(job?.id)
+    // без состояния воронки строку всё равно не рисуем (см. render) — и не спрашиваем
+    enabled: Boolean(job?.id && funnel.data),
+    retry: retryRatings
   });
   const [local, setLocal] = useState<Record<string, VideoRating>>({});
   const ratings = { ...(ratingsQuery.data?.ratings ?? {}), ...local };
@@ -618,7 +630,9 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
   const unavailable = apiErrorCode(funnel.error) === 'telegram_required';
 
   const render = (video: VideoVersion) => {
-    if (video.status !== 'COMPLETED' || unavailable) return null;
+    // Строка — только когда воронка доехала: иначе у аккаунта без Telegram она мелькала
+    // до ответа 409 и пропадала.
+    if (video.status !== 'COMPLETED' || unavailable || !funnel.data) return null;
     const current = ratings[video.id];
     return (
       <VideoRatingRow
