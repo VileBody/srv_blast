@@ -172,7 +172,9 @@ export function LimitsIndicator({
   // Платящим ни перезарядка, ни трипваер за 399 ₽ не предлагаются: воронка конверсионная,
   // а безлимит на трек мог остаться у них с бесплатного периода.
   const free = Boolean(funnel && !funnel.hasPaid);
-  const popout: { variant: PopoutVariant; key: string } | null = free && quota && !quota.allowed && !quota.tripwire && sameTrack
+  // Перезарядка — упор только когда и генераций на балансе нет: иначе батч уйдёт за них, и
+  // окно «до следующего батча 3:45» врало бы, что собирать нельзя.
+  const popout: { variant: PopoutVariant; key: string } | null = free && creditsOut && quota && !quota.allowed && !quota.tripwire && sameTrack
     ? { variant: quota.reason === 'daily_limit' ? 'daily' : 'cooldown', key: `limit:${quota.availableAt}` }
     : free && creditsOut && (!unlimited || isUnlimitedTrack(unlimited, track) === false)
       ? { variant: 'creditsOut', key: unlimited ? `credits-out:${track?.audioHash ?? track?.id}` : 'credits-out' }

@@ -25,6 +25,7 @@ import { demoTrackUrl } from '../dev/demoTrack';
 import { useToast } from '../contexts/ToastContext';
 import { useFunnelUi } from '../stores/funnelUi';
 import { trackTitleOf } from '../components/funnel/useFunnel';
+import type { FunnelState } from '../lib/types';
 import { useWizardStore } from '../stores/wizardStore';
 import { useCombos } from '../components/wizard/montage/combos';
 import { useFxTimelineOpen } from '../components/wizard/timelineGuides';
@@ -233,22 +234,37 @@ export function WizardPage() {
         push({ variant: 'info', title: t('wizard.page.asrPendingTitle'), text: t('wizard.page.asrPendingText') });
         return;
       }
-      // Воронка: бесплатные ролики кончились — открываем безлимит на этот трек; квота трека
-      // кончилась — обновляем лимиты, окно перезарядки всплывёт у кружка лимитов.
-      const limit = limitReached ? (error.detail as { detail?: { code?: string; unlimitedOffer?: boolean } })?.detail : undefined;
+      // Воронка: бесплатные ролики кончились — открываем безлимит на этот трек (не открыт —
+      // два шага к нему, открыт на другом — экран с трипваером). Квота трека ждёт, а генераций
+      // не хватает — то же окно на треке безлимита: там таймер и покупка трипваера, а не
+      // немой тост «Тарифы» (раньше трипваер так и не находился).
+      const limit = limitReached
+        ? (error.detail as { detail?: { code?: string; unlimitedOffer?: boolean; tripwireOffer?: FunnelState['tripwireOffer'] } })?.detail
+        : undefined;
+      const gate = {
+        source: 'gate' as const,
+        projectId: projectId ?? undefined,
+        trackId: state.track?.id,
+        audioHash: state.track?.audioHash,
+        trackTitle: trackTitleOf(state.track?.filename)
+      };
       if (limit?.code === 'credits_exhausted' && limit.unlimitedOffer) {
-        openUnlimited({
-          source: 'gate',
-          projectId: projectId ?? undefined,
-          trackId: state.track?.id,
-          audioHash: state.track?.audioHash,
-          trackTitle: trackTitleOf(state.track?.filename)
-        });
+        openUnlimited(gate);
         return;
       }
       if (limit?.code && ['cooldown', 'daily_limit', 'track_batch_cap'].includes(limit.code)) {
+        // отказ квоты сам открыл окно трипваера на бэке — кладём его сразу, не дожидаясь refetch
+        if (limit.tripwireOffer) {
+          queryClient.setQueryData<FunnelState>(['funnel-state'], (prev) => (prev ? { ...prev, tripwireOffer: limit.tripwireOffer ?? null } : prev));
+        }
         void queryClient.invalidateQueries({ queryKey: ['funnel-state'] });
         void queryClient.invalidateQueries({ queryKey: ['me'] });
+        const funnel = queryClient.getQueryData<FunnelState>(['funnel-state']);
+        // «за раз не больше N» — не упор: человеку достаточно уменьшить число роликов (тост ниже)
+        if (limit.code !== 'track_batch_cap' && funnel && !funnel.hasPaid) {
+          openUnlimited(gate);
+          return;
+        }
       }
       push({
         variant: 'error',

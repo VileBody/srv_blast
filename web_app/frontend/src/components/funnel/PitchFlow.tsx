@@ -10,8 +10,8 @@ import { FunnelSheet } from './FunnelSheet';
  * Питч в модалке B — выжимка веток питча из бота (services/tg_bot_public/app.py:
  * высокая оценка → «поток роликов», _handle_sales_pitch → Бласт против монтажёра,
  * задача шага — продать Бласт). Должен помещаться в один экран телефона: одна фраза
- * по ответам квиза, сравнение полосками и одна строка действий — «Изучить тариф» и
- * квадрат со стрелкой к следующему шагу (бесплатный безлимит, если не купил).
+ * по ответам квиза, сравнение полосками и одна строка действий — «Изучить тариф» (серая)
+ * и главный квадрат со стрелкой к следующему шагу (бесплатный безлимит, если не купил).
  *
  * Персонализация — по ответам квиза (общие с ботом): Q3 выбирает довод
  * (время / деньги / идеи / смысл), Q2a/Q2b подставляют собственные цифры человека.
@@ -73,8 +73,10 @@ export function PitchFlow({
       description={t(personal.key, personal.vars)}
       actions={
         <>
-          <ButtonLink variant="primary" className="flex-1" href={STUDY_HREF} onClick={study}>{t('funnel.pitch.study')}</ButtonLink>
-          <Button variant="secondary" iconOnly aria-label={t('funnel.pitch.skipToFree')} title={t('funnel.pitch.skipToFree')} onClick={onNext}>
+          {/* Акцент — на «дальше» (к бесплатному безлимиту): окно ведёт по шагам, а тариф —
+              запасной путь, поэтому он серый, а стрелка — главная кнопка строки */}
+          <ButtonLink variant="secondary" className="flex-1" href={STUDY_HREF} onClick={study}>{t('funnel.pitch.study')}</ButtonLink>
+          <Button variant="primary" iconOnly aria-label={t('funnel.pitch.skipToFree')} title={t('funnel.pitch.skipToFree')} onClick={onNext}>
             <Icon>{GLYPH.arrowRight}</Icon>
           </Button>
         </>
