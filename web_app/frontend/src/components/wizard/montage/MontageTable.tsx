@@ -226,7 +226,6 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
   sub?: SubProps; w: number; h: number; className?: string; children?: ReactNode;
 }) {
   const [subError, setSubError] = useState<string | null>(null);
-  const { t: tr } = useTranslation();
   const fxName = useFxName();
   const shots = Math.max(1, bounds.length - 1);
   const fNow = frameIndex(bounds, t);
@@ -261,7 +260,7 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
           if (!visible && !ahead) return null;
           if (ahead && !visible) return frame ? <FrameView key={`${frame.id}:${i}`} frame={frame} t={t} at={0} playing={false} className="shot" style={{ zIndex: 0, opacity: 0 }} /> : null;
           const style = { zIndex: i === fNow ? 2 : 1, ...shotStyle(i) };
-          if (!frame) return <div key={`ph${i}`} className="fxt-ph" style={{ ...style, background: `linear-gradient(145deg, hsl(${(i * 53 + 260) % 360} 45% 22%), hsl(${(i * 53 + 305) % 360} 35% 10%))` }}><span>{tr('wizard.montage.shotPh', { n: pad(i + 1) })}</span></div>;
+          if (!frame) return <ShotPlaceholder key={`ph${i}`} i={i} style={style} />;
           return <FrameView key={`${frame.id}:${i}`} frame={frame} t={t} at={t - (bounds[i] ?? 0)} playing={playing && i === fNow} className="shot on" style={style} />;
         })}
       </div>
@@ -281,10 +280,41 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
   );
 }
 
+function ShotPlaceholder({ i, style }: { i: number; style?: CSSProperties }) {
+  const { t: tr } = useTranslation();
+  return <div className="fxt-ph" style={{ ...style, background: `linear-gradient(145deg, hsl(${(i * 53 + 260) % 360} 45% 22%), hsl(${(i * 53 + 305) % 360} 35% 10%))` }}><span>{tr('wizard.montage.shotPh', { n: pad(i + 1) })}</span></div>;
+}
+
+/**
+ * Неподвижный кадр ролика: картинка кадра под временем t (JPEG прослойки, см. FrameView thumb),
+ * его стили, плашка хука и рамка. Без <video>, субтитров и анимации — так стоят ролики сетки
+ * «Все ролики» и плитки библиотеки, пока на них не навели: живой Stage — свой декодер на клип.
+ */
+function StagePoster({ frames, bounds, t, fx, w, h, className = '' }: { frames: Frame[]; bounds: number[]; t: number; fx: StageFx; w: number; h: number; className?: string }) {
+  const fxName = useFxName();
+  const shots = Math.max(1, bounds.length - 1);
+  const k = frameIndex(bounds, t);
+  const activeStyles = fx.styles.filter((s) => t >= bounds[s.a] && t < bounds[Math.min(s.b, shots)]).map((s) => s.style);
+  const inHook = fx.hookRange && t >= fx.hookRange[0] && t < fx.hookRange[1];
+  const cover = inHook && (fx.hookKind === 'motion' || fx.hookKind === 'thought');
+  return (
+    <div className={`fxt-stage ${className}`} style={{ width: w, height: h }}>
+      <div className="fxt-fx" style={{ filter: styleFilter(activeStyles, t) }}>
+        {frames[k] ? <FrameView frame={frames[k]} t={t} thumb className="shot on" /> : <ShotPlaceholder i={k} />}
+      </div>
+      {cover && <div className="mt-cover"><span>{fxName(fx.hookLabel)}</span></div>}
+      {fx.frameUrl && <img className="mt-frame" src={fx.frameUrl} alt="" draggable={false} />}
+    </div>
+  );
+}
+
 /** Пример эффекта на своём ролике: окно [at − lead, at − lead + span] крутится по кругу. */
 function LoopStage({ frames, bounds, at, dur, fx, w = 169, h = 300, lead = 0.5, span = 1.5, paused = false }: {
   frames: Frame[]; bounds: number[]; at: number; dur: number; fx: StageFx; w?: number; h?: number; lead?: number; span?: number;
-  /** плитка ушла из виду — цикл стоит (кадры не размонтируются и не качаются заново) */
+  /**
+   * плитка не под курсором (или ушла из виду) — цикл стоит, вместо живого Stage неподвижный
+   * кадр: иначе каждая видимая плитка держала бы свои <video> и свой цикл одновременно
+   */
   paused?: boolean;
 }) {
   const [t, setT] = useState(at - 0.4);
@@ -295,7 +325,9 @@ function LoopStage({ frames, bounds, at, dur, fx, w = 169, h = 300, lead = 0.5, 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [at, dur, lead, span, paused]);
-  return <Stage frames={frames} bounds={bounds} t={t} fx={fx} w={w} h={h} className="mt-loop" />;
+  if (paused) return <StagePoster frames={frames} bounds={bounds} t={t} fx={fx} w={w} h={h} className="mt-loop" />;
+  // время идёт вживую — клип играет сам и перематывается только на стыке круга, а не каждый кадр
+  return <Stage frames={frames} bounds={bounds} t={t} playing fx={fx} w={w} h={h} className="mt-loop" />;
 }
 
 /**
@@ -384,7 +416,10 @@ function TileMedia({ preview }: { preview: LibPreview }) {
   const [ref, visible, seen] = useInView<HTMLSpanElement>();
   // медленная сеть / экономия трафика: пример не стартует сам — играет по наведению или тапу
   const lowData = useLowData();
+  // «на твоём ролике» оживает только под курсором: остальные плитки — неподвижный кадр
+  const [hot, setHot] = useState(false);
   const hover = (play: boolean) => (e: React.SyntheticEvent<HTMLSpanElement>) => {
+    setHot(play);
     const video = e.currentTarget.querySelector('video');
     if (!lowData || !video) return;
     if (play) void video.play().catch(() => undefined); else video.pause();
@@ -393,7 +428,7 @@ function TileMedia({ preview }: { preview: LibPreview }) {
     <span ref={ref} className="mt-fxtile-media" onPointerEnter={hover(true)} onPointerLeave={hover(false)}>
       {seen && (preview.url
         ? <LazyVideo src={preview.url} visible={visible} lowData={lowData} />
-        : preview.sim?.(TILE, !visible))}
+        : preview.sim?.(TILE, !(visible && hot)))}
       {seen && !preview.url && preview.sim && <span className="mt-fxtile-tag">{tr('wizard.montage.onYourVideo')}</span>}
       {preview.state === 'loading' && <span className="mt-fxtile-none"><span className="spinner" aria-hidden="true" /></span>}
       {preview.state === 'error' && <span className="mt-fxtile-none">{tr('wizard.montage.previewsFailed')}</span>}
@@ -1576,6 +1611,15 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   const isEdited = (c: Combo) => fxOf(c.index).edited || Object.keys(storyboard.videos[c.slotIndex]?.pins ?? {}).length > 0;
   const editedCount = combos.filter(isEdited).length;
 
+  /*
+   * «Все ролики»: живой (видео, субтитры) только один ролик — под курсором/фокусом, иначе
+   * выбранный; остальные — неподвижные кадры под тем же временем. Раньше каждый ролик батча
+   * был полным Stage с <video preload="auto"> и canvas субтитров — самый тяжёлый вид стола.
+   * На медленной сети выбранный сам не оживает — только по наведению.
+   */
+  const lowData = useLowData();
+  const [gridHot, setGridHot] = useState<number | null>(null);
+  const gridLive = gridHot ?? (lowData ? null : index);
   // «Все ролики»: сетка под размер области — все 9:16 целиком, синхронно по времени.
   const gridCell = useMemo(() => {
     const gap = 16; const labelH = 44;
@@ -1954,8 +1998,12 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
         <main ref={mainRef} className="fxt-main mt-gridmain">
           <div className="mt-grid" style={{ gridTemplateColumns: `repeat(${gridCell.cols}, ${gridCell.w}px)` }}>
             {combos.map((c) => (
-              <button key={c.index} type="button" className={`mt-cell${c.index === index ? ' cur' : ''}`} onClick={() => { onIndex(c.index); setView('table'); }} aria-label={tr('wizard.montage.openVideo', { n: c.index + 1 })}>
-                <Stage frames={clipsOf(c)} bounds={bounds} t={t} playing={playing} fx={stageFxFor(c)} sub={subFor(c)} w={gridCell.w} h={gridCell.h} />
+              <button key={c.index} type="button" className={`mt-cell${c.index === index ? ' cur' : ''}`} onClick={() => { onIndex(c.index); setView('table'); }} aria-label={tr('wizard.montage.openVideo', { n: c.index + 1 })}
+                onPointerEnter={() => setGridHot(c.index)} onPointerLeave={() => setGridHot((h) => (h === c.index ? null : h))}
+                onFocus={() => setGridHot(c.index)} onBlur={() => setGridHot((h) => (h === c.index ? null : h))}>
+                {c.index === gridLive
+                  ? <Stage frames={clipsOf(c)} bounds={bounds} t={t} playing={playing} fx={stageFxFor(c)} sub={subFor(c)} w={gridCell.w} h={gridCell.h} />
+                  : <StagePoster frames={clipsOf(c)} bounds={bounds} t={t} fx={stageFxFor(c)} w={gridCell.w} h={gridCell.h} />}
                 <span className="mt-cap"><b className="num tx">{c.index + 1}</b><span className="tx">{videoLabel(c)}</span>{isEdited(c) && <i className="mt-dot" />}</span>
               </button>
             ))}
