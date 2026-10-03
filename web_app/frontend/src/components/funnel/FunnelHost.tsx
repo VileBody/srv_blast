@@ -529,11 +529,6 @@ export function FunnelHost() {
  */
 type DockKind = 'unlimited' | 'tripwire';
 
-/** Пути, где низ экрана занят главными действиями страницы — карточку там не ставим. */
-function dockBlocked(pathname: string): boolean {
-  // выкладка в TikTok («Опубликовать») и тарифы (кнопки оплаты у карточек тарифов)
-  return pathname.endsWith('/post') || pathname.startsWith('/app/pricing');
-}
 
 export function FunnelBadge() {
   const { t } = useTranslation();
@@ -573,10 +568,11 @@ export function FunnelBadge() {
     setCollapsedKeys((prev) => ({ ...prev, [dockKey]: on }));
   };
 
-  // Под модалками и обложками не показываем: карточка висела бы поверх диалогов
-  const hidden = dockBlocked(location.pathname) || modals > 0 || covers > 0;
+  // Вход в безлимит виден всегда, на любой странице (спрятанный — неочевиден). Не показываем
+  // только под модалками и обложками: карточка висела бы поверх самих диалогов.
+  const hidden = modals > 0 || covers > 0;
   // Визард на десктопе — композиция ровно в экран, «Продолжить» в правом нижнем углу:
-  // карточка легла бы на неё. На телефоне визард прокручивается — там запас снизу.
+  // там карточка встаёт в левый нижний угол, сразу за боковой панелью.
   const wizard = location.pathname.startsWith('/app/generate');
   const visible = Boolean(kind && !open && !hidden);
   // Пока карточка видна, на телефоне у содержимого есть запас снизу (index.css): последние
@@ -609,7 +605,7 @@ export function FunnelBadge() {
   };
 
   return (
-    <div className={cn('funnel-dock fn-step', mini && 'funnel-dock--mini', wizard && 'md:hidden')} role="region" aria-label={title}>
+    <div className={cn('funnel-dock fn-step', mini && 'funnel-dock--mini', wizard && 'funnel-dock--left')} role="region" aria-label={title}>
       {mini ? (
         <button
           type="button"
