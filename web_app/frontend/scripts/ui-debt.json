@@ -3,7 +3,7 @@
     "src/components/billing/BillingCard.tsx": 12,
     "src/components/billing/TrackUsageCard.tsx": 8,
     "src/components/guidance/ActionGuideOverlay.tsx": 23,
-    "src/components/layout/AppShell.tsx": 6,
+    "src/components/layout/AppShell.tsx": 5,
     "src/components/layout/LanguageSwitcher.tsx": 1,
     "src/components/layout/ProfileSetupGate.tsx": 3,
     "src/components/project/BatchCards.tsx": 29,
