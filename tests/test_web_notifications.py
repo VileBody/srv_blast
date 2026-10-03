@@ -31,7 +31,7 @@ def test_outbox_deduplicates_and_keeps_failed_delivery_for_retry(outbox, monkeyp
     outbox.enqueue("video:1", chat_id=123, text="ready")
     outbox.enqueue("video:1", chat_id=123, text="ready")
     calls = []
-    monkeypatch.setattr(outbox.telegram_bot, "_send", lambda *args, **kwargs: calls.append(args) or False)
+    monkeypatch.setattr(outbox.telegram_bot, "deliver", lambda *args, **kwargs: calls.append(args) or outbox.telegram_bot.SendResult(False, error="Telegram 500: boom"))
     outbox.deliver_pending()
     outbox.deliver_pending()
     assert len(calls) == 1  # backoff, not a tight retry loop
@@ -40,7 +40,7 @@ def test_outbox_deduplicates_and_keeps_failed_delivery_for_retry(outbox, monkeyp
         attempts, delivered, error = cursor.fetchone()
     assert attempts == 1 and delivered is None and error
     monkeypatch.setattr(outbox.time, "time", lambda: 1031)
-    monkeypatch.setattr(outbox.telegram_bot, "_send", lambda *args, **kwargs: calls.append(args) or True)
+    monkeypatch.setattr(outbox.telegram_bot, "deliver", lambda *args, **kwargs: calls.append(args) or outbox.telegram_bot.SendResult(True))
     outbox.deliver_pending()
     outbox.deliver_pending()
     assert len(calls) == 2
@@ -73,7 +73,7 @@ def test_manager_delivery_uses_explicit_route(outbox, monkeypatch):
     monkeypatch.setenv("WEB_MANAGER_CHAT_ID", "-123")
     outbox.manager_event("payment:created", "payment created")
     calls = []
-    monkeypatch.setattr(outbox.telegram_bot, "_send", lambda *args, **kwargs: calls.append((args, kwargs)) or True)
+    monkeypatch.setattr(outbox.telegram_bot, "deliver", lambda *args, **kwargs: calls.append((args, kwargs)) or outbox.telegram_bot.SendResult(True))
     outbox.deliver_pending()
     assert calls[0][0][0] == "-123"
     assert calls[0][1]["manager"] is True
@@ -172,8 +172,9 @@ def test_user_notifications_follow_the_account_bot_flag(outbox, monkeypatch):
     outbox.enqueue("video:b", chat_id=666, text="ready", user_route=True)
     outbox.enqueue("login:x", chat_id=555, text="welcome")  # ответ на вход — всегда бот входа
     sent = []
-    monkeypatch.setattr(outbox.telegram_bot, "_send",
-                        lambda chat, text, markup=None, **kw: sent.append((chat, text, kw.get("via"))) or True)
+    monkeypatch.setattr(outbox.telegram_bot, "deliver",
+                        lambda chat, text, markup=None, **kw: sent.append((chat, text, kw.get("via")))
+                        or outbox.telegram_bot.SendResult(True))
     outbox.deliver_pending()
     assert sorted(sent) == [(555, "ready", "public"), (555, "welcome", "auth"), (666, "ready", "auth")]
 
@@ -250,3 +251,79 @@ def test_production_monitor_decides_the_offer_from_the_funnel(outbox, monkeypatc
     monkeypatch.setattr(funnel, "unlimited_offer_due", broken)
     # сбой воронки не держит «батч готов»: без второй кнопки, с логом
     assert asyncio.run(monitor._unlimited_offer_due(done)) is False
+
+
+def _row(outbox, key):
+    with outbox.db.read() as cursor:
+        cursor.execute(outbox.db.sql(
+            "SELECT attempts, delivered_at, dead_at, last_error FROM notification_outbox WHERE event_key = %s"
+        ), (key,))
+        return cursor.fetchone()
+
+
+def test_blocked_bot_is_dead_lettered_at_once(outbox, monkeypatch):
+    """Регресс: 403 «bot was blocked» ретраился вечно и копился в outbox."""
+    monkeypatch.setattr(outbox.time, "time", lambda: 1000)
+    outbox.enqueue("video:blocked", chat_id=123, text="ready")
+    send = outbox.telegram_bot.SendResult(False, permanent=True, error="Telegram 403: Forbidden: bot was blocked by the user")
+    calls = []
+    monkeypatch.setattr(outbox.telegram_bot, "deliver", lambda *a, **kw: calls.append(a) or send)
+    outbox.deliver_pending()
+    monkeypatch.setattr(outbox.time, "time", lambda: 100000)
+    outbox.deliver_pending()
+    attempts, delivered, dead, error = _row(outbox, "video:blocked")
+    assert len(calls) == 1 and attempts == 1 and delivered is None and dead == 1000
+    assert "blocked" in error
+
+
+def test_transient_failures_stop_after_the_attempt_cap(outbox, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(outbox.time, "time", lambda: clock[0])
+    outbox.enqueue("video:flaky", chat_id=123, text="ready")
+    calls = []
+    fail = outbox.telegram_bot.SendResult(False, error="delivery unknown: TimeoutError")
+    monkeypatch.setattr(outbox.telegram_bot, "deliver", lambda *a, **kw: calls.append(a) or fail)
+    for _ in range(outbox.MAX_ATTEMPTS + 5):
+        outbox.deliver_pending()
+        clock[0] += 1000
+    attempts, delivered, dead, _ = _row(outbox, "video:flaky")
+    assert len(calls) == outbox.MAX_ATTEMPTS == attempts and delivered is None and dead is not None
+
+
+def test_fresh_events_go_before_a_backlog_of_retries(outbox, monkeypatch):
+    """Завал повторов не должен задерживать свежее «Ролик готов»."""
+    monkeypatch.setattr(outbox.time, "time", lambda: 1000)
+    with outbox.db.transaction() as cursor:
+        for i in range(outbox.BATCH_SIZE + 10):
+            cursor.execute(outbox.db.sql(
+                "INSERT INTO notification_outbox (event_key, payload, attempts, next_attempt) VALUES (%s, %s, 5, 0)"
+            ), (f"old:{i:03d}", outbox.db.json_param({"chat_id": 1, "text": "old"})))
+    outbox.enqueue("video:fresh", chat_id=2, text="fresh")
+    sent = []
+    monkeypatch.setattr(outbox.telegram_bot, "deliver",
+                        lambda chat_id, text, *a, **kw: sent.append(text) or outbox.telegram_bot.SendResult(text == "fresh"))
+    outbox.deliver_pending()
+    assert sent[0] == "fresh" and len(sent) == outbox.BATCH_SIZE
+    assert _row(outbox, "video:fresh")[1] == 1000
+
+
+def test_bot_api_403_is_classified_as_permanent(outbox, monkeypatch):
+    import io
+    import json
+    import urllib.error
+
+    tg = outbox.telegram_bot
+
+    def blocked(*_a, **_kw):
+        body = json.dumps({"ok": False, "error_code": 403, "description": "Forbidden: bot was blocked by the user"})
+        raise urllib.error.HTTPError("https://api.telegram.org/x", 403, "Forbidden", {}, io.BytesIO(body.encode()))
+
+    monkeypatch.setattr(tg, "_api", blocked)
+    result = tg.deliver(1, "hi")
+    assert not result.ok and result.permanent and "blocked" in result.error
+    monkeypatch.setattr(tg, "_api", lambda *a, **kw: {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"})
+    assert tg.deliver(1, "hi").permanent
+    monkeypatch.setattr(tg, "_api", lambda *a, **kw: {"ok": False, "error_code": 429, "description": "Too Many Requests"})
+    assert not tg.deliver(1, "hi").permanent
+    monkeypatch.setattr(tg, "_api", lambda *a, **kw: {"ok": True})
+    assert tg._send(1, "hi") is True
