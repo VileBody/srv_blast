@@ -16,7 +16,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { SvgMaskIcon } from './SvgMaskIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { AppAnalytics } from '../analytics/AppAnalytics';
-import { FunnelBadge, FunnelHost } from '../funnel/FunnelHost';
+import { FunnelBadge, FunnelHost, FunnelRailEntry } from '../funnel/FunnelHost';
 import { rememberSessionUser } from '../../stores/session';
 import { DraftReplaceDialog } from './DraftReplaceDialog';
 import { usePaymentReturn } from '../funnel/useFunnel';
@@ -135,6 +135,8 @@ function Sidebar({ activeJobId, userName, avatarUrl }: { activeJobId?: string; u
         ))}
       </nav>
       <div className="flex-1" />
+      {/* вход в безлимит: ключ с пилом над переключателем языка */}
+      <FunnelRailEntry />
       <LanguageSwitcher className="mb-space-4" />
       <Avatar name={userName} avatarUrl={avatarUrl} />
     </aside>
