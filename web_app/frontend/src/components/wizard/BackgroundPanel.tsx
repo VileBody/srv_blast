@@ -652,7 +652,6 @@ export function BackgroundWorkZone({ ready, loading, onBack, onNext }: { ready: 
   const { t } = useTranslation();
   const chip = useChip();
   const setBackground = useWizardStore((state) => state.setBackground);
-  const lyrics = useWizardStore((state) => state.fragmentEnabled ? state.fragmentLyrics : state.lyrics);
   const { background, vibesQuery, photosQuery } = useBackgroundLists();
   const example = useBgHover((state) => state.example);
   const setHover = useBgHover((state) => state.set);
@@ -682,7 +681,6 @@ export function BackgroundWorkZone({ ready, loading, onBack, onNext }: { ready: 
   const color = background.mode === 'color' ? background.color : undefined;
   const isVideo = current ? isVideoUrl(current.previewUrl) : false;
   const hasContent = Boolean(current || color);
-  const lyricLine = lyrics.split('\n').map((line) => line.trim()).find(Boolean) ?? '';
   const meta = total
     ? background.mode === 'footage' ? t('wizard.bg.metaFootage', { count: total }) : background.mode === 'photo' ? t('wizard.bg.metaPhoto', { count: total }) : t('wizard.bg.modeColor')
     : '';
@@ -720,12 +718,9 @@ export function BackgroundWorkZone({ ready, loading, onBack, onNext }: { ready: 
             {/* наведённая склейка или стиль — честный пример из каталога эффектов */}
             {example && <div className="w12-media-el w12-example"><EffectPreview previewId={example} /></div>}
             {!hasContent && !example && <div className="w12-empty">{t(background.mode === 'color' ? 'wizard.bg.previewEmptyColor' : 'wizard.bg.previewEmpty')}</div>}
-            {hasContent && !example && (
-              <>
-                <div className="w12-shade" />
-                {lyricLine && <div className="w12-lyric" style={color === WHITE_BG ? { color: BLACK_BG, textShadow: 'none' } : undefined}>{lyricLine}</div>}
-              </>
-            )}
+            {/* текста поверх кадра на «Фоне» нет: субтитры ещё не посчитаны, а строка песни
+                отвлекала от выбора фона. Затемнение оставлено — под плашкой и кнопкой «играть» */}
+            {hasContent && !example && <div className="w12-shade" />}
             {tag && <span className="w12-pv-tag">{tag}</span>}
             {hasContent && fragmentAudio.available && (
               <button type="button" className="w12-pv-play" onClick={fragmentAudio.toggle} aria-label={fragmentAudio.playing ? t('wizard.bg.stopTrack') : t('wizard.bg.playTrack')}>

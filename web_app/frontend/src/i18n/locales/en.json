@@ -716,7 +716,8 @@
       "previewEmpty": "Your lyrics will appear here",
       "previewPickStyle": "Pick a style to see it here",
       "fontMissing": "Font {{fonts}} is not on the server yet — no preview, so we never show the wrong geometry",
-      "fontFailed": "Could not load font {{fonts}} — reload the page"
+      "fontFailed": "Could not load font {{fonts}} — reload the page",
+      "previewFailed": "Preview didn't load"
     },
     "fxv": {
       "stepSound": "Warm-up",

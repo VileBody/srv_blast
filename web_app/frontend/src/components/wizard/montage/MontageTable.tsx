@@ -14,7 +14,7 @@ import { peakLevels, useTrackPeaks } from '../trackPeaks';
 import { usePhone } from '../../../lib/usePhone';
 import { useLowData } from '../../../lib/network';
 import { SubtitleTextCustomization } from '../SubtitlesPanel';
-import { SubtitleCanvas, type SubtitleCanvasProps } from '../SubtitleCanvas';
+import { SubtitleCanvas, SubtitlePreviewError, type SubtitleCanvasProps, type SubtitlePreviewIssue } from '../SubtitleCanvas';
 import { StoryboardReplaceGuideVisual, TimelineEntryGuideVisual } from '../timelineGuides';
 import { useGuideDismiss, useMarkGuideSeen } from '../../guidance/useGuideDismiss';
 import { useTranslation } from 'react-i18next';
@@ -231,7 +231,7 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
   frames: Frame[]; bounds: number[]; t: number; playing?: boolean; fx: StageFx;
   sub?: SubProps; w: number; h: number; className?: string; children?: ReactNode;
 }) {
-  const [subError, setSubError] = useState<string | null>(null);
+  const [subError, setSubError] = useState<SubtitlePreviewIssue | null>(null);
   const fxName = useFxName();
   const shots = Math.max(1, bounds.length - 1);
   const fNow = frameIndex(bounds, t);
@@ -278,7 +278,7 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
       {sub && sub.words.length > 0 && (
         <div className="w12 mt-sub">
           <SubtitleCanvas {...sub} time={t} rest={!playing} onError={setSubError} />
-          {subError && <div className="w12-sub-error">{subError}</div>}
+          {subError && <SubtitlePreviewError issue={subError} />}
         </div>
       )}
       {children}

@@ -1,7 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { api } from '../../lib/api';
+import { api, apiErrorMessage, ApiError } from '../../lib/api';
 import { cssZoom } from '../../lib/zoom';
 import { findFont, type SubtitleStyleId } from '../../lib/subtitleText';
 import { useSubtitleFonts } from '../../lib/useSubtitleFonts';
@@ -292,8 +292,37 @@ export interface SubtitleCanvasProps {
   rest: boolean;
   /** кадр 16:9 — текст-комп 1080×1920 вложен в 1920×1080, видна его середина */
   wide: boolean;
-  /** что показать, если геометрию посчитать нельзя (настройки, которые рендер не примет) */
-  onError?: (message: string | null) => void;
+  /** что показать, если превью не нарисовать: настройки, которые рендер не примет, или сбой загрузки */
+  onError?: (issue: SubtitlePreviewIssue | null) => void;
+}
+
+/** Почему превью не рисуется; `retry` — только у сбоя загрузки (повтор может помочь). */
+export type SubtitlePreviewIssue = { message: string; retry?: () => void; retrying?: boolean };
+
+/*
+ * Ошибка раскладки, которую показываем как есть: 4xx с человеческим текстом от самой ручки
+ * («положение „снизу“ только для 16:9» и т.п.) — человеку есть что поправить в настройках.
+ * Всё остальное — 5xx, HTML-страница прокси («502 Bad Gateway» от nginx при перезапуске бэка),
+ * обрыв сети, таймаут — сбой загрузки: короткое «Превью не загрузилось» и «Обновить».
+ */
+function isSettingsError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status >= 400 && error.status < 500
+    && error.status !== 408 && error.status !== 429 && apiErrorMessage(error.detail) !== null;
+}
+
+/** Плашка под превью: текст причины и, для сбоя загрузки, кнопка повтора. */
+export function SubtitlePreviewError({ issue }: { issue: SubtitlePreviewIssue }) {
+  const { t } = useTranslation();
+  return (
+    <div className="w12-sub-error" role="alert">
+      <span>{issue.message}</span>
+      {issue.retry && (
+        <button type="button" className="w12-sub-retry" onClick={issue.retry} disabled={issue.retrying}>
+          <span className="w12-l">{issue.retrying ? t('error.retrying') : t('error.inlineRetry')}</span>
+        </button>
+      )}
+    </div>
+  );
 }
 
 type FontState = { status: 'loading' | 'ready' | 'missing' | 'failed'; fonts: string[] };
@@ -310,9 +339,12 @@ export function SubtitleCanvas({ style, settings, color, words, lyrics, time, re
   const renderPreset = wide ? 'wide' : 'vertical';
   const geometry = useQuery({
     queryKey: ['subtitle-geometry', style, key, renderPreset],
-    queryFn: () => api.subtitleGeometry({ style, settings: key, renderPreset }),
+    queryFn: ({ signal }) => api.subtitleGeometry({ style, settings: key, renderPreset }, signal),
     staleTime: Infinity,
-    retry: false,
+    // невозможные настройки не повторяем (ответ будет тем же), а сбой загрузки — пару раз:
+    // при staleTime: Infinity один 502 во время перезапуска бэка иначе застревал в превью навсегда
+    retry: (count, error) => !isSettingsError(error) && count < 2,
+    retryDelay: (attempt) => 800 * 2 ** attempt,
     placeholderData: keepPreviousData,
   });
   const { catalog, files, settled } = useSubtitleFonts();
@@ -341,11 +373,23 @@ export function SubtitleCanvas({ style, settings, color, words, lyrics, time, re
   }, [needKey, settled, files]);
 
   const label = (ps: string) => findFont(catalog, ps)?.label ?? ps;
-  const geometryError = geometry.isError ? (geometry.error instanceof Error ? geometry.error.message : String(geometry.error)) : null;
+  // тело ответа (HTML прокси, трейсбек) в интерфейс не попадает никогда — только текст ручки или наш
+  const settingsError = geometry.isError && isSettingsError(geometry.error);
+  const loadFailed = geometry.isError && !settingsError;
+  const geometryError = settingsError ? (geometry.error as ApiError).message : loadFailed ? t('wizard.subs.previewFailed') : null;
   const fontError = fonts.status === 'missing' ? t('wizard.subs.fontMissing', { fonts: fonts.fonts.map(label).join(', ') })
     : fonts.status === 'failed' ? t('wizard.subs.fontFailed', { fonts: fonts.fonts.map(label).join(', ') }) : null;
   const error = geometryError ?? fontError;
-  useEffect(() => { onError?.(error); }, [error, onError]);
+  // повтор — стабильная ссылка, чтобы плашка у родителя не пересоздавалась на каждый кадр
+  const refetchRef = useRef(geometry.refetch);
+  refetchRef.current = geometry.refetch;
+  const retry = useCallback(() => { void refetchRef.current(); }, []);
+  const retrying = loadFailed && geometry.isFetching;
+  const issue = useMemo<SubtitlePreviewIssue | null>(
+    () => (error ? { message: error, ...(loadFailed && geometryError ? { retry, retrying } : {}) } : null),
+    [error, loadFailed, geometryError, retry, retrying]
+  );
+  useEffect(() => { onError?.(issue); }, [issue, onError]);
 
   useLayoutEffect(() => {
     const el = wrapRef.current;
