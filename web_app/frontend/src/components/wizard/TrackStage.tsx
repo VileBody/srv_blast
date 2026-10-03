@@ -341,7 +341,10 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
                     const previous = previousQuery.data.track;
                     if (!previous) return;
                     setTrack(previous);
-                    setBlobUrl(previous.localUrl || null);
+                    // это сохранённый трек, а не файл в памяти: играем лёгкую копию со своего домена
+                    // и берём пики с сервера (по id). Presigned-оригинал в blobUrl качал весь файл,
+                    // а волна упиралась в CORS бакета и рисовалась ровной полосой.
+                    setBlobUrl(null);
                   }}
                 >
                   <span className="w12-l">{t('wizard.track.take')}</span>

@@ -49,6 +49,26 @@ CLIP_ARGS = [
 ]
 TRACK_ARGS = ["-vn", "-ac", "2", "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart"]
 
+# Превью каталогов (вайбы, фото, стили субтитров, эффекты) — сырые AE-рендеры 1080×1920
+# (фото 1920×1440), а карточка на экране ~150–300 px. Короткая сторона ≤540, CRF 29, без звука.
+# fps источника не трогаем: в рендерах эффектов бывает 24/25/60, и 30 исказило бы ритм вспышек.
+# Ключевой кадр каждые 0,5 с по времени (не по кадрам — fps разный): луп и перемотка дешёвые.
+SHORT_SIDE_540 = "scale='if(gt(iw,ih),-2,min(540,iw))':'if(gt(iw,ih),min(540,ih),-2)':flags=bicubic"
+PREVIEW_ARGS = [
+    "-an",
+    "-vf", SHORT_SIDE_540,
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "29", "-pix_fmt", "yuv420p",
+    "-force_key_frames", "expr:gte(t,n_forced*0.5)", "-sc_threshold", "0",
+    "-movflags", "+faststart",
+]
+# заставка карточки — с первой секунды: в 0 с AE-рендер стиля часто ещё пустой (текст/эффект не вошёл)
+PREVIEW_POSTER_AT = 1.0
+# картинки каталога (PNG рамок 1080×1920 и т.п.) — до 720 по ширине; альфа сохраняется (PNG)
+IMAGE_MAX_W = 720
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg"}
+# превью и картинки адресуются содержимым (оригинал + его ETag) — кэшируются навсегда и всеми
+IMMUTABLE_PUBLIC = "public, max-age=31536000, immutable"
+
 
 class MediaProxyError(RuntimeError):
     """Лёгкую копию сделать не удалось — причина уходит в ответ, а не прячется."""
@@ -78,6 +98,61 @@ def proxy_name(source: str, kind: str) -> str:
     """Имя лёгкой копии: от адреса оригинала — одна копия на файл на весь сайт."""
     digest = hashlib.sha1(f"{VERSION}:{kind}:{source}".encode()).hexdigest()
     return f"{kind}/{digest[:2]}/{digest}"
+
+
+# ── превью каталогов: адрес = оригинал + его версия (ETag) ───────────────────────
+
+def object_version(etag: str) -> str:
+    """ETag объекта S3 → метка версии для имени копии и ссылки.
+
+    Ключи превью каталогов не версионированы (`previews/<plane>/<id>.mp4`, сборщик с --force
+    перезаливает на место): без ETag в адресе перезалитый ролик навсегда отдавался бы старой
+    копией из кэша браузера (immutable)."""
+    clean = "".join(ch for ch in str(etag or "") if ch.isalnum() or ch == "-")
+    if not clean:
+        raise MediaProxyError("у объекта S3 нет ETag — версию превью не определить")
+    return clean[:40]
+
+
+def preview_name(locator: str, version: str) -> str:
+    return proxy_name(f"{locator}#{version}", "preview") + ".mp4"
+
+
+def preview_poster_name(locator: str, version: str) -> str:
+    return preview_name(locator, version) + ".poster.jpg"
+
+
+def image_ext(locator: str) -> str:
+    ext = Path(locator.split("?", 1)[0]).suffix.lower()
+    ext = ".jpg" if ext == ".jpeg" else ext
+    if ext not in IMAGE_TYPES:
+        raise MediaProxyError(f"картинка каталога в неподдерживаемом формате: …{locator[-60:]}")
+    return ext
+
+
+def image_name(locator: str, version: str) -> str:
+    return proxy_name(f"{locator}#{version}", "image") + image_ext(locator)
+
+
+def preview_path(secret: str, locator: str, version: str) -> str:
+    """Стабильный адрес превью каталога: та же версия оригинала → тот же адрес → кэш браузера.
+
+    Расширение в адресе обязательно: сайт отличает видео от картинки по нему (isVideoUrl)."""
+    token = sign(secret, {"k": "preview", "s": locator, "v": version})
+    return f"/api/wizard/media/preview/{token}/clip.mp4"
+
+
+def image_path(secret: str, locator: str, version: str) -> str:
+    token = sign(secret, {"k": "image", "s": locator, "v": version})
+    return f"/api/wizard/media/image/{token}/image{image_ext(locator)}"
+
+
+def unsign_kind(secret: str, token: str, kind: str) -> tuple[str, str]:
+    """(оригинал, версия) из ссылки нужного вида; ссылка клипа сюда не подходит."""
+    data = unsign(secret, token)
+    if data.get("k") != kind or not data.get("s") or not data.get("v"):
+        raise MediaProxyError("ссылка на превью другого вида")
+    return data["s"], data["v"]
 
 
 # ── ffmpeg ─────────────────────────────────────────────────────────────────────
@@ -209,7 +284,7 @@ class LocalStore:
 
 # ── подготовка копий ─────────────────────────────────────────────────────────────
 
-def build_clip(store, name: str, fetch: Callable[[Path], None]) -> None:
+def build_clip(store, name: str, fetch: Callable[[Path], None], args: list[str] | None = None) -> None:
     """Скачать оригинал клипа → лёгкая копия → в хранилище (если её ещё нет)."""
     if store.has(name):
         return
@@ -217,8 +292,48 @@ def build_clip(store, name: str, fetch: Callable[[Path], None]) -> None:
     with tempfile.TemporaryDirectory(prefix="blast-clip-") as tmp:
         src, dst = Path(tmp) / "src", Path(tmp) / "out.mp4"
         fetch(src)
-        transcode(src, dst, CLIP_ARGS)
+        transcode(src, dst, CLIP_ARGS if args is None else args)
         store.put(name, dst, "video/mp4")
+
+
+def build_preview(store, name: str, fetch: Callable[[Path], None]) -> None:
+    """Превью каталога: свой профиль (fps источника, CRF 29) — см. PREVIEW_ARGS."""
+    build_clip(store, name, fetch, PREVIEW_ARGS)
+
+
+def build_preview_poster(store, clip: str, poster: str, source: str) -> None:
+    """Заставка карточки каталога (JPEG ≤540) — видна, пока ролик не в кадре или не играет.
+
+    Готовое превью есть — кадр из него; нет — прямо из оригинала по ссылке (ffmpeg читает
+    только нужный кусок), чтобы ряд карточек не ждал сжатия роликов целиком."""
+    if store.has(poster):
+        return
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="blast-pposter-") as tmp:
+        dst = Path(tmp) / "poster.jpg"
+        if store.has(clip):
+            src = Path(tmp) / "clip.mp4"
+            src.write_bytes(store.read(clip))
+            transcode_frame(str(src), dst, PREVIEW_POSTER_AT, scale=None)
+        else:
+            transcode_frame(source, dst, PREVIEW_POSTER_AT, scale=SHORT_SIDE_540)
+        store.put(poster, dst, "image/jpeg")
+
+
+def build_image(store, name: str, fetch: Callable[[Path], None]) -> None:
+    """Картинка каталога (рамка и т.п.) → ≤720 по ширине, тот же формат (PNG — с альфой)."""
+    if store.has(name):
+        return
+    import tempfile
+    ext = Path(name).suffix
+    with tempfile.TemporaryDirectory(prefix="blast-image-") as tmp:
+        src, dst = Path(tmp) / "src", Path(tmp) / f"out{ext}"
+        fetch(src)
+        args = ["-frames:v", "1", "-update", "1", "-vf", f"scale='min({IMAGE_MAX_W},iw)':-1:flags=lanczos"]
+        if ext == ".jpg":
+            args += ["-q:v", "4"]
+        transcode(src, dst, args)
+        store.put(name, dst, IMAGE_TYPES[ext])
 
 
 def build_track(store, name: str, fetch: Callable[[Path], None]) -> None:
@@ -263,9 +378,12 @@ def build_poster(store, clip: str, poster: str, at: float, source: str) -> None:
         store.put(poster, dst, "image/jpeg")
 
 
-def transcode_frame(src: str, dst: Path, at: float) -> None:
-    """src — путь или ссылка (https): -ss до -i, ffmpeg перематывает по индексу, не читая всё."""
+def transcode_frame(src: str, dst: Path, at: float, scale: str | None = "scale=-2:320") -> None:
+    """src — путь или ссылка (https): -ss до -i, ffmpeg перематывает по индексу, не читая всё.
+
+    scale=None — кадр в размере источника (заставка превью из уже сжатой копии ≤540)."""
+    vf = ["-vf", scale] if scale else []
     proc = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{max(0.0, at):.2f}", "-i", src, "-frames:v", "1",
-                           "-vf", "scale=-2:320", "-q:v", "6", str(dst)], capture_output=True, text=True, timeout=60)
+                           *vf, "-q:v", "6", str(dst)], capture_output=True, text=True, timeout=60)
     if proc.returncode != 0 or not dst.exists() or dst.stat().st_size == 0:
         raise MediaProxyError(f"ffmpeg не смог снять кадр: {(proc.stderr or '').strip()[-300:]}")
