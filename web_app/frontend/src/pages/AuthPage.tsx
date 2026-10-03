@@ -347,7 +347,9 @@ export function AuthPage({ mode }: { mode: Mode }) {
 
   const onVerified = async () => {
     await queryClient.invalidateQueries({ queryKey: ['me'] });
-    navigate(nextPath ?? '/app');
+    // replace: свежий /api/me и так уводит со страницы входа (<Navigate replace>), а «Назад»
+    // не должен возвращать на /login уже вошедшего
+    navigate(nextPath ?? '/app', { replace: true });
   };
 
   const busy = tgStartMutation.isPending;
