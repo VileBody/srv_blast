@@ -342,15 +342,18 @@ def test_reuploaded_preview_gets_a_new_link(monkeypatch: pytest.MonkeyPatch) -> 
     assert backend.preview_catalog("footage")[0]["previewUrl"] != first
 
 
-def test_missing_preview_original_fails_the_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_missing_preview_original_blanks_only_that_card(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """Один пропавший файл не валит каталог (иначе встал бы весь шаг «Фон»): у карточки пустая
+    ссылка («превью недоступно» на сайте), причина — в логе; ссылки на оригинал нет."""
     module, backend, _ = _catalog_backend(monkeypatch)
 
     def gone(**_kw: Any) -> dict[str, Any]:
         raise RuntimeError("NoSuchKey")
 
     backend._s3.head_object = gone
-    with pytest.raises(RuntimeError, match="NoSuchKey"):
-        backend.preview_catalog("footage")
+    items = backend.preview_catalog("footage")
+    assert items and all(item["previewUrl"] == "" for item in items if not str(item["previewUrl"]).startswith("https://"))
+    assert "preview catalog source unavailable" in caplog.text
 
 
 def test_frame_preview_is_a_stable_png_proxy_link(monkeypatch: pytest.MonkeyPatch) -> None:

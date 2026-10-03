@@ -628,8 +628,9 @@ class ProductionBackend:
     def catalog_versions(self, locators: list[str]) -> dict[str, str]:
         """Версия (ETag) каждого s3-оригинала; HEAD параллельно и только для устаревших в кэше.
 
-        Объекта нет / S3 не отвечает — ошибка всплывает (каталог не отдаётся), а не ссылка
-        на оригинал в обход прослойки."""
+        Объекта нет / S3 не ответил по нему — версия пустая и ошибка в лог (по каждому файлу):
+        карточка покажет «превью недоступно», а не ссылку на оригинал в обход прослойки. Валить
+        весь каталог из-за одного файла нельзя — встал бы целый шаг визарда. Сбой не кэшируется."""
         wanted = list(dict.fromkeys(loc for loc in locators if loc.startswith("s3://")))
         now = time.monotonic()
         out: dict[str, str] = {}
@@ -645,18 +646,20 @@ class ProductionBackend:
             return out
 
         def head(loc: str) -> tuple[str, str]:
-            bucket, key = self._parse_s3_locator(loc)
-            meta = self._s3.head_object(Bucket=bucket, Key=key)
             try:
+                bucket, key = self._parse_s3_locator(loc)
+                meta = self._s3.head_object(Bucket=bucket, Key=key)
                 return loc, media_proxy.object_version(str(meta.get("ETag") or ""))
-            except media_proxy.MediaProxyError as exc:
-                raise ProductionBackendError(f"{exc}: {loc}") from exc
+            except Exception as exc:  # noqa: BLE001 — по одному файлу, причина уходит в лог
+                logging.getLogger(__name__).error("preview catalog source unavailable: %s (%s)", loc, exc)
+                return loc, ""
 
         with ThreadPoolExecutor(max_workers=min(8, len(stale)), thread_name_prefix="catalog-head") as pool:
             fresh = list(pool.map(head, stale))
         with _CATALOG_VERSIONS_LOCK:
             for loc, version in fresh:
-                _CATALOG_VERSIONS[loc] = (now, version)
+                if version:
+                    _CATALOG_VERSIONS[loc] = (now, version)
                 out[loc] = version
         return out
 
@@ -664,7 +667,9 @@ class ProductionBackend:
         if locator.startswith("https://"):
             return locator
         self._parse_s3_locator(locator)
-        version = versions[locator]
+        version = versions.get(locator, "")
+        if not version:
+            return ""  # оригинала нет — карточка покажет «превью недоступно» (см. catalog_versions)
         ext = Path(locator).suffix.lower()
         if ext in _VIDEO_EXTS:
             name = media_proxy.preview_name(locator, version)

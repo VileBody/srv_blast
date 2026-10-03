@@ -299,7 +299,8 @@ export function Rail({ children, resetKey }: { children: ReactNode; resetKey: st
 }
 
 export function MediaCard({ item, order, format, caption, onToggle }: { item: Pick<Vibe, 'id' | 'name' | 'previewUrl'>; order: number; format: string; caption: string; onToggle: () => void }) {
-  const [broken, setBroken] = useState(false);
+  // пустая ссылка — оригинала превью нет в хранилище (бэк пишет это в лог): сразу «недоступно»
+  const [broken, setBroken] = useState(!item.previewUrl);
   const isVideo = isVideoUrl(item.previewUrl);
   return (
     <button
@@ -665,13 +666,16 @@ export function BackgroundWorkZone({ ready, loading, onBack, onNext }: { ready: 
         <div className={cn('w12-pv-stage', format !== '9:16' && 'w12-pv-ambient')}>
           {/* размытая подложка — заставка (картинка), а не второй экземпляр того же ролика:
               раньше выбранное превью качалось и декодировалось дважды */}
-          {format !== '9:16' && current && !broken[current.id] && !example && (isVideo
+          {format !== '9:16' && current?.previewUrl && !broken[current.id] && !example && (isVideo
             ? catalogPosterOf(current.previewUrl) && <img key={`bg-${current.id}`} className="w12-ambient-bg" src={catalogPosterOf(current.previewUrl)!} alt="" aria-hidden="true" />
             : <img key={`bg-${current.id}`} className="w12-ambient-bg" src={current.previewUrl} alt="" aria-hidden="true" />)}
           <div className={cn('w12-player', format === '4:3' && 'w12-wide', format === '16:9' && 'w12-cine', fragmentAudio.playing && 'w12-playing')}>
-            {current && !broken[current.id] && (isVideo
+            {current?.previewUrl && !broken[current.id] && (isVideo
               ? <PreviewVideo key={current.id} className="w12-media-el" src={current.previewUrl} ignoreLowData onError={() => setBroken((b) => ({ ...b, [current.id]: true }))} />
               : <img key={current.id} className="w12-media-el" src={current.previewUrl} alt="" onError={() => setBroken((b) => ({ ...b, [current.id]: true }))} />)}
+            {current && !color && !example && (!current.previewUrl || broken[current.id]) && (
+              <div role="status" className="w12-media-el grid place-items-center p-4 text-center text-text-60">{t('wizard.preview.unavailable')}</div>
+            )}
             {color && (
               <div
                 className="w12-media-el"
