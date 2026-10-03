@@ -856,7 +856,13 @@
       "sbRetry": "Retry",
       "sbLoading": "Loading",
       "sbPause": "Pause",
-      "sbPlay": "Play"
+      "sbPlay": "Play",
+      "guideTextRow": "Text",
+      "sbReasonColor": "Strobe and colour are built from colour plates — no source clips needed",
+      "sbReasonPhoto": "Photos are picked at generation — the storyboard is for video only for now",
+      "sbReasonUpload": "Your own video — your clips go in the order you uploaded them",
+      "sbReasonCollection": "The storyboard is only for vibes for now — the collection is picked at generation",
+      "sbReasonUnallocated": "This video's background isn't allocated yet"
     },
     "page": {
       "genStarted": "Generation started",
