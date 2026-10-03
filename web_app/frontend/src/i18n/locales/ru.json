@@ -563,6 +563,7 @@
       "chooseDrop": "Выбери тайминг дропа",
       "customDrop": "Свой вариант",
       "customDropShort": "Свой",
+      "dropBest": "Самый вероятный дроп",
       "chooseType": "Выбери тип FX:",
       "whatIs": "Что такое FX «{{label}}»",
       "add": "Добавить FX",
