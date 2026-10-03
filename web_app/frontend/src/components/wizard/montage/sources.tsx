@@ -2,7 +2,7 @@
    кадры — раскадровка «Пула» (реальные клипы, которые уйдут в рендер), у фото — подборка,
    у цвета — однотонный фон со стробом. Выбирают кадры прямо в превью ролика: механика
    раскадровки «Пула» — стрелки, «Заменить кадр», варианты, «Готово» закрепляет. */
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Ref } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
@@ -40,13 +40,28 @@ export function useFramesOf(shots: number) {
 }
 
 /** Видео-кадр: время клипа ведёт таймлайн, а не сам <video>. */
-function VideoFrame({ url, offset = 0, at, playing, className, style }: { url: string; offset?: number; at: number; playing: boolean; className?: string; style?: CSSProperties }) {
+function VideoFrame({ url, offset = 0, at, playing, className, style, onFrame }: {
+  url: string; offset?: number; at: number; playing: boolean; className?: string; style?: CSSProperties;
+  /** кадр встал (загрузился или перемотан) — размытая подложка широкого кадра снимает его */
+  onFrame?: (video: HTMLVideoElement) => void;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const video = ref.current;
+    if (!video || !onFrame) return undefined;
+    const paint = () => onFrame(video);
+    video.addEventListener('loadeddata', paint);
+    video.addEventListener('seeked', paint);
+    return () => { video.removeEventListener('loadeddata', paint); video.removeEventListener('seeked', paint); };
+  }, [onFrame]);
   useEffect(() => {
     const video = ref.current;
     if (!video) return;
     const want = offset + Math.max(0, at);
-    if (!playing || Math.abs(video.currentTime - want) > 0.25) { try { video.currentTime = want; } catch { /* метаданные ещё не пришли */ } }
+    // на паузе — точно в кадр, но без повторной перемотки на то же место на каждом рендере:
+    // присвоение currentTime запускает seek, даже если значение не изменилось
+    const drift = Math.abs(video.currentTime - want);
+    if (playing ? drift > 0.25 : drift > 0.001) { try { video.currentTime = want; } catch { /* метаданные ещё не пришли */ } }
     if (playing && video.paused) void video.play().catch(() => undefined);
     if (!playing && !video.paused) video.pause();
   });
@@ -70,6 +85,7 @@ export function FrameView({ frame, at = 0, t = 0, playing = false, bpm = 128, th
       : <VideoFrame className={cls} url={frame.url!} offset={frame.offset} at={at} playing={playing} />)
     : <img className={cls} src={frame.url!} alt="" draggable={false} />);
   if (frame.fit === 'contain') {
+    if (!thumb && isVideoUrl(frame.url)) return <ContainVideo frame={frame} at={at} playing={playing} className={className} style={style} />;
     return (
       <div className={`mt-fv mt-fv-amb ${className}`} style={style}>
         {media('bg')}
@@ -78,6 +94,28 @@ export function FrameView({ frame, at = 0, t = 0, playing = false, bpm = 128, th
     );
   }
   return <div className={`mt-fv mt-fv-cov ${className}`} style={style}>{media('fg')}</div>;
+}
+
+/**
+ * Широкий клип в вертикали: по центру видео, под ним размытый он же. Подложка — картинка, а не
+ * второй <video> того же клипа: два декодера на кадр (и вдвое трафика) ради размытого пятна.
+ * Есть JPEG-кадр прослойки — берём его; нет (мок, свои адреса) — снимок с основного видео на
+ * маленький canvas, когда кадр встал.
+ */
+function ContainVideo({ frame, at, playing, className, style }: { frame: Frame; at: number; playing: boolean; className: string; style?: CSSProperties }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const poster = posterOf(frame.url, (frame.offset ?? 0) + 0.1);
+  const snap = useCallback((video: HTMLVideoElement) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !video.videoWidth) return;
+    try { canvas.getContext('2d')?.drawImage(video, 0, 0, canvas.width, canvas.height); } catch { /* кадр ещё не готов — подложка останется тёмной до следующего */ }
+  }, []);
+  return (
+    <div className={`mt-fv mt-fv-amb ${className}`} style={style}>
+      {poster ? <img className="bg" src={poster} alt="" draggable={false} decoding="async" /> : <canvas ref={canvasRef} className="bg" width={32} height={18} />}
+      <VideoFrame className="fg" url={frame.url!} offset={frame.offset} at={at} playing={playing} onFrame={poster ? undefined : snap} />
+    </div>
+  );
 }
 
 const Arrow = ({ dir }: { dir: 'l' | 'r' }) => (

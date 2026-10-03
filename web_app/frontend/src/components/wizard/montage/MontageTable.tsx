@@ -24,6 +24,7 @@ import './montage.css';
 import './montage.mobile.css';
 import { useCombos, type Combo } from './combos';
 import { FrameDock, FrameView, useFramesOf, type Frame } from './sources';
+import { createLedger, ledgerPush, ledgerRedo, ledgerUndo, type HistKey } from './history';
 
 /*
  * Монтажный стол — финальный экран батча, открывается с «Пула». Основа — таймлайн FX: та же
@@ -116,15 +117,21 @@ const GLYPH: Record<string, string> = {
   'Ксерокс': 'xerox', 'Глитч': 'glitch', 'Неон': 'neon', 'Старая камера': 'oldcam', 'Ч/Б': 'bw', 'Crystal Glow': 'crystal', 'Night Vision': 'night', 'Wave': 'wave'
 };
 /*
- * Подписи эффектов. Свои — в локали (wizard.montage.meta.<подпись>); у эффектов реестра
- * (montage-поля, например пресеты Kant) подпись есть только по-русски — её и показываем в ru.
+ * Подписи эффектов. Свои — в локали (wizard.montage.meta.<подпись>), эффекты реестра (пресеты
+ * Kant) — в wizard.montage.fxMeta: так у них есть английский. Для переходов и стилей fxMeta
+ * смотрим первым: «Инверсия» — и хук «Мысль», и стиль Kant, и общая meta давала стилю
+ * подпись хука («голос поверх трека»). META — подпись из реестра для эффекта, которого ещё
+ * нет в локали: только в ru, английского текста у неё нет.
  */
 const META: Record<string, string> = {};
 function useMetaOf() {
   const { t, i18n } = useTranslation();
-  return (label: string) => {
+  return (label: string, kind?: LibKind) => {
+    const fxKey = `wizard.montage.fxMeta.${label}`;
+    if ((kind === 'style' || kind === 'trans') && i18n.exists(fxKey)) return t(fxKey);
     const key = `wizard.montage.meta.${label}`;
     if (i18n.exists(key)) return t(key);
+    if (i18n.exists(fxKey)) return t(fxKey);
     return i18n.language.startsWith('ru') ? META[label] ?? '' : '';
   };
 }
@@ -220,7 +227,6 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
   sub?: SubProps; w: number; h: number; className?: string; children?: ReactNode;
 }) {
   const [subError, setSubError] = useState<string | null>(null);
-  const { t: tr } = useTranslation();
   const fxName = useFxName();
   const shots = Math.max(1, bounds.length - 1);
   const fNow = frameIndex(bounds, t);
@@ -255,7 +261,7 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
           if (!visible && !ahead) return null;
           if (ahead && !visible) return frame ? <FrameView key={`${frame.id}:${i}`} frame={frame} t={t} at={0} playing={false} className="shot" style={{ zIndex: 0, opacity: 0 }} /> : null;
           const style = { zIndex: i === fNow ? 2 : 1, ...shotStyle(i) };
-          if (!frame) return <div key={`ph${i}`} className="fxt-ph" style={{ ...style, background: `linear-gradient(145deg, hsl(${(i * 53 + 260) % 360} 45% 22%), hsl(${(i * 53 + 305) % 360} 35% 10%))` }}><span>{tr('wizard.montage.shotPh', { n: pad(i + 1) })}</span></div>;
+          if (!frame) return <ShotPlaceholder key={`ph${i}`} i={i} style={style} />;
           return <FrameView key={`${frame.id}:${i}`} frame={frame} t={t} at={t - (bounds[i] ?? 0)} playing={playing && i === fNow} className="shot on" style={style} />;
         })}
       </div>
@@ -275,10 +281,41 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
   );
 }
 
+function ShotPlaceholder({ i, style }: { i: number; style?: CSSProperties }) {
+  const { t: tr } = useTranslation();
+  return <div className="fxt-ph" style={{ ...style, background: `linear-gradient(145deg, hsl(${(i * 53 + 260) % 360} 45% 22%), hsl(${(i * 53 + 305) % 360} 35% 10%))` }}><span>{tr('wizard.montage.shotPh', { n: pad(i + 1) })}</span></div>;
+}
+
+/**
+ * Неподвижный кадр ролика: картинка кадра под временем t (JPEG прослойки, см. FrameView thumb),
+ * его стили, плашка хука и рамка. Без <video>, субтитров и анимации — так стоят ролики сетки
+ * «Все ролики» и плитки библиотеки, пока на них не навели: живой Stage — свой декодер на клип.
+ */
+function StagePoster({ frames, bounds, t, fx, w, h, className = '' }: { frames: Frame[]; bounds: number[]; t: number; fx: StageFx; w: number; h: number; className?: string }) {
+  const fxName = useFxName();
+  const shots = Math.max(1, bounds.length - 1);
+  const k = frameIndex(bounds, t);
+  const activeStyles = fx.styles.filter((s) => t >= bounds[s.a] && t < bounds[Math.min(s.b, shots)]).map((s) => s.style);
+  const inHook = fx.hookRange && t >= fx.hookRange[0] && t < fx.hookRange[1];
+  const cover = inHook && (fx.hookKind === 'motion' || fx.hookKind === 'thought');
+  return (
+    <div className={`fxt-stage ${className}`} style={{ width: w, height: h }}>
+      <div className="fxt-fx" style={{ filter: styleFilter(activeStyles, t) }}>
+        {frames[k] ? <FrameView frame={frames[k]} t={t} thumb className="shot on" /> : <ShotPlaceholder i={k} />}
+      </div>
+      {cover && <div className="mt-cover"><span>{fxName(fx.hookLabel)}</span></div>}
+      {fx.frameUrl && <img className="mt-frame" src={fx.frameUrl} alt="" draggable={false} />}
+    </div>
+  );
+}
+
 /** Пример эффекта на своём ролике: окно [at − lead, at − lead + span] крутится по кругу. */
 function LoopStage({ frames, bounds, at, dur, fx, w = 169, h = 300, lead = 0.5, span = 1.5, paused = false }: {
   frames: Frame[]; bounds: number[]; at: number; dur: number; fx: StageFx; w?: number; h?: number; lead?: number; span?: number;
-  /** плитка ушла из виду — цикл стоит (кадры не размонтируются и не качаются заново) */
+  /**
+   * плитка не под курсором (или ушла из виду) — цикл стоит, вместо живого Stage неподвижный
+   * кадр: иначе каждая видимая плитка держала бы свои <video> и свой цикл одновременно
+   */
   paused?: boolean;
 }) {
   const [t, setT] = useState(at - 0.4);
@@ -289,7 +326,9 @@ function LoopStage({ frames, bounds, at, dur, fx, w = 169, h = 300, lead = 0.5, 
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [at, dur, lead, span, paused]);
-  return <Stage frames={frames} bounds={bounds} t={t} fx={fx} w={w} h={h} className="mt-loop" />;
+  if (paused) return <StagePoster frames={frames} bounds={bounds} t={t} fx={fx} w={w} h={h} className="mt-loop" />;
+  // время идёт вживую — клип играет сам и перематывается только на стыке круга, а не каждый кадр
+  return <Stage frames={frames} bounds={bounds} t={t} playing fx={fx} w={w} h={h} className="mt-loop" />;
 }
 
 /**
@@ -378,7 +417,10 @@ function TileMedia({ preview }: { preview: LibPreview }) {
   const [ref, visible, seen] = useInView<HTMLSpanElement>();
   // медленная сеть / экономия трафика: пример не стартует сам — играет по наведению или тапу
   const lowData = useLowData();
+  // «на твоём ролике» оживает только под курсором: остальные плитки — неподвижный кадр
+  const [hot, setHot] = useState(false);
   const hover = (play: boolean) => (e: React.SyntheticEvent<HTMLSpanElement>) => {
+    setHot(play);
     const video = e.currentTarget.querySelector('video');
     if (!lowData || !video) return;
     if (play) void video.play().catch(() => undefined); else video.pause();
@@ -387,7 +429,7 @@ function TileMedia({ preview }: { preview: LibPreview }) {
     <span ref={ref} className="mt-fxtile-media" onPointerEnter={hover(true)} onPointerLeave={hover(false)}>
       {seen && (preview.url
         ? <LazyVideo src={preview.url} visible={visible} lowData={lowData} />
-        : preview.sim?.(TILE, !visible))}
+        : preview.sim?.(TILE, !(visible && hot)))}
       {seen && !preview.url && preview.sim && <span className="mt-fxtile-tag">{tr('wizard.montage.onYourVideo')}</span>}
       {preview.state === 'loading' && <span className="mt-fxtile-none"><span className="spinner" aria-hidden="true" /></span>}
       {preview.state === 'error' && <span className="mt-fxtile-none">{tr('wizard.montage.previewsFailed')}</span>}
@@ -403,8 +445,17 @@ type PlaceTarget = { lane: string; a: number; b: number; bad?: boolean; label?: 
 /**
  * Шаг истории стола: прежнее состояние затронутых роликов (null — записи ещё не было) и, если
  * правка общая для батча, — склеек и дропа. Отмена возвращает ровно это и не трогает остальное.
+ * seq/prev — номер шага и прежние верхи его ключей в учёте живых шагов (montage/history.ts).
  */
-interface Snapshot { videos: Record<number, MontageVideo | null>; timeline?: Pick<TimelineRecipe, 'key' | 'pace' | 'cuts' | 'edited'>; dropTime?: string }
+interface Snapshot { videos: Record<number, MontageVideo | null>; timeline?: Pick<TimelineRecipe, 'key' | 'pace' | 'cuts' | 'edited'>; dropTime?: string; seq?: number; prev?: Record<HistKey, number> }
+/** ключи учёта, которые меняет шаг: ролики, склейки, дроп */
+const keysOf = (snap: Snapshot): HistKey[] => [...Object.keys(snap.videos).map((i) => `v${i}`), ...(snap.timeline ? ['tl'] : []), ...('dropTime' in snap ? ['drop'] : [])];
+/** часть шага — только эти ключи */
+const pickKeys = (snap: Snapshot, keys: HistKey[]): Snapshot => ({
+  videos: Object.fromEntries(Object.entries(snap.videos).filter(([i]) => keys.includes(`v${i}`))),
+  ...(snap.timeline && keys.includes('tl') ? { timeline: snap.timeline } : {}),
+  ...('dropTime' in snap && keys.includes('drop') ? { dropTime: snap.dropTime } : {})
+});
 /** Поля самого хука: «Во все N» у хука переносит только их — склейка и стили ролика остаются его. */
 const HOOK_FIELDS: readonly (keyof HookConfig)[] = ['object', 'effectHook', 'effectHookExtend', 'motion', 'thought', 'warmupKind', 'sound', 'soundUrl', 'soundPlaybackUrl', 'soundDuration', 'videoUrl', 'videoWidth', 'videoHeight', 'videoDuration', 'videoHasAudio'];
 
@@ -518,7 +569,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
   const tile = (item: LibItem) => {
     const on = used(item);
     return (
-      <div key={`${item.kind}:${item.label}`} role="group" aria-label={fxName(item.label)} className={`mt-fxtile${on ? ' on' : ''}`} data-tip={metaOf(item.label) || undefined}
+      <div key={`${item.kind}:${item.label}`} role="group" aria-label={fxName(item.label)} className={`mt-fxtile${on ? ' on' : ''}`} data-tip={metaOf(item.label, item.kind) || undefined}
         onPointerDown={(e) => { if (!tapAdd && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
         onClick={tapAdd ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}>
         <TileMedia preview={previewOf(item)} />
@@ -535,7 +586,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
         onPointerDown={(e) => { if (!tapAdd && !disabled && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
         onClick={tapAdd && !disabled ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}>
         {lead}
-        <span className="nm"><b>{fxName(item.label)}</b><small>{meta ?? metaOf(item.label)}</small></span>
+        <span className="nm"><b>{fxName(item.label)}</b><small>{meta ?? metaOf(item.label, item.kind)}</small></span>
         {!disabled && <span className="acts">{actBtn(item, on)}</span>}
       </div>
     );
@@ -605,7 +656,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
             <div className="fxt-acc mt-plain">
               <button type="button" className="fxt-acc-h" aria-pressed={used({ kind: 'trans', label: NO_GLUE })} onClick={() => onAdd({ kind: 'trans', label: NO_GLUE })}>
                 <span className={`fxt-ic k-trans sm${used({ kind: 'trans', label: NO_GLUE }) ? ' on' : ''}`}><Glyph name="t_none" size={14} /></span>
-                <span className="name">{fxName(NO_GLUE)}<span className="c">{metaOf(NO_GLUE)}</span></span>
+                <span className="name">{fxName(NO_GLUE)}<span className="c">{metaOf(NO_GLUE, 'trans')}</span></span>
                 {used({ kind: 'trans', label: NO_GLUE }) ? <span className="was">{tr('wizard.montage.inThisVideo')}</span> : <span className="mt-plainact">{tr('wizard.montage.onAllCuts')}</span>}
               </button>
             </div>
@@ -822,6 +873,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     // своё видео — один переход на весь ролик; статичный цвет склеек не имеет вовсе
     if (c.bgKey?.startsWith('upload:') && new Set(labels).size > 1) return true;
     if (c.bgKey === '__color__' && !strobe && labels.some((l) => l !== NO_GLUE)) return true;
+    // рамка нарисована под 9:16 — на 16:9 бэк её отвергает (montage.py)
+    if (v.frame && !c.vertical) return true;
     return false;
   };
 
@@ -925,7 +978,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   // примеры эффектов для библиотеки (тот же каталог отрендеренных образцов, что на шаге FX)
   const fxPreviews = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews, staleTime: 30 * 60_000 });
   const framesQuery = useQuery({ queryKey: ['wizard-frames'], queryFn: api.frames, staleTime: 30 * 60_000 });
-  const frameCatalog = framesQuery.data?.frames ?? [];
+  // подпись рамки — на языке интерфейса: бэк отдаёт обе (label — RU, labelEn — EN)
+  const ruUi = i18n.language.startsWith('ru');
+  const frameCatalog = useMemo(() => (framesQuery.data?.frames ?? []).map((f) => ({ ...f, label: ruUi ? f.label : f.labelEn })), [framesQuery.data, ruUi]);
   const frameUrlOf = (id?: string | null) => (id ? frameCatalog.find((f) => f.id === id)?.previewUrl ?? null : null);
   const pickSub = (name: string) => {
     remember();
@@ -1030,8 +1085,13 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
    * Раньше одна история на весь батч: правка ролика 1, «]», Ctrl+Z — и переходы ролика 1
    * записывались в ролик 2. Теперь шаг помнит, какие ролики он менял, и возвращает только их;
    * общие правки (дроп, темп, «Во все N») лежат в истории ролика, где их сделали.
+   * Такой шаг откатывает другой ролик (склейки, дроп), только если его не правили позже, —
+   * иначе снимок «до» стёр бы новые правки; пропущенное стол называет в тосте (history.ts).
+   * Отдельная история батча этого не решила бы: откат общего шага всё равно ложился бы
+   * поверх более поздних правок роликов.
    */
   const hist = useRef<Record<number, { past: Snapshot[]; future: Snapshot[] }>>({});
+  const ledger = useRef(createLedger());
   const [, bump] = useState(0);
   const stackOf = (i: number) => (hist.current[i] ??= { past: [], future: [] });
   const capture = (indices: number[], opts: { timeline?: boolean; drop?: boolean } = {}): Snapshot => {
@@ -1045,7 +1105,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   };
   const pushHistory = (snap: Snapshot) => {
     const h = stackOf(combo.index);
-    h.past.push(snap);
+    h.past.push({ ...snap, ...ledgerPush(ledger.current, keysOf(snap)) });
     if (h.past.length > 80) h.past.shift();
     h.future = [];
     bump((n) => n + 1);
@@ -1056,17 +1116,41 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     for (const [k, v] of Object.entries(snap.videos)) { if (v) videos[Number(k)] = v; else delete videos[Number(k)]; }
     setMontage({ videos });
     // дроп раньше склеек: склейки сверяются с ключом рецепта, а он считается от дропа
-    if (snap.dropTime !== undefined) setWizardHooks({ dropTime: snap.dropTime });
+    if ('dropTime' in snap) setWizardHooks({ dropTime: snap.dropTime });
     if (snap.timeline) setWTimeline(snap.timeline);
   };
-  const flip = (from: Snapshot[], to: Snapshot[]) => {
-    const snap = from.pop();
-    if (!snap) return;
-    to.push(capture(Object.keys(snap.videos).map(Number), { timeline: Boolean(snap.timeline), drop: snap.dropTime !== undefined }));
-    restore(snap); setSel(null); setPop(null); bump((n) => n + 1);
+  /** Что шаг не тронул: ролики по номерам, склейки и дроп — одной строкой. */
+  const sayHistorySkipped = (skipped: HistKey[], nothing: boolean) => {
+    if (!skipped.length) return;
+    const names = skipped.filter((k) => k.startsWith('v')).map((k) => tr('wizard.montage.historySkipVideo', { n: Number(k.slice(1)) + 1 }));
+    if (skipped.some((k) => !k.startsWith('v'))) names.push(tr('wizard.montage.historySkipCuts'));
+    say(tr(nothing ? 'wizard.montage.historySkippedAll' : 'wizard.montage.historySkipped', { list: names.join(', ') }));
   };
-  const undo = () => { const h = stackOf(combo.index); flip(h.past, h.future); };
-  const redo = () => { const h = stackOf(combo.index); flip(h.future, h.past); };
+  // отменённое ложится в «вернуть» только по тем ключам, что реально откатились
+  const undo = () => {
+    const h = stackOf(combo.index); const snap = h.past.pop();
+    if (!snap || snap.seq === undefined) return;
+    const { ok, skipped } = ledgerUndo(ledger.current, snap.seq, keysOf(snap));
+    if (ok.length) {
+      const now = capture(Object.keys(snap.videos).map(Number).filter((i) => ok.includes(`v${i}`)), { timeline: ok.includes('tl'), drop: ok.includes('drop') });
+      h.future.push({ ...now, seq: snap.seq, prev: snap.prev });
+      restore(pickKeys(snap, ok));
+    }
+    sayHistorySkipped(skipped, !ok.length);
+    setSel(null); setPop(null); bump((n) => n + 1);
+  };
+  const redo = () => {
+    const h = stackOf(combo.index); const snap = h.future.pop();
+    if (!snap || snap.seq === undefined) return;
+    const { ok, skipped } = ledgerRedo(ledger.current, snap.seq, snap.prev ?? {}, keysOf(snap));
+    if (ok.length) {
+      const now = capture(Object.keys(snap.videos).map(Number).filter((i) => ok.includes(`v${i}`)), { timeline: ok.includes('tl'), drop: ok.includes('drop') });
+      h.past.push({ ...now, seq: snap.seq, prev: snap.prev });
+      restore(pickKeys(snap, ok));
+    }
+    sayHistorySkipped(skipped, !ok.length);
+    setSel(null); setPop(null); bump((n) => n + 1);
+  };
   const canUndo = (hist.current[combo.index]?.past.length ?? 0) > 0;
   const canRedo = (hist.current[combo.index]?.future.length ?? 0) > 0;
 
@@ -1568,6 +1652,15 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   const isEdited = (c: Combo) => fxOf(c.index).edited || Object.keys(storyboard.videos[c.slotIndex]?.pins ?? {}).length > 0;
   const editedCount = combos.filter(isEdited).length;
 
+  /*
+   * «Все ролики»: живой (видео, субтитры) только один ролик — под курсором/фокусом, иначе
+   * выбранный; остальные — неподвижные кадры под тем же временем. Раньше каждый ролик батча
+   * был полным Stage с <video preload="auto"> и canvas субтитров — самый тяжёлый вид стола.
+   * На медленной сети выбранный сам не оживает — только по наведению.
+   */
+  const lowData = useLowData();
+  const [gridHot, setGridHot] = useState<number | null>(null);
+  const gridLive = gridHot ?? (lowData ? null : index);
   // «Все ролики»: сетка под размер области — все 9:16 целиком, синхронно по времени.
   const gridCell = useMemo(() => {
     const gap = 16; const labelH = 44;
@@ -1946,8 +2039,12 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
         <main ref={mainRef} className="fxt-main mt-gridmain">
           <div className="mt-grid" style={{ gridTemplateColumns: `repeat(${gridCell.cols}, ${gridCell.w}px)` }}>
             {combos.map((c) => (
-              <button key={c.index} type="button" className={`mt-cell${c.index === index ? ' cur' : ''}`} onClick={() => { onIndex(c.index); setView('table'); }} aria-label={tr('wizard.montage.openVideo', { n: c.index + 1 })}>
-                <Stage frames={clipsOf(c)} bounds={bounds} t={t} playing={playing} fx={stageFxFor(c)} sub={subFor(c)} w={gridCell.w} h={gridCell.h} />
+              <button key={c.index} type="button" className={`mt-cell${c.index === index ? ' cur' : ''}`} onClick={() => { onIndex(c.index); setView('table'); }} aria-label={tr('wizard.montage.openVideo', { n: c.index + 1 })}
+                onPointerEnter={() => setGridHot(c.index)} onPointerLeave={() => setGridHot((h) => (h === c.index ? null : h))}
+                onFocus={() => setGridHot(c.index)} onBlur={() => setGridHot((h) => (h === c.index ? null : h))}>
+                {c.index === gridLive
+                  ? <Stage frames={clipsOf(c)} bounds={bounds} t={t} playing={playing} fx={stageFxFor(c)} sub={subFor(c)} w={gridCell.w} h={gridCell.h} />
+                  : <StagePoster frames={clipsOf(c)} bounds={bounds} t={t} fx={stageFxFor(c)} w={gridCell.w} h={gridCell.h} />}
                 <span className="mt-cap"><b className="num tx">{c.index + 1}</b><span className="tx">{videoLabel(c)}</span>{isEdited(c) && <i className="mt-dot" />}</span>
               </button>
             ))}
