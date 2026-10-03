@@ -116,15 +116,21 @@ const GLYPH: Record<string, string> = {
   'Ксерокс': 'xerox', 'Глитч': 'glitch', 'Неон': 'neon', 'Старая камера': 'oldcam', 'Ч/Б': 'bw', 'Crystal Glow': 'crystal', 'Night Vision': 'night', 'Wave': 'wave'
 };
 /*
- * Подписи эффектов. Свои — в локали (wizard.montage.meta.<подпись>); у эффектов реестра
- * (montage-поля, например пресеты Kant) подпись есть только по-русски — её и показываем в ru.
+ * Подписи эффектов. Свои — в локали (wizard.montage.meta.<подпись>), эффекты реестра (пресеты
+ * Kant) — в wizard.montage.fxMeta: так у них есть английский. Для переходов и стилей fxMeta
+ * смотрим первым: «Инверсия» — и хук «Мысль», и стиль Kant, и общая meta давала стилю
+ * подпись хука («голос поверх трека»). META — подпись из реестра для эффекта, которого ещё
+ * нет в локали: только в ru, английского текста у неё нет.
  */
 const META: Record<string, string> = {};
 function useMetaOf() {
   const { t, i18n } = useTranslation();
-  return (label: string) => {
+  return (label: string, kind?: LibKind) => {
+    const fxKey = `wizard.montage.fxMeta.${label}`;
+    if ((kind === 'style' || kind === 'trans') && i18n.exists(fxKey)) return t(fxKey);
     const key = `wizard.montage.meta.${label}`;
     if (i18n.exists(key)) return t(key);
+    if (i18n.exists(fxKey)) return t(fxKey);
     return i18n.language.startsWith('ru') ? META[label] ?? '' : '';
   };
 }
@@ -518,7 +524,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
   const tile = (item: LibItem) => {
     const on = used(item);
     return (
-      <div key={`${item.kind}:${item.label}`} role="group" aria-label={fxName(item.label)} className={`mt-fxtile${on ? ' on' : ''}`} data-tip={metaOf(item.label) || undefined}
+      <div key={`${item.kind}:${item.label}`} role="group" aria-label={fxName(item.label)} className={`mt-fxtile${on ? ' on' : ''}`} data-tip={metaOf(item.label, item.kind) || undefined}
         onPointerDown={(e) => { if (!tapAdd && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
         onClick={tapAdd ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}>
         <TileMedia preview={previewOf(item)} />
@@ -535,7 +541,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
         onPointerDown={(e) => { if (!tapAdd && !disabled && !(e.target as Element).closest('[data-act]')) onDragStart(item, e); }}
         onClick={tapAdd && !disabled ? (e) => { if (!(e.target as Element).closest('[data-act]')) onAdd(item); } : undefined}>
         {lead}
-        <span className="nm"><b>{fxName(item.label)}</b><small>{meta ?? metaOf(item.label)}</small></span>
+        <span className="nm"><b>{fxName(item.label)}</b><small>{meta ?? metaOf(item.label, item.kind)}</small></span>
         {!disabled && <span className="acts">{actBtn(item, on)}</span>}
       </div>
     );
@@ -605,7 +611,7 @@ const Library = memo(function Library({ tab, setTab, open, setOpen, used, active
             <div className="fxt-acc mt-plain">
               <button type="button" className="fxt-acc-h" aria-pressed={used({ kind: 'trans', label: NO_GLUE })} onClick={() => onAdd({ kind: 'trans', label: NO_GLUE })}>
                 <span className={`fxt-ic k-trans sm${used({ kind: 'trans', label: NO_GLUE }) ? ' on' : ''}`}><Glyph name="t_none" size={14} /></span>
-                <span className="name">{fxName(NO_GLUE)}<span className="c">{metaOf(NO_GLUE)}</span></span>
+                <span className="name">{fxName(NO_GLUE)}<span className="c">{metaOf(NO_GLUE, 'trans')}</span></span>
                 {used({ kind: 'trans', label: NO_GLUE }) ? <span className="was">{tr('wizard.montage.inThisVideo')}</span> : <span className="mt-plainact">{tr('wizard.montage.onAllCuts')}</span>}
               </button>
             </div>
@@ -925,7 +931,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   // примеры эффектов для библиотеки (тот же каталог отрендеренных образцов, что на шаге FX)
   const fxPreviews = useQuery({ queryKey: ['fx-previews'], queryFn: api.fxPreviews, staleTime: 30 * 60_000 });
   const framesQuery = useQuery({ queryKey: ['wizard-frames'], queryFn: api.frames, staleTime: 30 * 60_000 });
-  const frameCatalog = framesQuery.data?.frames ?? [];
+  // подпись рамки — на языке интерфейса: бэк отдаёт обе (label — RU, labelEn — EN)
+  const ruUi = i18n.language.startsWith('ru');
+  const frameCatalog = useMemo(() => (framesQuery.data?.frames ?? []).map((f) => ({ ...f, label: ruUi ? f.label : f.labelEn })), [framesQuery.data, ruUi]);
   const frameUrlOf = (id?: string | null) => (id ? frameCatalog.find((f) => f.id === id)?.previewUrl ?? null : null);
   const pickSub = (name: string) => {
     remember();
