@@ -515,6 +515,7 @@
   --field-hover:   #211742;
   --accent-strong: #6a4fcf;
   --accent-soft:   rgba(139, 111, 230, 0.16);
+  --shadow-pop:    0 18px 60px rgba(0, 0, 0, 0.42);
   --accent-line:   rgba(139, 111, 230, 0.55);
   --line:          rgba(246, 245, 253, 0.09);
   --line-strong:   rgba(246, 245, 253, 0.16);
@@ -958,14 +959,20 @@ input, textarea, [contenteditable] { caret-color: var(--accent-light); }
     width: min(720px, calc(var(--app-layout-w, 100vw) - var(--space-5) * 2)); max-height: calc(var(--app-layout-h, 100dvh) - var(--space-5) * 2); overflow-y: auto;
     background: var(--card-2); border: 1px solid var(--accent-20); border-radius: var(--r25); padding: 28px; box-shadow: 0 28px 100px rgba(0,0,0,.5);
   }
-  /* Карточка воронки внизу (FunnelBadge): правый нижний угол с теми же полями, что у
-     .app-content, над полосой жестов. Телефон — в медиа-блоке ниже. */
-  .funnel-dock {
-    position: fixed; z-index: var(--z-sidebar);
-    right: var(--space-6); bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
-    width: 360px; max-width: calc(var(--app-layout-w, 100vw) - 2 * var(--space-6));
-  }
-  .funnel-dock--mini { width: auto; }
+  /* Вход в безлимит на десктопе — ключ с фиолетовым пилом в сайдбаре (FunnelRailEntry);
+     на телефоне это последняя карточка в ленте страницы (FunnelBadge). */
+  .funnel-rail { position: relative; }
+  /* та же ячейка, что пункты навигации (.sidebar-nav .sidebar-icon), но иконка — акцентная */
+  .funnel-rail-btn { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 15px; color: var(--accent-light); transition: background-color var(--t-fast), color var(--t-fast); }
+  .funnel-rail-btn:hover, .funnel-rail-btn:focus-visible { background: var(--accent-soft); color: var(--text); }
+  .funnel-rail-btn:focus-visible { outline: 2px solid var(--accent-light); outline-offset: 2px; }
+  /* всплывашка справа от ячейки: пояснение при наведении/фокусе или разовая подсказка после питча */
+  .funnel-rail-pop { position: absolute; left: calc(100% + 12px); top: 50%; transform: translateY(-50%); width: 240px; z-index: var(--z-toast); border: 1px solid var(--accent-20); border-radius: var(--r10); background: var(--card); box-shadow: var(--shadow-pop); padding: 10px 12px; }
+  .funnel-rail-tip { opacity: 0; pointer-events: none; transition: opacity var(--t-fast); }
+  .funnel-rail:hover .funnel-rail-tip, .funnel-rail:focus-within .funnel-rail-tip { opacity: 1; }
+  /* подсказка «безлимит здесь» после закрытого питча: над карточкой на телефоне */
+  .funnel-dock-hint { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; border-radius: var(--r10); background: var(--accent-soft); padding: 8px 8px 8px 12px; }
+  .funnel-dock-hint.funnel-rail-pop { margin: 0; background: var(--card); padding: 8px 8px 8px 12px; }
   .toast-stack { position: fixed; top: 60px; right: 32px; z-index: var(--z-toast); display: flex; width: min(390px, calc(var(--app-layout-w, 100vw) - 40px)); flex-direction: column; gap: 12px; }
   .toast-item { display: flex; align-items: flex-start; gap: 14px; width: 100%; border-radius: var(--r15); border: 1px solid var(--accent-20); padding: 18px; background: rgba(20,14,36,.96); box-shadow: 0 18px 60px rgba(0,0,0,.42); backdrop-filter: blur(50px); animation: slideUpFade var(--t-base); }
   /* однострочный тост: маркер-пил и текст выравниваем по центру, иначе текст (22px) съезжает
@@ -987,12 +994,6 @@ input, textarea, [contenteditable] { caret-color: var(--accent-light); }
 
 @media (max-width: 768px) {
   .app-content { padding: 12px; gap: 12px; }
-  /* Карточка воронки внизу (FunnelBadge) — во всю ширину с полями страницы. Запас снизу у
-     содержимого: карточка 70 + 12 от края + 12 зазор (свёрнутая — круг 44), плюс полоса жестов */
-  .funnel-dock { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); width: auto; max-width: none; }
-  .funnel-dock--mini { left: auto; }
-  :root[data-funnel-badge] .app-content { padding-bottom: calc(116px + env(safe-area-inset-bottom, 0px)); }
-  :root[data-funnel-badge="mini"] .app-content { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
   /* строки пула: подпись ужимается с многоточием, степпер не сжимается */
   .mini-pill { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count-stepper { flex-shrink: 0; }

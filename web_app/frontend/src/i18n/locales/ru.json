@@ -2119,7 +2119,8 @@
       "unlimitedText": "Бесплатно, два шага в Telegram",
       "tripwireTitle": "Без ожидания за {{price}} ₽",
       "tripwireText": "Бесплатный батч через {{time}}",
-      "collapse": "Свернуть"
+      "hint": "Безлимит на трек всегда здесь — вернись, когда захочешь.",
+      "hintOk": "Понятно"
     },
     "units": {
       "hours_one": "{{count}} час",

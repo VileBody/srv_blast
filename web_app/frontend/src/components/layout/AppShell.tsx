@@ -16,7 +16,7 @@ import { useToast } from '../../contexts/ToastContext';
 import { SvgMaskIcon } from './SvgMaskIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { AppAnalytics } from '../analytics/AppAnalytics';
-import { FunnelBadge, FunnelHost } from '../funnel/FunnelHost';
+import { FunnelBadge, FunnelHost, FunnelRailEntry } from '../funnel/FunnelHost';
 import { rememberSessionUser } from '../../stores/session';
 import { DraftReplaceDialog } from './DraftReplaceDialog';
 import { usePaymentReturn } from '../funnel/useFunnel';
@@ -133,6 +133,8 @@ function Sidebar({ activeJobId, userName, avatarUrl }: { activeJobId?: string; u
             />
           </NavLink>
         ))}
+        {/* вход в безлимит — рядом с разделами, той же ячейкой, но акцентный */}
+        <FunnelRailEntry />
       </nav>
       <div className="flex-1" />
       <LanguageSwitcher className="mb-space-4" />
@@ -304,8 +306,6 @@ export function AppShell() {
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
         {/* модалки воронки после генерации: квиз и безлимит на трек */}
         {meQuery.isSuccess && <FunnelHost />}
-        {/* модалку безлимита закрыли, не пройдя: плашка в углу открывает её снова */}
-        {meQuery.isSuccess && <FunnelBadge />}
         {/* «Заменить текущую настройку?» перед подменой черновика визарда */}
         <DraftReplaceDialog />
         <main className="with-sidebar min-w-0 flex-1">
@@ -334,6 +334,8 @@ export function AppShell() {
               // страницу: перемонтирование заново слало все её запросы и сбрасывало состояние
               <ErrorBoundary>
                 <Outlet />
+                {/* телефон: вход в безлимит — последней карточкой в ленте страницы (десктоп — в сайдбаре) */}
+                <FunnelBadge />
               </ErrorBoundary>
             )}
           </div>

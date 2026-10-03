@@ -39,7 +39,7 @@ const tabs: { stage: number; label: string; icon: ReactNode }[] = [
   { stage: 1, label: 'wizard.tabs.track', icon: <span className="w12-mi w12-cap w12-heavy" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-note.svg)', '--r': 0.75 } as React.CSSProperties} /> },
   { stage: 2, label: 'wizard.tabs.background', icon: <span className="w12-sq" aria-hidden="true" /> },
   { stage: 4, label: 'wizard.tabs.text', icon: <span className="w12-t-it" aria-hidden="true">Т</span> },
-  { stage: 3, label: 'wizard.tabs.fx', icon: <span className="w12-mi w12-cap w12-heavy" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-bolt.svg)', '--r': 0.65 } as React.CSSProperties} /> },
+  { stage: 3, label: 'wizard.tabs.fx', icon: <span className="w12-mi w12-cap w12-heavy w12-tab-bolt" aria-hidden="true" style={{ '--m': 'url(/assets/wizard/ic-bolt.svg)', '--r': 0.65 } as React.CSSProperties} /> },
   { stage: 5, label: 'wizard.tabs.pool', icon: <span className="w12-t-it" aria-hidden="true">V</span> }
 ];
 

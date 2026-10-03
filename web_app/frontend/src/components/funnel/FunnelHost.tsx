@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import type { FunnelState, GenerationJob, RatingReason, VideoRating, VideoVersion } from '../../lib/types';
 import { useToast } from '../../contexts/ToastContext';
-import { bindFunnelUser, forgetFunnelSeen, funnelSeen, markFunnelSeen, markQuizSkipped, quizSkippedRecently, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
+import { bindFunnelUser, funnelSeen, markFunnelSeen, markQuizSkipped, quizSkippedRecently, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
 import { startNextBatch } from '../../stores/wizardStore';
 import { guardDraft } from '../../stores/draftGuard';
 import { FunnelDialog, FunnelSheet } from './FunnelSheet';
@@ -517,31 +517,25 @@ export function FunnelHost() {
 }
 
 /**
- * Карточка воронки внизу экрана (docs/BOT_TO_WEB_FLOW.md, раздел 4). Два повода:
+ * Вход в безлимит (docs/BOT_TO_WEB_FLOW.md, раздел 4). Два повода:
  * - `unlimited` — модалку безлимита закрыли, не пройдя: вход в неё остаётся под рукой;
  * - `tripwire` — безлимит открыт, но собрать не из чего (квота ждёт, генераций нет), а окно
  *   предложения трипваера открыто: таймер до бесплатного батча и вход в покупку.
- * Только бесплатным. Крестик сворачивает карточку в круглую кнопку (помним по поводу),
- * а не убирает вход совсем.
- *
- * Геометрия — поля страницы: на десктопе в правом нижнем углу с отступом .app-content,
- * на телефоне во всю ширину с её полями и над полосой жестов (index.css, .funnel-dock).
+ * Только бесплатным: платящему и тому, у кого есть из чего собирать, входа нет.
  */
 type DockKind = 'unlimited' | 'tripwire';
 
-/** Пути, где низ экрана занят главными действиями страницы — карточку там не ставим. */
-function dockBlocked(pathname: string): boolean {
-  // выкладка в TikTok («Опубликовать») и тарифы (кнопки оплаты у карточек тарифов)
-  return pathname.endsWith('/post') || pathname.startsWith('/app/pricing');
-}
-
-export function FunnelBadge() {
+/**
+ * Что показывает вход в безлимит (одна логика на две формы: полоса внизу на телефоне и ключ
+ * в сайдбаре на десктопе). null — показывать нечего (платящий, безлимит открыт и собирать есть
+ * из чего, повода нет). Под модалками и обложками вход не показываем: висел бы поверх диалогов.
+ */
+function useFunnelDock() {
   const { t } = useTranslation();
   const badge = useFunnelUi((state) => state.badge);
   const open = useFunnelUi((state) => state.open);
   const openUnlimited = useFunnelUi((state) => state.openUnlimited);
   const clearBadge = useFunnelUi((state) => state.clearBadge);
-  const location = useLocation();
   const modals = useModalCount((state) => state.count);
   const covers = useCoverCount((state) => state.count);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
@@ -561,38 +555,10 @@ export function FunnelBadge() {
     && creditsLeft !== undefined && generateNow(quota, creditsLeft) === 'none'
   );
   const kind: DockKind | null = badge && funnel && !settled ? 'unlimited' : stuck ? 'tripwire' : null;
-  const dockKey = kind === 'unlimited' ? `unlimited:${badge?.jobId ?? 'gate'}` : kind === 'tripwire' ? `tripwire:${offer?.expiresAt}` : null;
   const timer = useCountdown(kind === 'tripwire' ? quota?.availableAt ?? null : null);
-
-  const [collapsedKeys, setCollapsedKeys] = useState<Record<string, boolean>>({});
-  const mini = dockKey ? (collapsedKeys[dockKey] ?? funnelSeen(`dock:mini:${dockKey}`)) : false;
-  const setMini = (on: boolean) => {
-    if (!dockKey) return;
-    if (on) markFunnelSeen(`dock:mini:${dockKey}`);
-    else forgetFunnelSeen(`dock:mini:${dockKey}`);
-    setCollapsedKeys((prev) => ({ ...prev, [dockKey]: on }));
-  };
-
-  // Под модалками и обложками не показываем: карточка висела бы поверх диалогов
-  const hidden = dockBlocked(location.pathname) || modals > 0 || covers > 0;
-  // Визард на десктопе — композиция ровно в экран, «Продолжить» в правом нижнем углу:
-  // карточка легла бы на неё. На телефоне визард прокручивается — там запас снизу.
-  const wizard = location.pathname.startsWith('/app/generate');
-  const visible = Boolean(kind && !open && !hidden);
-  // Пока карточка видна, на телефоне у содержимого есть запас снизу (index.css): последние
-  // кнопки страницы прокручиваются выше неё, а не прячутся под ней.
-  useEffect(() => {
-    if (!visible) return undefined;
-    document.documentElement.setAttribute('data-funnel-badge', mini ? 'mini' : 'card');
-    return () => document.documentElement.removeAttribute('data-funnel-badge');
-  }, [visible, mini]);
+  const visible = Boolean(kind && !open && modals === 0 && covers === 0);
   if (!visible || !kind) return null;
 
-  const title = kind === 'tripwire'
-    ? t('funnel.dock.tripwireTitle', { price: funnel?.rules.tripwirePriceRub })
-    : t('funnel.dock.unlimitedTitle');
-  const text = kind === 'tripwire' ? t('funnel.dock.tripwireText', { time: timer.text }) : t('funnel.dock.unlimitedText');
-  const glyph = kind === 'tripwire' ? FN_GLYPH.bolt : FN_GLYPH.key;
   const openDock = () => {
     if (kind === 'unlimited' && badge) {
       openUnlimited(badge);
@@ -607,41 +573,93 @@ export function FunnelBadge() {
       trackTitle: unlimited.trackTitle ?? undefined
     });
   };
+  return {
+    kind,
+    title: kind === 'tripwire' ? t('funnel.dock.tripwireTitle', { price: funnel?.rules.tripwirePriceRub }) : t('funnel.dock.unlimitedTitle'),
+    text: kind === 'tripwire' ? t('funnel.dock.tripwireText', { time: timer.text }) : t('funnel.dock.unlimitedText'),
+    glyph: kind === 'tripwire' ? FN_GLYPH.bolt : FN_GLYPH.key,
+    openDock
+  };
+}
 
+/**
+ * Подсказка «безлимит здесь»: прошёл питч и закрыл, не купив (useFunnelUi.close), — один раз
+ * на аккаунт показываем, куда вернуться. Гаснет по нажатию на вход или на «Понятно».
+ */
+function DockHint({ className }: { className?: string }) {
+  const { t } = useTranslation();
+  const hint = useFunnelUi((state) => state.dockHint);
+  const hideHint = useFunnelUi((state) => state.hideDockHint);
+  if (!hint) return null;
   return (
-    <div className={cn('funnel-dock fn-step', mini && 'funnel-dock--mini', wizard && 'md:hidden')} role="region" aria-label={title}>
-      {mini ? (
-        <button
-          type="button"
-          onClick={() => setMini(false)}
-          aria-label={title}
-          title={title}
-          className="grid h-ctl w-ctl place-items-center rounded-full bg-accent-strong text-ui-20 text-text shadow-soft transition-transform duration-150 active:scale-[.95] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light"
-        >
-          <Icon>{glyph}</Icon>
-        </button>
+    <div role="status" className={cn('funnel-dock-hint fn-step', className)}>
+      <span className="text-ui-14 text-text">{t('funnel.dock.hint')}</span>
+      <Button variant="ghost" size="sm" onClick={hideHint}>{t('funnel.dock.hintOk')}</Button>
+    </div>
+  );
+}
+
+/**
+ * Вход в безлимит на телефоне (docs/BOT_TO_WEB_FLOW.md, раздел 4): последняя карточка в ленте
+ * страницы — те же поля и форма, что у остальных контейнеров, под футером с главной кнопкой. Два повода:
+ * - `unlimited` — модалку безлимита закрыли, не пройдя: вход в неё остаётся под рукой;
+ * - `tripwire` — безлимит открыт, но собрать не из чего, а окно предложения трипваера открыто.
+ * На десктопе вход живёт в сайдбаре (FunnelRailEntry).
+ */
+export function FunnelBadge() {
+  const dock = useFunnelDock();
+  const hideHint = useFunnelUi((state) => state.hideDockHint);
+  if (!dock) return null;
+  return (
+    <section className="card-2 shrink-0 p-[20px] md:hidden" aria-label={dock.title}>
+      <DockHint />
+      <button
+        type="button"
+        onClick={() => { hideHint(); dock.openDock(); }}
+        className="group flex w-full min-w-0 items-center gap-[12px] text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light"
+      >
+        <span className="grid h-ctl w-ctl shrink-0 place-items-center rounded-r10 bg-accent-soft text-ui-20 text-accent-light">
+          <Icon>{dock.glyph}</Icon>
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col gap-[2px]">
+          <span className="truncate text-ui-16 text-text">{dock.title}</span>
+          <span className={cn('line-clamp-2 text-ui-14', dock.kind === 'tripwire' ? 'tabular-nums text-accent-light' : 'text-text-60')}>{dock.text}</span>
+        </span>
+        <span className="shrink-0 text-ui-16 text-text-40 transition-colors duration-150 group-hover:text-text">
+          <Icon>{GLYPH.right}</Icon>
+        </span>
+      </button>
+    </section>
+  );
+}
+
+/**
+ * Вход в безлимит в сайдбаре десктопа: такая же ячейка 52×52, как пункты навигации, только
+ * иконка фиолетовая — чтобы выделялась без подписи. Пояснение — всплывашкой при наведении
+ * и фокусе; разовая подсказка после закрытого питча (DockHint) встаёт на её место.
+ */
+export function FunnelRailEntry() {
+  const dock = useFunnelDock();
+  const hint = useFunnelUi((state) => state.dockHint);
+  const hideHint = useFunnelUi((state) => state.hideDockHint);
+  if (!dock) return null;
+  return (
+    <div className="funnel-rail">
+      <button
+        type="button"
+        onClick={() => { hideHint(); dock.openDock(); }}
+        aria-label={`${dock.title}. ${dock.text}`}
+        className="funnel-rail-btn"
+      >
+        <Icon style={{ width: 34, height: 34 }}>{dock.glyph}</Icon>
+      </button>
+      {hint ? (
+        <DockHint className="funnel-rail-pop" />
       ) : (
-        <div className="flex items-center gap-[4px] rounded-r15 border border-line-strong bg-card p-[8px] shadow-soft">
-          <button
-            type="button"
-            onClick={openDock}
-            className="group flex min-w-0 flex-1 items-center gap-[12px] rounded-r10 p-[4px] text-left transition-[background-color] duration-150 hover:bg-panel focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light"
-          >
-            <span className="grid h-ctl w-ctl shrink-0 place-items-center rounded-r10 bg-accent-soft text-ui-20 text-accent-light">
-              <Icon>{glyph}</Icon>
-            </span>
-            <span className="flex min-w-0 flex-1 flex-col gap-[2px]">
-              <span className="truncate text-ui-16 text-text">{title}</span>
-              <span className={cn('line-clamp-2 text-ui-14', kind === 'tripwire' ? 'tabular-nums text-accent-light' : 'text-text-60')}>{text}</span>
-            </span>
-            <span className="shrink-0 text-ui-16 text-text-40 transition-[color,transform] duration-150 group-hover:translate-x-[2px] group-hover:text-text">
-              <Icon>{GLYPH.right}</Icon>
-            </span>
-          </button>
-          <Button variant="ghost" size="sm" iconOnly aria-label={t('funnel.dock.collapse')} title={t('funnel.dock.collapse')} onClick={() => setMini(true)}>
-            <Icon>{GLYPH.close}</Icon>
-          </Button>
-        </div>
+        <span className="funnel-rail-pop funnel-rail-tip" aria-hidden="true">
+          <span className="block text-ui-14 text-text">{dock.title}</span>
+          <span className="block text-ui-12 text-text-60">{dock.text}</span>
+        </span>
       )}
     </div>
   );

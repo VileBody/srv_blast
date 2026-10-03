@@ -50,6 +50,9 @@ interface FunnelUiState {
    * перезагрузку; гасится, когда безлимит открыт (или человек стал платящим).
    */
   badge: UnlimitedContext | null;
+  /** подсказка «безлимит здесь» у входа: питч прошли и закрыли, не купив (раз на аккаунт) */
+  dockHint: boolean;
+  hideDockHint: () => void;
   syncUser: (userId: string) => void;
   openQuiz: (jobId?: string) => void;
   openUnlimited: (ctx: UnlimitedContext) => void;
@@ -111,6 +114,12 @@ export const useFunnelUi = create<FunnelUiState>((set) => ({
   queued: null,
   later: null,
   badge: null,
+  dockHint: false,
+  hideDockHint: () => set((state) => {
+    if (!state.dockHint) return {};
+    markFunnelSeen('dock:hint');
+    return { dockHint: false };
+  }),
   // Сменился аккаунт — окна и плашка прежнего ему не принадлежат.
   syncUser: (userId) => set((state) => {
     if (state.user === userId) return {};
@@ -140,7 +149,7 @@ export const useFunnelUi = create<FunnelUiState>((set) => ({
       const badge = state.later ?? state.open.ctx;
       if (state.later?.jobId) markFunnelSeen(`unlimited:${state.later.jobId}`);
       saveBadge(badge);
-      return { open: null, later: null, badge };
+      return { open: null, later: null, badge, dockHint: !funnelSeen('dock:hint') };
     }
     return state.queued
       ? { open: { kind: 'unlimited', ctx: state.queued }, queued: null }

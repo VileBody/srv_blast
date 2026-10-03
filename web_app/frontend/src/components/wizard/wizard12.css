@@ -46,6 +46,8 @@
    визуальный вес. Размер в em: иконка сама подстраивается под кегль заголовка, таба или кнопки. */
 .w12 .w12-mi.w12-cap { height: .7em; width: calc(.7em * var(--r, 1)); }
 .w12 .w12-mi.w12-cap.w12-heavy { height: .62em; width: calc(.62em * var(--r, 1)); }
+/* молния в табах шагов: тонкий глиф на .62em терялся рядом с «Т» и «V» — оптически вровень с буквами */
+.w12 .w12-mi.w12-cap.w12-heavy.w12-tab-bolt { height: .86em; width: calc(.86em * var(--r, 1)); }
 .w12 .w12-ttl-ic { color: var(--w12-text-3); }
 .w12 .w12-sq { position: relative; display: inline-block; width: .64em; height: .64em; flex: none; }
 .w12 .w12-sq::before { content: ''; position: absolute; left: 0; bottom: 0; width: 58%; height: 58%; border: 1px dashed currentColor; }

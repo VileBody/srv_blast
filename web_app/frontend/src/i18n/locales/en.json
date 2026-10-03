@@ -2095,7 +2095,8 @@
       "unlimitedText": "Free, two steps in Telegram",
       "tripwireTitle": "No waiting for {{price}} ₽",
       "tripwireText": "Free batch in {{time}}",
-      "collapse": "Collapse"
+      "hint": "Track unlimited is always here — come back any time.",
+      "hintOk": "Got it"
     },
     "units": {
       "hours_one": "{{count}} hour",
