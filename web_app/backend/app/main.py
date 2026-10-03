@@ -15,6 +15,7 @@ from pathlib import Path
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any, Literal
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -1197,34 +1198,81 @@ def api_tg_verify(request: Request, token: str | None = None) -> dict[str, Any]:
     return {"verified": False}
 
 
+def _upload_tiktok_avatar(avatar_url: str, user_id: str) -> str:
+    """Скачать TikTok-аватар и положить в наш S3; вернуть `s3://`. Ошибка — исключением."""
+    response = httpx.get(str(avatar_url), timeout=10.0, follow_redirects=True)
+    response.raise_for_status()
+    content = response.content
+    security.check_image(content, max_mb=8)
+    content_type = response.headers.get("content-type", "").split(";")[0].strip() or "image/jpeg"
+    ext = ".png" if "png" in content_type else ".jpg"
+    uploaded = _production_backend().upload_user_image(
+        content=content,
+        user_id=user_id,
+        filename=f"tiktok_avatar{ext}",
+        content_type=content_type,
+        kind="avatars",
+    )
+    return uploaded["s3_url"]
+
+
 def _mirror_tiktok_avatar(avatar_url: str | None, user_id: str) -> str | None:
     """Копия TikTok-аватара в нашем S3.
 
     TikTok отдаёт подписанную CDN-ссылку с коротким сроком — через несколько дней
     она протухает, и в профиле «аватар не подтянулся». Скачиваем один раз при
     подключении и храним `s3://` (свежую подпись выдаёт /api/me через image_url).
-    Не скачалось — оставляем исходную ссылку, подключение из-за картинки не ломаем.
+    Не скачалось — оставляем исходную ссылку, подключение из-за картинки не ломаем;
+    /api/me потом перезапросит профиль и зеркалит заново (_refresh_tiktok_avatar).
     """
     if not avatar_url or RUNTIME.backend != "production":
         return avatar_url
     try:
-        response = httpx.get(str(avatar_url), timeout=10.0, follow_redirects=True)
-        response.raise_for_status()
-        content = response.content
-        security.check_image(content, max_mb=8)
-        content_type = response.headers.get("content-type", "").split(";")[0].strip() or "image/jpeg"
-        ext = ".png" if "png" in content_type else ".jpg"
-        uploaded = _production_backend().upload_user_image(
-            content=content,
-            user_id=user_id,
-            filename=f"tiktok_avatar{ext}",
-            content_type=content_type,
-            kind="avatars",
-        )
-        return uploaded["s3_url"]
+        return _upload_tiktok_avatar(avatar_url, user_id)
     except Exception as exc:  # noqa: BLE001 — картинка не должна ломать OAuth-колбэк
         logger.warning("tiktok avatar mirror failed: %s", exc)
         return avatar_url
+
+
+def _is_foreign_avatar(url: str | None) -> bool:
+    """Ссылка на чужой CDN (TikTok), а не наш `s3://` / presign нашего же S3."""
+    if not url or not str(url).startswith("https://"):
+        return False
+    host = urlparse(str(url)).hostname or ""
+    ours = urlparse(_production_backend().config.s3_endpoint_url).hostname or ""
+    return not (ours and (host == ours or host.endswith(f".{ours}")))
+
+
+def _refresh_tiktok_avatar(user_id: str) -> str | None:
+    """Аккаунты, подключённые до зеркалирования (#338), держат подписанную CDN-ссылку
+    с протухшим `x-expires` — скачать её уже нельзя. Перезапрашиваем профиль по
+    сохранённому токену и зеркалим свежую ссылку в S3.
+
+    Один раз: результат (s3:// или None при неудаче) пишем и в воркспейс, и в
+    запись токена — иначе рефреш токена (_apply_token_profile) вернул бы протухшую
+    ссылку. При неудаче аватара просто нет (фронт рисует инициалы), а не битая картинка.
+    """
+    current = (store.ws().tiktok or {}).get("avatarUrl")
+    if not _is_foreign_avatar(current):
+        return current
+    try:
+        fresh = (tiktok_api.fetch_user_info(_access_token()) or {}).get("avatar_url")
+        if not fresh:
+            raise RuntimeError("TikTok user info has no avatar_url")
+        mirrored: str | None = _upload_tiktok_avatar(str(fresh), user_id)
+    except Exception as exc:  # noqa: BLE001 — профиль не должен падать из-за картинки
+        logger.warning("tiktok avatar refresh failed user=%s: %s", user_id, exc)
+        mirrored = None
+    # воркспейс перечитываем: рефреш токена внутри _access_token пересоздаёт ws().tiktok
+    live = store.ws().tiktok
+    if live is not None:
+        live["avatarUrl"] = mirrored
+    record = tiktok_token_store.load(user_id)
+    if record is not None:
+        record["avatarUrl"] = mirrored
+        tiktok_token_store.save(user_id, record)
+    persistence.flush_user(user_id)
+    return mirrored
 
 
 @app.get("/api/me", tags=["profile"])
@@ -1248,15 +1296,10 @@ async def api_me() -> dict[str, Any]:
             data["user"]["avatarUrl"] = _production_backend().image_url(data["user"]["avatarUrl"])
         tiktok = data.get("tiktok") or {}
         if tiktok.get("avatarUrl"):
-            # аккаунты, подключённые до зеркалирования, ещё держат протухающую CDN-ссылку —
-            # зеркалим лениво, один раз (после неудачи больше не пробуем)
-            live = store.ws().tiktok or {}
-            if str(live.get("avatarUrl") or "").startswith("https://") and not live.get("avatarMirrorTried"):
-                live["avatarMirrorTried"] = True
-                live["avatarUrl"] = _mirror_tiktok_avatar(live["avatarUrl"], store.current_user_id() or "")
-                data["tiktok"]["avatarUrl"] = live["avatarUrl"]
-                persistence.flush_user(store.current_user_id())
-            data["tiktok"]["avatarUrl"] = _production_backend().image_url(data["tiktok"]["avatarUrl"])
+            # CDN-ссылка TikTok протухает: перезапрос профиля + зеркало в S3, один раз
+            if _is_foreign_avatar(tiktok["avatarUrl"]):
+                tiktok["avatarUrl"] = await asyncio.to_thread(_refresh_tiktok_avatar, store.current_user_id() or "")
+            tiktok["avatarUrl"] = _production_backend().image_url(tiktok["avatarUrl"])
     # Экран ожидания обещает «пришлём в Telegram» — обещать это можно только когда бот
     # реально настроен И у юзера есть привязанный чат. Иначе фронт молчит про уведомления.
     data["telegramNotifications"] = bool(
