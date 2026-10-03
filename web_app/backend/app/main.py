@@ -29,7 +29,7 @@ from . import mock_store as store
 from . import analytics, asr_preview, auth_store, bot_import, fraud_guard, funnel, google_auth, persistence, security, telegram_bot
 from . import render_job as render_job_builder
 from . import demo_media, effect_map
-from . import media_proxy
+from . import job_errors, media_proxy
 from . import storyboard as storyboard_svc
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
@@ -1263,10 +1263,7 @@ async def api_me() -> dict[str, Any]:
         telegram_bot.configured() and auth_store.chat_id_for_user(store.current_user_id() or "")
     )
     data["mock"] = RUNTIME.backend == "mock"
-    data["isAdmin"] = bool(
-        store.current_user_id() in ADMIN_USER_IDS
-        or (not ADMIN_USER_IDS and not RUNTIME.production)
-    )
+    data["isAdmin"] = _viewer_is_admin()
     data["capabilities"] = {
         "customSources": True,
         # Кандидаты дропа есть в обоих режимах: в моке — фикстура, в проде —
@@ -1349,7 +1346,7 @@ def api_project(project_id: str) -> dict[str, Any]:
                 project["coverUrl"] = backend.image_url(project["coverUrl"])
         except Exception as exc:
             raise _production_error(exc) from exc
-    return {"project": project, "mock": RUNTIME.backend == "mock"}
+    return {"project": job_errors.public_project(project, admin=_viewer_is_admin()), "mock": RUNTIME.backend == "mock"}
 
 
 @app.patch("/api/projects/{project_id}", tags=["projects"])
@@ -2749,7 +2746,7 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         persistence.save_job(live_job["id"])
         job = store.get_job(live_job["id"]) or live_job
     analytics.track("generation_started", store.current_user_id(), {"jobId": job["id"], "videos": job["versions"], "projectId": project_id})
-    return {"job": job, "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
+    return {"job": _public_job(job), "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
 
 
 def _create_job_or_422(project_id: str, stage_data: dict[str, Any], payload: SubmitPayload) -> dict[str, Any]:
@@ -3070,7 +3067,7 @@ async def api_active_job() -> dict[str, Any]:
             job = store.get_job(live_job["id"])
         except Exception as exc:
             raise _production_error(exc) from exc
-    return {"job": job, "mock": RUNTIME.backend == "mock"}
+    return {"job": _public_job(job), "mock": RUNTIME.backend == "mock"}
 
 
 @app.get("/api/jobs/{job_id}", tags=["jobs"])
@@ -3086,7 +3083,7 @@ async def api_job(job_id: str) -> dict[str, Any]:
             job = store.get_job(job_id) or live_job
         except Exception as exc:
             raise _production_error(exc) from exc
-    return {"job": job, "mock": RUNTIME.backend == "mock"}
+    return {"job": _public_job(job), "mock": RUNTIME.backend == "mock"}
 
 
 @app.post("/api/jobs/{job_id}/rate", tags=["jobs"])
@@ -3102,7 +3099,7 @@ def api_rate_job(job_id: str, payload: RatePayload) -> dict[str, Any]:
         store.current_user_id(),
         {"jobId": job_id, "rating": payload.rating, "hasFeedback": bool(payload.feedback)},
     )
-    return {"ok": True, "job": store.get_job(job_id), "mock": RUNTIME.backend == "mock"}
+    return {"ok": True, "job": _public_job(store.get_job(job_id)), "mock": RUNTIME.backend == "mock"}
 
 
 # ------------------------- Content iterations -------------------------
@@ -3138,7 +3135,7 @@ def api_create_iteration(project_id: str, payload: IterationPayload) -> dict[str
     )
     return {
         "iteration": iteration,
-        "job": job,
+        "job": _public_job(job),
         "redirectTo": f"/app/processing/{job['id']}",
         "mock": True,
     }
@@ -3864,6 +3861,19 @@ def api_dev_ban(request: Request, on: bool = True, reason: str = fraud_guard.BAN
 
 # Кто видит админку. Пусто → в деве доступна всем залогиненным, в проде — никому.
 ADMIN_USER_IDS = {uid.strip() for uid in os.getenv("BLAST_ADMIN_USER_IDS", "").split(",") if uid.strip()}
+
+
+def _viewer_is_admin() -> bool:
+    """Тот же признак, что `isAdmin` в /api/me: им же решаем, кому отдавать сырые ошибки."""
+    return bool(
+        store.current_user_id() in ADMIN_USER_IDS
+        or (not ADMIN_USER_IDS and not RUNTIME.production)
+    )
+
+
+def _public_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
+    # трейсбек оркестратора (пути ноды, render_id) видит только админ, юзер — категорию
+    return job_errors.public_job(job, admin=_viewer_is_admin())
 
 
 def _require_admin() -> None:
