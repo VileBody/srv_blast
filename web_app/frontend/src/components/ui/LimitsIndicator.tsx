@@ -142,13 +142,14 @@ export function LimitsIndicator({
   // фокус вернули на кружок после Escape — этот onFocus не должен снова открыть поповер
   const refocusing = useRef(false);
   const queryClient = useQueryClient();
-  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
+  // staleTime как у шапки: иначе каждое монтирование кружка перезапрашивало /api/me
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
   const funnelQuery = useFunnelState();
   const tripwire = useTripwirePurchase();
   const openUnlimited = useFunnelUi((state) => state.openUnlimited);
   const funnelOpen = useFunnelUi((state) => Boolean(state.open));
   const badge = useFunnelUi((state) => state.badge);
-  // тот же запрос, что у шапки (AppShell): идёт ли сейчас батч
+  // тот же кеш, что у шапки (AppShell); опрашивает только она
   const activeJobQuery = useQuery(activeJobOptions);
   const batchRunning = Boolean(activeJobQuery.data?.job);
   const [closedKey, setClosedKey] = useState<string | null>(null);
