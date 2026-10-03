@@ -306,8 +306,12 @@
 .w12 .w12-pv-play svg { width: 20px; height: 20px; fill: currentColor; stroke: none; }
 .w12 .w12-pv-play .w12-pl { margin-left: 3px; }
 .w12 .w12-pv-play:active { transform: scale(.94); }
-.w12 .w12-player.w12-playing .w12-pv-play { opacity: 0; }
-.w12 .w12-player.w12-playing:hover .w12-pv-play { opacity: 1; }
+/* Пока трек играет, кнопка уходит с кадра и возвращается по наведению. Только там, где
+   наведение есть: на телефоне она исчезала насовсем, и остановить трек было нечем. */
+@media (hover: hover) {
+  .w12 .w12-player.w12-playing .w12-pv-play { opacity: 0; }
+  .w12 .w12-player.w12-playing:hover .w12-pv-play, .w12 .w12-player.w12-playing .w12-pv-play:focus-visible { opacity: 1; }
+}
 .w12 .w12-pv-bar { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; align-items: center; gap: 8px; }
 .w12 .w12-pv-nav { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: rgba(5, 1, 15, .55); backdrop-filter: blur(8px); color: var(--w12-text); transition: opacity .15s ease, transform .12s var(--w12-ease); }
 .w12 .w12-pv-nav:active { transform: scale(.94); }

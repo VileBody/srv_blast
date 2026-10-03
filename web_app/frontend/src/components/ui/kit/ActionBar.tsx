@@ -6,8 +6,8 @@ import { cn } from '../../../lib/cn';
  * итог, статус, галочка прав; справа действия, главное последним. Её используют шаги
  * визарда, выкладка в TikTok и модалки.
  *
- * На телефоне складывается в столбец (контекст сверху, кнопки на всю ширину) и, если
- * `sticky`, прилипает к низу экрана.
+ * На телефоне складывается в столбец (контекст сверху, кнопки на всю ширину: тянутся
+ * по строке, квадратные кнопки-иконки — нет) и, если `sticky`, прилипает к низу экрана.
  */
 export function ActionBar({
   start,
@@ -34,7 +34,10 @@ export function ActionBar({
       )}
     >
       {start && <div className="flex min-w-0 flex-1 flex-wrap items-center gap-[8px] text-ui-14 text-text-60">{start}</div>}
-      <div className={cn('flex shrink-0 items-center gap-[10px] max-md:w-full', !start && 'w-full')}>{children}</div>
+      {/* На телефоне кнопки растягиваются на всю строку, а если подписи вместе не влезают — переносятся
+          каждая на свою строку во всю ширину. Раньше ряд не переносился, кнопки не сжимались
+          (nowrap), и главная уезжала за правый край модалки («Использовать те же вводные?»). */}
+      <div className={cn('flex min-w-0 shrink-0 flex-wrap items-center gap-[10px] max-md:w-full max-md:[&>*:not([data-icon-only])]:grow', !start && 'w-full')}>{children}</div>
     </div>
   );
 }
