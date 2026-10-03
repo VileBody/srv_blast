@@ -133,6 +133,8 @@ export function useRecipeCuts() {
     data: query.data,
     loading: query.isLoading,
     error: query.error as Error | null,
+    /** склейки не пришли (сеть, 5xx) — запросить ещё раз: staleTime Infinity сам не повторит */
+    retry: () => { void query.refetch(); },
     cuts: timeline.key === key && timeline.cuts ? timeline.cuts : query.data?.cuts[timeline.pace] ?? null,
     pace: timeline.pace,
     setPace
@@ -148,6 +150,12 @@ export const useStoryboardBusy = create<{ busy: boolean; setBusy: (busy: boolean
   busy: false,
   setBusy: (busy) => set((state) => (state.busy === busy ? state : { busy }))
 }));
+
+/** Секунды с одним знаком под язык интерфейса: «1,5» в русском, «1.5» в английском. */
+export function fmtSec(value: number, lang: string): string {
+  const s = value.toFixed(1);
+  return lang.startsWith('ru') ? s.replace('.', ',') : s;
+}
 
 /** Стабильный seed видео: одинаковые вводные → одинаковый подбор; «перемешать» его сдвигает. */
 export function seedKeyFor(batchKey: string, index: number, shuffle: number): string {

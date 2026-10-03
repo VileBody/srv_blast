@@ -72,3 +72,4 @@
   .psb-dhead:not(.edit) .psb-btn.pri .tx { display: none; }
 }
 .psb-info small.psb-note { color: var(--warning); }
+.psb-ph-in { display: flex; flex-direction: column; align-items: center; gap: 12px; }
