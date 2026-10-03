@@ -14,7 +14,7 @@ import { FN_GLYPH, VideoRatingRow, type ActionStatus, type LadderTier, type Meth
 import { Button, Icon } from '../ui/kit';
 import { useCoverCount, useModalCount } from '../ui/Modal';
 import { Skeleton } from '../ui/Skeleton';
-import { apiErrorCode, isUnlimitedTrack, trackTitleOf, useFunnelState, useTripwirePurchase } from './useFunnel';
+import { apiErrorCode, isUnlimitedTrack, trackTitleOf, useFunnelState, useQuizCopy, useTripwirePurchase } from './useFunnel';
 
 /*
  * Хост модалок воронки (docs/BOT_TO_WEB_FLOW.md, раздел 4). Живёт в AppShell, поэтому
@@ -121,6 +121,7 @@ function useMethodology(onSent: () => void) {
 function useQuiz(funnel: FunnelState | undefined, onDone: (bridge: string | null) => void) {
   const queryClient = useQueryClient();
   const failed = useFunnelErrorToast();
+  const copy = useQuizCopy();
   const [answers, setAnswers] = useState<Record<string, { id: string }>>({});
   const [current, setCurrent] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -137,14 +138,14 @@ function useQuiz(funnel: FunnelState | undefined, onDone: (bridge: string | null
         setAnswers((prev) => ({ ...prev, [question.id]: { id: answerId } }));
         if (res.done) {
           void queryClient.invalidateQueries({ queryKey: ['funnel-state'] });
-          onDone(res.bridge ?? null);
+          onDone(copy.bridge(res.branch, res.bridge ?? null));
         } else setCurrent(res.next);
       })
       .catch(failed)
       .finally(() => setPendingId(null));
   };
   const view: QuizView | null = question
-    ? { kind: 'question', question, index: Math.max(0, path.indexOf(question.id)), total: path.length, pendingId }
+    ? { kind: 'question', question: copy.question(question), index: Math.max(0, path.indexOf(question.id)), total: path.length, pendingId }
     : null;
   return { view, answer, touched: Object.keys(answers).length > 0 || pendingId !== null };
 }
@@ -242,6 +243,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const [unlockPending, setUnlockPending] = useState(false);
   const [tier, setTier] = useState<LadderTier | null>(null);
   const quiz = useQuiz(funnel, (b) => { setBridge(b); setIndex((i) => i + 1); });
+  const copy = useQuizCopy();
   // Сама больше не откроется: окно на экране. Ставим здесь, а не в момент «пора открыть» —
   // окно, которое ждало квиз и пропало с перезагрузкой, откроется при следующем заходе.
   useEffect(() => { if (ctx.jobId) markFunnelSeen(`unlimited:${ctx.jobId}`); }, [ctx.jobId]);
@@ -333,7 +335,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
           reasons,
           canFix: Boolean(ctx.projectId),
           quiz: quiz.view ?? undefined,
-          bridge: bridge ?? funnel.survey.bridge,
+          bridge: bridge ?? copy.bridge(funnel.survey.branch, funnel.survey.bridge),
           methodology: methodology.state,
           methodologyUrl: methodology.url,
           botLink: methodology.botLink ?? funnel.links.bot,
