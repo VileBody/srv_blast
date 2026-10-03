@@ -2218,6 +2218,20 @@ class CreditsDB:
             "redeem_count": int(row["redeem_count"]),
         }
 
+    async def release_web_handoff(self, token: str) -> None:
+        """Вернуть одно погашение: сайт погасил ссылку, но открыть её не смог (S3, слот,
+        привязка аккаунта). Иначе одноразовая ссылка сгорала на сбое, а не на входе."""
+        token = str(token or "").strip()
+        if not token:
+            return
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE web_handoff_tokens SET redeem_count = GREATEST(redeem_count - 1, 0) "
+                "WHERE token_hash = $1",
+                self.hash_handoff_token(token),
+            )
+
     async def peek_web_handoff_owner(self, token: str) -> Optional[int]:
         """Чей живой токен — без погашения. Сайт сперва сверяет аккаунт в браузере:
         одноразовую ссылку нельзя тратить на вопрос «войти как другой аккаунт?»."""

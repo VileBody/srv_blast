@@ -784,6 +784,12 @@ _HANDOFF_LOCKS: dict[str, list[Any]] = {}  # key -> [asyncio.Lock, скольк�
 @contextlib.asynccontextmanager
 async def _handoff_lock(token: str) -> AsyncIterator[None]:
     key = hashlib.sha256(token.encode()).hexdigest()
+    async with _keyed_lock(key):
+        yield
+
+
+@contextlib.asynccontextmanager
+async def _keyed_lock(key: str) -> AsyncIterator[None]:
     entry = _HANDOFF_LOCKS.setdefault(key, [asyncio.Lock(), 0])
     entry[1] += 1
     try:
@@ -813,8 +819,23 @@ async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int)
     if not audio_s3_url or not audio_hash:
         raise HTTPException(status_code=422, detail={"code": "handoff_invalid", "message": "Ссылка без трека."})
 
-    billing = _billing_backend()
     remix_key = _remix_project_key(audio_hash, payload) if record["kind"] == "remix" else ""
+    # Замок по токену не спасает от двух РАЗНЫХ ссылок на тот же трек, открытых разом
+    # (напоминание + /site): между проверкой «проект уже есть» и его созданием идут
+    # await'ы (слот, S3), и оба запроса заводили по проекту. Ключ — человек + трек.
+    dedupe = f"handoff-project:{tg_id}:{remix_key or 'track:' + audio_hash}"
+    async with _keyed_lock(dedupe):
+        return await _handoff_track_project_locked(token, record, tg_id, remix_key=remix_key)
+
+
+async def _handoff_track_project_locked(
+    token: str, record: dict[str, Any], tg_id: int, *, remix_key: str
+) -> dict[str, Any]:
+    payload = record["payload"]
+    audio_s3_url = str(payload.get("audioS3Url") or "")
+    audio_hash = str(payload.get("audioHash") or "")
+    filename = security.sanitize_filename(str(payload.get("filename") or ""), "track.mp3")
+    billing = _billing_backend()
     # Каждая ссылка — свой токен (напоминание, перевыпуск, /site, вторая кнопка
     # «Докрутить» под тем же батчем). Уже заведённый проект — ведём туда же: трек — по
     # его хэшу, ролики бота — по хэшу трека и id джоб батча.
@@ -911,49 +932,86 @@ async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[st
             raise _production_error(exc) from exc
         if record is None:
             raise expired
-        tg_id = int(record["tg_id"])
-        profile = dict(record["payload"].get("profile") or {})
-        created = False
-        if link_current:
-            # В браузере уже открыт аккаунт без Telegram (вход через Google): это тот же
-            # человек — привязываем chat_id к нему, второй аккаунт не заводим.
+        try:
+            return await _complete_handoff(request, payload, record, current=current, owner=owner,
+                                           link_current=link_current)
+        except BaseException:
+            # Погашение — до входа и проекта (иначе гонка двух табов), но засчитываться
+            # должно только удачное открытие: упади S3/слот/привязка — одноразовая ссылка
+            # (/site, напоминания) сгорала бы, и человек упирался в «ссылка устарела».
+            try:
+                await billing.release_handoff(payload.token)
+            except Exception:
+                logger.exception("handoff_release_failed: single-use link stays redeemed after a failed open")
+            raise
+
+
+async def _complete_handoff(
+    request: Request,
+    payload: HandoffPayload,
+    record: dict[str, Any],
+    *,
+    current: dict[str, Any] | None,
+    owner: dict[str, Any] | None,
+    link_current: bool,
+) -> dict[str, Any]:
+    """Вход, аккаунт и проект по уже погашенной ссылке (ошибка → вызывающий откатит погашение)."""
+    tg_id = int(record["tg_id"])
+    profile = dict(record["payload"].get("profile") or {})
+    created = False
+    if link_current:
+        # В браузере уже открыт аккаунт без Telegram (вход через Google): это тот же
+        # человек — привязываем chat_id к нему, второй аккаунт не заводим.
+        try:
             user = auth_store.link_telegram(current["id"], tg_id, profile)
-        else:
-            user = owner
-            if user is None:
-                user = auth_store.create_user_from_telegram(tg_id, profile)
-                created = True
-            if current is not None and current["id"] != user["id"]:
-                # Смена аккаунта: ничего из старой сессии не переносим.
-                request.session.clear()
-        request.session["user_id"] = user["id"]
-        _sync_current_user(user)
-        auth_store.set_notify_bot(user["id"], "public")
-        if created:
-            analytics.track("signup_completed", user["id"], {"source": "bot_handoff"})
-        analytics.track("bot_handoff", user["id"], {"kind": record["kind"], "redeemCount": record["redeem_count"]})
-        if record["kind"] not in {"track", "remix"}:
-            return {"ok": True, "created": created, "redirectTo": "/app"}
-        project = await _handoff_track_project(payload.token, record, tg_id)
-        out: dict[str, Any] = {
-            "ok": True,
-            "created": created,
-            "redirectTo": f"/app/generate?project={project['projectId']}",
-            **project,
-        }
-        if record["kind"] == "remix":
-            # «Докрутить на сайте»: отрезок и текст ролика из бота — в черновик визарда.
-            draft = dict(record["payload"].get("draft") or {})
-            out["draft"] = {
-                "clipStart": float(draft.get("clipStart") or 0.0),
-                "clipEnd": float(draft.get("clipEnd") or 0.0),
-                "lyrics": str(draft.get("lyrics") or ""),
+        except ValueError as exc:
+            # chat_id успели привязать к другому аккаунту между вопросом «Привязать?»
+            # и ответом: это не 500, а понятный отказ — склеивать аккаунты молча нельзя.
+            messages = {
+                "telegram_taken": "Этот Telegram уже привязан к другому аккаунту. Выйди из текущего и открой ссылку снова.",
+                "telegram_other": "К этому аккаунту уже привязан другой Telegram. Выйди из него и открой ссылку снова.",
             }
-            # …и весь монтаж ролика сразу на столе — только при первом открытии ссылки:
-            # повтор не должен затирать правки, сделанные на сайте.
-            if not project.get("repeat") and record["payload"].get("jobIds"):
-                out.update(await _remix_import_or_error(record["payload"], project))
-        return out
+            if str(exc) in messages:
+                raise HTTPException(
+                    status_code=409, detail={"code": str(exc), "message": messages[str(exc)]}
+                ) from exc
+            raise
+    else:
+        user = owner
+        if user is None:
+            user = auth_store.create_user_from_telegram(tg_id, profile)
+            created = True
+        if current is not None and current["id"] != user["id"]:
+            # Смена аккаунта: ничего из старой сессии не переносим.
+            request.session.clear()
+    request.session["user_id"] = user["id"]
+    _sync_current_user(user)
+    auth_store.set_notify_bot(user["id"], "public")
+    if created:
+        analytics.track("signup_completed", user["id"], {"source": "bot_handoff"})
+    analytics.track("bot_handoff", user["id"], {"kind": record["kind"], "redeemCount": record["redeem_count"]})
+    if record["kind"] not in {"track", "remix"}:
+        return {"ok": True, "created": created, "redirectTo": "/app"}
+    project = await _handoff_track_project(payload.token, record, tg_id)
+    out: dict[str, Any] = {
+        "ok": True,
+        "created": created,
+        "redirectTo": f"/app/generate?project={project['projectId']}",
+        **project,
+    }
+    if record["kind"] == "remix":
+        # «Докрутить на сайте»: отрезок и текст ролика из бота — в черновик визарда.
+        draft = dict(record["payload"].get("draft") or {})
+        out["draft"] = {
+            "clipStart": float(draft.get("clipStart") or 0.0),
+            "clipEnd": float(draft.get("clipEnd") or 0.0),
+            "lyrics": str(draft.get("lyrics") or ""),
+        }
+        # …и весь монтаж ролика сразу на столе — только при первом открытии ссылки:
+        # повтор не должен затирать правки, сделанные на сайте.
+        if not project.get("repeat") and record["payload"].get("jobIds"):
+            out.update(await _remix_import_or_error(record["payload"], project))
+    return out
 
 
 def _remix_project_key(audio_hash: str, payload: dict[str, Any]) -> str:

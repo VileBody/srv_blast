@@ -610,3 +610,22 @@ def test_recharge_and_idle_rows_query_only_what_they_need():
                    "f.action = 'tripwire_offer'"):
         assert member in idle, member
     assert "opened.first_open > NOW() - make_interval(days => $1)" in forks
+
+
+def test_release_web_handoff_returns_one_redemption_never_below_zero():
+    """Сайт погасил ссылку, но открыть её не смог — погашение возвращается (одноразовая
+    ссылка не сгорает на сбое, а напоминания не считают её «открытой»)."""
+    calls: list[tuple] = []
+
+    class _Conn:
+        async def execute(self, sql, *args):
+            calls.append((sql, args))
+            return "UPDATE 1"
+
+    db = CreditsDB.__new__(CreditsDB)
+    db._pool_or_fail = lambda: _RecordingPool(_Conn())
+    _run(db.release_web_handoff("tok-123"))
+    _run(db.release_web_handoff(""))  # пустой токен — ничего не трогаем
+    assert len(calls) == 1
+    sql, args = calls[0]
+    assert "GREATEST(redeem_count - 1, 0)" in sql and args == (CreditsDB.hash_handoff_token("tok-123"),)
