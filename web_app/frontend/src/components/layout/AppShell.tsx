@@ -1,11 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { api } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
+import { currentAppPath } from '../../lib/appPath';
 import { ProfileSetupGate } from './ProfileSetupGate';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/Button';
+import { Button as KitButton } from '../ui/kit';
 import { ErrorBoundary } from '../ui/ErrorBoundary';
 import { Skeleton } from '../ui/Skeleton';
 import { useToast } from '../../contexts/ToastContext';
@@ -64,26 +66,27 @@ const baseNav = [
 ];
 
 
+const AVATAR_CLASS = 'flex h-[60px] w-[60px] items-center justify-center overflow-hidden rounded-full border-2 border-[var(--dash-white)] bg-accent-20 text-[20px] font-bold text-text-80 transition';
+
+/** Сам кружок аватара, без ссылки — для мест, где ссылка уже снаружи (пункт меню в шторке). */
+function AvatarFace({ name, avatarUrl }: { name?: string; avatarUrl?: string }) {
+  return avatarUrl ? (
+    <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover p-[2px]" />
+  ) : (
+    <span className="leading-none">{(name ?? 'B').slice(0, 1).toUpperCase()}</span>
+  );
+}
+
 function Avatar({ name, avatarUrl, className, onClick }: { name?: string; avatarUrl?: string; className?: string; onClick?: () => void }) {
   const { t } = useTranslation();
   return (
     <NavLink
       to="/app/profile"
       onClick={onClick}
-      className={({ isActive }) =>
-        cn(
-          'flex h-[60px] w-[60px] items-center justify-center overflow-hidden rounded-full border-2 border-[var(--dash-white)] bg-accent-20 text-[20px] font-bold text-text-80 transition hover:shadow-glow',
-          isActive && 'text-text shadow-glow',
-          className
-        )
-      }
+      className={({ isActive }) => cn(AVATAR_CLASS, 'hover:shadow-glow', isActive && 'text-text shadow-glow', className)}
       aria-label={t('nav.profile')}
     >
-      {avatarUrl ? (
-        <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover p-[2px]" />
-      ) : (
-        <span className="leading-none">{(name ?? 'B').slice(0, 1).toUpperCase()}</span>
-      )}
+      <AvatarFace name={name} avatarUrl={avatarUrl} />
     </NavLink>
   );
 }
@@ -152,14 +155,23 @@ function MobileHeader({ onOpen, userName, avatarUrl }: { onOpen: () => void; use
 
 function Drawer({ open, onClose, activeJobId, userName, avatarUrl }: { open: boolean; onClose: () => void; activeJobId?: string; userName?: string; avatarUrl?: string }) {
   const { t } = useTranslation();
+  const panelRef = useRef<HTMLElement>(null);
+  // Esc закрывает шторку, фокус — на её крестик (иначе клавиатура осталась бы под подложкой)
+  useEffect(() => {
+    if (!open) return undefined;
+    panelRef.current?.querySelector<HTMLElement>('[data-drawer-close]')?.focus({ preventScroll: true });
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
   if (!open) return null;
   return (
     <>
       <div className="fixed inset-0 z-overlay bg-[rgba(5,1,15,.72)] md:hidden" onClick={onClose} />
-      <aside className="fixed left-0 top-0 z-drawer h-dvh w-[280px] border-r border-border bg-nav p-space-5 shadow-soft md:hidden">
+      <aside ref={panelRef} className="fixed left-0 top-0 z-drawer h-dvh w-[280px] border-r border-border bg-nav p-space-5 shadow-soft md:hidden">
         <div className="mb-space-7 flex items-center justify-between">
           <img src="/assets/figma/logo-star.svg" width="40" height="40" alt="Blast" />
-          <Button variant="ghost" size="sm" onClick={onClose}>×</Button>
+          <Button data-drawer-close variant="ghost" size="sm" onClick={onClose} aria-label={t('common.closeMenu')}><span aria-hidden="true">×</span></Button>
         </div>
         <nav className="flex flex-col gap-space-3">
           {/* админ-аналитика — десктопный инструмент, в мобильном меню её нет */}
@@ -180,7 +192,10 @@ function Drawer({ open, onClose, activeJobId, userName, avatarUrl }: { open: boo
           onClick={onClose}
           className={({ isActive }) => cn('mt-space-3 flex items-center gap-space-3 rounded-r12 border border-border p-space-4 text-text-60', isActive && 'border-accent-light bg-accent-20 text-text')}
         >
-          <Avatar name={userName} avatarUrl={avatarUrl} className="!h-[28px] !w-[28px] !border !text-[12px]" />
+          {/* кружок без своей ссылки: пункт уже NavLink, а <a> в <a> — невалидная разметка */}
+          <span className={cn(AVATAR_CLASS, '!h-[28px] !w-[28px] !border !text-[12px]')} aria-hidden="true">
+            <AvatarFace name={userName} avatarUrl={avatarUrl} />
+          </span>
           {t('nav.profile')}
         </NavLink>
         <LanguageSwitcher className="mt-space-5 w-max" />
@@ -189,16 +204,59 @@ function Drawer({ open, onClose, activeJobId, userName, avatarUrl }: { open: boo
   );
 }
 
-export function AppShell() {
+/*
+ * «Ролики готовы» / «Генерация не удалась». /api/jobs/active отдаёт только PENDING/PROCESSING,
+ * поэтому COMPLETED там не увидеть никогда — раньше тост не всплывал вовсе. Ловим переход:
+ * активный джоб пропал (или сменился) → дочитываем его по id и говорим, чем кончилось.
+ */
+function useJobFinishedToast(currentJobId: string | null | undefined) {
+  const { t } = useTranslation();
   const { push } = useToast();
+  const queryClient = useQueryClient();
+  const location = useLocation();
+  const pathRef = useRef(location.pathname);
+  pathRef.current = location.pathname;
+  const trackedJob = useRef<string | null>(null);
+  // ref, а не state: под StrictMode эффект прогоняется дважды в одном коммите — тост задваивался
+  const notifiedJob = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (currentJobId === undefined) return; // ответа ещё нет / запрос упал — перехода не знаем
+    const previous = trackedJob.current;
+    trackedJob.current = currentJobId;
+    if (!previous || previous === currentJobId || notifiedJob.current === previous) return;
+    notifiedJob.current = previous;
+    api.job(previous).then(({ job }) => {
+      if (job.status !== 'COMPLETED' && job.status !== 'FAILED') return;
+      // батч закончился: счётчики, список проектов и сам проект устарели
+      void queryClient.invalidateQueries({ queryKey: ['projects'] });
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
+      void queryClient.invalidateQueries({ queryKey: ['project'] });
+      void queryClient.invalidateQueries({ queryKey: ['job', job.id] });
+      // экран генерации этого батча сам покажет исход (или уведёт в проект) — тост там лишний
+      if (pathRef.current === `/app/processing/${job.id}`) return;
+      // как на экране генерации: упавший ролик = неудача, даже если джоб формально завершён
+      const failed = job.status === 'FAILED' || job.videos.some((video) => video.status === 'FAILED');
+      push(failed
+        ? { variant: 'error', title: t('processing.failed'), action: { label: t('processing.toastDetails'), href: `/app/processing/${job.id}` } }
+        : { variant: 'success', title: t('processing.toastReady'), action: { label: t('common.view'), href: job.projectId ? `/app/projects/${job.projectId}` : `/app/processing/${job.id}` } });
+    }, (error: unknown) => {
+      // статус не дочитали — молча не выдумываем исход, но и не теряем след в консоли
+      console.warn(`job ${previous} left the active slot, final status unavailable`, error);
+    });
+  }, [currentJobId, push, queryClient, t]);
+}
+
+export function AppShell() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
   // идёт генерация — следим часто; нет — раз в 30 с (раньше каждые 5 с на любой странице)
   const activeJobQuery = useQuery({ queryKey: ['active-job'], queryFn: api.activeJob, refetchInterval: (query) => (query.state.data?.job ? 5000 : 30_000) });
   const activeJob = activeJobQuery.data?.job;
-  const [lastCompletedJob, setLastCompletedJob] = useState<string | null>(null);
-  const notifiedJob = useRef<string | null>(null);
+  useJobFinishedToast(activeJobQuery.isSuccess ? (activeJob?.id ?? null) : undefined);
   const viewport = useAppViewport();
   // возврат из банка после трипваера: на любую страницу /app (батч, визард, генерация)
   usePaymentReturn();
@@ -214,22 +272,6 @@ export function AppShell() {
       root.style.removeProperty('--app-layout-h');
     };
   }, [viewport.layoutHeight, viewport.layoutWidth, viewport.scale]);
-
-  useEffect(() => {
-    if (!activeJobQuery.data || activeJob) return;
-    if (lastCompletedJob) return;
-  }, [activeJob, activeJobQuery.data, lastCompletedJob]);
-
-  useEffect(() => {
-    const job = activeJobQuery.data?.job;
-    if (!job || job.status !== 'COMPLETED') return;
-    // ref, а не state: под StrictMode эффект прогоняется дважды в одном коммите, и
-    // setLastCompletedJob не успевает применится — уведомление задваивалось.
-    if (notifiedJob.current === job.id) return;
-    notifiedJob.current = job.id;
-    setLastCompletedJob(job.id);
-    push({ variant: 'success', title: 'Ролики готовы', action: { label: 'Открыть', href: `/app/processing/${job.id}` } });
-  }, [activeJobQuery.data?.job, push]);
 
   const userName = meQuery.data?.user.name;
   const frameStyle = {
@@ -247,7 +289,7 @@ export function AppShell() {
         <div className="app-frame" style={frameStyle}>
           {/* Тот же выбор аватара, что в ЛК: свой, иначе из TikTok — сайдбар отставал и показывал букву */}
           <Sidebar activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />
-        <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />
+        <Drawer open={drawerOpen} onClose={closeDrawer} activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />
         {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
         {/* модалки воронки после генерации: квиз и безлимит на трек */}
@@ -260,12 +302,20 @@ export function AppShell() {
             {meQuery.isLoading ? (
               <Skeleton className="h-[120px]" />
             ) : meQuery.error ? (
-              <div className="card flex items-center justify-between gap-space-4">
-                <div>
-                  <h1 className="text-[28px] font-bold">API недоступен</h1>
-                  <p className="mt-space-2 text-text-60">Проверь, что FastAPI запущен на 8000 порту.</p>
+              /* аккаунт не загрузился: повторить или войти заново (с возвратом на эту страницу) */
+              <div className="card-2 flex min-h-[260px] flex-col items-center justify-center px-[28px] py-[40px] text-center" role="alert">
+                <h1 className="text-ui-24 font-[400] text-text">{t('error.meTitle')}</h1>
+                <p className="mt-[12px] max-w-[420px] text-ui-16 text-text-60">{t('error.meText')}</p>
+                {meQuery.error instanceof ApiError && (
+                  <p className="mt-[8px] text-ui-12 text-text-40">{t('error.code', { code: meQuery.error.status })}</p>
+                )}
+                <div className="mt-[24px] flex flex-wrap justify-center gap-[12px]">
+                  <KitButton variant="primary" size="md" loading={meQuery.isFetching} onClick={() => void meQuery.refetch()}>{t('error.retry')}</KitButton>
+                  <KitButton variant="secondary" size="md" onClick={() => {
+                    const back = currentAppPath();
+                    navigate(back ? `/login?next=${encodeURIComponent(back)}` : '/login');
+                  }}>{t('error.relogin')}</KitButton>
                 </div>
-                <Button onClick={() => navigate('/login')}>К логину</Button>
               </div>
             ) : (
               <ErrorBoundary>

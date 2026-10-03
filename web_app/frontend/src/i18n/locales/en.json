@@ -43,7 +43,8 @@
     "play": "Play",
     "pause": "Pause",
     "closeDialog": "Close dialog",
-    "logoutFailed": "Couldn't sign out"
+    "logoutFailed": "Couldn't sign out",
+    "closeMenu": "Close menu"
   },
   "legal": {
     "policyTitle": "Privacy policy",
@@ -1119,7 +1120,9 @@
     "whatHappened": "What happened",
     "failedDone": "{{done}} of {{total}} ready",
     "stopped": "Stopped",
-    "failedNoReason": "The server sent no reason — contact support with the batch number"
+    "failedNoReason": "The server sent no reason — contact support with the batch number",
+    "toastReady": "Your videos are ready",
+    "toastDetails": "Details"
   },
   "tiktok": {
     "captionPlaceholder": "What is this video about?",
@@ -1384,7 +1387,10 @@
     "retrying": "Retrying…",
     "code": "Error code: {{code}}",
     "inlineRetry": "Refresh",
-    "generic": "Something went wrong. Please try again."
+    "generic": "Something went wrong. Please try again.",
+    "meTitle": "Couldn't load your account",
+    "meText": "The server didn't respond. Try again or sign in again — your data is safe.",
+    "relogin": "Sign in again"
   },
   "trackUsage": {
     "title": "Where your tracks went",
