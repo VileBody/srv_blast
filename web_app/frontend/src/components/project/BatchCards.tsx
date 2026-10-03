@@ -8,6 +8,7 @@ import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { api } from '../../lib/api';
+import { failureKey, useIsAdmin } from '../../lib/failure';
 import { Button, Pager } from '../ui/kit';
 
 /**
@@ -150,7 +151,7 @@ export function TagChip({ label, icon }: { label: string; icon: 'bg' | 'sub' | '
 }
 
 /**
- * Причина падения ролика — коротко и по делу. Чаще всего это ответ оркестратора вида
+ * Сырая причина падения (только для админа, под «Подробности»). Чаще всего это ответ оркестратора вида
  * `orchestrator /send_audio_s3 failed status=422 body={"detail":[{"loc":[...],"msg":"..."}]}`:
  * достаём из него сами сообщения, а не показываем простыню JSON.
  */
@@ -185,7 +186,10 @@ export function GenerationRow({ video, onPost, footer }: { video: VideoVersion; 
   const chips = useHorizontalScroll();
   const chipsMask = edgeMask(chips.fade.left, chips.fade.right, 20);
   const failed = video.status === 'FAILED';
-  const reason = failed ? failureReason(video.error) : null;
+  const isAdmin = useIsAdmin();
+  // человеку — категория причины; сырой текст (трейсбек, пути ноды) бэк отдаёт только админу
+  const reason = failed ? t(failureKey(video)) : null;
+  const rawReason = failed && isAdmin ? failureReason(video.error) : null;
   return (
     <div className={cn('shrink-0 rounded-[15px] bg-panel', posted && 'opacity-70')}>
     <div className="relative flex h-[60px] items-center pl-[28px] pr-[24px]">
@@ -207,7 +211,7 @@ export function GenerationRow({ video, onPost, footer }: { video: VideoVersion; 
       </div>
       {/* Figma W36: звезда заменена на постинг в TikTok (18×20), скачивание рядом (gap 12) */}
       {video.status === 'FAILED' ? (
-        <span className="ml-[8px] shrink-0 whitespace-nowrap text-[14px] leading-none text-warning" title={video.error ?? undefined}>
+        <span className="ml-[8px] shrink-0 whitespace-nowrap text-[14px] leading-none text-warning" title={reason ?? undefined}>
           {t('processing.failedShort')}
         </span>
       ) : posted ? (
@@ -244,9 +248,15 @@ export function GenerationRow({ video, onPost, footer }: { video: VideoVersion; 
     </div>
       {/* причина видна сразу, а не только во всплывающей подсказке (на телефоне её не навести) */}
       {failed && (
-        <p className="px-[28px] pb-[14px] text-ui-12 text-warning [overflow-wrap:anywhere]" role="note">
-          {reason ?? t('processing.failedNoReason')}
-        </p>
+        <div className="px-[28px] pb-[14px] text-ui-12" role="note">
+          <p className="text-warning [overflow-wrap:anywhere]">{reason}</p>
+          {rawReason && (
+            <details className="mt-[6px] text-text-60">
+              <summary className="w-fit cursor-pointer text-accent-light">{t('processing.details')}</summary>
+              <code className="mt-[6px] block max-h-[120px] overflow-auto whitespace-pre-wrap break-words rounded-r10 bg-field p-[10px] font-mono text-ui-12">{rawReason}</code>
+            </details>
+          )}
+        </div>
       )}
       {/* оценка ролика 1–10 (воронка после генерации, components/funnel) */}
       {footer}
