@@ -1030,7 +1030,10 @@ async def _remix_import_or_error(payload: dict[str, Any], project: dict[str, Any
     ссылке: визард откроется по-старому (трек, окно, текст), а человек увидит, почему
     монтаж не переехал (No Fallback — не молча)."""
     try:
-        return {"wizardImport": await _remix_wizard_import(payload, project)}
+        return {"wizardImport": await asyncio.wait_for(_remix_wizard_import(payload, project), REMIX_IMPORT_DEADLINE_S)}
+    except asyncio.TimeoutError:
+        logger.warning("bot_remix_import_timeout jobs=%s deadline=%ss", payload.get("jobIds"), REMIX_IMPORT_DEADLINE_S)
+        return {"wizardImportError": REMIX_IMPORT_TIMEOUT_TEXT}
     except bot_import.BotImportError as exc:
         logger.warning("bot_remix_import_refused jobs=%s reason=%s", payload.get("jobIds"), exc)
         return {"wizardImportError": str(exc)}
@@ -1039,16 +1042,45 @@ async def _remix_import_or_error(payload: dict[str, Any], project: dict[str, Any
         return {"wizardImportError": "Монтаж ролика из бота не загрузился"}
 
 
+# Импорт монтажа идёт внутри запроса входа по ссылке (под замком ссылки): до 20
+# последовательных походов в оркестратор держали человека на экране входа минутами.
+# Состояния тянем параллельно и с общим сроком; не успевшие ролики — UNAVAILABLE
+# (визард пишет «монтаж ролика N сейчас недоступен»), а не молча выпадают.
+REMIX_EDIT_STATE_WORKERS = 6
+REMIX_EDIT_STATE_DEADLINE_S = float(os.getenv("WEB_REMIX_EDIT_STATE_DEADLINE_S", "20"))
+# Весь импорт (состояния + подбор клипов + клон слов): дальше вход открывает визард
+# по черновику и явно говорит, что монтаж не успел загрузиться.
+REMIX_IMPORT_DEADLINE_S = float(os.getenv("WEB_REMIX_IMPORT_DEADLINE_S", "45"))
+REMIX_IMPORT_TIMEOUT_TEXT = "Монтаж ролика из бота не успел загрузиться, открыли трек, отрезок и текст."
+
+
 def _remix_edit_states(job_ids: list[str]) -> list[dict[str, Any]]:
+    import concurrent.futures
+
     backend = _production_backend()
-    states: list[dict[str, Any]] = []
-    for job_id in job_ids:
-        try:
-            states.append(backend.job_edit_state(job_id))
-        except Exception as exc:  # один ролик без состояния не отменяет остальные
-            logger.warning("bot_remix_edit_state_unavailable job=%s err=%s", job_id, exc)
-            states.append({"job_id": job_id, "status": bot_import.STATUS_UNAVAILABLE})
-    return states
+    if not job_ids:
+        return []
+    pool = concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(REMIX_EDIT_STATE_WORKERS, len(job_ids)), thread_name_prefix="remix-edit-state"
+    )
+    try:
+        futures = [pool.submit(backend.job_edit_state, job_id) for job_id in job_ids]
+        concurrent.futures.wait(futures, timeout=REMIX_EDIT_STATE_DEADLINE_S)
+        states: list[dict[str, Any]] = []
+        for job_id, future in zip(job_ids, futures):
+            if not future.done():
+                logger.warning("bot_remix_edit_state_timeout job=%s deadline=%ss", job_id, REMIX_EDIT_STATE_DEADLINE_S)
+                states.append({"job_id": job_id, "status": bot_import.STATUS_UNAVAILABLE})
+                continue
+            try:
+                states.append(future.result())
+            except Exception as exc:  # один ролик без состояния не отменяет остальные
+                logger.warning("bot_remix_edit_state_unavailable job=%s err=%s", job_id, exc)
+                states.append({"job_id": job_id, "status": bot_import.STATUS_UNAVAILABLE})
+        return states
+    finally:
+        # Не ждём зависшие запросы: их результат уже не нужен, у httpx свой таймаут.
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 async def _remix_wizard_import(payload: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:

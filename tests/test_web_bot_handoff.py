@@ -615,3 +615,58 @@ def test_two_links_for_one_track_opened_at_once_make_one_project(client, monkeyp
     assert first["projectId"] == second["projectId"] and second["repeat"] is True
     assert [p["id"] for p in main.store.ws().projects] == [first["projectId"]]
     assert main._HANDOFF_LOCKS == {}
+
+
+def test_remix_edit_states_are_fetched_in_parallel_with_a_deadline(client, monkeypatch) -> None:
+    """Регресс: до 20 последовательных edit_state держали запрос входа. Теперь они
+    параллельны, а не успевший к сроку ролик явно помечен «недоступен»."""
+    import threading
+    import time
+
+    tc, main = client
+    backend = _RemixBackend()
+    original = backend.job_edit_state
+    active = peak = 0
+    lock = threading.Lock()
+    release = threading.Event()
+
+    def slow(job_id: str) -> dict[str, Any]:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            if job_id == "bot-stuck":
+                release.wait(5)  # завис дольше срока
+            else:
+                time.sleep(0.1)
+            return original(job_id)
+        finally:
+            with lock:
+                active -= 1
+
+    backend.job_edit_state = slow
+    monkeypatch.setattr(main, "_production_backend", lambda: backend)
+    monkeypatch.setattr(main, "REMIX_EDIT_STATE_DEADLINE_S", 0.5)
+    started = time.monotonic()
+    states = main._remix_edit_states(["bot-a", "bot-b", "bot-c", "bot-stuck"])
+    elapsed = time.monotonic() - started
+    release.set()
+
+    assert peak >= 3 and elapsed < 2.0
+    assert [s["status"] for s in states] == ["SUCCEEDED"] * 3 + [main.bot_import.STATUS_UNAVAILABLE]
+    assert [s["job_id"] for s in states] == ["bot-a", "bot-b", "bot-c", "bot-stuck"]
+
+
+def test_remix_import_over_the_total_deadline_says_so(client, monkeypatch) -> None:
+    import asyncio
+
+    tc, main = client
+    monkeypatch.setattr(main, "REMIX_IMPORT_DEADLINE_S", 0.05)
+
+    async def hang(payload, project):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(main, "_remix_wizard_import", hang)
+    out = asyncio.run(main._remix_import_or_error({"jobIds": ["bot-a"]}, {"projectId": "p"}))
+    assert out == {"wizardImportError": main.REMIX_IMPORT_TIMEOUT_TEXT}
