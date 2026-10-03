@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
+import { nearestHuePercent } from '../../lib/huePosition';
 import { MediaCard, Rail, useBackdrop } from './BackgroundPanel';
 import { PreviewVideo } from './CatalogPreview';
 import { catalogPosterOf, useInView } from '../../lib/media';
@@ -16,13 +17,9 @@ import {
 import { SubtitleTimeline } from './SubtitleTimeline';
 import { SubtitleCanvas, type SubtitleCanvasProps } from './SubtitleCanvas';
 import { useSubtitleClock } from '../../lib/subtitleClock';
+import { formatTimePrecise } from '../../lib/timeFormat';
 import { useSubtitleFonts } from '../../lib/useSubtitleFonts';
 
-const clockLabel = (s: number) => {
-  const v = Math.max(0, s);
-  const m = Math.floor(v / 60);
-  return `${m}:${(v - m * 60).toFixed(1).padStart(4, '0')}`;
-};
 import { InlineError, queryDown } from '../ui/ErrorState';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
@@ -117,22 +114,6 @@ function SubtitleStyleGuideVisual() {
  * стили лентой карточек (номер = порядок в пуле) и настройки текста выбранного стиля;
  * справа превью субтитров поверх выбранного на «Фоне» кадра и итог шага.
  */
-
-function nearestHuePercent(hex: string): number {
-  const target = Number.parseInt(hex.replace('#', ''), 16);
-  if (!Number.isFinite(target)) return 50;
-  const rgb = (value: number) => [(value >> 16) & 255, (value >> 8) & 255, value & 255];
-  const targetRgb = rgb(target);
-  let best = 50;
-  let bestDistance = Number.POSITIVE_INFINITY;
-  for (let pct = 0; pct <= 100; pct++) {
-    const candidate = Number.parseInt(hueAt(pct).slice(1), 16);
-    const [r, g, b] = rgb(candidate);
-    const distance = (r - targetRgb[0]) ** 2 + (g - targetRgb[1]) ** 2 + (b - targetRgb[2]) ** 2;
-    if (distance < bestDistance) { best = pct; bestDistance = distance; }
-  }
-  return best;
-}
 
 /** Строка настройки: подпись слева, контрол справа. */
 function SetRow({ label, children }: { label: string; children: ReactNode }) {
@@ -236,33 +217,83 @@ function FontSample({ option, menuRef }: { option: FontOption; menuRef: RefObjec
   );
 }
 
-/** Выбор шрифта: выпадающий список с образцом «Аа» каждым шрифтом; недоступные — с причиной. */
+/**
+ * Выбор шрифта: выпадающий список с образцом «Аа» каждым шрифтом; недоступные — с причиной.
+ * С клавиатуры — как у типа подборки на «Фоне»: ↓/↑ открывают и ходят по шрифтам (недоступные
+ * пропускаются), Home/End — к краям, Enter/пробел выбирают, Esc закрывает. Фокус на время
+ * открытия уходит в список и возвращается на кнопку.
+ */
 function FontMenu({ label, value, options, onChange }: { label: string; value: string; options: FontOption[]; onChange: (value: string) => void }) {
   const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
   const wrapRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const listId = useId();
+  const optionId = (index: number) => `${listId}-${index}`;
   const selected = options.find((option) => option.value === value) ?? options[0];
   useEffect(() => {
     if (!open) return undefined;
+    const current = options.findIndex((option) => option.value === value);
+    setActive(current >= 0 ? current : Math.max(0, options.findIndex((option) => !option.disabled)));
+    menuRef.current?.focus();
     const onDown = (event: PointerEvent) => { if (!wrapRef.current?.contains(event.target as Node)) setOpen(false); };
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false); };
     window.addEventListener('pointerdown', onDown);
-    window.addEventListener('keydown', onKey);
-    return () => { window.removeEventListener('pointerdown', onDown); window.removeEventListener('keydown', onKey); };
+    return () => window.removeEventListener('pointerdown', onDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+  // активная строка всегда в видимой части прокрутки меню
+  useEffect(() => {
+    if (open) document.getElementById(optionId(active))?.scrollIntoView({ block: 'nearest' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, active]);
+  const close = () => { setOpen(false); buttonRef.current?.focus(); };
+  const pick = (option: FontOption | undefined) => {
+    if (!option || option.disabled) return;
+    onChange(option.value);
+    close();
+  };
+  /** следующий доступный шрифт в сторону dir (по кругу); недоступные не выбираются и с клавиатуры */
+  const step = (from: number, dir: 1 | -1) => {
+    for (let k = 1; k <= options.length; k++) {
+      const index = (from + dir * k + options.length * k) % options.length;
+      if (!options[index].disabled) return index;
+    }
+    return from;
+  };
+  const onKey = (event: React.KeyboardEvent) => {
+    if (event.key === 'Escape' && open) {
+      // гасим здесь: иначе тот же Esc закрыл бы и подсказку шага (она слушает window)
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!open) { setOpen(true); return; }
+      setActive((index) => step(index, event.key === 'ArrowDown' ? 1 : -1));
+      return;
+    }
+    if (!open) return;
+    if (event.key === 'Home') { event.preventDefault(); setActive(step(options.length - 1, 1)); return; }
+    if (event.key === 'End') { event.preventDefault(); setActive(step(0, -1)); return; }
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); pick(options[active]); return; }
+    if (event.key === 'Tab') setOpen(false);
+  };
   return (
     <SetRow label={label}>
-      <div ref={wrapRef} className="w12-dd-wrap w12-font-dd">
-        <button type="button" className="w12-dd" aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined} aria-label={`${label}: ${selected?.label ?? ''}`} onClick={() => setOpen((next) => !next)}>
+      <div ref={wrapRef} className="w12-dd-wrap w12-font-dd" onKeyDown={onKey}>
+        <button ref={buttonRef} type="button" className="w12-dd" aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? listId : undefined} aria-label={`${label}: ${selected?.label ?? ''}`} onClick={() => setOpen((next) => !next)}>
           <span className="w12-l">{selected?.label}</span><Svg>{W12.down}</Svg>
         </button>
         {open && (
-          <div ref={menuRef} id={listId} role="listbox" aria-label={label} className="w12-dd-menu w12-font-menu">
-            {options.map((option) => (
-              <div key={option.value} role="option" aria-selected={value === option.value} aria-disabled={Boolean(option.disabled) || undefined}
-                title={option.disabled} className={cn('w12-dd-opt', option.disabled && 'w12-off')}
-                onClick={() => { if (option.disabled) return; onChange(option.value); setOpen(false); }}>
+          <div ref={menuRef} id={listId} role="listbox" tabIndex={-1} aria-label={label} aria-activedescendant={optionId(active)} className="w12-dd-menu w12-font-menu">
+            {options.map((option, index) => (
+              <div key={option.value} id={optionId(index)} role="option" aria-selected={value === option.value} aria-disabled={Boolean(option.disabled) || undefined}
+                title={option.disabled} data-active={index === active || undefined} className={cn('w12-dd-opt', option.disabled && 'w12-off')}
+                onPointerEnter={() => { if (!option.disabled) setActive(index); }}
+                onClick={() => pick(option)}>
                 <span className="w12-font-name">
                   <span className="w12-l">{option.label}</span>
                   {option.disabled && <small>{option.disabled}</small>}
@@ -296,6 +327,23 @@ export function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: 
 
   const tabStyle = tab ? styleIdOf(tab) : null;
   const styles = tabStyle ? [tabStyle] : [];
+  // вкладки стилей — табы с панелью настроек: стрелки ходят по вкладкам, панель подписана активной
+  const tabsId = useId();
+  const styleTabId = (index: number) => `${tabsId}-tab-${index}`;
+  const stylePanelId = `${tabsId}-panel`;
+  const styleTabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const hasStyleTabs = subtitles.pool.length > 1;
+  const activeTabIndex = Math.max(0, subtitles.pool.findIndex((name) => name === tab));
+  const panelA11y = hasStyleTabs ? { id: stylePanelId, role: 'tabpanel', 'aria-labelledby': styleTabId(activeTabIndex) } : {};
+  const onStyleTabKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const count = subtitles.pool.length;
+    const dir = ({ ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 } as Record<string, number>)[event.key];
+    const index = event.key === 'Home' ? 0 : event.key === 'End' ? count - 1 : dir === undefined ? -1 : (activeTabIndex + dir + count) % count;
+    if (index < 0) return;
+    event.preventDefault();
+    setSubtitles({ textTab: subtitles.pool[index] });
+    styleTabRefs.current[index]?.focus();
+  };
   const pickable = fontStyles(styles, catalog);
   const hasBrat = tabStyle === 'brat';
   const fixed = isFixedStyle(tabStyle);
@@ -338,17 +386,18 @@ export function SubtitleTextCustomization({ guideTargetRef }: { guideTargetRef: 
       </div>
       <p className="w12-sec-note">{t('wizard.subs.customization.description')}</p>
       <div className="w12-cut w12-set">
-        {subtitles.pool.length > 1 && (
-          <div className="w12-types" role="tablist" aria-label={t('wizard.subs.customization.styleTabs')}>
-            {subtitles.pool.map((name) => (
-              <button key={name} type="button" role="tab" aria-selected={name === tab} className="w12-type" onClick={() => setSubtitles({ textTab: name })}>
+        {hasStyleTabs && (
+          <div className="w12-types" role="tablist" aria-label={t('wizard.subs.customization.styleTabs')} onKeyDown={onStyleTabKey}>
+            {subtitles.pool.map((name, index) => (
+              <button key={name} ref={(el) => { styleTabRefs.current[index] = el; }} id={styleTabId(index)} type="button" role="tab" aria-selected={name === tab}
+                aria-controls={stylePanelId} tabIndex={index === activeTabIndex ? 0 : -1} className="w12-type" onClick={() => setSubtitles({ textTab: name })}>
                 <span className="w12-l">{name}</span>
               </button>
             ))}
           </div>
         )}
-        {!tab ? <p className="w12-set-empty">{t('wizard.subs.customization.pickStyleFirst')}</p> : (
-          <div className="w12-set-rows">
+        {!tab ? <p className="w12-set-empty" {...panelA11y}>{t('wizard.subs.customization.pickStyleFirst')}</p> : (
+          <div className="w12-set-rows" {...panelA11y}>
             {/* тайтл: шрифт, цвет и анимация зашиты в шаблон — остаются размер и положение */}
             {fixed && <p className="w12-set-note">{t('wizard.subs.customization.fixedTitle')}</p>}
             {queryDown(catalogQuery) && <InlineError error={catalogQuery.error} offline={catalogQuery.fetchStatus === 'paused'} onRetry={() => catalogQuery.refetch()} retrying={catalogQuery.isFetching} />}
@@ -514,7 +563,7 @@ function PreviewPlay({ clipStart }: { clipStart: number }) {
     <button type="button" className="w12-drop-play" onClick={() => toggle()}
       aria-label={playing ? t('wizard.subs.timeline.pause') : t('wizard.subs.timeline.play')}>
       <span className="w12-dot">{playing ? PAUSE : PLAY}</span>
-      <span className="w12-num w12-drop-clock">{clockLabel((time ?? clipStart) - clipStart)}</span>
+      <span className="w12-num w12-drop-clock">{formatTimePrecise(time ?? clipStart)}</span>
     </button>
   );
 }

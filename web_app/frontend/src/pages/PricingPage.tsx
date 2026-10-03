@@ -236,9 +236,10 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
         </div>
       ) : (
       <label className={cn('absolute left-[28px] top-[548px] flex w-[calc(100%-56px)] cursor-pointer items-start gap-[12px] rounded-r10 transition max-md:top-[504px]', attention && 'bg-[rgba(139,111,230,.14)] shadow-[0_0_0_8px_rgba(139,111,230,.14)]')}>
-        <input type="checkbox" className="sr-only" checked={agreed} onChange={(e) => onAgree(e.target.checked)} />
+        {/* инпут скрыт (sr-only), поэтому фокус с клавиатуры рисуем на видимом квадрате через peer */}
+        <input type="checkbox" className="peer sr-only" checked={agreed} onChange={(e) => onAgree(e.target.checked)} />
         {/* ui-allow: квадрат 20px по центру первой строки текста 26px — (26−20)/2 */}
-        <span className={cn('mt-[3px] flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] border border-text transition-all', agreed && 'bg-text', attention && !agreed && 'border-accent-light shadow-[0_0_14px_rgba(139,111,230,.9)]')} aria-hidden="true">
+        <span className={cn('mt-[3px] flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] border border-text transition-all peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent-light', agreed && 'bg-text', attention && !agreed && 'border-accent-light shadow-[0_0_14px_rgba(139,111,230,.9)]')} aria-hidden="true">
           {agreed && (
             <svg viewBox="0 0 12 10" width="11" height="9" fill="none" aria-hidden="true">
               <path d="M1 5l3.2 3.2L11 1.4" stroke="#05010f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
@@ -274,8 +275,8 @@ function PlanCard({ plan, agreed, onAgree, recurrentAgreed, onRecurrentAgree, on
 
       {!current && plan.kind === 'subscription' && (
         <label className="absolute left-[28px] top-[606px] flex w-[calc(100%-56px)] cursor-pointer items-center gap-[12px] max-md:top-[562px]">
-          <input type="checkbox" className="sr-only" checked={recurrentAgreed} onChange={(event) => onRecurrentAgree(event.target.checked)} />
-          <span className={cn('flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] border border-text transition-all', recurrentAgreed && 'bg-text', attention && !recurrentAgreed && 'border-accent-light shadow-[0_0_14px_rgba(139,111,230,.9)]')} aria-hidden="true">
+          <input type="checkbox" className="peer sr-only" checked={recurrentAgreed} onChange={(event) => onRecurrentAgree(event.target.checked)} />
+          <span className={cn('flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-[5px] border border-text transition-all peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-accent-light', recurrentAgreed && 'bg-text', attention && !recurrentAgreed && 'border-accent-light shadow-[0_0_14px_rgba(139,111,230,.9)]')} aria-hidden="true">
             {recurrentAgreed && (
               <svg viewBox="0 0 12 10" width="11" height="9" fill="none" aria-hidden="true"><path d="M1 5l3.2 3.2L11 1.4" stroke="#05010f" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
             )}

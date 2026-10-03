@@ -1,9 +1,8 @@
 import { api } from '../lib/api';
 import type { GenerationJob, SavedTrack } from '../lib/types';
-import { footageTypePlane } from '../data/footageTypes';
 import { combosOf } from '../components/wizard/SlicePanel';
 import { seedKeyFor } from '../components/wizard/storyboardData';
-import { hasTrackInput, startNextBatch, useWizardStore, type StoryboardClip, type StoryboardVideo } from './wizardStore';
+import { footagePlaneOf, hasTrackInput, startNextBatch, useWizardStore, type StoryboardClip, type StoryboardVideo } from './wizardStore';
 
 /*
  * «Открыть таймлайн» у готового батча (оценка ролика, шаг «Что докрутить?» воронки):
@@ -55,8 +54,10 @@ function restoreStoryboard(raw: Record<string, unknown>): void {
 
   // Раскладка роликов — та же, что у «Пула» (SlicePanel → PoolStoryboard): по ней ключ.
   const combos = combosOf(state);
-  const plane = footageTypePlane(state.background.footageType);
-  const footageSlots = plane === 'vibes' ? combos.filter((c) => c.group).map((c) => ({ index: c.slotIndex, group: String(c.group) })) : [];
+  // раскадровка — только у вайбов, и план у каждого футажа свой (батч смешивает вайбы и фильмы)
+  const footageSlots = combos
+    .filter((c) => c.group && footagePlaneOf(state.background, c.group) === 'vibes')
+    .map((c) => ({ index: c.slotIndex, group: String(c.group) }));
   const shots = cuts.length + 1;
   const batchKey = state.final.idempotencyKey;
   const videos: Record<number, StoryboardVideo> = {};

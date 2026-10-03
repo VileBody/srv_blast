@@ -50,7 +50,8 @@ function PoolTotalGuideVisual() {
 
 /** Мини-визуал второй подсказки пула: распределение по группам. */
 function PoolDistributeGuideVisual() {
-  const rows = ['Фон', 'Субтитры', 'Хук'];
+  const { t } = useTranslation();
+  const rows = [t('wizard.pool.background'), t('wizard.pool.subtitles'), t('wizard.pool.hook')];
   return (
     <div className="flex w-full flex-col gap-[6px]" aria-hidden="true">
       {rows.map((label, index) => (
@@ -84,11 +85,13 @@ function PoolDistributeGuideVisual() {
  * подсвечены ровно те фон и вариант, что сейчас в ролике.
  */
 function PoolCombosGuideVisual() {
-  // 3 ролика: доли в каждом слоте в сумме дают 3
+  const { t } = useTranslation();
+  const chip = useChip();
+  // 3 ролика: доли в каждом слоте в сумме дают 3; подписи — те же значения, что в пуле, через словарь
   const rows: { label: string; items: { text: string; n: number; dot?: string; phase?: 'a' | 'b' }[] }[] = [
-    { label: 'Фон', items: [{ text: 'Ночной город', n: 2, phase: 'a' }, { text: 'Неон', n: 1, phase: 'b' }] },
-    { label: 'Текст', items: [{ text: 'Jakson', n: 3 }] },
-    { label: 'FX', items: [{ text: 'Молния', n: 2, dot: '#8b6fe6', phase: 'a' }, { text: 'Свайп', n: 1, dot: '#e38fb5', phase: 'b' }] }
+    { label: t('wizard.pool.background'), items: [{ text: chip('Ночной город'), n: 2, phase: 'a' }, { text: chip('Неон'), n: 1, phase: 'b' }] },
+    { label: t('wizard.pool.guideTextRow'), items: [{ text: 'Jakson', n: 3 }] },
+    { label: t('wizard.pool.fx'), items: [{ text: chip('Молния'), n: 2, dot: '#8b6fe6', phase: 'a' }, { text: chip('Свайп'), n: 1, dot: '#e38fb5', phase: 'b' }] }
   ];
   const on = 'bg-accent-20 text-white shadow-[inset_0_0_0_1px_var(--accent-light)]';
   return (
@@ -616,12 +619,12 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext, ind
     ).bg;
     const plane = units.find((unit) => unit.key === bgKey)?.plane;
     if (bgKey?.startsWith('footage:') && plane === 'vibes') return { index: i + 1, group: bgKey.slice('footage:'.length) };
-    const reason = bgKey === '__color__' ? 'Строб и цвет собираются из цветовых планов — исходники не нужны'
-      : bgKey?.startsWith('photo:') ? 'Фото подберутся при генерации — раскадровка пока только для видео'
-        : bgKey?.startsWith('upload:') ? 'Своё видео — ваши клипы пойдут в том порядке, в каком загружены'
+    const reason = bgKey === '__color__' ? t('wizard.pool.sbReasonColor')
+      : bgKey?.startsWith('photo:') ? t('wizard.pool.sbReasonPhoto')
+        : bgKey?.startsWith('upload:') ? t('wizard.pool.sbReasonUpload')
           : bgKey?.startsWith('footage:') && plane === 'films' ? t('wizard.track.poolFilmNoStoryboard')
-            : bgKey?.startsWith('footage:') ? 'Раскадровка пока только для вайбов — коллекция подберётся при генерации'
-              : 'Фон этого видео ещё не распределён';
+            : bgKey?.startsWith('footage:') ? t('wizard.pool.sbReasonCollection')
+              : t('wizard.pool.sbReasonUnallocated');
     return { index: i + 1, reason };
   }), [total, alloc, units, state.background.color, colorStyle, t]);
   const chips = [

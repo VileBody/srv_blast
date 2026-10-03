@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { formatTimePrecise } from '../../lib/timeFormat';
 import { useTranslation } from 'react-i18next';
 import { useWizardStore } from '../../stores/wizardStore';
 import { dropToSeconds, timingToSeconds, usePlaybackUrl } from './useFragmentAudio';
@@ -8,11 +9,8 @@ import { PAUSE, PLAY } from './WizardFrame';
 const LEAD_S = 3;
 const TAIL_S = 2;
 
-const clock = (s: number) => {
-  const m = Math.floor(s / 60);
-  const rest = s - m * 60;
-  return `${m}:${rest.toFixed(1).padStart(4, '0')}`;
-};
+// таймер — в общем виде времени визарда (мм:сс.сс), как метки дропа и таймлайн
+const clock = (s: number) => formatTimePrecise(s);
 
 /**
  * Прослушать дроп прямо на шаге FX: раньше, чтобы оценить тайминг, приходилось уходить на

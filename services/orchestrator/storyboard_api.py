@@ -15,12 +15,15 @@ folder itself and the storyboard would have nothing to choose.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
 import tempfile
 import threading
 import time
+from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -123,15 +126,68 @@ def load_bucket(*, theme: str, tags_group: str, seed_key: str) -> LoadedBucket:
     return LoadedBucket(ctx=ctx, raw_by_name=raw_by_name)
 
 
-def analyze_window(*, audio_s3_url: str, clip_start_abs: float, clip_end_abs: float) -> Any:
+# Анализ окна трека (скачивание + analyze_focus_clip, секунды CPU) детерминирован
+# для пары трек+окно, а визард зовёт его дважды подряд: шаг FX (`/hook/analyze`,
+# кандидаты дропа) и «Пул» (`/storyboard/cuts`, склейки). Общий кэш процесса делает
+# второй вызов бесплатным. Ключ трека — s3-адрес загрузки: файл не перезаписывается.
+# Кэш живёт в процессе, поэтому выкатка нового анализатора (рестарт) его сбрасывает.
+ANALYSIS_CACHE_MAX = int(os.environ.get("HOOK_ANALYSIS_CACHE_MAX") or 64)
+ANALYSIS_CACHE_TTL_S = float(os.environ.get("HOOK_ANALYSIS_CACHE_TTL_S") or 6 * 3600)
+_ANALYSIS_LOCK = threading.Lock()
+_ANALYSIS_CACHE: "OrderedDict[tuple[str, float, float], tuple[float, Any]]" = OrderedDict()
+# идущие анализы: FX и «Пул» на холодном кэше часто просят одно окно почти одновременно —
+# второй ждёт первый, а не качает и не считает трек заново
+_ANALYSIS_INFLIGHT: "dict[tuple[str, float, float], Future]" = {}
+
+
+def _analyze_window_uncached(*, audio_s3_url: str, clip_start_abs: float, clip_end_abs: float) -> Any:
     from mlcore.audio_analysis import analyze_focus_clip
     from src.storage.s3 import get_s3_client
 
     bucket, key = _parse_s3(audio_s3_url)
-    with tempfile.TemporaryDirectory(prefix="storyboard_cuts_") as td:
+    with tempfile.TemporaryDirectory(prefix="hook_analyze_") as td:
         local = Path(td) / f"audio{Path(key).suffix or '.mp3'}"
         get_s3_client().download_file(bucket, key, str(local))
         return analyze_focus_clip(audio_path=local, clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs)
+
+
+def analyze_window(*, audio_s3_url: str, clip_start_abs: float, clip_end_abs: float) -> Any:
+    """Анализ окна трека — один и тот же для `/hook/analyze` и `/storyboard/cuts`."""
+    # окно — точными float: округление склеило бы разные окна в один анализ
+    key = (str(audio_s3_url), float(clip_start_abs), float(clip_end_abs))
+    now = time.monotonic()
+    with _ANALYSIS_LOCK:
+        hit = _ANALYSIS_CACHE.get(key)
+        if hit is not None and now - hit[0] < ANALYSIS_CACHE_TTL_S:
+            _ANALYSIS_CACHE.move_to_end(key)
+            # копия: потребитель не должен портить общий результат
+            return copy.deepcopy(hit[1])
+        pending = _ANALYSIS_INFLIGHT.get(key)
+        owner = pending is None
+        if owner:
+            pending = Future()
+            _ANALYSIS_INFLIGHT[key] = pending
+    if not owner:
+        # тот же анализ уже идёт: ждём его (ошибка первого всплывает и здесь)
+        return copy.deepcopy(pending.result())
+    try:
+        result = _analyze_window_uncached(
+            audio_s3_url=audio_s3_url, clip_start_abs=clip_start_abs, clip_end_abs=clip_end_abs,
+        )
+    except BaseException as exc:
+        # ошибки не кэшируем: следующий вызов посчитает заново
+        pending.set_exception(exc)
+        with _ANALYSIS_LOCK:
+            _ANALYSIS_INFLIGHT.pop(key, None)
+        raise
+    with _ANALYSIS_LOCK:
+        _ANALYSIS_CACHE[key] = (now, result)
+        _ANALYSIS_CACHE.move_to_end(key)
+        while len(_ANALYSIS_CACHE) > ANALYSIS_CACHE_MAX:
+            _ANALYSIS_CACHE.popitem(last=False)
+        _ANALYSIS_INFLIGHT.pop(key, None)
+    pending.set_result(result)
+    return copy.deepcopy(result)
 
 
 def presign(file_path: str) -> str:

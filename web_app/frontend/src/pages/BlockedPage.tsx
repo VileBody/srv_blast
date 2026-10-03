@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Button, buttonClass } from '../components/ui/kit';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { api, humanDate } from '../lib/api';
 import { useToast } from '../contexts/ToastContext';
 import { clearUserState } from '../stores/session';
 import { LEGAL_ENTITY } from '../data/legal-docs';
@@ -41,11 +41,8 @@ export function BlockedPage() {
     if (statusQuery.data && !banned) navigate('/app', { replace: true });
   }, [banned, navigate, statusQuery.data]);
 
-  const bannedAt = statusQuery.data?.bannedAt
-    ? new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(
-        new Date(statusQuery.data.bannedAt)
-      )
-    : null;
+  // тот же формат, что и везде, но в локали текущего языка
+  const bannedAt = statusQuery.data?.bannedAt ? humanDate(statusQuery.data.bannedAt) : null;
 
   return (
     <main className="flex min-h-dvh items-center justify-center bg-bg p-[24px]">

@@ -27,6 +27,11 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
   const queryClient = useQueryClient();
   const { push } = useToast();
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, enabled: open });
+  /* Новичок с ?new=1 получал «Новый проект» поверх обязательного «Как тебя зовут» (ProfileSetupGate
+     в AppShell). Ждём профиль: модалка появится сама, когда гейт сохранит ФИО и ['me'] обновится.
+     Пока ['me'] грузится — тоже ждём, иначе модалка мигнула бы и спряталась под гейт. */
+  const waitingForProfile = meQuery.isPending || meQuery.data?.user.profileComplete === false;
+  const shown = open && !waitingForProfile;
   const inputRef = useRef<HTMLInputElement>(null);
   const trackInputRef = useRef<HTMLInputElement>(null);
   const resetWizard = useWizardStore((state) => state.reset);
@@ -145,14 +150,15 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
     if (trackUrlRef.current) URL.revokeObjectURL(trackUrlRef.current);
   }, []);
 
+  // Escape не должен закрывать невидимую модалку, пока поверх стоит гейт профиля
   useEffect(() => {
-    if (!open) return;
+    if (!shown) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !createMutation.isPending) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose, createMutation.isPending]);
+  }, [shown, onClose, createMutation.isPending]);
 
   // objectURL живёт ровно столько, сколько превью обложки
   useEffect(() => () => { if (cover) URL.revokeObjectURL(cover.url); }, [cover]);
@@ -195,7 +201,7 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
     acceptTrack(event.dataTransfer.files?.[0]);
   };
 
-  if (!open) return null;
+  if (!shown) return null;
   const busy = createMutation.isPending;
 
   return createPortal(
