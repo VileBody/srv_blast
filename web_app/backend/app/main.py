@@ -2916,9 +2916,13 @@ async def api_funnel_methodology() -> dict[str, Any]:
 
 @app.post("/api/funnel/rating", tags=["funnel"])
 async def api_funnel_rating(payload: FunnelRatingPayload) -> dict[str, Any]:
+    # Оценка — только своему ролику своего батча: раньше чужой/выдуманный jobId или
+    # videoId молча писались в survey-таблицы и портили аналитику оценок.
     job = store.JOBS.get(payload.jobId) if payload.jobId else None
-    if job is not None and job.get("userId") != store.current_user_id():
+    if job is None or job.get("userId") != store.current_user_id():
         raise HTTPException(status_code=404, detail="Job not found")
+    if payload.videoId not in {str(v.get("id")) for v in job.get("videos") or []}:
+        raise HTTPException(status_code=422, detail={"code": "video_not_in_job", "message": "Ролик не из этого батча."})
     await funnel.repo().save_video_rating(
         _funnel_tg_id(),
         video_id=payload.videoId,
@@ -2929,19 +2933,18 @@ async def api_funnel_rating(payload: FunnelRatingPayload) -> dict[str, Any]:
         comment=payload.comment,
     )
     analytics.track("video_rated", store.current_user_id(), {"videoId": payload.videoId, "score": payload.score})
-    if job is not None:
-        # Оценка батча теперь складывается из оценок роликов (шкала 1–10): job.rating и
-        # событие generation_rated, которые писала старая оценка 1–5, не пропадают.
-        scores = dict(job.get("videoRatings") or {})
-        scores[payload.videoId] = payload.score
-        job["videoRatings"] = scores
-        job["rating"] = round(sum(scores.values()) / len(scores), 1)
-        persistence.save_job(job["id"])
-        analytics.track(
-            "generation_rated",
-            store.current_user_id(),
-            {"jobId": job["id"], "rating": job["rating"], "scale": 10, "videos": len(scores)},
-        )
+    # Оценка батча теперь складывается из оценок роликов (шкала 1–10): job.rating и
+    # событие generation_rated, которые писала старая оценка 1–5, не пропадают.
+    scores = dict(job.get("videoRatings") or {})
+    scores[payload.videoId] = payload.score
+    job["videoRatings"] = scores
+    job["rating"] = round(sum(scores.values()) / len(scores), 1)
+    persistence.save_job(job["id"])
+    analytics.track(
+        "generation_rated",
+        store.current_user_id(),
+        {"jobId": job["id"], "rating": job["rating"], "scale": 10, "videos": len(scores)},
+    )
     return {"ok": True}
 
 

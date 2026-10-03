@@ -473,3 +473,15 @@ def test_google_login_returns_to_the_page_it_was_sent_from(client, monkeypatch) 
     tc.get(f"/api/auth/google?next={quote('https://evil.example')}", follow_redirects=False)
     r = tc.get(f"/api/auth/google/callback?code=c&state={captured['state']}", follow_redirects=False)
     assert r.headers["location"].endswith("/app")
+
+
+def test_rating_is_scoped_to_an_own_job_and_its_videos(client) -> None:
+    """Регресс: без jobId / с выдуманным jobId / с чужим videoId оценка молча писалась."""
+    tc, main = client
+    main.store.JOBS["job_z"] = {"id": "job_z", "videos": [{"id": "v1"}], "userId": main.store.current_user_id()}
+    assert tc.post("/api/funnel/rating", json={"videoId": "v1", "jobId": "nope", "score": 5}).status_code == 404
+    assert tc.post("/api/funnel/rating", json={"videoId": "v1", "score": 5}).status_code == 404
+    r = tc.post("/api/funnel/rating", json={"videoId": "v9", "jobId": "job_z", "score": 5})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "video_not_in_job"
+    assert "videoRatings" not in main.store.JOBS["job_z"]
+    assert tc.post("/api/funnel/rating", json={"videoId": "v1", "jobId": "job_z", "score": 5}).json() == {"ok": True}
