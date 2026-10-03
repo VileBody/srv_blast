@@ -1,4 +1,5 @@
 import { lazy, Suspense, type ComponentType, type ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppShell } from '../components/layout/AppShell';
 import { AuthPage } from '../pages/AuthPage';
@@ -33,8 +34,9 @@ const FunnelShowcasePage = page(() => import('../pages/FunnelShowcasePage'), 'Fu
 
 /** Пока кусок страницы грузится — спокойный спиннер на её месте (оболочка сайта остаётся). */
 function Lazy({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   return (
-    <Suspense fallback={<div className="grid min-h-[40vh] place-items-center" role="status" aria-label="Загрузка"><span className="spinner" /></div>}>
+    <Suspense fallback={<div className="grid min-h-[40vh] place-items-center" role="status" aria-label={t('common.loading')}><span className="spinner" /></div>}>
       {children}
     </Suspense>
   );
