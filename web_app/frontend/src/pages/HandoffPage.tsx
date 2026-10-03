@@ -6,6 +6,9 @@ import { Button, buttonClass } from '../components/ui/kit';
 import { useToast } from '../contexts/ToastContext';
 import { api, ApiError } from '../lib/api';
 import { useWizardStore } from '../stores/wizardStore';
+import { guardDraft } from '../stores/draftGuard';
+import { clearUserState, rememberSessionUser, sessionUser } from '../stores/session';
+import { DraftReplaceDialog } from '../components/layout/DraftReplaceDialog';
 import { apiErrorCode } from '../components/funnel/useFunnel';
 
 type Failure = 'expired' | 'error' | 'otherAccount' | 'linkAccount';
@@ -56,52 +59,90 @@ export function HandoffPage() {
     const attempt = JSON.stringify(answer);
     if (started.current === attempt) return;
     started.current = attempt;
+    // чей черновик был в браузере до входа по ссылке (до входа /api/me спросить нельзя)
+    const previousUser = sessionUser();
     api.botHandoff(token, answer)
       .then(async (res) => {
-        queryClient.removeQueries({ queryKey: ['me'] });
-        let imported = false;
-        let importFailed = false;
-        // Повтор ссылки (тот же проект уже был): стор не трогаем — WizardPage сам
-        // восстановит серверную сессию проекта, правки на сайте не затираются.
-        if (res.projectId && !res.repeat) {
-          const store = useWizardStore.getState();
-          if (res.wizardImport) {
-            // «Докрутить на сайте»: весь монтаж роликов бота сразу на столе
-            try {
-              const { applyWizardImport } = await import('../stores/wizardImport');
-              applyWizardImport(res.projectId, res.track, res.wizardImport);
-              imported = true;
-            } catch (error) {
-              // Черновик не лёг (битый импорт, не загрузился модуль): говорим об этом, а
-              // проект всё равно открываем — трек там уже есть.
-              importFailed = true;
-              console.error('handoff: wizard import failed', error);
-            }
-          } else {
-            if (store.projectId !== res.projectId) store.reset(res.projectId);
-            if (res.track) store.setTrack(res.track);
-            // Монтаж не переехал (или ссылка старого вида): отрезок и текст ролика — в черновик
-            if (res.draft && res.draft.clipEnd > res.draft.clipStart) {
-              store.setField('timingMode', 'manual');
-              store.setField('timingFrom', secondsToTiming(res.draft.clipStart));
-              store.setField('timingTo', secondsToTiming(res.draft.clipEnd));
-              if (res.draft.lyrics) store.setField('lyrics', res.draft.lyrics);
+        /*
+         * Ссылка могла войти другим аккаунтом (force, привязка, протухшая сессия). Тогда черновик
+         * визарда, окна воронки и кэш запросов принадлежат прежнему — стираем до того, как
+         * класть трек из бота, иначе новый аккаунт увидел бы чужой трек и чужие лимиты.
+         */
+        const me = await api.me().catch(() => null);
+        const switched = previousUser !== null && previousUser !== (me?.user.id ?? null);
+        if (switched) {
+          clearUserState();
+          queryClient.clear();
+        } else {
+          queryClient.removeQueries({ queryKey: ['me'] });
+        }
+        if (me) {
+          rememberSessionUser(me.user.id);
+          queryClient.setQueryData(['me'], me);
+        }
+
+        const apply = async () => {
+          let imported = false;
+          let importFailed = false;
+          // Повтор ссылки (тот же проект уже был): стор не трогаем — WizardPage сам
+          // восстановит серверную сессию проекта, правки на сайте не затираются.
+          if (res.projectId && !res.repeat) {
+            const store = useWizardStore.getState();
+            if (res.wizardImport) {
+              // «Докрутить на сайте»: весь монтаж роликов бота сразу на столе
+              try {
+                const { applyWizardImport } = await import('../stores/wizardImport');
+                applyWizardImport(res.projectId, res.track, res.wizardImport);
+                imported = true;
+              } catch (error) {
+                // Черновик не лёг (битый импорт, не загрузился модуль): открываем проект хотя бы
+                // с треком и прямо говорим, что настройка не переехала — пустой визард молча
+                // выглядел бы как «потерялось всё».
+                importFailed = true;
+                console.error('handoff: wizard import failed', error);
+                const fresh = useWizardStore.getState();
+                fresh.reset(res.projectId);
+                if (res.track) fresh.setTrack(res.track);
+              }
+            } else {
+              if (store.projectId !== res.projectId) store.reset(res.projectId);
+              if (res.track) store.setTrack(res.track);
+              // Монтаж не переехал (или ссылка старого вида): отрезок и текст ролика — в черновик
+              if (res.draft && res.draft.clipEnd > res.draft.clipStart) {
+                store.setField('timingMode', 'manual');
+                store.setField('timingFrom', secondsToTiming(res.draft.clipStart));
+                store.setField('timingTo', secondsToTiming(res.draft.clipEnd));
+                if (res.draft.lyrics) store.setField('lyrics', res.draft.lyrics);
+              }
             }
           }
+          if (res.trackError === 'tracks_limit') {
+            push({ variant: 'error', title: t('handoff.tracksLimit'), text: t('handoff.tracksLimitText') });
+          } else if (importFailed) {
+            push({ variant: 'error', title: t('handoff.remixFailed'), text: t('handoff.importFailedText') });
+          } else if (!res.repeat && res.wizardImportError) {
+            push({ variant: 'error', title: t('handoff.remixFailed'), text: res.wizardImportError });
+          } else if (imported) {
+            const notes = res.wizardImport?.notes ?? [];
+            push({ variant: notes.length ? 'info' : 'success', title: t('handoff.remixReady'), text: notes.length ? notes.join(' ') : t('handoff.remixReadyText') });
+          } else if (res.track && !res.repeat) {
+            push({ variant: 'success', title: t('handoff.trackReady'), text: t('handoff.trackReadyText') });
+          }
+          navigate(res.redirectTo, { replace: true });
+        };
+
+        // Свой недоделанный черновик другого проекта молча не подменяем: спрашиваем. Пустой
+        // черновик или черновик прежнего аккаунта (уже стёрт выше) — кладём сразу.
+        if (res.projectId && !res.repeat) {
+          guardDraft({ projectId: res.projectId }, () => void apply(), () => {
+            // Оставили своё: трек из бота уже в «Проектах», визард — с текущей настройкой
+            const current = useWizardStore.getState().projectId;
+            push({ variant: 'info', title: t('handoff.keptDraft'), text: t('handoff.keptDraftText') });
+            navigate(current ? `/app/generate?project=${encodeURIComponent(current)}` : '/app/generate', { replace: true });
+          });
+          return;
         }
-        if (res.trackError === 'tracks_limit') {
-          push({ variant: 'error', title: t('handoff.tracksLimit'), text: t('handoff.tracksLimitText') });
-        } else if (importFailed) {
-          push({ variant: 'error', title: t('handoff.remixFailed'), text: t('handoff.remixApplyFailed') });
-        } else if (!res.repeat && res.wizardImportError) {
-          push({ variant: 'error', title: t('handoff.remixFailed'), text: res.wizardImportError });
-        } else if (imported) {
-          const notes = res.wizardImport?.notes ?? [];
-          push({ variant: notes.length ? 'info' : 'success', title: t('handoff.remixReady'), text: notes.length ? notes.join(' ') : t('handoff.remixReadyText') });
-        } else if (res.track && !res.repeat) {
-          push({ variant: 'success', title: t('handoff.trackReady'), text: t('handoff.trackReadyText') });
-        }
-        navigate(res.redirectTo, { replace: true });
+        await apply();
       })
       .catch((error: unknown) => {
         const code = apiErrorCode(error);
@@ -175,6 +216,8 @@ export function HandoffPage() {
           </>
         )}
       </section>
+      {/* страница вне AppShell: вопрос о замене черновика рисуем здесь */}
+      <DraftReplaceDialog />
     </main>
   );
 }
