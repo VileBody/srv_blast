@@ -629,3 +629,23 @@ def test_release_web_handoff_returns_one_redemption_never_below_zero():
     assert len(calls) == 1
     sql, args = calls[0]
     assert "GREATEST(redeem_count - 1, 0)" in sql and args == (CreditsDB.hash_handoff_token("tok-123"),)
+
+
+def test_fail_open_subscription_check_is_counted_and_logged_as_error(monkeypatch, caplog):
+    """Поведение fail-open не меняем (решение не принято), но сбой обязан быть виден:
+    error-лог со счётчиком по месту проверки, а не warning."""
+    import logging
+
+    app = _make_app(generation_subscription_required=True)
+
+    async def _broken(user_id):
+        return None
+
+    monkeypatch.setattr(app, "_check_subscription", _broken, raising=False)
+    monkeypatch.setattr(pub, "SUBSCRIPTION_CHECK_FAILURES", pub.collections.Counter())
+    with caplog.at_level(logging.ERROR, logger="tg_bot"):
+        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is True
+        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is True
+    assert pub.SUBSCRIPTION_CHECK_FAILURES["launch"] == 2
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert any("subscription_check_failed_passed" in m and "count=2" in m for m in errors)
