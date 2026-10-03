@@ -47,6 +47,34 @@ function useFunnelErrorToast() {
   return useCallback(() => push({ variant: 'error', title: t('funnel.errors.save') }), [push, t]);
 }
 
+/**
+ * Сохранения оценки по одному ролику — строго по очереди. Два быстрых клика (7, потом 8)
+ * уходили параллельно, и бэк мог принять их в обратном порядке: на сервере оставалась 7.
+ * `pending` — по ролику идёт сохранение (строка оценки показывает это и ждёт).
+ */
+function useSerialSaves() {
+  const chains = useRef(new Map<string, Promise<unknown>>());
+  const [inFlight, setInFlight] = useState<Record<string, number>>({});
+  const bump = useCallback((id: string, delta: number) => setInFlight((prev) => {
+    const count = (prev[id] ?? 0) + delta;
+    const next = { ...prev };
+    if (count > 0) next[id] = count;
+    else delete next[id];
+    return next;
+  }), []);
+  const run = useCallback((id: string, task: () => Promise<unknown>) => {
+    bump(id, 1);
+    // упавшее предыдущее сохранение очередь не рвёт: о нём уже сказал свой тост
+    const queued = (chains.current.get(id) ?? Promise.resolve()).catch(() => undefined).then(task);
+    chains.current.set(id, queued);
+    return queued.finally(() => {
+      bump(id, -1);
+      if (chains.current.get(id) === queued) chains.current.delete(id);
+    });
+  }, [bump]);
+  return { run, pending: (id: string) => Boolean(inFlight[id]) };
+}
+
 /* ------------------------------------------------------------------ квиз */
 
 /**
@@ -190,6 +218,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const failed = useFunnelErrorToast();
   const tripwire = useTripwirePurchase();
   const openTable = useOpenJobOnTable();
+  const saves = useSerialSaves();
   const [ratings, setRatings] = useState<Record<string, VideoRating>>({});
   const [bridge, setBridge] = useState<string | null>(null);
   const [channel, setChannel] = useState<ActionStatus>('todo');
@@ -245,7 +274,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const reasons = Array.from(new Set(reasonTargets.flatMap((id) => allRatings[id]?.reasons ?? [])));
   const saveRating = (videoId: string, score: number, nextReasons: RatingReason[]) => {
     setRatings((prev) => ({ ...prev, [videoId]: { score, reasons: nextReasons, comment: '' } }));
-    api.funnelRate({ videoId, jobId: ctx.jobId ?? '', projectId: ctx.projectId ?? '', score, reasons: nextReasons })
+    saves.run(videoId, () => api.funnelRate({ videoId, jobId: ctx.jobId ?? '', projectId: ctx.projectId ?? '', score, reasons: nextReasons }))
       .then(() => queryClient.invalidateQueries({ queryKey: ['funnel-ratings', ctx.jobId] }))
       .catch(failed);
   };
@@ -569,9 +598,10 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
     if (watchedRunning.has(job.id) || (fresh && entry.current?.jobId === job.id)) offer();
   }, [job, finished, ratingsQuery.isFetched, offer]);
 
+  const saves = useSerialSaves();
   const save = (video: VideoVersion, score: number, reasons: RatingReason[]) => {
     setLocal((prev) => ({ ...prev, [video.id]: { score, reasons, comment: '' } }));
-    api.funnelRate({ videoId: video.id, jobId: job?.id ?? '', projectId: projectId ?? '', score, reasons })
+    saves.run(video.id, () => api.funnelRate({ videoId: video.id, jobId: job?.id ?? '', projectId: projectId ?? '', score, reasons }))
       .then(() => queryClient.invalidateQueries({ queryKey: ['funnel-ratings', job?.id] }))
       .catch(failed);
   };
@@ -593,6 +623,7 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
         }}
         onReasons={(next) => save(video, current?.score ?? 1, next)}
         onFix={projectId ? () => openTable(projectId, job?.id) : undefined}
+        pending={saves.pending(video.id)}
       />
     );
   };
