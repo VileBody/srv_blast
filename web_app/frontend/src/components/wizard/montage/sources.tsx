@@ -58,7 +58,10 @@ function VideoFrame({ url, offset = 0, at, playing, className, style, onFrame }:
     const video = ref.current;
     if (!video) return;
     const want = offset + Math.max(0, at);
-    if (!playing || Math.abs(video.currentTime - want) > 0.25) { try { video.currentTime = want; } catch { /* метаданные ещё не пришли */ } }
+    // на паузе — точно в кадр, но без повторной перемотки на то же место на каждом рендере:
+    // присвоение currentTime запускает seek, даже если значение не изменилось
+    const drift = Math.abs(video.currentTime - want);
+    if (playing ? drift > 0.25 : drift > 0.001) { try { video.currentTime = want; } catch { /* метаданные ещё не пришли */ } }
     if (playing && video.paused) void video.play().catch(() => undefined);
     if (!playing && !video.paused) video.pause();
   });
