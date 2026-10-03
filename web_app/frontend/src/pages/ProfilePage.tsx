@@ -150,10 +150,15 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
    * нужен четвёртый месяц. Раньше у текущего сегмента брался месяц i+1, а у будущих — i,
    * и первые два сегмента показывали один и тот же месяц.
    */
-  const availableIn = (index: number) => {
-    const date = new Date(start.getFullYear(), start.getMonth() + index + 1, 1);
-    return t(`profile.monthLocative.${date.getMonth()}`);
-  };
+  const unlockMonth = (index: number) => new Date(start.getFullYear(), start.getMonth() + index + 1, 1);
+  const availableIn = (index: number) => t(`profile.monthLocative.${unlockMonth(index).getMonth()}`);
+  /*
+   * Месяц открытия уже прошёл, а бонус не заработан (подписка не продлилась) — сегмент
+   * «пропущен». Иначе в октябре висело «доступно в июне»: подпись в прошедшем месяце.
+   * В сам месяц открытия ещё ждём продления (списание могло не дойти) — «доступно в …».
+   */
+  const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const missed = (index: number) => unlockMonth(index) < thisMonth;
   // телефон: «+1 трек» и «к лимиту» — двумя строками (whitespace-pre-line в labelCls)
   const twoLine = (s: string) => s.replace(' к лимиту', '\nк лимиту').replace(' без лимита', '\nбез лимита');
   const rewards = [twoLine(t('profile.bonusTrack')), twoLine(t('profile.bonusTrack')), twoLine(t('profile.bonusUnlimited'))];
@@ -166,6 +171,7 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
   const segs = months.map((_, i) => {
     if (i < claimed) return { def: t('profile.claimed'), hov: t('profile.claimed'), bg: 'bg-grad-main', claimable: false };
     if (i < safeEarned) return { def: rewards[i], hov: t('profile.claim'), bg: CURRENT_BG, claimable: i === claimed };
+    if (missed(i)) return { def: t('profile.bonusMissed'), hov: t('profile.bonusMissedHint'), bg: '', claimable: false };
     if (i === safeEarned) return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: CURRENT_BG, claimable: false };
     return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: '', claimable: false };
   });

@@ -1733,7 +1733,9 @@
     "deleteConfirm": "This cannot be undone. Paid services and generated materials cannot be restored.",
     "deleteAction": "Delete account",
     "deleteFailed": "Could not delete the account",
-    "avatarFailed": "Couldn't update the avatar"
+    "avatarFailed": "Couldn't update the avatar",
+    "bonusMissed": "missed",
+    "bonusMissedHint": "subscription not renewed"
   },
   "pricing": {
     "title": "Expand your options",
