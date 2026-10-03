@@ -148,6 +148,14 @@ def test_link_decision_is_scoped_to_the_telegram_being_linked():
     sql, args = conn.calls[0][1], conn.calls[0][2]
     assert "tg_id = $2" in sql and "status = 'pending'" in sql and "expires_at > NOW()" in sql
     assert args == ("req1", CHAT, "confirmed")
+    assert len(conn.calls) == 1  # подтверждение ссылку не трогает
+
+    # «Это не я» гасит ссылку, по которой пытались привязать
+    rejected = _Conn(val="rejected")
+    assert _run(_db(rejected).decide_web_link_request("req1", tg_id=CHAT, approve=False)) == "rejected"
+    burn_sql, burn_args = rejected.calls[1][1], rejected.calls[1][2]
+    assert "UPDATE web_handoff_tokens" in burn_sql and "web_link_requests WHERE id = $1" in burn_sql
+    assert burn_args == ("req1",)
 
     # не pending: отдаём текущий статус, протухший pending — expired, чужой/нет — unknown
     assert _run(_db(_Conn(row={"status": "confirmed", "expired": False})).decide_web_link_request(

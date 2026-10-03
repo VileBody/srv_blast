@@ -26,7 +26,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import mock_store as store
-from . import analytics, asr_preview, auth_store, bot_import, fraud_guard, funnel, google_auth, persistence, security, telegram_bot
+from . import analytics, asr_preview, auth_store, bot_import, fraud_guard, funnel, google_auth, handoff_link, persistence, security, telegram_bot
 from . import render_job as render_job_builder
 from . import demo_media, effect_map
 from . import media_proxy
@@ -877,8 +877,25 @@ async def _handoff_track_project_locked(
 
 # Ссылка «на сайт» из публичного бота: бот уже знает chat_id, поэтому подтверждать вход
 # через бота верификации не нужно — токен из общей с ботом БД и есть подтверждение.
+# Каждая ссылка одноразовая (Telegram сохраняет URL-кнопки в пересланных сообщениях).
+def _handoff_gone(status: str) -> HTTPException:
+    """410 «ссылка использована / устарела» + кнопка «новая ссылка в боте» (botUrl)."""
+    if status == "used":
+        code, message = "handoff_used", "Ссылка уже использована: она одноразовая. Новую пришлёт бот."
+    else:
+        code, message = "handoff_expired", "Ссылка устарела. Новую пришлёт бот."
+    return HTTPException(
+        status_code=410, detail={"code": code, "message": message, "botUrl": handoff_link.bot_relogin_url()}
+    )
+
+
+def _handoff_token_hash(token: str) -> str:
+    # Та же функция, что CreditsDB.hash_handoff_token: запрос привязки хранит хэш ссылки.
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
 @app.post("/api/auth/handoff", tags=["auth"])
-async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[str, Any]:
+async def api_auth_handoff(request: Request, payload: HandoffPayload) -> Any:
     if RUNTIME.backend != "production" and DEV_TOOLS and payload.token.startswith(DEV_REMIX_TOKEN_PREFIX):
         return await _dev_remix_handoff()
     if RUNTIME.backend != "production":
@@ -886,29 +903,35 @@ async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[st
             status_code=503,
             detail={"code": "handoff_unavailable", "message": "Вход по ссылке из бота работает только в проде."},
         )
-    expired = HTTPException(
-        status_code=410,
-        detail={"code": "handoff_expired", "message": "Ссылка устарела. Новую пришлёт бот по команде /site."},
-    )
     if not _handoff_token_ok(payload.token):
-        raise expired
+        raise _handoff_gone("expired")
     async with _handoff_lock(payload.token):
         billing = _billing_backend()
         try:
-            # Аккаунт сверяем ДО погашения: одноразовая ссылка (/site, напоминания) иначе
-            # сгорела бы на вопросе «войти как другой аккаунт?», и «Сменить» получил бы 410.
-            peek_tg = await billing.peek_handoff_owner(payload.token)
+            # Аккаунт сверяем ДО погашения: ссылка одноразовая и иначе сгорела бы на
+            # вопросе «войти как другой аккаунт?» / «привязать Telegram?».
+            info = await billing.inspect_handoff(payload.token)
         except Exception as exc:
             raise _production_error(exc) from exc
-        if peek_tg is None:
-            raise expired
+        if info is None:
+            raise _handoff_gone("expired")
         current = auth_store.user_by_id(str(request.session.get("user_id") or ""))
-        owner = auth_store.get_user_by_chat(peek_tg)
+        owner = auth_store.get_user_by_chat(info["tg_id"])
+        if info["status"] != "live":
+            # Свою же ссылку открыли повторно в том же аккаунте — входить заново не нужно,
+            # ведём туда, куда она вела. Любому другому браузеру она больше не откроется.
+            if current is not None and owner is not None and owner["id"] == current["id"]:
+                return _reopen_own_handoff(info)
+            raise _handoff_gone(info["status"])
+        # Какой Telegram войдёт/привяжется — называем в каждом вопросе: ссылку могли
+        # подсунуть, и человек должен видеть, что это не его аккаунт.
+        telegram = handoff_link.telegram_label(info["payload"].get("profile"))
         can_link = current is not None and owner is None and not current.get("tgChatId")
-        if can_link and not payload.link and not payload.force:
+        if can_link and payload.link:
+            return await _handoff_link_via_bot(request, payload, info, current, telegram)
+        if can_link and not payload.force:
             # В браузере аккаунт без Telegram (вход через Google). Тот же это человек или
-            # нет, мы не знаем — молча привязывать нельзя. Спрашиваем ДО погашения ссылки:
-            # одноразовая (/site, напоминания) иначе сгорела бы на вопросе.
+            # нет, мы не знаем — молча привязывать нельзя, спрашиваем.
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -916,34 +939,147 @@ async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[st
                     "message": "В браузере открыт аккаунт без Telegram.",
                     "email": str(current.get("email") or current.get("googleEmail") or ""),
                     "name": str(current.get("name") or ""),
+                    "telegram": telegram,
                 },
             )
-        link_current = can_link and payload.link
-        if current is not None and not link_current and (owner or {}).get("id") != current["id"] and not payload.force:
-            # Открыт ДРУГОЙ аккаунт: молча переключать нельзя — фронт спросит
-            # «Войти как другой аккаунт?» и повторит запрос с force.
+        if current is not None and (owner or {}).get("id") != current["id"] and not payload.force:
+            # Открыт ДРУГОЙ аккаунт: молча переключать нельзя — фронт спросит «Войти как
+            # <этот Telegram>?» и повторит запрос с force.
             raise HTTPException(
                 status_code=409,
-                detail={"code": "handoff_other_account", "message": "В браузере открыт другой аккаунт."},
+                detail={"code": "handoff_other_account", "message": "В браузере открыт другой аккаунт.",
+                        "telegram": telegram},
             )
+        return await _redeem_and_complete(request, payload, current=current, owner=owner, link_current=False)
+
+
+def _reopen_own_handoff(info: dict[str, Any]) -> dict[str, Any]:
+    """Уже использованная ссылка в том же аккаунте: туда же, без входа и без нового проекта."""
+    known = info["result"]
+    project_id = str(known.get("projectId") or "")
+    if info["kind"] in {"track", "remix"} and project_id and store.get_project(project_id):
+        track = store.saved_track(str(known["trackId"])) if known.get("trackId") else None
+        return {"ok": True, "created": False, "redirectTo": f"/app/generate?project={project_id}",
+                "projectId": project_id, "track": track, "repeat": True}
+    return {"ok": True, "created": False, "redirectTo": "/app", "repeat": True}
+
+
+async def _redeem_and_complete(
+    request: Request,
+    payload: HandoffPayload,
+    *,
+    current: dict[str, Any] | None,
+    owner: dict[str, Any] | None,
+    link_current: bool,
+) -> dict[str, Any]:
+    billing = _billing_backend()
+    try:
+        record = await billing.redeem_handoff(payload.token)
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    if record is None:
+        # погасили между проверкой и погашением (другой браузер успел раньше)
+        raise _handoff_gone("used")
+    try:
+        return await _complete_handoff(request, payload, record, current=current, owner=owner,
+                                       link_current=link_current)
+    except BaseException:
+        # Погашение — до входа и проекта (иначе гонка двух табов), но засчитываться
+        # должно только удачное открытие: упади S3/слот/привязка — одноразовая ссылка
+        # сгорала бы, и человек упирался в «ссылка использована».
         try:
-            record = await billing.redeem_handoff(payload.token)
-        except Exception as exc:
-            raise _production_error(exc) from exc
-        if record is None:
-            raise expired
-        try:
-            return await _complete_handoff(request, payload, record, current=current, owner=owner,
-                                           link_current=link_current)
-        except BaseException:
-            # Погашение — до входа и проекта (иначе гонка двух табов), но засчитываться
-            # должно только удачное открытие: упади S3/слот/привязка — одноразовая ссылка
-            # (/site, напоминания) сгорала бы, и человек упирался в «ссылка устарела».
-            try:
-                await billing.release_handoff(payload.token)
-            except Exception:
-                logger.exception("handoff_release_failed: single-use link stays redeemed after a failed open")
-            raise
+            await billing.release_handoff(payload.token)
+        except Exception:
+            logger.exception("handoff_release_failed: single-use link stays redeemed after a failed open")
+        raise
+
+
+async def _handoff_link_via_bot(
+    request: Request,
+    payload: HandoffPayload,
+    info: dict[str, Any],
+    current: dict[str, Any],
+    telegram: dict[str, str],
+) -> Any:
+    """«Привязать»: привязка — только после «Привязать» в том самом Telegram.
+
+    Первый запрос заводит запрос и шлёт в чат кнопки (202 pending), сайт опрашивает
+    `GET /api/auth/handoff/link-status`; увидев confirmed, повторяет этот же запрос —
+    тогда ссылка гасится и Telegram привязывается. Запрос живёт в сессии браузера,
+    который его завёл, и привязан к ссылке, аккаунту и chat_id."""
+    billing = _billing_backend()
+    request_id = str(request.session.get(handoff_link.SESSION_KEY) or "")
+    try:
+        link_req = await billing.link_request(request_id) if request_id else None
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    if link_req is not None and (
+        link_req["handoff_hash"] != _handoff_token_hash(payload.token)
+        or link_req["web_user_id"] != current["id"]
+        or int(link_req["tg_id"]) != int(info["tg_id"])
+    ):
+        link_req = None  # запрос другой ссылки или другого аккаунта — начинаем заново
+    status = link_req["status"] if link_req else "none"
+    pending = JSONResponse(status_code=202, content={
+        "ok": False, "pending": True, "telegram": telegram, "expiresInS": handoff_link.LINK_REQUEST_TTL_S,
+    })
+    if status == "pending":
+        return pending
+    if status == "rejected":
+        request.session.pop(handoff_link.SESSION_KEY, None)
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "handoff_link_rejected", "message": "В Telegram ответили «Это не я» — привязка отменена.",
+                    "telegram": telegram},
+        )
+    if status == "confirmed":
+        out = await _redeem_and_complete(request, payload, current=current, owner=None, link_current=True)
+        request.session.pop(handoff_link.SESSION_KEY, None)
+        if not await billing.complete_link_request(link_req["id"]):
+            logger.warning("handoff_link_complete_twice request=%s", link_req["id"])
+        return out
+    # Запроса нет, он протух или уже отработал — новый запрос и новое сообщение в бот.
+    try:
+        request_id = await billing.create_link_request(
+            tg_id=int(info["tg_id"]), web_user_id=current["id"], token=payload.token,
+            ttl_seconds=handoff_link.LINK_REQUEST_TTL_S,
+        )
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    sent = await run_in_threadpool(handoff_link.send_confirmation, int(info["tg_id"]), request_id, current)
+    if not sent.ok:
+        # Без сообщения в Telegram подтвердить нечем — явный отказ, а не молчаливое ожидание.
+        logger.error("handoff_link_confirmation_undeliverable tg=%s err=%s", info["tg_id"], sent.error)
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "handoff_link_undeliverable",
+                    "message": "Не получилось написать в Telegram. Открой бота, нажми «Старт» и попробуй ещё раз.",
+                    "botUrl": handoff_link.bot_relogin_url()},
+        )
+    request.session[handoff_link.SESSION_KEY] = request_id
+    logger.info("handoff_link_requested tg=%s user=%s request=%s", info["tg_id"], current["id"], request_id)
+    return pending
+
+
+@app.get("/api/auth/handoff/link-status", tags=["auth"])
+async def api_auth_handoff_link_status(request: Request) -> dict[str, Any]:
+    """Опрос «подтвердили ли привязку в Telegram» (GET — не тратит лимит POST /api/auth/*)."""
+    if RUNTIME.backend != "production":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "handoff_unavailable", "message": "Вход по ссылке из бота работает только в проде."},
+        )
+    request_id = str(request.session.get(handoff_link.SESSION_KEY) or "")
+    current = auth_store.user_by_id(str(request.session.get("user_id") or ""))
+    if not request_id or current is None:
+        return {"status": "none"}
+    try:
+        link_req = await _billing_backend().link_request(request_id)
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    if link_req is None or link_req["web_user_id"] != current["id"]:
+        return {"status": "none"}
+    return {"status": link_req["status"]}
 
 
 async def _complete_handoff(

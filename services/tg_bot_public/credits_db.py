@@ -2349,6 +2349,14 @@ class CreditsDB:
                 int(tg_id),
                 new_status,
             )
+            if updated == "rejected":
+                # «Это не я»: ссылка, по которой пытались привязать этот Telegram, гаснет
+                # сразу — иначе с неё можно было бы слать новые запросы в этот чат.
+                await conn.execute(
+                    "UPDATE web_handoff_tokens SET redeem_count = GREATEST(redeem_count, COALESCE(max_redeems, 1)) "
+                    "WHERE token_hash = (SELECT handoff_hash FROM web_link_requests WHERE id = $1)",
+                    request_id,
+                )
             if updated is not None:
                 return str(updated)
             row = await conn.fetchrow(

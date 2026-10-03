@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import importlib
 import sys
 from types import SimpleNamespace
@@ -22,7 +23,9 @@ class _Billing:
         self.consumed: list[tuple[int, str]] = []
         self.results: list[dict[str, Any]] = []
         self.released = 0
-        self.max_redeems: int | None = None  # 1 — одноразовая ссылка (/site, напоминания)
+        # Как в БД: каждая ссылка одноразовая (старые NULL читаются как 1).
+        self.max_redeems = 1
+        self.link_requests: dict[str, dict[str, Any]] = {}
 
     async def redeem_handoff(self, token: str) -> dict[str, Any] | None:
         assert token == TOKEN
@@ -33,13 +36,33 @@ class _Billing:
         self.record["redeem_count"] += 1
         return {**self.record, "result": dict(self.record["result"])}
 
-    async def peek_handoff_owner(self, token: str) -> int | None:
+    async def inspect_handoff(self, token: str) -> dict[str, Any] | None:
         assert token == TOKEN
         if self.record is None:
             return None
-        if self.max_redeems is not None and self.record["redeem_count"] >= self.max_redeems:
-            return None
-        return int(self.record["tg_id"])
+        used = self.record["redeem_count"] >= self.max_redeems
+        return {"tg_id": int(self.record["tg_id"]), "kind": self.record["kind"],
+                "payload": self.record["payload"], "result": dict(self.record["result"]),
+                "status": "used" if used else self.record.get("status", "live")}
+
+    async def create_link_request(self, *, tg_id: int, web_user_id: str, token: str, ttl_seconds: int) -> str:
+        request_id = f"req{len(self.link_requests) + 1}"
+        self.link_requests[request_id] = {
+            "id": request_id, "tg_id": int(tg_id), "web_user_id": web_user_id,
+            "handoff_hash": hashlib.sha256(token.encode()).hexdigest(), "status": "pending", "ttl": ttl_seconds,
+        }
+        return request_id
+
+    async def link_request(self, request_id: str) -> dict[str, Any] | None:
+        req = self.link_requests.get(request_id)
+        return dict(req) if req else None
+
+    async def complete_link_request(self, request_id: str) -> bool:
+        req = self.link_requests[request_id]
+        if req["status"] != "confirmed":
+            return False
+        req["status"] = "completed"
+        return True
 
     async def release_handoff(self, token: str) -> None:
         assert token == TOKEN
@@ -254,7 +277,7 @@ def test_new_link_for_the_same_track_reuses_the_project(client, monkeypatch) -> 
     billing, backend = _Billing(_track_record()), _Backend()
     _production(monkeypatch, main, billing, backend)
     first = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
-    billing.record["result"] = {}  # как будто это другой, свежий токен
+    billing.record.update(result={}, redeem_count=0)  # как будто это другой, свежий токен
 
     second = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
 
@@ -309,12 +332,25 @@ def _google_session(tc, main, billing) -> dict:
     return google_user
 
 
+def _sent_confirmations(monkeypatch, main, *, ok: bool = True) -> list[tuple]:
+    """Вопрос «привязать этот Telegram?» в бот — без сети, только запись."""
+    sent: list[tuple] = []
+
+    def fake_send(tg_id, request_id, user):
+        sent.append((tg_id, request_id, main.handoff_link.confirm_text(user)))
+        return main.telegram_bot.SendResult(ok, error="" if ok else "Telegram 403: blocked")
+
+    monkeypatch.setattr(main.handoff_link, "send_confirmation", fake_send)
+    return sent
+
+
 def test_account_without_telegram_is_asked_before_linking(client, monkeypatch) -> None:
     """В браузере аккаунт без Telegram (Google): молча chat_id не привязываем — сперва
-    вопрос «Привязать Telegram к аккаунту …?», и одноразовая ссылка на нём не тратится."""
+    вопрос «Привязать Telegram @… к аккаунту …?», и одноразовая ссылка на нём не тратится."""
     tc, main = client
     billing = _Billing(_track_record())
     _production(monkeypatch, main, billing)
+    sent = _sent_confirmations(monkeypatch, main)
     google_user = _google_session(tc, main, billing)
     redeemed = billing.record["redeem_count"]
 
@@ -323,14 +359,38 @@ def test_account_without_telegram_is_asked_before_linking(client, monkeypatch) -
     assert r.status_code == 409
     detail = r.json()["detail"]
     assert detail["code"] == "handoff_link_account" and detail["email"] == "lena@example.com"
+    # какой Telegram привяжется — видно в вопросе
+    assert detail["telegram"] == {"username": "@lena_beats", "name": "Лена"}
     assert billing.record["redeem_count"] == redeemed
     assert main.auth_store.get_user_by_chat(CHAT2) is None
 
-    body = tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True}).json()
+    linked = _link_through_the_bot(tc, main, billing, sent)
 
-    assert body["created"] is False
-    linked = main.auth_store.get_user_by_chat(CHAT2)
-    assert linked["id"] == google_user["id"] and linked["tgVerified"] is True
+    assert linked["created"] is False
+    user = main.auth_store.get_user_by_chat(CHAT2)
+    assert user["id"] == google_user["id"] and user["tgVerified"] is True
+
+
+def _link_through_the_bot(tc, main, billing, sent) -> dict:
+    """«Привязать» на сайте → вопрос в тот самый чат → «Привязать» в боте → вход."""
+    pending = tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True})
+    assert pending.status_code == 202, pending.text
+    assert pending.json()["pending"] is True and pending.json()["telegram"]["username"] == "@lena_beats"
+    assert main.auth_store.get_user_by_chat(CHAT2) is None  # до подтверждения не привязано
+    assert billing.record["redeem_count"] == 0  # и ссылка не погашена
+    tg_id, request_id, text = sent[-1]
+    assert tg_id == CHAT2 and "le***@example.com" in text and "lena@example.com" not in text
+    assert tc.get("/api/auth/handoff/link-status").json() == {"status": "pending"}
+    # повторное «Привязать», пока ждём, второе сообщение в бот не шлёт
+    assert tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True}).status_code == 202
+    assert len(sent) == 1
+    billing.link_requests[request_id]["status"] = "confirmed"  # колбэк бота
+    assert tc.get("/api/auth/handoff/link-status").json() == {"status": "confirmed"}
+    done = tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True})
+    assert done.status_code == 200, done.text
+    assert billing.link_requests[request_id]["status"] == "completed"
+    assert billing.record["redeem_count"] == 1
+    return done.json()
 
 
 def test_account_without_telegram_can_log_in_separately(client, monkeypatch) -> None:
@@ -550,17 +610,22 @@ def test_failed_open_does_not_burn_a_single_use_link(client, monkeypatch) -> Non
     ok = tc.post("/api/auth/handoff", json={"token": TOKEN})
     assert ok.status_code == 200, ok.text
     assert billing.released == 1 and billing.record["redeem_count"] == 1
-    # удачное открытие засчитано: одноразовая ссылка теперь и правда погашена
-    assert tc.post("/api/auth/handoff", json={"token": TOKEN}).status_code == 410
+    # удачное открытие засчитано: в другом браузере одноразовая ссылка уже не откроется
+    tc.cookies.clear()
+    gone = tc.post("/api/auth/handoff", json={"token": TOKEN})
+    assert gone.status_code == 410 and gone.json()["detail"]["code"] == "handoff_used"
 
 
 def test_telegram_taken_while_linking_is_409_not_500(client, monkeypatch) -> None:
-    """Пока человек думал над «Привязать?», chat_id привязался к другому аккаунту:
+    """Пока человек подтверждал в Telegram, chat_id привязался к другому аккаунту:
     понятный 409, и одноразовая ссылка не сгорает."""
     tc, main = client
     billing = _Billing(_track_record())
     _production(monkeypatch, main, billing)
+    sent = _sent_confirmations(monkeypatch, main)
     _google_session(tc, main, billing)
+    assert tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True}).status_code == 202
+    billing.link_requests[sent[-1][1]]["status"] = "confirmed"
     original = billing.redeem_handoff
 
     async def redeem_with_race(token: str):
@@ -670,3 +735,135 @@ def test_remix_import_over_the_total_deadline_says_so(client, monkeypatch) -> No
     monkeypatch.setattr(main, "_remix_wizard_import", hang)
     out = asyncio.run(main._remix_import_or_error({"jobIds": ["bot-a"]}, {"projectId": "p"}))
     assert out == {"wizardImportError": main.REMIX_IMPORT_TIMEOUT_TEXT}
+
+
+# ── безопасность: одноразовые ссылки и привязка только с подтверждением в Telegram ──
+
+def test_forwarded_link_does_not_open_the_account_in_another_browser(client, monkeypatch) -> None:
+    """Регресс: ссылки были многоразовыми 48 ч, а Telegram сохраняет URL-кнопки в
+    пересланном сообщении — любой, кому переслали, входил в аккаунт."""
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing)
+    owner = tc.post("/api/auth/handoff", json={"token": TOKEN})
+    assert owner.status_code == 200
+
+    tc.cookies.clear()  # другой браузер: тот, кому переслали сообщение
+    r = tc.post("/api/auth/handoff", json={"token": TOKEN})
+
+    assert r.status_code == 410
+    detail = r.json()["detail"]
+    assert detail["code"] == "handoff_used"
+    assert detail["botUrl"].endswith("?start=site_login")  # «Получить новую ссылку в боте»
+    assert "session" not in tc.cookies  # не залогинило: сессию не выдали
+    assert billing.record["redeem_count"] == 1
+
+
+def test_owner_reopening_a_used_link_is_just_redirected(client, monkeypatch) -> None:
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing)
+    first = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+
+    again = tc.post("/api/auth/handoff", json={"token": TOKEN})
+
+    assert again.status_code == 200
+    body = again.json()
+    assert body["redirectTo"] == first["redirectTo"] and body["repeat"] is True
+    assert billing.record["redeem_count"] == 1  # не гасим повторно и не входим заново
+
+
+def test_expired_link_offers_a_fresh_one_from_the_bot(client, monkeypatch) -> None:
+    tc, main = client
+    record = _track_record()
+    record["status"] = "expired"
+    _production(monkeypatch, main, _Billing(record))
+    r = tc.post("/api/auth/handoff", json={"token": TOKEN})
+    assert r.status_code == 410
+    assert r.json()["detail"]["code"] == "handoff_expired" and "site_login" in r.json()["detail"]["botUrl"]
+
+
+def test_switch_account_question_names_the_telegram_account(client, monkeypatch) -> None:
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing)
+    tc.post("/api/auth/handoff", json={"token": TOKEN})
+    other = _track_record()
+    other.update(tg_id=CHAT2)
+    other["payload"] = {**other["payload"], "profile": {"name": "Чужой", "username": "stranger"}}
+    billing.record = other
+
+    r = tc.post("/api/auth/handoff", json={"token": TOKEN})
+
+    assert r.status_code == 409
+    assert r.json()["detail"]["telegram"] == {"username": "@stranger", "name": "Чужой"}
+
+
+def test_not_me_in_telegram_cancels_the_link(client, monkeypatch) -> None:
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing)
+    sent = _sent_confirmations(monkeypatch, main)
+    google_user = _google_session(tc, main, billing)
+    assert tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True}).status_code == 202
+    billing.link_requests[sent[-1][1]]["status"] = "rejected"  # «Это не я» в боте
+
+    assert tc.get("/api/auth/handoff/link-status").json() == {"status": "rejected"}
+    r = tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True})
+
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "handoff_link_rejected"
+    assert main.auth_store.get_user_by_chat(CHAT2) is None
+    assert google_user.get("tgChatId") is None
+    assert billing.record["redeem_count"] == 0
+
+
+def test_link_needs_a_delivered_question_in_telegram(client, monkeypatch) -> None:
+    """Бот не смог написать (человек его заблокировал) — явный отказ, без молчаливого ожидания."""
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing)
+    _sent_confirmations(monkeypatch, main, ok=False)
+    _google_session(tc, main, billing)
+
+    r = tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True})
+
+    assert r.status_code == 502 and r.json()["detail"]["code"] == "handoff_link_undeliverable"
+    assert tc.get("/api/auth/handoff/link-status").json() == {"status": "none"}
+    assert main.auth_store.get_user_by_chat(CHAT2) is None
+
+
+def test_confirmation_of_another_link_does_not_link_this_one(client, monkeypatch) -> None:
+    """Подтверждённый запрос привязан к ссылке, аккаунту и chat_id: чужой не подходит."""
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing)
+    sent = _sent_confirmations(monkeypatch, main)
+    _google_session(tc, main, billing)
+    assert tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True}).status_code == 202
+    first_id = sent[-1][1]
+    billing.link_requests[first_id].update(status="confirmed", handoff_hash="0" * 64)  # другая ссылка
+
+    r = tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True})
+
+    assert r.status_code == 202  # завели новый запрос, а не привязали по чужому
+    assert len(sent) == 2 and sent[-1][1] != first_id
+    assert main.auth_store.get_user_by_chat(CHAT2) is None
+
+
+def test_link_status_without_a_request_is_none(client, monkeypatch) -> None:
+    tc, main = client
+    _production(monkeypatch, main, _Billing(_track_record()))
+    assert tc.get("/api/auth/handoff/link-status").json() == {"status": "none"}
+
+
+def test_link_confirmation_text_masks_the_email(client) -> None:
+    _, main = client
+    hl = main.handoff_link
+    assert hl.mask_email("lena.beats@gmail.com") == "le***@gmail.com"
+    assert hl.mask_email("not-an-email") == ""
+    assert hl.account_label({"email": "", "name": "Лена"}) == "Лена"
+    markup = hl.confirm_markup("abcdefghijklmnopqrstuv")
+    datas = [b["callback_data"] for b in markup["inline_keyboard"][0]]
+    assert datas == ["hlink:y:abcdefghijklmnopqrstuv", "hlink:n:abcdefghijklmnopqrstuv"]
+    assert all(len(d.encode()) <= 64 for d in datas)
+    assert main._handoff_token_hash(TOKEN) == hashlib.sha256(TOKEN.encode()).hexdigest()
