@@ -82,7 +82,9 @@ export function ProcessingPage() {
   const allDone = videos.length > 0 && done.length === videos.length;
   const project = projectQuery.data?.project;
   // Воронка: квиз, пока идёт рендер; оценка под каждым готовым роликом (первая 7+ — безлимит)
-  useQuizOnGeneration(job);
+  // Упавший ролик уже рисует «Генерация не удалась» (джоб ещё может быть в PROCESSING) —
+  // квиз поверх экрана ошибки не нужен.
+  useQuizOnGeneration(failed ? undefined : job);
   const ratings = useVideoRatings(job, job?.projectId);
 
   /*

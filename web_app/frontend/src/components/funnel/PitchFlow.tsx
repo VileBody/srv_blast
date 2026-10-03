@@ -1,3 +1,5 @@
+import type { MouseEvent } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../lib/cn';
 import type { FunnelState } from '../../lib/types';
@@ -20,6 +22,8 @@ type Survey = FunnelState['survey'];
 const TIME_IDS = new Set(['lt_hour', '1_3h', 'half_day', 'a_lot']);
 /** «Ничего не трачу» — без своей фразы: общий довод про деньги */
 const MONEY_IDS = new Set(['2_5k', '5_10k', '10k_plus']);
+
+const STUDY_HREF = '/app/pricing?plan=BLAST';
 
 /** Довод по ответам квиза: ключ i18n и подстановки. Без квиза — общий довод из бота. */
 function personalLine(survey: Survey | undefined): { key: string; vars: Record<string, string> } {
@@ -48,7 +52,17 @@ export function PitchFlow({
   titleId?: string;
 }) {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const personal = personalLine(survey);
+  // «Изучить тариф» — переход внутри сайта: окно закрываем как «закрыл, не пройдя»
+  // (в углу остаётся плашка, она ведёт обратно в окно), без перезагрузки страницы.
+  // Ссылка остаётся ссылкой: с Ctrl/Cmd и средней кнопкой — новая вкладка, как обычно.
+  const study = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    onClose();
+    navigate(STUDY_HREF);
+  };
   return (
     <FunnelSheet
       titleId={titleId}
@@ -59,7 +73,7 @@ export function PitchFlow({
       description={t(personal.key, personal.vars)}
       actions={
         <>
-          <ButtonLink variant="primary" className="flex-1" href="/app/pricing?plan=BLAST">{t('funnel.pitch.study')}</ButtonLink>
+          <ButtonLink variant="primary" className="flex-1" href={STUDY_HREF} onClick={study}>{t('funnel.pitch.study')}</ButtonLink>
           <Button variant="secondary" iconOnly aria-label={t('funnel.pitch.skipToFree')} title={t('funnel.pitch.skipToFree')} onClick={onNext}>
             <Icon>{GLYPH.arrowRight}</Icon>
           </Button>

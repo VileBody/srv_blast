@@ -893,6 +893,33 @@ def bot_track_project(audio_hash: str) -> tuple[dict[str, Any], dict[str, Any]] 
     return deepcopy(project), _track_with_identity(track)
 
 
+def mark_bot_remix_project(project_id: str, remix_key: str) -> None:
+    """Пометить проект «Докрутить на сайте» ключом трек + ролики батча (см. bot_remix_project)."""
+    project = next((p for p in ws().projects if p["id"] == project_id), None)
+    if project is None:
+        raise KeyError(f"project not found: {project_id}")
+    project["botRemixKey"] = remix_key
+
+
+def bot_remix_project(remix_key: str) -> tuple[dict[str, Any], dict[str, Any]] | None:
+    """Проект этого человека, уже заведённый по remix-ссылке на тот же батч бота, и его
+    трек. Вторая ссылка «Докрутить на сайте» под тем же батчем ведёт в тот же проект:
+    отдельный проект делил бы с первым клон слов ASR."""
+    if not remix_key:
+        return None
+    project = next(
+        (p for p in ws().projects if p.get("botRemixKey") == remix_key and not p.get("archived")),
+        None,
+    )
+    if project is None:
+        return None
+    audio_hash = str(project.get("botTrackHash") or "")
+    track = next((t for t in ws().saved_tracks if audio_hash and t.get("audioHash") == audio_hash), None)
+    if track is None:
+        return None
+    return deepcopy(project), _track_with_identity(track)
+
+
 def rename_project(project_id: str, name: str) -> dict[str, Any] | None:
     project = next((p for p in ws().projects if p["id"] == project_id), None)
     if not project:

@@ -60,6 +60,7 @@ def _new_app(*, paid: bool = False, balance: int = 5, free_limit: int = 5):
         generation_subscription_required=False,
         initial_credits=free_limit,
         rust_gen_bot_default_enabled=False,
+        tg_force_free_funnel_chat_ids=frozenset(),
     )
     return app
 

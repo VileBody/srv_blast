@@ -5102,10 +5102,14 @@ def build_app(
                             except Exception as e:
                                 log.warning("tbank notify: no-rebill alert failed: %s", e)
 
-            try:
-                await state_store.reset_to_wait_audio(tg_id)
-            except Exception as e:
-                log.warning("tbank notify: failed to unlock user state %s: %s", tg_id, e)
+            # Трипваер (track399) покупают на сайте, посреди чего угодно в боте: роликов он
+            # не начисляет, снимает лимиты с трека сайта. Сбрасывать человеку стадию бота
+            # (и, например, оборвать сборку там) поводу нет — бот для этого пакета не трогаем.
+            if _normalize_pkg_code(str(pkg)) != TRIPWIRE_PACKAGE:
+                try:
+                    await state_store.reset_to_wait_audio(tg_id)
+                except Exception as e:
+                    log.warning("tbank notify: failed to unlock user state %s: %s", tg_id, e)
             log.info("payment confirmed tg_id=%s pkg=%s credits=+%s", tg_id, pkg, credits_to_add)
 
             # Notify user as side-effect. Unlock is already committed.

@@ -811,7 +811,7 @@ def create_app() -> FastAPI:
         пропали бы молча); нет состояния — 404.
         """
         try:
-            out = clone_asr_preview_from_job(store=store, source_job_id=req.source_job_id)
+            out = clone_asr_preview_from_job(store=store, source_job_id=req.source_job_id, clone_key=req.clone_key)
         except EditStateUnavailable:
             raise HTTPException(status_code=404, detail="source job state not found")
         except ValueError as exc:

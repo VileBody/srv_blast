@@ -142,7 +142,7 @@ def test_clone_creates_succeeded_asr_preview_with_stage1_only(env, tmp_path: Pat
     store.add("bot1", {"audio_s3_url": "s3://raw/a.mp3"})
     runtime["bot1"] = _resume_state()
 
-    out = tasks.clone_asr_preview_from_job(store=store, source_job_id="bot1")
+    out = tasks.clone_asr_preview_from_job(store=store, source_job_id="bot1", clone_key="user_1:project_a")
 
     assert out["created"] is True and out["status"] == "SUCCEEDED"
     job = store.get(out["job_id"])
@@ -162,9 +162,27 @@ def test_clone_creates_succeeded_asr_preview_with_stage1_only(env, tmp_path: Pat
     ])
     assert edited["words"][0]["t_start"] == 10.25
 
-    # повторный клон той же джобы — та же asr-джоба
-    again = tasks.clone_asr_preview_from_job(store=store, source_job_id="bot1")
+    # повторный клон той же джобы в тот же проект — та же asr-джоба
+    again = tasks.clone_asr_preview_from_job(store=store, source_job_id="bot1", clone_key="user_1:project_a")
     assert again == {"job_id": out["job_id"], "status": "SUCCEEDED", "created": False}
+
+
+def test_clone_is_per_project_so_word_edits_do_not_leak(env) -> None:
+    """Тот же ролик бота в двух проектах сайта — два клона: правка слов в одном не
+    меняет слова в другом. Без ключа клон не делаем вовсе (был общий на всех)."""
+    store, runtime = env
+    store.add("bot1", {"audio_s3_url": "s3://raw/a.mp3"})
+    runtime["bot1"] = _resume_state()
+    first = tasks.clone_asr_preview_from_job(store=store, source_job_id="bot1", clone_key="user_1:project_a")
+    second = tasks.clone_asr_preview_from_job(store=store, source_job_id="bot1", clone_key="user_1:project_b")
+    assert first["job_id"] != second["job_id"] and second["created"] is True
+    tasks.apply_asr_words_edit(store=store, job_id=first["job_id"], words=[
+        {"text": "раз", "t_start": 10.25, "t_end": 10.6},
+        {"text": "два", "t_start": 10.7, "t_end": 11.1},
+    ])
+    assert store.get(second["job_id"]).result["words"][0]["t_start"] != 10.25
+    with pytest.raises(ValueError, match="clone_key"):
+        tasks.clone_asr_preview_from_job(store=store, source_job_id="bot1", clone_key=" ")
 
 
 def test_clone_refuses_non_local_ctc_source(env) -> None:
@@ -172,7 +190,7 @@ def test_clone_refuses_non_local_ctc_source(env) -> None:
     store.add("bot1", {})
     runtime["bot1"] = _resume_state(mode="forced_alignment")
     with pytest.raises(ValueError, match="local_ctc"):
-        tasks.clone_asr_preview_from_job(store=store, source_job_id="bot1")
+        tasks.clone_asr_preview_from_job(store=store, source_job_id="bot1", clone_key="user_1:project_a")
 
 
 def test_footage_plan_is_persisted_into_resume_state_source() -> None:

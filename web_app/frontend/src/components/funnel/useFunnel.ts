@@ -1,5 +1,10 @@
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
+import { currentAppPath } from '../../lib/appPath';
+import { useToast } from '../../contexts/ToastContext';
 import type { FunnelQuota, FunnelState } from '../../lib/types';
 
 /** Название трека для людей — без расширения файла («Нет любви.mp3» → «Нет любви»). */
@@ -42,8 +47,10 @@ export function quotaLeft(quota: FunnelQuota | null | undefined): { left: number
   return { left: quota.allowed ? quota.maxVideos : 0, cap: quota.tripwire ? quota.tripwireBatchCap : quota.batchCap };
 }
 
+const TRIPWIRE_ATTEMPT_PREFIX = 'blast:tripwire-attempt:';
+
 function tripwireKey(trackId: string): string {
-  const storageKey = `blast:tripwire-attempt:${trackId}`;
+  const storageKey = `${TRIPWIRE_ATTEMPT_PREFIX}${trackId}`;
   try {
     const saved = sessionStorage.getItem(storageKey);
     if (saved) return saved;
@@ -55,11 +62,58 @@ function tripwireKey(trackId: string): string {
   }
 }
 
-/** Покупка трипваера 399 ₽: уводим в банк, вернёт туда же, откуда купили. */
+/**
+ * Забыть ключи попыток оплаты трипваера. После возврата из банка (успех или отказ)
+ * следующая попытка — новый заказ: со старым ключом бэк вернул бы тот же, уже
+ * отклонённый банком заказ.
+ */
+export function forgetTripwireAttempts(): void {
+  try {
+    for (let i = sessionStorage.length - 1; i >= 0; i -= 1) {
+      const key = sessionStorage.key(i);
+      if (key?.startsWith(TRIPWIRE_ATTEMPT_PREFIX)) sessionStorage.removeItem(key);
+    }
+  } catch {
+    /* приватный режим — ключей и не было */
+  }
+}
+
+/** Покупка трипваера 399 ₽: уводим в банк, вернёт туда же, откуда купили (путь + query). */
 export function useTripwirePurchase() {
   return useMutation({
-    mutationFn: (trackId: string) =>
-      api.funnelTripwire({ trackId, returnPath: window.location.pathname, idempotencyKey: tripwireKey(trackId) }),
+    mutationFn: (trackId: string) => {
+      // ?project=… обязателен визарду: без него возврат из банка открыл бы не тот проект
+      const returnPath = currentAppPath();
+      if (!returnPath) throw new Error(`tripwire: page ${window.location.pathname} cannot be a return path`);
+      return api.funnelTripwire({ trackId, returnPath, idempotencyKey: tripwireKey(trackId) });
+    },
     onSuccess: (order) => window.location.assign(order.paymentUrl)
   });
+}
+
+/**
+ * Возврат из банка после трипваера (`?payment=success|failed` на любой странице /app):
+ * тост, свежие лимиты и баланс, параметр снимаем, ключ попытки забываем. Живёт в
+ * AppShell — вернуть могут и на батч, и в визард, и на генерацию. Тарифы (/app/pricing)
+ * разбирают свой возврат сами.
+ */
+export function usePaymentReturn() {
+  const { t } = useTranslation();
+  const { push } = useToast();
+  const queryClient = useQueryClient();
+  const location = useLocation();
+  const [search, setSearch] = useSearchParams();
+  const payment = search.get('payment');
+  useEffect(() => {
+    if (!payment || location.pathname.startsWith('/app/pricing')) return;
+    push(payment === 'success'
+      ? { variant: 'success', title: t('funnel.tripwire.paid') }
+      : { variant: 'error', title: t('funnel.tripwire.failed') });
+    forgetTripwireAttempts();
+    void queryClient.invalidateQueries({ queryKey: ['funnel-state'] });
+    void queryClient.invalidateQueries({ queryKey: ['me'] });
+    const next = new URLSearchParams(search);
+    next.delete('payment');
+    setSearch(next, { replace: true });
+  }, [payment, location.pathname, search, setSearch, push, t, queryClient]);
 }

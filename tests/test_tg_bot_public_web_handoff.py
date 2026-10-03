@@ -37,10 +37,14 @@ class _Store:
 
 
 class _CreditsDB:
-    def __init__(self):
+    def __init__(self, *, paid: bool = False):
         self.events: list[tuple[int, str]] = []
         self.handoffs: list[dict] = []
         self.grants: list[tuple] = []
+        self.paid = paid
+
+    async def has_paid(self, tg_id):
+        return self.paid
 
     async def log_event(self, tg_id, event, detail=""):
         self.events.append((tg_id, event))
@@ -90,15 +94,16 @@ def _settings(**over):
         initial_track_credits=1,
         generation_subscription_required=False,
         subscription_channel="@impulsemarketing",
+        tg_force_free_funnel_chat_ids=frozenset(),
     )
     base.update(over)
     return SimpleNamespace(**base)
 
 
-def _make_app(*, s3_fail=False, **settings):
+def _make_app(*, s3_fail=False, paid=False, **settings):
     app = pub.BlastBotApp.__new__(pub.BlastBotApp)
     app.store = _Store()
-    app.credits_db = _CreditsDB()
+    app.credits_db = _CreditsDB(paid=paid)
     app.s3 = _S3(fail=s3_fail)
     app.settings = _settings(**settings)
     return app
@@ -424,7 +429,7 @@ def test_reminder_rows_anchor_on_the_fork_token_and_compare_in_one_timezone():
     conn = _RecordingConn()
     db = CreditsDB.__new__(CreditsDB)
     db._pool_or_fail = lambda: _RecordingPool(conn)
-    _run(db.site_handoff_reminder_rows())
+    _run(db.site_handoff_reminder_rows(chain_days=4, lookback_days=10))
     _run(db.idle_generation_rows())
     reminders, idle = conn.sql
     assert "COALESCE(t.payload->>'source', 'fork') = 'fork'" in reminders
@@ -468,3 +473,140 @@ def test_remix_link_carries_batch_jobs_and_settings_snapshot(tmp_path):
 
 async def _async_append(bucket, item):
     bucket.append(item)
+
+
+# ── ревью: ограничения бота — только бесплатным, сбой проверки подписки, двойной тап ──
+
+def test_paid_users_get_the_version_picker_not_the_one_video_note(monkeypatch):
+    """«Один ролик за раз» — только бесплатным; платящий собирает как раньше."""
+    app = _make_app(paid=True)
+    monkeypatch.setattr(pub, "FRAME_FLOW_ENABLED", False)
+    msg = _Msg()
+    st = ChatState(chat_id=CHAT, versions_count=4)
+    _run(app._ask_versions(msg, st))
+    assert msg.answers[0][0] != mt.BOT_ONE_VIDEO_NOTE
+    assert app.store.by_id[CHAT].stage == pub.STAGE_WAIT_VERSIONS
+
+
+def test_paid_users_launch_without_the_channel_step(monkeypatch):
+    app = _make_app(paid=True, generation_subscription_required=True)
+    checked: list[int] = []
+
+    async def _check(user_id):
+        checked.append(user_id)
+        return False
+
+    monkeypatch.setattr(app, "_check_subscription", _check, raising=False)
+    monkeypatch.setattr(app, "_has_timing_window", lambda st: False, raising=False)
+    msg = _Msg(text=pub.BTN_LAUNCH)
+    _run(pub.BlastBotApp._handle_wait_confirm(app, msg, ChatState(chat_id=CHAT)))
+    assert checked == []  # подписку платящего не проверяем вовсе
+    assert app.store.by_id[CHAT].stage != pub.STAGE_WAIT_GEN_SUBSCRIPTION
+
+
+def test_failed_subscription_check_lets_the_launch_through_with_an_event(monkeypatch):
+    """getChatMember сломался (бот не админ, флуд) — это не «не подписан»: пускаем, но
+    со следом в логе и событием. «Не подписан» при рабочей проверке — не пускаем."""
+    app = _make_app(generation_subscription_required=True)
+    result = {"value": None}
+
+    async def _check(user_id):
+        return result["value"]
+
+    monkeypatch.setattr(app, "_check_subscription", _check, raising=False)
+    monkeypatch.setattr(app, "_has_timing_window", lambda st: False, raising=False)
+    msg = _Msg(text=pub.BTN_LAUNCH)
+    _run(pub.BlastBotApp._handle_wait_confirm(app, msg, ChatState(chat_id=CHAT)))
+    assert app.store.by_id[CHAT].stage != pub.STAGE_WAIT_GEN_SUBSCRIPTION
+    assert (CHAT, "subscription_check_failed") in app.credits_db.events
+
+    result["value"] = False
+    _run(pub.BlastBotApp._handle_wait_confirm(app, _Msg(text=pub.BTN_LAUNCH), ChatState(chat_id=CHAT)))
+    assert app.store.by_id[CHAT].stage == pub.STAGE_WAIT_GEN_SUBSCRIPTION
+
+
+def test_check_subscription_tells_failure_from_not_subscribed():
+    app = _make_app()
+
+    class _Bot:
+        def __init__(self, status=None, fail=False):
+            self.status, self.fail = status, fail
+
+        async def get_chat_member(self, chat_id, user_id):
+            if self.fail:
+                raise RuntimeError("Bad Request: member list is inaccessible")
+            return SimpleNamespace(status=self.status)
+
+    for bot, expected in ((_Bot(status="member"), True), (_Bot(status="left"), False), (_Bot(fail=True), None)):
+        app._require_bot = lambda bot=bot: bot
+        assert _run(app._check_subscription(CHAT)) is expected
+
+
+def test_double_tap_subscribed_launches_once(monkeypatch):
+    """Два «Я подписался» подряд: генерация запускается один раз (чат занят до первого await)."""
+    app = _make_app(generation_subscription_required=True)
+    app.store.by_id[CHAT] = ChatState(chat_id=CHAT, stage=pub.STAGE_WAIT_GEN_SUBSCRIPTION)
+    gate = asyncio.Event()
+    launched: list[bool] = []
+
+    async def _check(user_id):
+        await gate.wait()
+        return True
+
+    async def _confirm(message, st, *, subscribed=False):
+        launched.append(subscribed)
+        st.stage = pub.STAGE_PROCESSING
+        await app.store.set(st)
+
+    monkeypatch.setattr(app, "_check_subscription", _check, raising=False)
+    monkeypatch.setattr(app, "_handle_wait_confirm", _confirm, raising=False)
+
+    async def both():
+        first = asyncio.create_task(app._handle_wait_gen_subscription(_Msg(text=pub.BTN_SUBSCRIBED), app.store.by_id[CHAT]))
+        second = asyncio.create_task(app._handle_wait_gen_subscription(_Msg(text=pub.BTN_SUBSCRIBED), app.store.by_id[CHAT]))
+        await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(first, second)
+        # третий тап уже после запуска — стадия сменилась, второй раз не запускаем
+        await app._handle_wait_gen_subscription(_Msg(text=pub.BTN_SUBSCRIBED), app.store.by_id[CHAT])
+
+    _run(both())
+    assert launched == [True]
+
+
+def test_reset_to_wait_audio_forgets_the_remix_payload():
+    """Ссылка «на сайт» после оценки не должна вести на ролик прошлого батча."""
+    from services.tg_bot_public.state_store import RedisChatStateStore
+
+    store = RedisChatStateStore.__new__(RedisChatStateStore)
+    saved = {CHAT: ChatState(chat_id=CHAT, web_remix_payload={"audioS3Url": "s3://raw/old.mp3"})}
+
+    async def _get(chat_id):
+        return saved[int(chat_id)]
+
+    async def _set(st):
+        saved[int(st.chat_id)] = st
+
+    store.get, store.set = _get, _set
+    _run(store.reset_to_wait_audio(CHAT))
+    assert saved[CHAT].web_remix_payload == {}
+
+
+def test_recharge_and_idle_rows_query_only_what_they_need():
+    """«Лимиты обновились»: без трека с трипваером (track_tripwire, а не мёртвая колонка),
+    только недавно генерировавшие, батчи — тем же запросом. Затихшие — только участники
+    воронки бот → сайт. Цепочка развилки живёт и от открытия ссылки."""
+    conn = _RecordingConn()
+    db = CreditsDB.__new__(CreditsDB)
+    db._pool_or_fail = lambda: _RecordingPool(conn)
+    _run(db.track_unlimited_rows(active_hours=48))
+    _run(db.idle_generation_rows())
+    _run(db.site_handoff_reminder_rows(chain_days=4, lookback_days=10))
+    recharge, idle, forks = conn.sql
+    assert "track_tripwire t WHERE t.tg_id = u.tg_id AND t.audio_hash = u.audio_hash" in recharge
+    assert "tripwire_paid_at" not in recharge
+    assert "make_interval(hours => $1)" in recharge and "array_agg(b.created_at" in recharge
+    for member in ("FROM web_handoff_tokens t", "a.event = 'web_fork_shown'", "FROM track_unlimited u",
+                   "f.action = 'tripwire_offer'"):
+        assert member in idle, member
+    assert "opened.first_open > NOW() - make_interval(days => $1)" in forks

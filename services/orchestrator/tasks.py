@@ -3463,7 +3463,7 @@ def job_edit_state(*, store: JobStore, job_id: str) -> Dict[str, Any]:
     }
 
 
-def clone_asr_preview_from_job(*, store: JobStore, source_job_id: str) -> Dict[str, Any]:
+def clone_asr_preview_from_job(*, store: JobStore, source_job_id: str, clone_key: str) -> Dict[str, Any]:
     """Готовая asr_preview-джоба со Stage 1 чужой (бот-) джобы — без нового выравнивания.
 
     Сайт правит слова поверх неё (`apply_asr_words_edit`) и рендерит с
@@ -3472,6 +3472,11 @@ def clone_asr_preview_from_job(*, store: JobStore, source_job_id: str) -> Dict[s
     иначе правки молча потерялись бы — поэтому это явная ошибка.
     """
     src = str(source_job_id or "").strip()
+    key = str(clone_key or "").strip()
+    if not key:
+        # Без ключа клон был общим на все проекты сайта с этим роликом: правка слов в
+        # одном проекте меняла другой. Ключ (пользователь + проект) обязателен.
+        raise ValueError("clone_key is required (site user + project)")
     resume_state, _source = _load_job_resume_state(store, src) if src else ({}, "")
     stage1_asr = resume_state.get("stage1_asr")
     if not isinstance(stage1_asr, dict):
@@ -3496,7 +3501,7 @@ def clone_asr_preview_from_job(*, store: JobStore, source_job_id: str) -> Dict[s
         "stage1_alignment_backend": "local_ctc",
     }
     st, created = store.new_job(
-        request=request_payload, idempotency_key=f"asr-from-job:{src}"
+        request=request_payload, idempotency_key=f"asr-from-job:{src}:{key}"
     )
     if not created and st.status == "SUCCEEDED":
         return {"job_id": st.job_id, "status": st.status, "created": False}

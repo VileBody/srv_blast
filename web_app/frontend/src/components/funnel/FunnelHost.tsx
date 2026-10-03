@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { FunnelState, GenerationJob, RatingReason, VideoRating, VideoVersion } from '../../lib/types';
 import { useToast } from '../../contexts/ToastContext';
-import { funnelSeen, markFunnelSeen, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
+import { bindFunnelUser, funnelSeen, markFunnelSeen, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
 import { startNextBatch } from '../../stores/wizardStore';
-import { FunnelDialog } from './FunnelSheet';
+import { FunnelDialog, FunnelSheet } from './FunnelSheet';
 import { QuizPanel, UnlimitedPanel, quizPath, type QuizView, type UnlimitedStep } from './panels';
 import { FN_GLYPH, VideoRatingRow, type ActionStatus, type LadderTier, type MethodologyState } from './parts';
-import { Icon } from '../ui/kit';
+import { Button, Icon } from '../ui/kit';
+import { useModalCount } from '../ui/Modal';
+import { Skeleton } from '../ui/Skeleton';
 import { apiErrorCode, isUnlimitedTrack, trackTitleOf, useFunnelState, useTripwirePurchase } from './useFunnel';
 
 /*
@@ -74,7 +76,10 @@ function useMethodology(onSent: () => void) {
   return { state, url, botLink, get };
 }
 
-/** Квиз пошагово по ответам с бэка; общий для модалки A и шага модалки B. */
+/**
+ * Квиз пошагово по ответам с бэка; общий для модалки A и шага модалки B.
+ * `touched` — человек ответил хоть на один вопрос в этом окне (квиз «его», а не пройден где-то ещё).
+ */
 function useQuiz(funnel: FunnelState | undefined, onDone: (bridge: string | null) => void) {
   const queryClient = useQueryClient();
   const failed = useFunnelErrorToast();
@@ -103,10 +108,10 @@ function useQuiz(funnel: FunnelState | undefined, onDone: (bridge: string | null
   const view: QuizView | null = question
     ? { kind: 'question', question, index: Math.max(0, path.indexOf(question.id)), total: path.length, pendingId }
     : null;
-  return { view, answer };
+  return { view, answer, touched: Object.keys(answers).length > 0 || pendingId !== null };
 }
 
-function QuizModal({ jobId, onClose }: { jobId?: string; onClose: () => void }) {
+function QuizModal({ jobId, onClose, onDismiss }: { jobId?: string; onClose: () => void; onDismiss: () => void }) {
   const titleId = useId();
   const funnel = useFunnelState();
   const methodology = useMethodology(onClose);
@@ -116,7 +121,13 @@ function QuizModal({ jobId, onClose }: { jobId?: string; onClose: () => void }) 
   const view: QuizView | null = bridge !== undefined
     ? { kind: 'done', bridge, methodology: methodology.state, url: methodology.url, botLink: methodology.botLink }
     : quiz.view;
-  if (!view) return null;
+  // Спрашивать нечего (квиз уже пройден — тут или в боте, вопросов нет) или воронка
+  // недоступна — окно не держим открытым без UI: иначе стор считал бы квиз открытым,
+  // и безлимит ждал бы его вечно. Пройденный квиз заново с первого вопроса не начинаем.
+  const passed = Boolean(funnel.data?.survey.completed) && !quiz.touched && bridge === undefined;
+  const nothing = (!view || passed) && (funnel.isError || Boolean(funnel.data));
+  useEffect(() => { if (nothing) onDismiss(); }, [nothing, onDismiss]);
+  if (!view || nothing) return null;
   return (
     <FunnelDialog open onClose={onClose} labelledBy={titleId}>
       <QuizPanel titleId={titleId} view={view} onAnswer={quiz.answer} onSkip={onClose} onMethodology={methodology.get} onClose={onClose} />
@@ -126,7 +137,31 @@ function QuizModal({ jobId, onClose }: { jobId?: string; onClose: () => void }) 
 
 /* ------------------------------------------------------------------ безлимит */
 
-function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () => void }) {
+/** Окно безлимита, пока дочитываем воронку, оценки и ролики (или их не удалось загрузить). */
+function UnlimitedPending({ titleId, onClose, onRetry }: { titleId: string; onClose: () => void; onRetry?: () => void }) {
+  const { t } = useTranslation();
+  return (
+    <FunnelDialog open onClose={onClose} labelledBy={titleId}>
+      <FunnelSheet
+        titleId={titleId}
+        stepKey={onRetry ? 'error' : 'loading'}
+        title={t('funnel.badge')}
+        description={onRetry ? t('funnel.errors.load') : undefined}
+        onClose={onClose}
+        actions={onRetry ? <Button variant="primary" onClick={onRetry}>{t('funnel.errors.retry')}</Button> : undefined}
+      >
+        {!onRetry && (
+          <div className="flex flex-col gap-[12px]" aria-busy="true" aria-label={t('common.loading')}>
+            <Skeleton className="h-[44px]" />
+            <Skeleton className="h-[44px]" />
+          </div>
+        )}
+      </FunnelSheet>
+    </FunnelDialog>
+  );
+}
+
+function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; onClose: () => void; onDismiss: () => void }) {
   const { t } = useTranslation();
   const titleId = useId();
   const navigate = useNavigate();
@@ -138,6 +173,14 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
   const ratingsQuery = useQuery({
     queryKey: ['funnel-ratings', ctx.jobId],
     queryFn: () => api.funnelRatings(ctx.jobId ?? ''),
+    enabled: Boolean(ctx.jobId)
+  });
+  // Ролики — из батча: у плашки после перезагрузки их нет (ссылки подписанные, не храним),
+  // а в контексте с оценки 7+ — только готовые на тот момент. Ключ общий со страницей
+  // генерации: там батч уже в кэше и обновляется сам.
+  const jobQuery = useQuery({
+    queryKey: ['job', ctx.jobId],
+    queryFn: () => api.job(ctx.jobId ?? ''),
     enabled: Boolean(ctx.jobId)
   });
   const [index, setIndex] = useState(0);
@@ -152,19 +195,45 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
   const [unlockPending, setUnlockPending] = useState(false);
   const [tier, setTier] = useState<LadderTier | null>(null);
   const quiz = useQuiz(funnel, (b) => { setBridge(b); setIndex((i) => i + 1); });
+  // Сама больше не откроется: окно на экране. Ставим здесь, а не в момент «пора открыть» —
+  // окно, которое ждало квиз и пропало с перезагрузкой, откроется при следующем заходе.
+  useEffect(() => { if (ctx.jobId) markFunnelSeen(`unlimited:${ctx.jobId}`); }, [ctx.jobId]);
 
   const allRatings = { ...(ratingsQuery.data?.ratings ?? {}), ...ratings };
-  const videos = (ctx.videos ?? []).filter((video) => video.status === 'COMPLETED');
+  const videos = (jobQuery.data?.job.videos ?? ctx.videos ?? []).filter((video) => video.status === 'COMPLETED');
 
-  // Состав шагов фиксируется при открытии: иначе ответ в квизе выкидывал бы шаг из-под ног.
-  const plan = useRef<{ rate: boolean; quiz: boolean } | null>(null);
-  if (!plan.current && funnel && (!ctx.jobId || ratingsQuery.isFetched)) {
+  // Состав шагов фиксируется, когда данные доехали: иначе ответ в квизе выкидывал бы шаг
+  // из-под ног. План — состояние, а не ref: шаги пересчитываются, как только он появился
+  // (с ref окно, открытое до загрузки оценок, оставалось пустым навсегда).
+  const [plan, setPlan] = useState<{ rate: boolean; quiz: boolean } | null>(null);
+  const ready = Boolean(funnel)
+    && (!ctx.jobId || (ratingsQuery.isFetched && (Boolean(ctx.videos) || jobQuery.isFetched)));
+  if (!plan && ready && funnel) {
     const rated = ratingsQuery.data?.ratings ?? {};
-    plan.current = {
-      rate: videos.some((video) => !rated[video.id]),
-      quiz: !funnel.survey.completed
-    };
+    setPlan({ rate: videos.some((video) => !rated[video.id]), quiz: !funnel.survey.completed });
   }
+
+  // Без привязанного Telegram воронки нет (409 telegram_required): окно не держим и плашку не ставим.
+  const unavailable = apiErrorCode(funnelQuery.error) === 'telegram_required';
+  useEffect(() => { if (unavailable) onDismiss(); }, [unavailable, onDismiss]);
+
+  useEffect(() => {
+    if (!funnel) return;
+    if (funnel.actions.channel_subscribed) setChannel('done');
+    if (funnel.actions.manager_contacted) setManager('done');
+  }, [funnel]);
+
+  if (unavailable) return null;
+  if (!funnel || !plan) {
+    return (
+      <UnlimitedPending
+        titleId={titleId}
+        onClose={onClose}
+        onRetry={funnelQuery.isError ? () => void funnelQuery.refetch() : undefined}
+      />
+    );
+  }
+
   const maxScore = Math.max(0, ...Object.values(allRatings).map((r) => r.score));
   const high = maxScore >= 7 || videos.length === 0;
   // «Что докрутить»: причины у каждого ролика свои (как в карточке); шаг правит их
@@ -179,28 +248,24 @@ function UnlimitedModal({ ctx, onClose }: { ctx: UnlimitedContext; onClose: () =
       .catch(failed);
   };
 
-  const steps: UnlimitedStep[] = useMemo(() => {
-    if (!funnel || !plan.current) return [];
+  const steps = ((): UnlimitedStep[] => {
     const unl = funnel.unlimited;
     // Трек сверяем по хэшу: безлимит на другом треке никогда не показываем как «открыт».
     if (unl && isUnlimitedTrack(unl, { id: ctx.trackId, audioHash: ctx.audioHash }) === false) return ['otherTrack'];
     if (unl) return ['done'];
     const out: UnlimitedStep[] = [];
-    if (plan.current.rate) out.push('rate');
+    if (plan.rate) out.push('rate');
     if (!high) out.push('improve');
-    if (plan.current.quiz) out.push('quiz', 'methodology');
+    if (plan.quiz) out.push('quiz', 'methodology');
     if (high) out.push('pitch');
     out.push('actions', 'done');
-    return out;
-  }, [funnel, high, ctx.trackId, ctx.audioHash]);
+    // Квиз прошли в другом месте (модалка A, другая вкладка), пока окно открыто: шаги квиза
+    // впереди выкидываем, а не начинаем его заново с первого вопроса. Пройденное не трогаем,
+    // чтобы текущий шаг не съехал.
+    const quizGone = !quiz.touched && (funnel.survey.completed || !quiz.view);
+    return quizGone ? out.filter((step, at) => at < index || (step !== 'quiz' && step !== 'methodology')) : out;
+  })();
 
-  useEffect(() => {
-    if (!funnel) return;
-    if (funnel.actions.channel_subscribed) setChannel('done');
-    if (funnel.actions.manager_contacted) setManager('done');
-  }, [funnel]);
-
-  if (!funnel || steps.length === 0) return null;
   const step = steps[Math.min(index, steps.length - 1)];
   const trackTitle = ctx.trackTitle ?? funnel.unlimited?.trackTitle ?? '';
   const managerText = t('funnel.actions.managerMessage', { track: trackTitle, code: funnel.links.managerCode });
@@ -321,11 +386,32 @@ function useOpenJobOnTable() {
 /* ------------------------------------------------------------------ хост */
 
 export function FunnelHost() {
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
+  const userId = meQuery.data?.user.id ?? null;
+  // Синхронно, до страниц в этом же проходе рендера: funnelSeen смотрит в ключ этого аккаунта.
+  bindFunnelUser(userId);
+  const syncUser = useFunnelUi((state) => state.syncUser);
+  useEffect(() => { if (userId) syncUser(userId); }, [userId, syncUser]);
+
   const open = useFunnelUi((state) => state.open);
   const close = useFunnelUi((state) => state.close);
-  if (!open) return null;
-  if (open.kind === 'quiz') return <QuizModal jobId={open.jobId} onClose={close} />;
-  return <UnlimitedModal ctx={open.ctx} onClose={close} />;
+  const dismiss = useFunnelUi((state) => state.dismiss);
+  const modals = useModalCount((state) => state.count);
+  /*
+   * Чужая модалка на экране (обязательный профиль, диалоги визарда) — квиз и безлимит
+   * ждут её закрытия: в сторе окно уже открыто, рисуем его, когда экран свободен.
+   * `live` — наше окно уже на экране: его собственный FunnelDialog тоже в счётчике,
+   * и переход квиз → безлимит (из очереди) не должен снова ждать. Ставится прямо
+   * в рендере, а не эффектом: иначе +1 от своего же окна успевал его снять, и окно
+   * монтировалось-размонтировалось по кругу.
+   */
+  const [live, setLive] = useState(false);
+  if (open && !live && modals === 0) setLive(true);
+  if (!open && live) setLive(false);
+
+  if (!open || !live) return null;
+  if (open.kind === 'quiz') return <QuizModal jobId={open.jobId} onClose={close} onDismiss={dismiss} />;
+  return <UnlimitedModal key={open.ctx.jobId ?? open.ctx.source} ctx={open.ctx} onClose={close} onDismiss={dismiss} />;
 }
 
 /**
@@ -375,6 +461,13 @@ export function useQuizOnGeneration(job: GenerationJob | undefined) {
 }
 
 /**
+ * Батчи, которые в этой вкладке видели недоделанными. Их готовность — «на глазах»:
+ * модуль, а не ref, потому что страница генерации сама уводит на страницу батча,
+ * и готовность часто ловит уже другой экземпляр хука.
+ */
+const watchedRunning = new Set<string>();
+
+/**
  * Оценка под каждым роликом + момент модалки «безлимит»: первая оценка 7+ открывает её
  * сразу; если 7+ так и не было — открываем, когда готов последний ролик.
  */
@@ -402,7 +495,8 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
   const offer = useCallback((again = false) => {
     if (!job || !offerable) return;
     if (funnelSeen(`unlimited:${job.id}`) && !(again && badge?.jobId === job.id)) return;
-    markFunnelSeen(`unlimited:${job.id}`);
+    // «показано» ставит само окно, когда появилось на экране (UnlimitedModal): пока оно
+    // ждёт квиз или чужую модалку, повторный вызов в сторе ничего не меняет
     openUnlimited({
       source: 'results',
       jobId: job.id,
@@ -414,14 +508,25 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
     });
   }, [job, offerable, openUnlimited, projectId, track.id, track.audioHash, track.title, badge?.jobId]);
 
-  // «Последний ролик готов» — только про свежий батч: старые (в т.ч. сделанные до
-  // воронки) модалку сами не открывают, только оценка 7+.
-  // Частично упавший батч (FAILED, но часть роликов готова) — тоже «последний ролик готов».
-  const fresh = Boolean(job && Date.now() - Date.parse(job.completedAt ?? job.createdAt) < OFFER_FRESH_MS);
+  /*
+   * «Последний ролик готов» открывает модалку сама в двух случаях:
+   *  - батч закончился на глазах — в этой вкладке его видели недоделанным;
+   *  - это батч, с которым открыли страницу, и он свежий (< суток): ушёл до конца
+   *    рендера и вернулся. Старые батчи (в т.ч. сделанные до воронки) сами не открывают.
+   * Выбор другого батча пилюлей на странице проекта модалку не открывает — только оценка 7+.
+   * Частично упавший батч (FAILED, но часть роликов готова) — тоже «последний ролик готов».
+   */
+  const entry = useRef<{ projectId?: string; jobId: string } | null>(null);
+  if (job && (!entry.current || entry.current.projectId !== projectId)) entry.current = { projectId, jobId: job.id };
   const finished = batchFinished(job);
   useEffect(() => {
-    if (finished && fresh && ratingsQuery.isFetched) offer();
-  }, [finished, fresh, ratingsQuery.isFetched, offer]);
+    if (job && !finished) watchedRunning.add(job.id);
+  }, [job, finished]);
+  useEffect(() => {
+    if (!job || !finished || !ratingsQuery.isFetched) return;
+    const fresh = Date.now() - Date.parse(job.completedAt ?? job.createdAt) < OFFER_FRESH_MS;
+    if (watchedRunning.has(job.id) || (fresh && entry.current?.jobId === job.id)) offer();
+  }, [job, finished, ratingsQuery.isFetched, offer]);
 
   const save = (video: VideoVersion, score: number, reasons: RatingReason[]) => {
     setLocal((prev) => ({ ...prev, [video.id]: { score, reasons, comment: '' } }));

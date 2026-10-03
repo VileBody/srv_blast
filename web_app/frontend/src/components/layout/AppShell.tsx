@@ -13,6 +13,7 @@ import { SvgMaskIcon } from './SvgMaskIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { AppAnalytics } from '../analytics/AppAnalytics';
 import { FunnelBadge, FunnelHost } from '../funnel/FunnelHost';
+import { usePaymentReturn } from '../funnel/useFunnel';
 
 // The desktop screens were laid out for a 1600x900 canvas. Scaling from 1280x800
 // left a 1280x720 laptop at 90%, while the same page at browser zoom 80% got the
@@ -198,6 +199,8 @@ export function AppShell() {
   const [lastCompletedJob, setLastCompletedJob] = useState<string | null>(null);
   const notifiedJob = useRef<string | null>(null);
   const viewport = useAppViewport();
+  // возврат из банка после трипваера: на любую страницу /app (батч, визард, генерация)
+  usePaymentReturn();
 
   useLayoutEffect(() => {
     const root = document.documentElement;

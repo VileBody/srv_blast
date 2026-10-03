@@ -555,7 +555,7 @@ def api_auth_providers(request: Request) -> dict[str, Any]:
     }
 
 
-def _start_google(request: Request, *, link: bool) -> RedirectResponse:
+def _start_google(request: Request, *, link: bool, next_path: str | None = None) -> RedirectResponse:
     """Общий старт OAuth. `link=True` — привязка к текущему аккаунту, иначе вход.
 
     `state` кладём в сессию и сверяем на возврате — без него чужой сайт мог бы подсунуть
@@ -570,15 +570,24 @@ def _start_google(request: Request, *, link: bool) -> RedirectResponse:
     state = secrets.token_urlsafe(24)
     request.session["google_state"] = state
     request.session["google_link"] = link
+    # Куда вернуть после входа: кнопка уведомления вела на /app/…?unlimited=1, без
+    # сессии фронт ушёл на /login?next=… — после входа человек должен оказаться там же.
+    safe_next = security.safe_app_path(next_path)
+    if safe_next:
+        request.session["login_next"] = safe_next
+    else:
+        request.session.pop("login_next", None)
     if not link:
         analytics.track("signup_started", store.current_user_id(), {"provider": "google"})
     return RedirectResponse(google_auth.authorize_url(state), status_code=302)
 
 
 @app.get("/api/auth/google", tags=["auth"])
-def api_google_auth(request: Request) -> RedirectResponse:
-    """Старт входа через Google: уводим на экран выбора аккаунта."""
-    return _start_google(request, link=False)
+def api_google_auth(request: Request, next: str | None = None) -> RedirectResponse:
+    """Старт входа через Google: уводим на экран выбора аккаунта.
+
+    `next` — путь внутри /app, куда вернуть после входа (проверяется security.safe_app_path)."""
+    return _start_google(request, link=False, next_path=next)
 
 
 @app.get("/api/auth/google/link", tags=["auth"])
@@ -647,13 +656,14 @@ def api_google_callback(request: Request, code: str | None = None, state: str | 
     except ValueError:
         return RedirectResponse(f"{back}?auth=error", status_code=302)
 
+    next_path = security.safe_app_path(request.session.pop("login_next", None)) or "/app"
     request.session["user_id"] = user["id"]
     _sync_current_user(user)
     analytics.track("signup_completed", user["id"], {"source": "google"})
     # Колбэк — GET, а сброс состояния в middleware висит на мутирующих методах:
     # без явного вызова воркспейс нового аккаунта не попал бы в БД до первой правки.
     persistence.flush_user(user["id"])
-    return RedirectResponse(f"{_app_url()}/app", status_code=302)
+    return RedirectResponse(f"{_app_url()}{next_path}", status_code=302)
 
 
 @app.post("/api/auth/logout", tags=["auth"])
@@ -739,7 +749,12 @@ class HandoffPayload(BaseModel):
     # устарела» (410), а не 422 «не получилось открыть» (см. _handoff_token_ok).
     token: str = Field(default="", max_length=4096)
     # В браузере открыт другой аккаунт: входим по ссылке только после подтверждения.
+    # Для аккаунта без Telegram это ответ «Войти отдельно»: выйти из него и войти по
+    # Telegram (аккаунт найдётся по chat_id или заведётся).
     force: bool = False
+    # В браузере аккаунт без Telegram: ответ «Привязать» — chat_id из ссылки
+    # привязывается к нему, второй аккаунт не заводим.
+    link: bool = False
 
 
 _HANDOFF_TOKEN_LEN = (16, 128)
@@ -789,14 +804,17 @@ async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int)
         raise HTTPException(status_code=422, detail={"code": "handoff_invalid", "message": "Ссылка без трека."})
 
     billing = _billing_backend()
-    if record["kind"] == "track":
-        # Каждая ссылка на трек — свой токен (напоминание, перевыпуск, /site). Трек
-        # этого человека уже лежит в проекте из прошлой ссылки — ведём туда же.
-        reused = store.bot_track_project(audio_hash)
-        if reused is not None:
-            project, track = reused
-            await billing.set_handoff_result(token, {"projectId": project["id"], "trackId": track["id"]})
-            return {"projectId": project["id"], "track": track, "repeat": True}
+    remix_key = _remix_project_key(audio_hash, payload) if record["kind"] == "remix" else ""
+    # Каждая ссылка — свой токен (напоминание, перевыпуск, /site, вторая кнопка
+    # «Докрутить» под тем же батчем). Уже заведённый проект — ведём туда же: трек — по
+    # его хэшу, ролики бота — по хэшу трека и id джоб батча.
+    reused = store.bot_remix_project(remix_key) if remix_key else (
+        store.bot_track_project(audio_hash) if record["kind"] == "track" else None
+    )
+    if reused is not None:
+        project, track = reused
+        await billing.set_handoff_result(token, {"projectId": project["id"], "trackId": track["id"]})
+        return {"projectId": project["id"], "track": track, "repeat": True}
 
     try:
         # Слот трека здесь НЕ тратим: открыть ссылку «посмотреть» не значит взять трек.
@@ -815,6 +833,8 @@ async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int)
         audio_hash=audio_hash,
     )
     store.mark_bot_track_project(project["id"], audio_hash)
+    if remix_key:
+        store.mark_bot_remix_project(project["id"], remix_key)
     analytics.track("track_uploaded", store.current_user_id(), {"trackId": track["id"], "source": "bot_handoff"})
     await billing.set_handoff_result(token, {"projectId": project["id"], "trackId": track["id"]})
     out: dict[str, Any] = {"projectId": project["id"], "track": track, "repeat": False}
@@ -853,7 +873,21 @@ async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[st
             raise expired
         current = auth_store.user_by_id(str(request.session.get("user_id") or ""))
         owner = auth_store.get_user_by_chat(peek_tg)
-        link_current = current is not None and owner is None and not current.get("tgChatId")
+        can_link = current is not None and owner is None and not current.get("tgChatId")
+        if can_link and not payload.link and not payload.force:
+            # В браузере аккаунт без Telegram (вход через Google). Тот же это человек или
+            # нет, мы не знаем — молча привязывать нельзя. Спрашиваем ДО погашения ссылки:
+            # одноразовая (/site, напоминания) иначе сгорела бы на вопросе.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "handoff_link_account",
+                    "message": "В браузере открыт аккаунт без Telegram.",
+                    "email": str(current.get("email") or current.get("googleEmail") or ""),
+                    "name": str(current.get("name") or ""),
+                },
+            )
+        link_current = can_link and payload.link
         if current is not None and not link_current and (owner or {}).get("id") != current["id"] and not payload.force:
             # Открыт ДРУГОЙ аккаунт: молча переключать нельзя — фронт спросит
             # «Войти как другой аккаунт?» и повторит запрос с force.
@@ -912,6 +946,17 @@ async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[st
         return out
 
 
+def _remix_project_key(audio_hash: str, payload: dict[str, Any]) -> str:
+    """Ключ проекта «Докрутить на сайте»: трек + ролики батча бота (порядок не важен).
+
+    Без ключа две remix-ссылки на один батч заводили два проекта, а клон слов ASR у них
+    был общий — правка слов в одном проекте меняла другой."""
+    job_ids = sorted({str(j) for j in payload.get("jobIds") or [] if str(j or "").strip()})
+    if not job_ids:
+        return ""
+    return hashlib.sha256(f"{audio_hash}|{','.join(job_ids)}".encode()).hexdigest()
+
+
 async def _remix_import_or_error(payload: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
     """{"wizardImport": …} или {"wizardImportError": текст}. Ошибка не роняет вход по
     ссылке: визард откроется по-старому (трек, окно, текст), а человек увидит, почему
@@ -934,7 +979,7 @@ def _remix_edit_states(job_ids: list[str]) -> list[dict[str, Any]]:
             states.append(backend.job_edit_state(job_id))
         except Exception as exc:  # один ролик без состояния не отменяет остальные
             logger.warning("bot_remix_edit_state_unavailable job=%s err=%s", job_id, exc)
-            states.append({"job_id": job_id, "status": "UNAVAILABLE"})
+            states.append({"job_id": job_id, "status": bot_import.STATUS_UNAVAILABLE})
     return states
 
 
@@ -946,8 +991,11 @@ async def _remix_wizard_import(payload: dict[str, Any], project: dict[str, Any])
         states, backend.remix_catalog(),
         snapshot=dict(payload.get("settings") or {}), draft=dict(payload.get("draft") or {}),
     )
+    # Клон слов ASR — свой на каждый проект: правки слов на таймлайне пишутся в него.
+    clone_key = f"{store.current_user_id()}:{project['projectId']}"
     return await _finish_remix_import(imported, project.get("track") or {},
-                                      asr_job=backend.asr_preview_from_job, asr_state=backend.asr_preview_state)
+                                      asr_job=lambda src: backend.asr_preview_from_job(src, clone_key=clone_key),
+                                      asr_state=backend.asr_preview_state)
 
 
 async def _finish_remix_import(imported: dict[str, Any], track: dict[str, Any], *, asr_job, asr_state) -> dict[str, Any]:
@@ -2214,45 +2262,37 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     credits_total = store.video_limit()
     # Повтор по тому же ключу возвращает уже созданный джоб — и не должен упираться в лимит
     replay = payload.idempotencyKey and payload.idempotencyKey in store.JOB_IDEMPOTENCY
-    mock_batch_mode = "credits"
-    if RUNTIME.backend == "mock" and credits_total is not None and not replay:
-        credits_left = credits_total - store.SUBSCRIPTION["creditsUsed"]
-        mock_batch_mode = await _plan_generation_or_402(
-            _funnel_tg_id(),
-            str((stage_data.get("track") or {}).get("audioHash") or ""),
-            payload.videosToGenerate,
-            credits_left,
-        )
-    try:
-        job = store.create_job(
-            project_id,
-            stage_data,
-            payload.videosToGenerate,
-            payload.idempotencyKey,
-            enqueue_mock=RUNTIME.backend == "mock",
-        )
-    except ValueError as exc:
-        # Раскладка батча не сошлась (пул, варианты FX, устаревшая раскадровка) — это
-        # ошибка вводных, которую человек может поправить, а не 500.
-        raise HTTPException(422, detail=str(exc)) from exc
-    if RUNTIME.backend == "mock" and not replay:
+    if RUNTIME.backend == "mock":
+        # Проверка квоты и запись батча — под одним замком на человека (как
+        # claim_track_batch в проде): два сабмита подряд не уходят бесплатно оба.
+        tg_mock = _funnel_tg_id()
         mock_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
-        if mock_hash:
-            await funnel.repo().record_track_batch(
-                tg_id=_funnel_tg_id(), audio_hash=mock_hash, job_id=job["id"],
-                videos=int(job.get("versions") or payload.videosToGenerate), mode=mock_batch_mode,
-            )
+        async with funnel.repo().batch_lock(tg_mock):
+            mock_batch_mode = "credits"
+            if credits_total is not None and not replay:
+                credits_left = credits_total - store.SUBSCRIPTION["creditsUsed"]
+                mock_batch_mode = await _plan_generation_or_402(
+                    tg_mock, mock_hash, payload.videosToGenerate, credits_left,
+                )
+            job = _create_job_or_422(project_id, stage_data, payload)
+            if not replay and mock_hash:
+                await funnel.repo().record_track_batch(
+                    tg_id=tg_mock, audio_hash=mock_hash, job_id=job["id"],
+                    videos=int(job.get("versions") or payload.videosToGenerate), mode=mock_batch_mode,
+                )
+    else:
+        job = _create_job_or_422(project_id, stage_data, payload)
     if RUNTIME.backend == "production":
         live_job = store.JOBS[job["id"]]
         try:
             _production_backend().validate_job(live_job)
         except (ValueError, RuntimeError) as exc:
-            store.rollback_job_creation(live_job["id"])
+            _rollback_unless_enqueued(live_job["id"])
             raise HTTPException(422, detail=str(exc)) from exc
         tg_id = _telegram_chat_id()
         track_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
         if not track_hash:
-            store.rollback_job_creation(live_job["id"])
+            _rollback_unless_enqueued(live_job["id"])
             raise HTTPException(status_code=422, detail="Uploaded track has no content hash")
         # Примерка субтитров: ещё считается → «подожди» ДО резерва кредитов и списания
         # трека, чтобы откатывать было нечего. Упала/протухла → reuse снимается явно
@@ -2262,32 +2302,35 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         try:
             await run_in_threadpool(_production_backend().prepare_asr_reuse, live_job)
         except AsrPreviewPending as exc:
-            store.rollback_job_creation(live_job["id"])
+            _rollback_unless_enqueued(live_job["id"])
             raise HTTPException(
                 status_code=409,
                 detail={"code": "asr_preview_pending", "message": str(exc)},
             ) from exc
         except Exception as exc:
-            store.rollback_job_creation(live_job["id"])
+            _rollback_unless_enqueued(live_job["id"])
             raise _production_error(exc) from exc
         videos_n = len(live_job.get("videos") or [])
         # Безлимит на трек (docs/BOT_TO_WEB_FLOW.md, раздел 5): батч по открытому
-        # треку идёт без кредитов, пока хватает квоты; иначе — обычный путь.
+        # треку идёт без кредитов, пока хватает квоты; иначе — обычный путь. Повтор
+        # сабмита / дозапуск частично поставленного батча берёт уже записанный режим.
         try:
-            credits_left = await _billing_backend().balance(tg_id)
-            batch_mode = await _plan_generation_or_402(tg_id, track_hash, videos_n, credits_left)
+            batch_mode = await _start_batch_or_402(tg_id, track_hash, live_job["id"], videos_n)
         except HTTPException:
-            store.rollback_job_creation(live_job["id"])
+            _rollback_unless_enqueued(live_job["id"])
             raise
+        except Exception as exc:
+            _rollback_unless_enqueued(live_job["id"])
+            raise _production_error(exc) from exc
         free_batch = batch_mode == "free"
         if free_batch:
             live_job["freeUnlimited"] = True
         try:
             if not free_batch:
                 await _billing_backend().reserve(tg_id, live_job["id"], videos_n)
-            await funnel.repo().record_track_batch(
-                tg_id=tg_id, audio_hash=track_hash, job_id=live_job["id"], videos=videos_n, mode=batch_mode,
-            )
+                await funnel.repo().record_track_batch(
+                    tg_id=tg_id, audio_hash=track_hash, job_id=live_job["id"], videos=videos_n, mode=batch_mode,
+                )
             await _billing_backend().consume_track(tg_id, track_hash)
             from . import production_monitor
             await production_monitor.enqueue_job(live_job)
@@ -2301,11 +2344,11 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
 
             if isinstance(exc, InsufficientCredits):
                 await funnel.repo().drop_track_batch(live_job["id"])
-                store.rollback_job_creation(live_job["id"])
+                _rollback_unless_enqueued(live_job["id"])
                 raise HTTPException(status_code=402, detail=await _credits_exhausted_detail(tg_id, exc.available)) from exc
             if isinstance(exc, TrackQuotaExhausted):
                 await _undo()
-                store.rollback_job_creation(live_job["id"])
+                _rollback_unless_enqueued(live_job["id"])
                 raise HTTPException(status_code=402, detail="Лимит уникальных треков исчерпан") from exc
             partial = any(
                 video.get("orchestratorJobId")
@@ -2316,7 +2359,7 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
                 persistence.save_job(live_job["id"])
             else:
                 await _undo()
-                store.rollback_job_creation(live_job["id"])
+                _rollback_unless_enqueued(live_job["id"])
             raise _production_error(exc) from exc
         live_job.pop("enqueueError", None)
         live_job["productionNotifications"] = True
@@ -2324,6 +2367,57 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         job = store.get_job(live_job["id"]) or live_job
     analytics.track("generation_started", store.current_user_id(), {"jobId": job["id"], "videos": job["versions"], "projectId": project_id})
     return {"job": job, "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
+
+
+def _create_job_or_422(project_id: str, stage_data: dict[str, Any], payload: SubmitPayload) -> dict[str, Any]:
+    try:
+        return store.create_job(
+            project_id,
+            stage_data,
+            payload.videosToGenerate,
+            payload.idempotencyKey,
+            enqueue_mock=RUNTIME.backend == "mock",
+        )
+    except ValueError as exc:
+        # Раскладка батча не сошлась (пул, варианты FX, устаревшая раскадровка) — это
+        # ошибка вводных, которую человек может поправить, а не 500.
+        raise HTTPException(422, detail=str(exc)) from exc
+
+
+def _rollback_unless_enqueued(job_id: str) -> None:
+    """Откатить джоб, который не ушёл в работу.
+
+    Частично поставленный батч (часть роликов уже в оркестраторе) не откатывается
+    никогда: он сохранён с `enqueueError`, и повтор того же сабмита дозапускает его с
+    первого недостающего ролика. Раньше повтор такого батча падал в
+    `rollback_job_creation` → ValueError → 500 вместо понятного ответа."""
+    job = store.JOBS.get(job_id)
+    if job is not None and any(video.get("orchestratorJobId") for video in job.get("videos") or []):
+        return
+    store.rollback_job_creation(job_id)
+
+
+async def _start_batch_or_402(tg_id: int, track_hash: str, job_id: str, videos: int) -> str:
+    """Режим батча («free» / «credits») с записью бесплатного батча; отказ — 402 с причиной."""
+    try:
+        return await funnel.start_batch(
+            tg_id, track_hash, job_id, videos, credits_left=lambda: _billing_backend().balance(tg_id),
+        )
+    except funnel.TrackLimitError as exc:
+        raise await _track_limit_http(tg_id, exc) from exc
+    except funnel.CreditsExhausted as exc:
+        raise HTTPException(status_code=402, detail=await _credits_exhausted_detail(tg_id, exc.available)) from exc
+
+
+async def _track_limit_http(tg_id: int, exc: "funnel.TrackLimitError") -> HTTPException:
+    """402 по квоте трека. Отказ из-за перезарядки или суточного лимита — это и есть
+    первый реальный упор: здесь открывается окно трипваера (сутки)."""
+    analytics.track("limit_hit", store.current_user_id(), {"limit": "track_quota", "reason": exc.code})
+    offer = await funnel.tripwire_offer(tg_id, exc.quota)
+    return HTTPException(
+        status_code=402,
+        detail={"code": exc.code, "message": exc.message, "quota": funnel.quota_view(exc.quota), "tripwireOffer": offer},
+    )
 
 
 def _billing_email() -> str:
@@ -2365,11 +2459,7 @@ async def _plan_generation_or_402(tg_id: int, track_hash: str, videos: int, cred
     try:
         mode, _quota = await funnel.plan_generation(tg_id, track_hash, videos, credits_left)
     except funnel.TrackLimitError as exc:
-        analytics.track("limit_hit", store.current_user_id(), {"limit": "track_quota", "reason": exc.code})
-        raise HTTPException(
-            status_code=402,
-            detail={"code": exc.code, "message": exc.message, "quota": funnel.quota_view(exc.quota)},
-        ) from exc
+        raise await _track_limit_http(tg_id, exc) from exc
     if mode == "credits" and videos > credits_left:
         raise HTTPException(status_code=402, detail=await _credits_exhausted_detail(tg_id, credits_left))
     return mode
@@ -2404,10 +2494,17 @@ class FunnelTrackPayload(BaseModel):
     trackId: str = Field(min_length=1, max_length=64)
 
 
+class FunnelTripwireOfferPayload(BaseModel):
+    # трек страницы: безлимит открыт на другом треке — тоже упор (экран «другой трек»)
+    trackId: str = Field(default="", max_length=64)
+
+
 class FunnelTripwirePayload(BaseModel):
     trackId: str = Field(min_length=1, max_length=64)
-    # куда вернуть после оплаты: только путь внутри приложения, не внешний адрес
-    returnPath: str = Field(default="/app", max_length=200, pattern=r"^/app(/[A-Za-z0-9_\-/]*)?$")
+    # куда вернуть после оплаты: только путь внутри приложения, не внешний адрес.
+    # Query можно (?project=… — визард вернётся в свой проект), но без `//`, `\`,
+    # `#`, `@` и схем: адрес собирается как APP_URL + путь, наружу он не уведёт.
+    returnPath: str = Field(default="/app", max_length=300, pattern=security.APP_RETURN_PATH_RE)
     idempotencyKey: str = Field(min_length=8, max_length=128)
 
 
@@ -2514,6 +2611,15 @@ async def api_funnel_quota(trackId: str) -> dict[str, Any]:
     return {"quota": funnel.quota_view(q) if q else None}
 
 
+@app.post("/api/funnel/tripwire/offer", tags=["funnel"])
+async def api_funnel_tripwire_offer(payload: FunnelTripwireOfferPayload) -> dict[str, Any]:
+    """Показали окно перезарядки у кружка или экран «безлимит на другом треке»: открыть
+    окно трипваера (сутки), если человек и правда упёрся в лимит. Ответ — само окно
+    (или null, если упора нет / предложение уже закончилось)."""
+    audio_hash = _track_hash_for(payload.trackId)[1] if payload.trackId else ""
+    return {"tripwireOffer": await funnel.open_tripwire_offer(_funnel_tg_id(), audio_hash)}
+
+
 @app.post("/api/funnel/tripwire", tags=["funnel"])
 async def api_funnel_tripwire(payload: FunnelTripwirePayload) -> dict[str, Any]:
     if RUNTIME.backend != "production":
@@ -2523,8 +2629,9 @@ async def api_funnel_tripwire(payload: FunnelTripwirePayload) -> dict[str, Any]:
         )
     _, audio_hash = _track_hash_for(payload.trackId)
     tg_id = _telegram_chat_id()
-    # Трипваер — на любой трек; но предложение живёт сутки с первого упора в лимит.
-    if await funnel.tripwire_offer(tg_id, None) is None:
+    # Трипваер — на любой трек; предложение живёт сутки с первого упора в лимит. Покупка
+    # с экрана «безлимит уже на другом треке» сама и есть такой упор — окно открывается.
+    if await funnel.open_tripwire_offer(tg_id, audio_hash) is None:
         raise HTTPException(
             status_code=410,
             detail={"code": "tripwire_expired", "message": "Предложение уже закончилось."},

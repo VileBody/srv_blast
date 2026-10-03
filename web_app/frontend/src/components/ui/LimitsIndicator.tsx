@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { isSubscriptionPlan } from '../../lib/types';
 import { cssZoom } from '../../lib/zoom';
@@ -135,11 +135,18 @@ export function LimitsIndicator({
   useEffect(() => () => { if (closeTimer.current) window.clearTimeout(closeTimer.current); }, []);
   const [anchor, setAnchor] = useState<{ host: HTMLElement; x: number; y: number } | null>(null);
   const ringRef = useRef<HTMLSpanElement>(null);
+  const queryClient = useQueryClient();
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
   const funnelQuery = useFunnelState();
   const tripwire = useTripwirePurchase();
   const openUnlimited = useFunnelUi((state) => state.openUnlimited);
+  const funnelOpen = useFunnelUi((state) => Boolean(state.open));
+  const badge = useFunnelUi((state) => state.badge);
+  // тот же запрос, что у шапки (AppShell): идёт ли сейчас батч
+  const activeJobQuery = useQuery({ queryKey: ['active-job'], queryFn: api.activeJob, refetchInterval: 5000 });
+  const batchRunning = Boolean(activeJobQuery.data?.job);
   const [closedKey, setClosedKey] = useState<string | null>(null);
+  const [shownKey, setShownKey] = useState<string | null>(null);
 
   const sub = meQuery.data?.subscription;
   const videosTotal = sub?.creditsTotal ?? null;
@@ -152,16 +159,37 @@ export function LimitsIndicator({
   const creditsOut = videosTotal !== null && videosUsed >= videosTotal;
 
   // Окно у кружка: перезарядка безлимита или кончились бесплатные ролики (без безлимита).
-  const popout: { variant: PopoutVariant; key: string } | null = quota && !quota.allowed && !quota.tripwire
+  // Перезарядка — только у трека безлимита (или где трека страницы нет): в визарде другого
+  // трека окно про «Нет любви» было бы чужим.
+  const sameTrack = !track || isUnlimitedTrack(unlimited, track) !== false;
+  const popout: { variant: PopoutVariant; key: string } | null = quota && !quota.allowed && !quota.tripwire && sameTrack
     ? { variant: quota.reason === 'daily_limit' ? 'daily' : 'cooldown', key: `limit:${quota.availableAt}` }
     : funnel && !funnel.hasPaid && creditsOut && (!unlimited || isUnlimitedTrack(unlimited, track) === false)
       ? { variant: 'creditsOut', key: unlimited ? `credits-out:${track?.audioHash ?? track?.id}` : 'credits-out' }
       : null;
-  // «Ролики кончились» напоминаем раз в сутки, а не один раз навсегда; окно перезарядки
-  // и так своё на каждое исчерпание (ключ с availableAt).
+  // «Ролики кончились» не перебивает воронку: пока батч собирается (бесплатные 5 роликов
+  // уходят разом при запуске), пока открыта модалка воронки и пока в углу висит плашка
+  // безлимита — призыв уже на экране.
+  const quiet = funnelOpen || (popout?.variant === 'creditsOut' && (batchRunning || Boolean(badge)));
+  // Один раз на исчерпание: «видел» ставим при первом показе, а не по крестику — иначе окно
+  // всплывало бы на каждой странице с кружком. «Ролики кончились» — раз в сутки.
   const showPopout = Boolean(
-    popout && popout.key !== closedKey && !funnelSeen(popout.key, popout.variant === 'creditsOut' ? CREDITS_OUT_REPEAT_MS : undefined)
+    popout && !quiet && popout.key !== closedKey && (
+      popout.key === shownKey || !funnelSeen(popout.key, popout.variant === 'creditsOut' ? CREDITS_OUT_REPEAT_MS : undefined)
+    )
   );
+  useEffect(() => {
+    if (!showPopout || !popout || popout.key === shownKey) return;
+    markFunnelSeen(popout.key);
+    setShownKey(popout.key);
+    // Первый упор в перезарядку открывает 24-часовое окно трипваера: показ окна — это и
+    // есть упор. Не открылось — кнопка покупки ответит понятной ошибкой, окно не прячем.
+    if (popout.variant !== 'creditsOut' && funnel && !funnel.tripwireOffer) {
+      api.funnelTripwireOffer(track?.id)
+        .then(() => queryClient.invalidateQueries({ queryKey: ['funnel-state'] }))
+        .catch(() => {});
+    }
+  }, [showPopout, popout, shownKey, funnel, track?.id, queryClient]);
   const closePopout = () => {
     if (!popout) return;
     markFunnelSeen(popout.key);

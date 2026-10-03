@@ -286,22 +286,53 @@ def test_other_account_in_the_browser_needs_confirmation(client, monkeypatch) ->
     assert tc.post("/api/auth/handoff", json={"token": TOKEN}).status_code == 409
 
 
-def test_account_without_telegram_gets_the_chat_linked(client, monkeypatch) -> None:
-    """В браузере аккаунт без Telegram (Google): ссылка из бота привязывает chat_id к
-    нему, а не заводит второй аккаунт."""
+def _google_session(tc, main, billing) -> dict:
+    """Сессия аккаунта без Telegram (как заведённый через Google)."""
+    tc.post("/api/auth/handoff", json={"token": TOKEN})
+    google_user = main.auth_store.get_user_by_chat(CHAT)
+    google_user["tgChatId"] = None
+    google_user["email"] = "lena@example.com"
+    billing.record = {**_track_record(), "tg_id": CHAT2}
+    return google_user
+
+
+def test_account_without_telegram_is_asked_before_linking(client, monkeypatch) -> None:
+    """В браузере аккаунт без Telegram (Google): молча chat_id не привязываем — сперва
+    вопрос «Привязать Telegram к аккаунту …?», и одноразовая ссылка на нём не тратится."""
     tc, main = client
     billing = _Billing(_track_record())
     _production(monkeypatch, main, billing)
-    tc.post("/api/auth/handoff", json={"token": TOKEN})
-    google_user = main.auth_store.get_user_by_chat(CHAT)
-    google_user["tgChatId"] = None  # как аккаунт, заведённый через Google
-    billing.record = {**_track_record(), "tg_id": CHAT2}
+    google_user = _google_session(tc, main, billing)
+    redeemed = billing.record["redeem_count"]
 
-    body = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+    r = tc.post("/api/auth/handoff", json={"token": TOKEN})
+
+    assert r.status_code == 409
+    detail = r.json()["detail"]
+    assert detail["code"] == "handoff_link_account" and detail["email"] == "lena@example.com"
+    assert billing.record["redeem_count"] == redeemed
+    assert main.auth_store.get_user_by_chat(CHAT2) is None
+
+    body = tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True}).json()
 
     assert body["created"] is False
     linked = main.auth_store.get_user_by_chat(CHAT2)
     assert linked["id"] == google_user["id"] and linked["tgVerified"] is True
+
+
+def test_account_without_telegram_can_log_in_separately(client, monkeypatch) -> None:
+    """«Войти отдельно»: из аккаунта без Telegram выходим, по Telegram заводится свой."""
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing)
+    google_user = _google_session(tc, main, billing)
+
+    body = tc.post("/api/auth/handoff", json={"token": TOKEN, "force": True}).json()
+
+    assert body["created"] is True
+    separate = main.auth_store.get_user_by_chat(CHAT2)
+    assert separate["id"] != google_user["id"]
+    assert google_user.get("tgChatId") is None  # Google-аккаунт не тронут
 
 
 # ── «Докрутить на сайте»: монтаж ролика сразу на столе ─────────────────────────
@@ -312,6 +343,7 @@ class _RemixBackend(_Backend):
     def __init__(self, *, clips_gone: bool = False) -> None:
         super().__init__()
         self.cloned: list[str] = []
+        self.clone_keys: list[str] = []
         self.picks: list[dict[str, Any]] = []
         self.clips_gone = clips_gone
 
@@ -350,8 +382,9 @@ class _RemixBackend(_Backend):
                                       for _, name in sorted(v["pins"].items(), key=lambda kv: int(kv[0]))], "plan": {}}
                            for v in videos]}
 
-    def asr_preview_from_job(self, source_job_id: str) -> str:
+    def asr_preview_from_job(self, source_job_id: str, *, clone_key: str) -> str:
         self.cloned.append(source_job_id)
+        self.clone_keys.append(clone_key)
         return "asr-clone-1"
 
     def asr_preview_state(self, job_id: str) -> dict[str, Any]:
@@ -388,8 +421,9 @@ def test_remix_link_opens_the_whole_montage_on_the_table(client, monkeypatch) ->
     ]
     assert [c["fileName"] for c in imp["storyboard"][1]["clips"]] == ["bot-b-0.mp4", "bot-b-1.mp4", "bot-b-2.mp4"]
     assert imp["storyboard"][0]["plan"]["clip_start_abs"] == 10.0
-    # слова — клон Stage 1 бота, примерка готова под ключом трек+окно+текст сайта
+    # слова — клон Stage 1 бота (свой на проект), примерка под ключом трек+окно+текст сайта
     assert backend.cloned == ["bot-a"]
+    assert backend.clone_keys[0].endswith(f":{body['projectId']}")
     assert imp["asr"]["jobId"] == "asr-clone-1" and imp["asr"]["status"] == "COMPLETED"
     _as_user(main)
     key = main.asr_preview.preview_key(body["track"]["s3Key"], 10.0, 20.0, "раз два")
@@ -439,3 +473,42 @@ def test_dev_remix_link_plays_the_flow_in_mock(client, monkeypatch) -> None:
     assert imp["timing"] == {"from": "00:10:23", "to": "00:21:99"}
     assert len(imp["storyboard"]) == 2 and imp["asr"]["status"] == "COMPLETED"
     assert imp["frames"] == {"0": "rounded", "1": "rounded"}
+
+
+def test_second_remix_link_for_the_same_batch_reuses_the_project(client, monkeypatch) -> None:
+    """Вторая кнопка «Докрутить на сайте» под тем же батчем — новый токен, но тот же
+    проект: второй проект делил бы с первым клон слов ASR."""
+    tc, main = client
+    billing, backend = _Billing(_remix_record(["bot-a", "bot-b"])), _RemixBackend()
+    _production(monkeypatch, main, billing, backend)
+    first = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+    billing.record = _remix_record(["bot-b", "bot-a"])  # свежий токен, тот же батч
+
+    second = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+
+    assert second["projectId"] == first["projectId"] and second["repeat"] is True
+    assert "wizardImport" not in second  # правки на сайте не затираются
+    assert backend.cloned == ["bot-a"]  # клон слов не пересоздаётся
+    _as_user(main)
+    assert [p["id"] for p in main.store.ws().projects] == [first["projectId"]]
+    # другой батч того же трека — свой проект
+    billing.record = _remix_record(["bot-c"])
+    third = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+    assert third["projectId"] != first["projectId"] and third["repeat"] is False
+
+
+def test_remix_with_unreachable_edit_state_says_unavailable(client, monkeypatch) -> None:
+    """Ручка состояния монтажа не ответила (старый оркестратор, сбой) — это не «ролик не
+    собрался»: человек видит, что монтаж сейчас недоступен, визард — по черновику."""
+    tc, main = client
+    backend = _RemixBackend()
+
+    def gone(job_id: str) -> dict[str, Any]:
+        raise RuntimeError("orchestrator /jobs/x/edit_state failed status=404")
+
+    backend.job_edit_state = gone
+    _production(monkeypatch, main, _Billing(_remix_record(["bot-a", "bot-b"])), backend)
+    body = tc.post("/api/auth/handoff", json={"token": TOKEN}).json()
+    assert "wizardImport" not in body
+    assert body["wizardImportError"] == main.bot_import.UNAVAILABLE_TEXT
+    assert body["draft"]["clipEnd"] == 20.0

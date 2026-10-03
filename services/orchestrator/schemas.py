@@ -539,6 +539,10 @@ class AsrPreviewFromJobRequest(BaseModel):
     выравнивания, а рендер сайта переиспользует их через `reuse_text_job_id`.
     """
     source_job_id: str = Field(min_length=1, max_length=128)
+    # Чей клон: сайт передаёт пользователя + проект. Один и тот же ролик бота можно
+    # открыть в разных проектах — у каждого должен быть свой клон слов, иначе правки
+    # слов в одном проекте меняли бы другой.
+    clone_key: str = Field(min_length=1, max_length=200)
 
 
 class JobEditStateResponse(BaseModel):

@@ -11,7 +11,7 @@ import { BatchLayout, BatchTrack, GenerationsCard, PreviewColumn, TrackCard } fr
 import { startNextBatch } from '../stores/wizardStore';
 import { trackOfJob, useVideoRatings } from '../components/funnel/FunnelHost';
 import { useFunnelState } from '../components/funnel/useFunnel';
-import { markFunnelSeen, useFunnelUi } from '../stores/funnelUi';
+import { useFunnelUi } from '../stores/funnelUi';
 
 /** Батч видео (Figma W36, состояние с лимитами — W47). Раскладка общая с W51 (генерация). */
 export function ProjectDetailPage() {
@@ -44,7 +44,6 @@ export function ProjectDetailPage() {
     if (!unlimitedParam || !selectedJob || !funnelReady) return;
     if (funnelQuery.data && !funnelQuery.data.hasPaid) {
       const track = trackOfJob(selectedJob);
-      markFunnelSeen(`unlimited:${selectedJob.id}`);
       openUnlimited({
         source: 'results',
         jobId: selectedJob.id,
@@ -59,18 +58,7 @@ export function ProjectDetailPage() {
     setSearch(search, { replace: true });
   }, [unlimitedParam, selectedJob, funnelReady, funnelQuery.data, openUnlimited, id, search, setSearch]);
 
-  // Возврат из банка после трипваера 399 ₽ (оплату подтверждает бот, лимиты снимает credits_db)
-  useEffect(() => {
-    const payment = search.get('payment');
-    if (!payment) return;
-    push(payment === 'success'
-      ? { variant: 'success', title: t('funnel.tripwire.paid') }
-      : { variant: 'error', title: t('funnel.tripwire.failed') });
-    void queryClient.invalidateQueries({ queryKey: ['funnel-state'] });
-    void queryClient.invalidateQueries({ queryKey: ['me'] });
-    search.delete('payment');
-    setSearch(search, { replace: true });
-  }, [search, setSearch, push, t, queryClient]);
+  // Возврат из банка после трипваера (?payment=…) разбирает AppShell (usePaymentReturn).
 
   const activateMutation = useMutation({
     mutationFn: () => api.activateProject(id ?? ''),

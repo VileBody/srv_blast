@@ -501,15 +501,19 @@ class ProductionBackend:
             )
         return dict(response.json())
 
-    def asr_preview_from_job(self, source_job_id: str) -> str:
+    def asr_preview_from_job(self, source_job_id: str, *, clone_key: str) -> str:
         """Примерка субтитров со словами джобы бота, без нового выравнивания.
 
         Готова сразу (SUCCEEDED): дальше это обычная asr_preview-джоба — правки слов,
         `reuse_text_job_id` в рендере. Источник не local_ctc — отказ оркестратора (422).
+        `clone_key` — чей это клон (пользователь + проект сайта): у каждого проекта свой,
+        иначе правки слов в одном проекте меняли бы слова в другом.
         """
+        if not str(clone_key or "").strip():
+            raise ProductionBackendError("asr clone requires a clone_key (user + project)")
         response = self._http.post(
             f"{self.config.orchestrator_url}/asr/preview/from-job",
-            json={"source_job_id": str(source_job_id)},
+            json={"source_job_id": str(source_job_id), "clone_key": str(clone_key)},
         )
         if response.status_code >= 300:
             raise ProductionBackendError(

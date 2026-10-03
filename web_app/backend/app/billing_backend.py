@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .runtime import SETTINGS
+from .security import with_query_param
 
 
 class BillingError(RuntimeError):
@@ -511,8 +512,9 @@ class BillingBackend:
             plan=TRIPWIRE_PLAN,
             email=email,
             idempotency_key=idempotency_key,
-            success_url=f"{back}?payment=success",
-            fail_url=f"{back}?payment=failed",
+            # путь может уже нести query (?project=…): параметр оплаты дописываем к нему
+            success_url=with_query_param(back, "payment", "success"),
+            fail_url=with_query_param(back, "payment", "failed"),
             track_hash=audio_hash,
         )
 

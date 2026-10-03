@@ -55,14 +55,15 @@ class _DB:
         self.tokens: list[tuple[int, str, dict]] = []
         self.events: list[tuple[int, str, str]] = []
 
-    async def site_handoff_reminder_rows(self):
+    async def site_handoff_reminder_rows(self, *, chain_days, lookback_days):
         return self.handoffs
 
-    async def track_unlimited_rows(self):
-        return self.unlimited
+    async def track_unlimited_rows(self, *, active_hours):
+        return [{**row, "batches": self.batches.get(row["tg_id"], [])} for row in self.unlimited]
 
-    async def list_track_batches(self, tg_id, audio_hash):
-        return self.batches.get(tg_id, [])
+    async def purge_expired_web_handoffs(self, older_than_days):
+        self.purged = getattr(self, "purged", []) + [older_than_days]
+        return 0
 
     async def idle_generation_rows(self):
         return self.idle
@@ -257,3 +258,70 @@ def test_remix_offer_reuses_the_fork_hash_for_the_same_file(tmp_path: Path, monk
     monkeypatch.setattr(app, "_sha256_file", lambda path: (_ for _ in ()).throw(AssertionError("rehash")))
     asyncio.run(app._offer_site_remix_best_effort(bot=bot, st=st, source=app._site_remix_source(st)))
     assert db.tokens[0][2]["audioHash"] == "forkhash"
+
+
+# ── ревью: один на тик, только бесплатным, последний шаг no_gen, чистка ссылок ──
+
+def test_one_message_per_person_per_tick_and_tripwire_goes_first():
+    """После ночи у человека наступили и догон трипваера, и «ссылку не открыл»: за тик —
+    одно сообщение, и это трипваер (у него свой срок)."""
+    db = _DB(handoffs=[_handoff(tg_id=8)], tripwire=[{"tg_id": 8, "created_at": DAY - timedelta(hours=13), "age_s": 13 * 3600}])
+    bot = _Bot()
+    assert asyncio.run(_app(db, bot)._site_reminders_tick(DAY)) == 1
+    assert len(bot.sent) == 1 and "399" in bot.sent[0][1]
+
+
+def test_tripwire_steps_missed_at_night_send_only_the_latest():
+    """Ночью наступили шаги 2 ч и 12 ч — утром уходит только последний, без пачки."""
+    opened = DAY - timedelta(hours=13)
+    db = _DB(tripwire=[{"tg_id": 8, "created_at": opened, "age_s": 13 * 3600}])
+    bot = _Bot()
+    app = _app(db, bot)
+    asyncio.run(app._site_reminders_tick(DAY))
+    asyncio.run(app._site_reminders_tick(DAY + timedelta(minutes=10)))
+    assert len(bot.sent) == 1
+    assert {ref for (_, kind, ref) in db.marked if kind == "tripwire"} == {f"{opened.isoformat()}:1"}
+
+
+def test_paying_people_get_no_site_reminders_of_any_kind():
+    """Платящим не пишем ни по одному поводу (общий гейт _is_free_funnel_chat)."""
+    unlocked = DAY - timedelta(hours=10)
+    batch = {"job_id": "j9", "videos": 5, "mode": "free", "created_at": DAY - timedelta(hours=5)}
+    db = _DB(
+        handoffs=[_handoff(tg_id=9), _handoff(tg_id=10, redeem_count=1, since_open_s=4 * 3600)],
+        unlimited=[{"tg_id": 11, "audio_hash": "h", "unlocked_at": unlocked}], batches={11: [batch]},
+        tripwire=[{"tg_id": 12, "created_at": DAY - timedelta(hours=3), "age_s": 3 * 3600}],
+        paid={9, 10, 11, 12},
+    )
+    bot = _Bot()
+    assert asyncio.run(_app(db, bot)._site_reminders_tick(DAY)) == 0 and bot.sent == []
+
+
+def test_no_gen_last_step_lives_from_the_open_not_from_the_fork():
+    """Открыл ссылку через 2 суток после развилки: шаг «+3 дня от открытия» всё ещё приходит
+    (окно выборки считается и от открытия)."""
+    db = _DB(handoffs=[_handoff(redeem_count=1, age_s=5 * 86400, since_open_s=3 * 86400 + 60)])
+    bot = _Bot()
+    asyncio.run(_app(db, bot)._site_reminders_tick(DAY))
+    assert bot.sent and bot.sent[0][1] == mt.REMIND_SITE_NO_GEN
+    assert (1, "no_gen", f"{'a' * 16}:2") in db.marked
+
+
+def test_idle_reminder_goes_only_to_funnel_members():
+    """Затихший участник воронки (выборка уже отфильтрована SQL) — получает; бесплатный
+    вне воронки в выборку не попадает вовсе (см. test_recharge_and_idle_rows_query_only_what_they_need)."""
+    db = _DB(idle=[{"tg_id": 5, "idle_s": 4 * 86400, "last_ref": "202609290000"}])
+    bot = _Bot()
+    asyncio.run(_app(db, bot)._site_reminders_tick(DAY))
+    assert [chat for chat, *_ in bot.sent] == [5]
+
+
+def test_expired_handoff_links_are_purged_once_a_day():
+    db, bot = _DB(), _Bot()
+    app = _app(db, bot)
+    asyncio.run(app._site_reminders_tick(NIGHT))  # чистка не ждёт дня
+    asyncio.run(app._site_reminders_tick(NIGHT + timedelta(minutes=10)))
+    assert db.purged == [sr.HANDOFF_PURGE_DAYS]
+    asyncio.run(app._site_reminders_tick(NIGHT + timedelta(hours=25)))
+    assert db.purged == [sr.HANDOFF_PURGE_DAYS, sr.HANDOFF_PURGE_DAYS]
+    assert sr.HANDOFF_PURGE_DAYS > sr.FORK_LOOKBACK_DAYS

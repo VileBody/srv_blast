@@ -13,11 +13,13 @@
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import hashlib
 import logging
 import os
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Any, AsyncIterator, Awaitable, Callable, Protocol
 from urllib.parse import quote
 
 from services.tg_bot_public import marketing_texts as mt
@@ -59,6 +61,7 @@ class _Repo(Protocol):
     async def unlock_track_unlimited(self, tg_id: int, audio_hash: str) -> dict[str, Any]: ...
     async def list_track_batches(self, tg_id: int, audio_hash: str) -> list[dict[str, Any]]: ...
     async def record_track_batch(self, **kw: Any) -> None: ...
+    async def claim_track_batch(self, **kw: Any) -> str | None: ...
     async def release_track_batch(self, job_id: str, videos: int) -> None: ...
     async def drop_track_batch(self, job_id: str) -> None: ...
     async def has_track_tripwire(self, tg_id: int, audio_hash: str) -> bool: ...
@@ -75,6 +78,18 @@ class MemoryRepo:
         self.unlimited: dict[int, dict[str, Any]] = {}
         self.batches: list[dict[str, Any]] = []
         self.tripwire: set[tuple[int, str]] = set()
+        # Замок «проверить квоту и записать батч» на человека — то же, что
+        # pg_advisory_xact_lock в credits_db.claim_track_batch.
+        self.locks: dict[int, asyncio.Lock] = {}
+
+    def _lock(self, tg_id: int) -> asyncio.Lock:
+        return self.locks.setdefault(int(tg_id), asyncio.Lock())
+
+    @contextlib.asynccontextmanager
+    async def batch_lock(self, tg_id: int) -> AsyncIterator[None]:
+        """Mock-сабмит: проверка квоты, заведение джоба и запись батча — под одним замком."""
+        async with self._lock(tg_id):
+            yield
 
     async def has_paid(self, tg_id: int) -> bool:
         return int(tg_id) in self.paid
@@ -129,6 +144,23 @@ class MemoryRepo:
             return
         self.batches.append({"tg_id": int(tg_id), "audio_hash": audio_hash, "job_id": job_id, "videos": int(videos),
                              "released": 0, "mode": mode, "created_at": datetime.now(timezone.utc)})
+
+    async def claim_track_batch(self, *, tg_id: int, audio_hash: str, job_id: str, videos: int,
+                                admit: Callable[[bool, dict[str, Any] | None, list[dict[str, Any]]], bool]) -> str | None:
+        async with self._lock(tg_id):
+            known = next((b["mode"] for b in self.batches if b["job_id"] == job_id), None)
+            if known is not None:
+                return str(known)
+            tripwire = (int(tg_id), audio_hash) in self.tripwire
+            unl = self.unlimited.get(int(tg_id))
+            rows = await self.list_track_batches(tg_id, audio_hash)
+            # Между чтением и записью в БД — сетевой круг; здесь отдаём цикл, чтобы
+            # гонка двух сабмитов воспроизводилась и в памяти (её держит замок).
+            await asyncio.sleep(0)
+            if not admit(tripwire, dict(unl) if unl else None, rows):
+                return None
+            await self.record_track_batch(tg_id=tg_id, audio_hash=audio_hash, job_id=job_id, videos=videos, mode="free")
+            return "free"
 
     async def release_track_batch(self, job_id: str, videos: int) -> None:
         for b in self.batches:
@@ -278,26 +310,37 @@ def quota_view(q: tu.TrackQuota) -> dict[str, Any]:
     }
 
 
+def _quota_of(*, now: datetime, audio_hash: str, tripwire: bool, unl: dict[str, Any] | None,
+              rows: list[dict[str, Any]]) -> tu.TrackQuota | None:
+    """Квота трека по фактам: купленный трипваер на нём, бесплатный безлимит на нём или None.
+
+    Трипваер живёт в track_tripwire (на любой трек); колонка
+    track_unlimited.tripwire_paid_at не пишется и здесь не участвует."""
+    if audio_hash and tripwire:
+        return tu.evaluate(now=now, unlocked_at=now, tripwire=True, batches=[])
+    if not unl or unl["audio_hash"] != audio_hash:
+        return None
+    return tu.evaluate(now=now, unlocked_at=unl["unlocked_at"], tripwire=False, batches=_batches(rows))
+
+
 async def track_quota(tg_id: int, audio_hash: str) -> tu.TrackQuota | None:
     """Квота трека: купленный трипваер на нём, бесплатный безлимит на нём или None."""
     r = repo()
-    if audio_hash and await r.has_track_tripwire(int(tg_id), audio_hash):
-        return tu.evaluate(now=now_utc(), unlocked_at=now_utc(), tripwire=True, batches=[])
-    unl = await r.get_track_unlimited(int(tg_id))
-    if not unl or unl["audio_hash"] != audio_hash:
-        return None
-    rows = await r.list_track_batches(int(tg_id), audio_hash)
-    return tu.evaluate(
-        now=now_utc(),
-        unlocked_at=unl["unlocked_at"],
-        tripwire=unl.get("tripwire_paid_at") is not None,
-        batches=_batches(rows),
-    )
+    tripwire = bool(audio_hash) and await r.has_track_tripwire(int(tg_id), audio_hash)
+    unl = None if tripwire else await r.get_track_unlimited(int(tg_id))
+    rows = await r.list_track_batches(int(tg_id), audio_hash) if unl and unl["audio_hash"] == audio_hash else []
+    return _quota_of(now=now_utc(), audio_hash=audio_hash, tripwire=tripwire, unl=unl, rows=rows)
+
+
+def _free_fits(q: tu.TrackQuota | None, videos: int) -> bool:
+    return q is not None and q.allowed and videos <= q.max_videos
 
 
 async def tripwire_offer(tg_id: int, quota: tu.TrackQuota | None) -> dict[str, Any] | None:
-    """Окно предложения трипваера: открывается при первом упоре в лимит, живёт сутки.
+    """Окно предложения трипваера: открывается при первом РЕАЛЬНОМ упоре в лимит, живёт сутки.
 
+    `quota` — квота, в которую человек только что упёрся (отказ сабмита, показ окна
+    перезарядки): заблокированная — открывает окно; None — только прочитать.
     Отметка ставится на сервере (funnel_actions) — от неё же считает догон бота."""
     r = repo()
     if quota is not None and not quota.allowed and not quota.tripwire:
@@ -309,6 +352,35 @@ async def tripwire_offer(tg_id: int, quota: tu.TrackQuota | None) -> dict[str, A
     if now_utc() >= expires:
         return None
     return {"expiresAt": expires.isoformat(), "priceRub": tu.TRIPWIRE_PRICE_RUB}
+
+
+async def open_tripwire_offer(tg_id: int, audio_hash: str = "") -> dict[str, Any] | None:
+    """Открыть окно трипваера, если человек на самом деле упёрся в лимит, и вернуть его.
+
+    Упор — это: безлимит на трек сейчас на перезарядке или исчерпан за сутки; либо
+    человек на другом треке (`audio_hash`), а безлимит уже открыт не на нём — экран
+    «безлимит уже на другом треке» с трипваером. Трипваер — на любой трек, поэтому
+    показ этого экрана и покупка с него открывают окно, а не отвечают «предложение
+    закончилось». Платящим окно не открываем: воронка конверсионная."""
+    r = repo()
+    tg_id = int(tg_id)
+    if await r.has_paid(tg_id):
+        return await tripwire_offer(tg_id, None)
+    unl = await r.get_track_unlimited(tg_id)
+    if unl is None:
+        return await tripwire_offer(tg_id, None)
+    if audio_hash and audio_hash != unl["audio_hash"] and not await r.has_track_tripwire(tg_id, audio_hash):
+        await r.mark_funnel_action(tg_id, "tripwire_offer", "other_track")
+        return await tripwire_offer(tg_id, None)
+    return await tripwire_offer(tg_id, await track_quota(tg_id, unl["audio_hash"]))
+
+
+async def _used_since_unlock(tg_id: int, unl: dict[str, Any]) -> bool:
+    """Был ли батч по треку уже ПОСЛЕ открытия безлимита. Без этого перезарядка от
+    стартового батча (первые 5 роликов до открытия) открывала окно трипваера в сам
+    момент открытия безлимита — человек ещё ни во что не упирался."""
+    rows = await repo().list_track_batches(int(tg_id), unl["audio_hash"])
+    return any(b["created_at"] >= unl["unlocked_at"] for b in rows)
 
 
 async def state(tg_id: int, *, saved_tracks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -341,7 +413,11 @@ async def state(tg_id: int, *, saved_tracks: list[dict[str, Any]]) -> dict[str, 
             "bridge": web_bridge(str(survey.get("branch_q3") or "")) if survey.get("completed_at") else None,
         },
         "actions": {a: a in actions for a in UNLOCK_ACTIONS},
-        "tripwireOffer": await tripwire_offer(tg_id, unl_quota),
+        # Окно открывает только упор после реальной генерации по безлимиту (иначе — только
+        # чтение): отказ сабмита и экран «другой трек» открывают его сами.
+        "tripwireOffer": await tripwire_offer(
+            tg_id, unl_quota if unl and unl_quota and await _used_since_unlock(tg_id, unl) else None
+        ),
         "unlimited": unlimited,
         "links": {
             "channel": channel_link(),
@@ -407,3 +483,51 @@ class TrackLimitError(FunnelError):
     def __init__(self, code: str, message: str, quota: tu.TrackQuota) -> None:
         super().__init__(code, message, 402)
         self.quota = quota
+
+
+class CreditsExhausted(FunnelError):
+    """Ни бесплатной квоты трека, ни кредитов: 402 `credits_exhausted` (с офером безлимита)."""
+
+    def __init__(self, available: int) -> None:
+        super().__init__("credits_exhausted", f"Доступно {available} генераций", 402)
+        self.available = int(available)
+
+
+async def start_batch(tg_id: int, audio_hash: str, job_id: str, videos: int,
+                      credits_left: Callable[[], Awaitable[int]]) -> str:
+    """Режим батча сайта — «free» или «credits» — с записью бесплатного батча.
+
+    Бесплатная квота проверяется и списывается одной транзакцией под замком на человека
+    (claim_track_batch): два параллельных сабмита больше не уходят бесплатно оба.
+    Повтор того же сабмита (тот же ключ идемпотентности) и дозапуск частично
+    поставленного батча берут уже записанный режим джобы — квоту заново не считаем,
+    бесплатный батч не превращается в батч за кредиты.
+
+    Режим «credits» здесь только выбирается: резерв кредитов и запись батча за кредиты
+    делает вызывающий (резерв идемпотентен по джобе). Не хватает ни квоты, ни
+    кредитов — TrackLimitError с причиной для окна перезарядки или CreditsExhausted."""
+    tg_id, videos = int(tg_id), int(videos)
+
+    def admit(tripwire: bool, unl: dict[str, Any] | None, rows: list[dict[str, Any]]) -> bool:
+        q = _quota_of(now=now_utc(), audio_hash=audio_hash, tripwire=tripwire, unl=unl, rows=rows)
+        return _free_fits(q, videos)
+
+    # Два круга: между отказом квоты и её чтением для текста ошибки могла кончиться
+    # перезарядка — тогда пробуем занять квоту ещё раз, а не отвечаем «лимит».
+    for _ in range(2):
+        mode = await repo().claim_track_batch(
+            tg_id=tg_id, audio_hash=audio_hash, job_id=job_id, videos=videos, admit=admit,
+        )
+        if mode is not None:
+            return mode
+        left = int(await credits_left())
+        if left >= videos:
+            return "credits"
+        q = await track_quota(tg_id, audio_hash)
+        if q is None:
+            raise CreditsExhausted(left)
+        if not q.allowed:
+            raise TrackLimitError(q.reason, "Лимит на трек пока исчерпан.", q)
+        if videos > q.max_videos:
+            raise TrackLimitError("track_batch_cap", f"За раз — не больше {q.max_videos} роликов.", q)
+    raise RuntimeError(f"track quota flapped twice for job {job_id}")

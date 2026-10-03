@@ -9,7 +9,7 @@ import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 import asyncpg
 
@@ -30,6 +30,18 @@ _NO_ADMINS_BARE = " AND tg_id NOT IN (SELECT tg_id FROM admins)"
 
 
 from .track_unlimited import TRIPWIRE_PACKAGE  # noqa: E402
+
+# Партнёрская комиссия: 50% — с первой оплаты приведённого человека, 20% — со всех
+# следующих. Трипваер 399 ₽ «первой» не бывает: ставку 50% получает первая
+# НЕ-трипваерная оплата, а сам трипваер всегда идёт по 20%. Нумерация — отдельная для
+# трипваеров и остальных; трипваер получает rn = 0 (не 1 и не NULL: везде ниже
+# «первая» — это ровно rn = 1, всё остальное — повторные). Пакет — константа модуля,
+# в SQL её можно подставить строкой.
+_PARTNER_RANK_SQL = (
+    f"CASE WHEN p.package = '{TRIPWIRE_PACKAGE}' THEN 0 "
+    f"ELSE ROW_NUMBER() OVER (PARTITION BY p.tg_id, (p.package = '{TRIPWIRE_PACKAGE}') "
+    f"ORDER BY p.created_at ASC) END AS rn"
+)
 
 # Bot → site handoff link kinds: "track" carries an uploaded track into a new
 # project; "remix" — the same plus the window and lyrics of a finished bot
@@ -436,7 +448,7 @@ _PACKAGE_VIDEO_CREDITS = {
     # sentinel so the existing integer balance contract remains unchanged.
     "50": 100_000,
     # Трипваер 399 ₽ не даёт роликов: он снимает лимиты с одного трека
-    # (track_unlimited.tripwire_paid_at), см. confirm_payment_once.
+    # (запись в track_tripwire), см. confirm_payment_once.
     TRIPWIRE_PACKAGE: 0,
 }
 
@@ -896,6 +908,15 @@ class CreditsDB:
         # NULL — многоразовая (развилка: открыть позже с компьютера), 1 — одноразовая
         # (/site, напоминания: человек всегда может попросить новую).
         await conn.execute("ALTER TABLE web_handoff_tokens ADD COLUMN IF NOT EXISTS max_redeems INTEGER")
+        # Выборка развилок для напоминаний (site_handoff_reminder_rows) идёт по kind и
+        # возрасту по всем людям сразу — индекс по tg_id ей не помогает.
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_handoff_kind_created ON web_handoff_tokens(kind, created_at)"
+        )
+        # Чистка протухших (purge_expired_web_handoffs) идёт по expires_at.
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_handoff_expires ON web_handoff_tokens(expires_at)"
+        )
         # Бесплатный «безлимит на трек» (services/tg_bot_public/track_unlimited.py).
         # PRIMARY KEY tg_id: безлимит открывается на ОДИН трек и не переносится.
         # TIMESTAMPTZ — квоты считаются по UTC-времени, без наивных datetime.
@@ -1242,12 +1263,23 @@ class CreditsDB:
             return bool(is_new)
 
     async def has_paid(self, tg_id: int) -> bool:
+        """Платящий ли человек — для всех гейтов «бесплатный / платящий» (воронка сайта
+        и бота, напоминания, ограничения бота).
+
+        Трипваер 399 ₽ (track399) платящим НЕ делает: это дешёвый вход внутри воронки,
+        купившему и питч Бласта, и воронка остаются. Оплата трипваера пишется той же
+        `reason='payment'`, поэтому отсекаем её по пакету заказа (`context_order_id` →
+        payments.package) — это работает и для уже записанных строк."""
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             row = await conn.fetchval(
-                "SELECT 1 FROM transactions WHERE tg_id = $1 AND reason = ANY($2::TEXT[]) LIMIT 1",
+                "SELECT 1 FROM transactions t WHERE t.tg_id = $1 AND t.reason = ANY($2::TEXT[]) "
+                "AND NOT (t.reason = 'payment' AND EXISTS ("
+                "  SELECT 1 FROM payments p WHERE p.order_id = t.context_order_id AND p.package = $3"
+                ")) LIMIT 1",
                 int(tg_id),
                 list(_PAID_REASONS),
+                TRIPWIRE_PACKAGE,
             )
             return row is not None
 
@@ -2175,6 +2207,23 @@ class CreditsDB:
             )
         return None if tg_id is None else int(tg_id)
 
+    async def purge_expired_web_handoffs(self, older_than_days: int) -> int:
+        """Удалить ссылки, протухшие больше `older_than_days` дней назад; вернуть, сколько.
+
+        Таблица растёт на каждую развилку, напоминание и /site. Порог обязан быть больше
+        окна выборки развилок для напоминаний (site_reminders.FORK_LOOKBACK_DAYS): иначе
+        цепочка «открыл, но не генерировал» потеряла бы свою развилку."""
+        if int(older_than_days) <= 0:
+            raise ValueError("older_than_days must be positive")
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            status = await conn.execute(
+                "DELETE FROM web_handoff_tokens WHERE expires_at < NOW() - make_interval(days => $1)",
+                int(older_than_days),
+            )
+        # asyncpg отдаёт статус команды строкой вида "DELETE 12"
+        return int(str(status).rsplit(" ", 1)[-1] or 0)
+
     async def set_web_handoff_result(self, token: str, result: Dict[str, Any]) -> None:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
@@ -2281,6 +2330,62 @@ class CreditsDB:
                 int(videos),
                 mode,
             )
+
+    async def claim_track_batch(
+        self,
+        *,
+        tg_id: int,
+        audio_hash: str,
+        job_id: str,
+        videos: int,
+        admit: Callable[[bool, Optional[Dict[str, Any]], List[Dict[str, Any]]], bool],
+    ) -> Optional[str]:
+        """Проверка бесплатной квоты трека и запись батча — одной транзакцией.
+
+        Два сабмита одного человека (две вкладки, разные ключи идемпотентности) иначе
+        оба читали квоту до записи друг друга и оба уходили бесплатно. Замок —
+        pg_advisory_xact_lock по tg_id на ОДНОМ соединении: снимается вместе с
+        транзакцией, второе соединение из пула внутри не берём.
+
+        `admit(tripwire, unlimited, batches)` — чистое решение без I/O (квота
+        track_unlimited.evaluate на сайте): True — батч влезает в бесплатную квоту.
+
+        Возвращает режим уже записанного батча этой джобы (повтор сабмита или дозапуск
+        частично поставленного батча — квоту заново не считаем), "free" — батч записан
+        бесплатным, None — квоты не хватает (дальше путь за кредиты)."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await conn.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext('track_batch:' || $1))", str(int(tg_id))
+                )
+                known = await conn.fetchval("SELECT mode FROM track_batches WHERE job_id = $1", str(job_id))
+                if known is not None:
+                    return str(known)
+                tripwire = await conn.fetchval(
+                    "SELECT 1 FROM track_tripwire WHERE tg_id = $1 AND audio_hash = $2",
+                    int(tg_id),
+                    str(audio_hash),
+                )
+                unlimited = await conn.fetchrow(
+                    "SELECT tg_id, audio_hash, unlocked_at FROM track_unlimited WHERE tg_id = $1", int(tg_id)
+                )
+                rows = await conn.fetch(
+                    "SELECT job_id, GREATEST(0, videos - released) AS videos, mode, created_at "
+                    "FROM track_batches WHERE tg_id = $1 AND audio_hash = $2 ORDER BY created_at",
+                    int(tg_id),
+                    str(audio_hash),
+                )
+                if not admit(tripwire is not None, dict(unlimited) if unlimited else None, [dict(r) for r in rows]):
+                    return None
+                await conn.execute(
+                    "INSERT INTO track_batches (tg_id, audio_hash, job_id, videos, mode) VALUES ($1, $2, $3, $4, 'free')",
+                    int(tg_id),
+                    str(audio_hash),
+                    str(job_id),
+                    int(videos),
+                )
+                return "free"
 
     async def release_track_batch(self, job_id: str, videos: int) -> None:
         """Вернуть в квоту ролики, которые не отрендерились (как возврат кредитов)."""
@@ -2403,8 +2508,13 @@ class CreditsDB:
 
     # Напоминания про сайт (services/tg_bot_public/site_reminders.py)
 
-    async def site_handoff_reminder_rows(self, max_age_days: int = 4) -> List[Dict[str, Any]]:
+    async def site_handoff_reminder_rows(self, *, chain_days: int, lookback_days: int) -> List[Dict[str, Any]]:
         """Последняя развилка «на сайт» у каждого человека + что было после неё.
+
+        `lookback_days` — сколько назад искать последнюю развилку человека; `chain_days` —
+        сколько живёт цепочка: от развилки («не открыл») ИЛИ от первого открытия («открыл,
+        но не генерировал»). Раньше окно считалось только от развилки, и последний шаг
+        `no_gen` (3 дня от открытия) выпадал, если ссылку открыли позже суток после неё.
 
         Цепочку держит токен развилки (`payload.source` пуст или `fork`): ссылки,
         выпущенные напоминаниями, `/site` и CTA, её не перезапускают — иначе каждое
@@ -2424,7 +2534,7 @@ class CreditsDB:
                     FROM web_handoff_tokens t
                     WHERE t.kind = 'track'
                       AND COALESCE(t.payload->>'source', 'fork') = 'fork'
-                      AND t.created_at > NOW() - make_interval(days => $1)
+                      AND t.created_at > NOW() - make_interval(days => $2)
                     ORDER BY t.tg_id, t.created_at DESC
                 )
                 SELECT
@@ -2451,8 +2561,11 @@ class CreditsDB:
                     WHERE r.tg_id = f.tg_id AND r.kind = 'track' AND r.created_at >= f.created_at
                       AND COALESCE(r.payload->>'audioHash', '') = COALESCE(f.payload->>'audioHash', '')
                 ) opened
+                WHERE f.created_at > NOW() - make_interval(days => $1)
+                   OR opened.first_open > NOW() - make_interval(days => $1)
                 """,
-                int(max_age_days),
+                int(chain_days),
+                int(lookback_days),
             )
         out = []
         for r in rows:
@@ -2461,17 +2574,60 @@ class CreditsDB:
             out.append(item)
         return out
 
-    async def track_unlimited_rows(self) -> List[Dict[str, Any]]:
+    async def track_unlimited_rows(self, *, active_hours: int) -> List[Dict[str, Any]]:
+        """Безлимиты для напоминания «лимиты обновились» — вместе с батчами трека.
+
+        Только те, у кого был батч по треку за последние `active_hours`: перезарядка
+        (4 ч) и скользящие сутки отпускают лимит не позже чем через сутки после
+        последнего батча, а ночью напоминание ждёт до утра. Остальные безлимиты лимит
+        уже отпустил давно — гонять их каждые 10 минут незачем. Батчи собираются тем же
+        запросом (раньше — отдельный запрос на каждый безлимит).
+
+        Трек с купленным трипваером (track_tripwire) не перезаряжается — его отсекаем.
+        Колонка track_unlimited.tripwire_paid_at не пишется: трипваер живёт отдельно."""
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT tg_id, audio_hash, unlocked_at, tripwire_paid_at FROM track_unlimited "
-                "WHERE tripwire_paid_at IS NULL"
+                """
+                SELECT u.tg_id, u.audio_hash, u.unlocked_at,
+                       array_agg(b.job_id ORDER BY b.created_at) AS job_ids,
+                       array_agg(GREATEST(0, b.videos - b.released) ORDER BY b.created_at) AS videos,
+                       array_agg(b.mode ORDER BY b.created_at) AS modes,
+                       array_agg(b.created_at ORDER BY b.created_at) AS created
+                FROM track_unlimited u
+                JOIN track_batches b ON b.tg_id = u.tg_id AND b.audio_hash = u.audio_hash
+                WHERE NOT EXISTS (
+                        SELECT 1 FROM track_tripwire t WHERE t.tg_id = u.tg_id AND t.audio_hash = u.audio_hash
+                      )
+                  AND EXISTS (
+                        SELECT 1 FROM track_batches r
+                        WHERE r.tg_id = u.tg_id AND r.audio_hash = u.audio_hash
+                          AND r.created_at > NOW() - make_interval(hours => $1)
+                      )
+                GROUP BY u.tg_id, u.audio_hash, u.unlocked_at
+                """,
+                int(active_hours),
             )
-        return [dict(r) for r in rows]
+        out = []
+        for r in rows:
+            out.append({
+                "tg_id": int(r["tg_id"]),
+                "audio_hash": str(r["audio_hash"]),
+                "unlocked_at": r["unlocked_at"],
+                "batches": [
+                    {"job_id": str(j), "videos": int(v), "mode": str(m), "created_at": c}
+                    for j, v, m, c in zip(r["job_ids"], r["videos"], r["modes"], r["created"], strict=True)
+                ],
+            })
+        return out
 
     async def idle_generation_rows(self, min_days: int = 3, max_days: int = 15) -> List[Dict[str, Any]]:
-        """Последняя генерация (бот или сайт) у тех, кто затих от min до max дней назад."""
+        """Последняя генерация (бот или сайт) у тех, кто затих от min до max дней назад.
+
+        Только участники воронки бот → сайт, а не вся бесплатная база бота: получил
+        развилку (токен развилки или событие `web_fork_shown` — оно переживает чистку
+        протухших токенов), открыл безлимит на трек или ему открывалось предложение
+        трипваера. Простой — от последней генерации и в боте, и на сайте."""
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
@@ -2490,10 +2646,22 @@ class CreditsDB:
                 ), last AS (
                     SELECT tg_id, MAX(created_at) AS last_at FROM gens GROUP BY tg_id
                 )
-                SELECT tg_id, EXTRACT(EPOCH FROM NOW() - last_at) AS idle_s,
-                       to_char(last_at, 'YYYYMMDDHH24MI') AS last_ref
-                FROM last
-                WHERE last_at < NOW() - make_interval(days => $1)
+                SELECT l.tg_id, EXTRACT(EPOCH FROM NOW() - l.last_at) AS idle_s,
+                       to_char(l.last_at, 'YYYYMMDDHH24MI') AS last_ref
+                FROM last l
+                WHERE l.last_at < NOW() - make_interval(days => $1)
+                  AND (
+                    EXISTS (
+                        SELECT 1 FROM web_handoff_tokens t
+                        WHERE t.tg_id = l.tg_id AND t.kind = 'track'
+                          AND COALESCE(t.payload->>'source', 'fork') = 'fork'
+                    )
+                    OR EXISTS (SELECT 1 FROM activity_log a WHERE a.tg_id = l.tg_id AND a.event = 'web_fork_shown')
+                    OR EXISTS (SELECT 1 FROM track_unlimited u WHERE u.tg_id = l.tg_id)
+                    OR EXISTS (
+                        SELECT 1 FROM funnel_actions f WHERE f.tg_id = l.tg_id AND f.action = 'tripwire_offer'
+                    )
+                  )
                 """,
                 int(min_days),
                 int(max_days),
@@ -6484,21 +6652,22 @@ class CreditsDB:
     async def partner_commission_summary(self, partner_id: int) -> Dict[str, Any]:
         """Commission rule: 50% of a referred user's FIRST confirmed payment,
         20% of every confirmed payment after that (manual repurchase or
-        subscription rebill alike, every rebill is its own CONFIRMED row)."""
+        subscription rebill alike, every rebill is its own CONFIRMED row).
+        Трипваер 399 ₽ всегда по 20% и «первой» оплатой не считается (_PARTNER_RANK_SQL)."""
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "WITH ranked AS ("
                 "  SELECT p.amount_rub, "
-                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn "
+                "         " + _PARTNER_RANK_SQL + " "
                 "  FROM payments p JOIN users u ON u.tg_id = p.tg_id "
                 "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
                 ") "
                 "SELECT "
                 "  COALESCE(SUM(CASE WHEN rn = 1 THEN amount_rub ELSE 0 END), 0)::BIGINT AS first_revenue_rub, "
-                "  COALESCE(SUM(CASE WHEN rn > 1 THEN amount_rub ELSE 0 END), 0)::BIGINT AS repeat_revenue_rub, "
+                "  COALESCE(SUM(CASE WHEN rn <> 1 THEN amount_rub ELSE 0 END), 0)::BIGINT AS repeat_revenue_rub, "
                 "  COALESCE(SUM(CASE WHEN rn = 1 THEN 1 ELSE 0 END), 0)::BIGINT AS first_count, "
-                "  COALESCE(SUM(CASE WHEN rn > 1 THEN 1 ELSE 0 END), 0)::BIGINT AS repeat_count "
+                "  COALESCE(SUM(CASE WHEN rn <> 1 THEN 1 ELSE 0 END), 0)::BIGINT AS repeat_count "
                 "FROM ranked",
                 int(partner_id),
             )
@@ -6527,13 +6696,13 @@ class CreditsDB:
             rows = await conn.fetch(
                 "WITH ranked AS ("
                 "  SELECT p.tg_id, p.amount_rub, "
-                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn "
+                "         " + _PARTNER_RANK_SQL + " "
                 "  FROM payments p WHERE UPPER(p.status) = 'CONFIRMED'"
                 ") "
                 "SELECT l.code, l.label, l.created_at, "
                 "  COUNT(u.tg_id)::BIGINT AS starts_count, "
                 "  COALESCE(SUM(CASE WHEN r.rn = 1 THEN r.amount_rub * 0.5 "
-                "                     WHEN r.rn > 1 THEN r.amount_rub * 0.2 ELSE 0 END), 0)::BIGINT AS commission_rub, "
+                "                     WHEN r.rn <> 1 THEN r.amount_rub * 0.2 ELSE 0 END), 0)::BIGINT AS commission_rub, "
                 "  COUNT(DISTINCT r.tg_id)::BIGINT AS paying_users "
                 "FROM partner_links l "
                 # Filter in the JOIN, not the WHERE: a link whose only visitor
@@ -6583,7 +6752,7 @@ class CreditsDB:
             rows = await conn.fetch(
                 "WITH ranked AS ("
                 "  SELECT p.tg_id, p.amount_rub, p.created_at,"
-                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
+                "         " + _PARTNER_RANK_SQL +
                 "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
                 "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
                 "    AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
@@ -6620,7 +6789,7 @@ class CreditsDB:
             row = await conn.fetchrow(
                 "WITH ranked AS ("
                 "  SELECT p.tg_id, p.amount_rub,"
-                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
+                "         " + _PARTNER_RANK_SQL +
                 "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
                 "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
                 "    AND u.tg_id NOT IN (SELECT tg_id FROM admins)"
@@ -6655,7 +6824,7 @@ class CreditsDB:
                 "         (CURRENT_DATE - ($2::int * $3::int) + 1)::timestamp AS hi"
                 "), ranked AS ("
                 "  SELECT p.amount_rub, p.created_at,"
-                "         ROW_NUMBER() OVER (PARTITION BY p.tg_id ORDER BY p.created_at ASC) AS rn"
+                "         " + _PARTNER_RANK_SQL +
                 "  FROM payments p JOIN users u ON u.tg_id = p.tg_id"
                 "  WHERE u.partner_id = $1" + _NO_ADMINS + " AND UPPER(p.status) = 'CONFIRMED'"
                 ") "

@@ -3979,7 +3979,11 @@ class BlastBotApp:
             reply_markup=_kb([BTN_SUBSCRIBED]),
         )
 
-    async def _check_subscription(self, user_id: int) -> bool:
+    async def _check_subscription(self, user_id: int) -> Optional[bool]:
+        """Подписан ли человек на канал: True / False, None — проверить не удалось.
+
+        «Не удалось» (бот не админ канала, флуд-лимит, неверный канал, сеть) — это не
+        «не подписан»: решает гейт (_subscription_gate_passes), а не эта функция."""
         if bool(getattr(self.settings, "tg_test_bypass_subscription", False)):
             log.info("subscription_check_bypassed_for_telegram_test_env user_id=%s", user_id)
             return True
@@ -4004,7 +4008,21 @@ class BlastBotApp:
                 int((time.monotonic() - t0) * 1000.0),
                 e,
             )
-            return False
+            return None
+
+    async def _subscription_gate_passes(self, user_id: int, chat_id: int, *, where: str) -> bool:
+        """Гейт «подписка на канал»: не подписан — не пускаем; подписан — пускаем.
+
+        Проверка сломалась (getChatMember ответил ошибкой) — пускаем: из-за нашего
+        сбоя человек не должен застревать перед генерацией. Сбой не молчаливый:
+        warning в логе и событие `subscription_check_failed` (видно в активности и
+        в метриках по событиям), с местом, где он случился."""
+        result = await self._check_subscription(int(user_id))
+        if result is None:
+            log.warning("subscription_check_failed_passed chat=%s user_id=%s where=%s", chat_id, user_id, where)
+            await self.credits_db.log_event(int(chat_id), "subscription_check_failed", where)
+            return True
+        return bool(result)
 
     async def _handle_wait_start(self, message: Message, st: ChatState) -> None:
         if str(message.text or "").strip() == BTN_LETS_GO:
@@ -4029,7 +4047,7 @@ class BlastBotApp:
             )
             return
         user_id = int(message.from_user.id) if message.from_user else 0
-        subscribed = await self._check_subscription(user_id)
+        subscribed = await self._subscription_gate_passes(user_id, int(message.chat.id), where="onboarding")
         if not subscribed:
             await self._timed_answer(message, "Думаешь, мы не будем проверять подписку?)", op="subscription_not_ok")
             await self._move_to_subscription(int(message.chat.id), message)
@@ -7475,16 +7493,17 @@ class BlastBotApp:
         if FRAME_FLOW_ENABLED and vertical and not st.frame_id:
             await self._ask_frame(message, st)
             return
-        if self.settings.web_handoff_enabled:
-            # В боте — один ролик за раз; пачки до 5 и безлимит на трек живут на сайте.
+        free = await self._is_free_funnel_user(st)
+        if self.settings.web_handoff_enabled and free:
+            # Бесплатным в боте — один ролик за раз; пачки до 5 и безлимит на трек живут
+            # на сайте. Платящие собирают как раньше: селектор версий до своего лимита.
             st.versions_count = 1
             await self.store.set(st)
             await message.answer(BOT_ONE_VIDEO_NOTE)
             await self._show_final_confirm_after_versions(message, st)
             return
-        paid = await self.credits_db.has_paid(st.chat_id)
         text = VERSIONS_PROMPT
-        if not paid:
+        if free:
             text += VERSIONS_PROMPT_FREE_SUFFIX.format(limit=self._free_generation_limit())
         st.stage = STAGE_WAIT_VERSIONS
         await self.store.set(st)
@@ -7611,17 +7630,32 @@ class BlastBotApp:
         if text != BTN_SUBSCRIBED:
             await message.answer(GEN_SUBSCRIPTION_REMINDER, reply_markup=_kb([BTN_SUBSCRIBED], [BTN_RESTART]))
             return
-        user_id = int(message.from_user.id) if message.from_user else int(st.chat_id)
-        if not await self._check_subscription(user_id):
-            await message.answer(
-                GEN_SUBSCRIPTION_MISSING.format(channel=self.settings.subscription_channel),
-                reply_markup=_kb([BTN_SUBSCRIBED], [BTN_RESTART]),
-            )
+        # Двойной тап «Я подписался» не должен дважды запускать генерацию. Чат занимаем
+        # синхронно, до первого await (как у развилки, _handle_web_fork_bot_callback):
+        # оба нажатия иначе успевали пройти проверку подписки до смены стадии.
+        chat_id = int(st.chat_id)
+        busy = self.__dict__.setdefault("_gen_subscription_checking", set())
+        if chat_id in busy:
             return
-        await self.credits_db.log_event(int(st.chat_id), "subscription_ok", "before_generation")
-        st.stage = STAGE_WAIT_CONFIRM
-        await self.store.set(st)
-        await self._handle_wait_confirm(message, st, subscribed=True)
+        busy.add(chat_id)
+        try:
+            fresh = await self.store.get(chat_id)
+            if fresh.stage != STAGE_WAIT_GEN_SUBSCRIPTION:
+                return  # первое нажатие уже запустило генерацию
+            st = fresh
+            user_id = int(message.from_user.id) if message.from_user else chat_id
+            if not await self._subscription_gate_passes(user_id, chat_id, where="before_generation"):
+                await message.answer(
+                    GEN_SUBSCRIPTION_MISSING.format(channel=self.settings.subscription_channel),
+                    reply_markup=_kb([BTN_SUBSCRIBED], [BTN_RESTART]),
+                )
+                return
+            await self.credits_db.log_event(chat_id, "subscription_ok", "before_generation")
+            st.stage = STAGE_WAIT_CONFIRM
+            await self.store.set(st)
+            await self._handle_wait_confirm(message, st, subscribed=True)
+        finally:
+            busy.discard(chat_id)
 
     async def _show_final_confirm_after_versions(self, message: Message, st: ChatState) -> None:
         st.stage = STAGE_WAIT_CONFIRM
@@ -7662,10 +7696,12 @@ class BlastBotApp:
         chat_id = int(message.chat.id)
         user_id = message.from_user.id if message.from_user else chat_id
         # Подписка на канал — условие запуска генерации (раньше стояла на входе в бот).
+        # Только для бесплатных: платящие запускают как раньше, без шага подписки.
         if (
             not subscribed
             and self.settings.generation_subscription_required
-            and not await self._check_subscription(int(user_id))
+            and await self._is_free_funnel_chat(chat_id)
+            and not await self._subscription_gate_passes(int(user_id), chat_id, where="launch")
         ):
             await self._ask_generation_subscription(message, st)
             return
@@ -9988,10 +10024,32 @@ class BlastBotApp:
             await asyncio.sleep(self._SITE_REMINDERS_PERIOD_S)
 
     async def _site_reminders_tick(self, now: datetime) -> int:
+        await self._purge_web_handoffs_if_due(now)
         if not site_reminders.is_daytime(now):
             return 0
         sent = 0
-        for row in await self.credits_db.site_handoff_reminder_rows():
+        # За один тик человеку — не больше одного сообщения: после ночи у него могли
+        # наступить шаги нескольких поводов сразу (и urgent-трипваер общий интервал не держит).
+        done: set[int] = set()
+
+        # Догон трипваера — первым: у предложения свой срок (сутки), остальное подождёт.
+        for row in await self.credits_db.tripwire_offer_rows():
+            tg_id = int(row["tg_id"])
+            age = timedelta(seconds=float(row["age_s"]))
+            # Пропущенные ночью шаги не догоняем: только последний наступивший.
+            step = site_reminders.due_step(age, site_reminders.TRIPWIRE_STEPS)
+            if step is None:
+                continue
+            hours_left = max(1, int((track_unlimited.TRIPWIRE_OFFER_WINDOW - age).total_seconds() // 3600))
+            sent += await self._send_site_reminder(
+                now, tg_id, kind="tripwire", ref=f"{row['created_at'].isoformat()}:{step}",
+                text=REMIND_TRIPWIRE[step].format(hours=hours_left, price=track_unlimited.TRIPWIRE_PRICE_RUB),
+                button=BTN_REMIND_TRIPWIRE, link_kind="site", payload={}, urgent=True, done=done,
+            )
+
+        for row in await self.credits_db.site_handoff_reminder_rows(
+            chain_days=site_reminders.CHAIN_DAYS, lookback_days=site_reminders.FORK_LOOKBACK_DAYS,
+        ):
             if row["stayed_in_bot"] or row["generated_on_site"]:
                 continue
             tg_id = int(row["tg_id"])
@@ -10015,12 +10073,13 @@ class BlastBotApp:
                 else {"profile": row["payload"].get("profile") or {}}
             )
             sent += await self._send_site_reminder(
-                now, tg_id, kind=kind, ref=ref, text=text, button=button, link_kind=link_kind, payload=payload
+                now, tg_id, kind=kind, ref=ref, text=text, button=button, link_kind=link_kind,
+                payload=payload, done=done,
             )
 
-        for row in await self.credits_db.track_unlimited_rows():
+        for row in await self.credits_db.track_unlimited_rows(active_hours=site_reminders.RECHARGE_ACTIVE_HOURS):
             tg_id = int(row["tg_id"])
-            batches = await self.credits_db.list_track_batches(tg_id, str(row["audio_hash"]))
+            batches = row["batches"]
             if not batches:
                 continue
             items = [track_unlimited.TrackBatch(b["created_at"], int(b["videos"]), str(b["mode"])) for b in batches]
@@ -10038,34 +10097,33 @@ class BlastBotApp:
             sent += await self._send_site_reminder(
                 now, tg_id, kind="recharge", ref=str(last["job_id"]),
                 text=REMIND_SITE_RECHARGE.format(n=current.max_videos), button=BTN_REMIND_GENERATE,
-                link_kind="site", payload={},
-            )
-
-        for row in await self.credits_db.tripwire_offer_rows():
-            tg_id = int(row["tg_id"])
-            age = timedelta(seconds=float(row["age_s"]))
-            step = site_reminders.due_step(age, site_reminders.TRIPWIRE_STEPS)
-            if step is None:
-                continue
-            hours_left = max(1, int((track_unlimited.TRIPWIRE_OFFER_WINDOW - age).total_seconds() // 3600))
-            sent += await self._send_site_reminder(
-                now, tg_id, kind="tripwire", ref=f"{row['created_at'].isoformat()}:{step}",
-                text=REMIND_TRIPWIRE[step].format(hours=hours_left, price=track_unlimited.TRIPWIRE_PRICE_RUB),
-                button=BTN_REMIND_TRIPWIRE, link_kind="site", payload={}, urgent=True,
+                link_kind="site", payload={}, done=done,
             )
 
         for row in await self.credits_db.idle_generation_rows():
             tg_id = int(row["tg_id"])
-            if not await self._is_free_funnel_chat(tg_id):
-                continue
             step = site_reminders.due_step(timedelta(seconds=float(row["idle_s"])), site_reminders.IDLE_STEPS)
             if step is None:
                 continue
             sent += await self._send_site_reminder(
                 now, tg_id, kind="idle", ref=f"{row['last_ref']}:{step}", text=REMIND_SITE_IDLE,
-                button=BTN_REMIND_GENERATE, link_kind="site", payload={},
+                button=BTN_REMIND_GENERATE, link_kind="site", payload={}, done=done,
             )
         return sent
+
+    async def _purge_web_handoffs_if_due(self, now: datetime) -> None:
+        """Раз в сутки — чистка протухших ссылок на сайт (web_handoff_tokens)."""
+        last = self.__dict__.get("_web_handoffs_purged_at")
+        if last is not None and now - last < site_reminders.HANDOFF_PURGE_EVERY:
+            return
+        self._web_handoffs_purged_at = now
+        try:
+            removed = await self.credits_db.purge_expired_web_handoffs(site_reminders.HANDOFF_PURGE_DAYS)
+        except Exception:
+            # Чистка — обслуживание: напоминания она не держит, но сбой видно в логах.
+            log.exception("web_handoffs_purge_failed")
+            return
+        log.info("web_handoffs_purged removed=%s older_than_days=%s", removed, site_reminders.HANDOFF_PURGE_DAYS)
 
     async def _send_site_reminder(
         self,
@@ -10078,8 +10136,15 @@ class BlastBotApp:
         button: str,
         link_kind: str,
         payload: Dict[str, Any],
+        done: set[int],
         urgent: bool = False,
     ) -> int:
+        if tg_id in done:
+            return 0
+        # Воронка конверсионная: платящим не пишем ни по одному поводу. Общий гейт
+        # «бесплатный» (_is_free_funnel_chat) — правило о том, кто платящий, живёт в нём.
+        if not await self._is_free_funnel_chat(tg_id):
+            return 0
         # urgent — у повода свой срок (предложение на сутки): общий интервал не держим,
         # но ночью всё равно не пишем.
         last = None if urgent else await self.credits_db.last_reminder_at(tg_id)
@@ -10088,6 +10153,7 @@ class BlastBotApp:
         # Отмечаем ДО отправки: лучше не дослать, чем прислать дважды.
         if not await self.credits_db.try_mark_reminder(tg_id, kind, ref):
             return 0
+        done.add(tg_id)
         try:
             token = await self.credits_db.create_web_handoff(
                 tg_id, link_kind, payload, ttl_seconds=self.settings.web_handoff_ttl_s, single_use=True,

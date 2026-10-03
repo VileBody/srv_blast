@@ -1422,7 +1422,13 @@
     "otherAccountStay": "Stay here",
     "remixReady": "Your bot video is on the editing table",
     "remixReadyText": "Same cuts, clips, transitions and subtitles. Edit and generate.",
-    "remixFailed": "The video edit did not carry over"
+    "remixFailed": "The video edit did not carry over",
+    "remixApplyFailed": "The project is open with your track, but the bot video edit didn't load.",
+    "linkAccount": "Link Telegram to {{account}}?",
+    "linkAccountNoName": "Link Telegram to this account?",
+    "linkAccountText": "A Blast account without Telegram is open in this browser. Link Telegram and the track from the bot lands there. Or log in as a separate account with Telegram.",
+    "linkAccountConfirm": "Link",
+    "linkAccountSeparate": "Log in separately"
   },
   "funnel": {
     "step": "{{n}} of {{total}}",
@@ -1581,7 +1587,9 @@
       "noTrack": "Upload a track first",
       "unlock": "Couldn't unlock. Try again.",
       "save": "Couldn't save. Try again.",
-      "reopen": "Couldn't open the batch. Try again."
+      "reopen": "Couldn't open the batch. Try again.",
+      "load": "Couldn't load. Try again.",
+      "retry": "Retry"
     },
     "badge": "Track unlimited",
     "units": {

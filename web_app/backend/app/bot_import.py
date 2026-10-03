@@ -53,6 +53,12 @@ class BotImportError(ValueError):
     """Ролики бота нельзя открыть на столе как есть — сообщение показывается человеку."""
 
 
+# Статус ролика, у которого `/jobs/{id}/edit_state` не ответил (main._remix_edit_states):
+# монтаж есть, но достать его сейчас нельзя — не путать с «ролик не собрался».
+STATUS_UNAVAILABLE = "UNAVAILABLE"
+UNAVAILABLE_TEXT = "Монтаж ролика сейчас недоступен, открыли трек, отрезок и текст."
+
+
 @dataclass(frozen=True)
 class ImportCatalog:
     """Что сайт знает о каталогах: подпись стиля субтитров → режим рендера, подпись вайба/фото →
@@ -343,14 +349,23 @@ def build_wizard_import(
     snapshot = dict(snapshot or {})
     notes: list[str] = []
     versions: list[dict[str, Any]] = []
+    unavailable = 0
     for position, state in enumerate(edit_states):
         status = state.get("status")
+        if status == STATUS_UNAVAILABLE:
+            # Ручка состояния монтажа не ответила (старый оркестратор, сбой сети) — это не
+            # «ролик не собрался»: ролик в боте есть, достать его монтаж сейчас нельзя.
+            unavailable += 1
+            notes.append(f"Монтаж ролика {position + 1} сейчас недоступен, на стол он не попал.")
+            continue
         if status not in (None, "SUCCEEDED"):
             notes.append(f"Ролик {position + 1} в боте не собрался, на стол он не попал.")
             continue
         req = dict(state.get("request") or {}) or _request_from_snapshot(snapshot, position)
         versions.append({"position": position, "state": state, "req": req})
     if not versions:
+        if unavailable:
+            raise BotImportError(UNAVAILABLE_TEXT)
         raise BotImportError("Ни один ролик батча не собрался в боте")
 
     first = versions[0]

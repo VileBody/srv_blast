@@ -632,6 +632,9 @@ class RedisChatStateStore:
         existing.web_handoff_audio_hash = ""
         existing.web_handoff_prepared_path = ""
         existing.web_handoff_prepared_sig = ""
+        # Ссылка «на сайт» после оценки ведёт на трек прошлого батча — после сброса
+        # (новый трек, «Начать заново», оплата) она уже про чужой ролик.
+        existing.web_remix_payload = {}
         existing.batch_total_versions = 1
         existing.next_version_to_enqueue = 1
         existing.master_job_id = ""
