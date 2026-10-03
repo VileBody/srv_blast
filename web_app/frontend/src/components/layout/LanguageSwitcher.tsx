@@ -6,14 +6,14 @@ const LANGS: Lang[] = ['ru', 'en'];
 
 /** Компактный переключатель RU/EN (каркас локализации). */
 export function LanguageSwitcher({ className }: { className?: string }) {
-  const { i18n } = useTranslation();
+  const { t, i18n } = useTranslation();
   const current = (i18n.language?.slice(0, 2) as Lang) || 'ru';
   return (
     <div
       className={cn('flex items-center gap-[2px] rounded-[10px] p-[3px] text-[13px]', className)}
       style={{ background: 'var(--grad-soft-10)' }}
       role="group"
-      aria-label="Language"
+      aria-label={t('common.language')}
     >
       {LANGS.map((lng) => (
         <button

@@ -459,9 +459,14 @@ export const api = {
   tiktokPostStatus: (publishId: string) => request<{ publishId: string; status?: string; fail_reason?: string; publicaly_available_post_id?: string[]; mock?: boolean }>(`/api/tiktok/post/${encodeURIComponent(publishId)}`)
 };
 
+/** Локаль дат по текущему языку интерфейса: английский — en-GB (день перед месяцем, как на остальных страницах). */
+export function dateLocale(): string {
+  return i18n.language?.startsWith('en') ? 'en-GB' : 'ru-RU';
+}
+
 export function humanDate(value?: string | null): string {
   if (!value) return '—';
-  return new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value));
+  return new Intl.DateTimeFormat(dateLocale(), { day: '2-digit', month: '2-digit', year: 'numeric' }).format(new Date(value));
 }
 
 export function durationLabel(seconds: number): string {

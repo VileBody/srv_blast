@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, dateLocale } from '../lib/api';
 import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 
@@ -114,13 +114,15 @@ export function AdminAnalyticsPage() {
         <div className="flex flex-wrap items-center justify-between gap-space-4">
           <h1 className="text-[32px] font-[400] leading-none text-text">{t('admin.title')}</h1>
           <div className="flex flex-wrap items-center justify-end gap-[12px]">
+            {/* кольцо фокуса как в ките: без него с клавиатуры не видно, где ты в переключателе */}
             <div className="flex items-center gap-[6px] rounded-r10 bg-grad-soft-10 p-[3px]">
               {SOURCES.map((item) => (
                 <button
                   key={item}
                   type="button"
                   onClick={() => setSource(item)}
-                  className={`h-[32px] rounded-[8px] px-[14px] text-[14px] leading-none transition focus-visible:outline-none ${
+                  aria-pressed={source === item}
+                  className={`h-[32px] rounded-[8px] px-[14px] text-[14px] leading-none transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light ${
                     source === item ? 'bg-accent text-text' : 'text-text-60 hover:text-text'
                   }`}
                 >
@@ -134,7 +136,8 @@ export function AdminAnalyticsPage() {
                   key={period}
                   type="button"
                   onClick={() => setDays(period)}
-                  className={`h-[36px] rounded-r10 px-[14px] text-[15px] leading-none transition focus-visible:outline-none ${
+                  aria-pressed={days === period}
+                  className={`h-[36px] rounded-r10 px-[14px] text-[15px] leading-none transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light ${
                     days === period ? 'bg-accent text-text' : 'bg-grad-soft-10 text-text-60 hover:text-text'
                   }`}
                 >
@@ -210,7 +213,7 @@ export function AdminAnalyticsPage() {
                 {(data?.bot?.recent ?? []).slice(0, 16).map((row) => (
                   <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_110px] gap-[12px] py-[10px] text-[14px]">
                     <span className="truncate text-text-80">{t(`admin.botActionsMap.${row.name}`, { defaultValue: row.name })}</span>
-                    <span className="text-right text-text-40">{new Date(row.ts).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                    <span className="text-right text-text-40">{new Date(row.ts).toLocaleString(dateLocale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
                 ))}
               </div>
@@ -369,7 +372,7 @@ export function AdminAnalyticsPage() {
                         row.failedGenerations > 0 && t('delivery.flagFail')].filter(Boolean).join(' · ') || '—'}
                     </td>
                     <td className="py-[12px] text-[13px] text-text-40">
-                      {row.lastSeen ? new Date(row.lastSeen).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '—'}
+                      {row.lastSeen ? new Date(row.lastSeen).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' }) : '—'}
                     </td>
                   </tr>
                 ))}
