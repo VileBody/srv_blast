@@ -260,6 +260,24 @@ function geometryKey(settings: SubtitleTextSettings) {
   return { font, accentFont, size, height, shadow, position, accentColor, focusStyle };
 }
 
+/** Значение с задержкой: ползунок цвета шлёт событие на каждый сдвиг указателя. */
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(id);
+  }, [value, ms]);
+  return settled;
+}
+
+/*
+ * Акцентный цвет в запросе геометрии — с задержкой. Геометрию он не меняет, но бэк кладёт его
+ * в конфиг стиля (focusColor tape, focusFillColor trendy/brat) и проверяет (#RRGGBB, запрет у
+ * тайтла) — поэтому из запроса его не убрать. Раньше POST уходил на каждый pointermove
+ * ползунка; теперь один — когда ползунок замер. Сам цвет красим сразу из настроек.
+ */
+const ACCENT_DEBOUNCE_MS = 200;
+
 export interface SubtitleCanvasProps {
   style: SubtitleStyleId;
   settings: SubtitleTextSettings;
@@ -286,7 +304,9 @@ export function SubtitleCanvas({ style, settings, color, words, lyrics, time, re
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0, z: 1 });
   const [fonts, setFonts] = useState<FontState>({ status: 'loading', fonts: [] });
-  const key = geometryKey(settings);
+  const accentLive = settings.accentColor;
+  const accentAsked = useDebounced(accentLive, ACCENT_DEBOUNCE_MS);
+  const key = geometryKey({ ...settings, accentColor: accentAsked });
   const renderPreset = wide ? 'wide' : 'vertical';
   const geometry = useQuery({
     queryKey: ['subtitle-geometry', style, key, renderPreset],
@@ -296,7 +316,12 @@ export function SubtitleCanvas({ style, settings, color, words, lyrics, time, re
     placeholderData: keepPreviousData,
   });
   const { catalog, files, settled } = useSubtitleFonts();
-  const g = geometry.data && geometry.data.style === style ? geometry.data : undefined;
+  const served = geometry.data && geometry.data.style === style ? geometry.data : undefined;
+  // пока запрос с новым цветом ждёт паузы ползунка — акцент (jakson/impulse/tape) уже новый
+  const g = useMemo(
+    () => (served && accentLive && served.accentColor !== accentLive ? { ...served, accentColor: accentLive } : served),
+    [served, accentLive]
+  );
 
   // Шрифты стиля: все должны лежать на сервере и загрузиться — иначе явная ошибка, не подмена
   const needKey = g ? neededFonts(g).join('|') : '';
