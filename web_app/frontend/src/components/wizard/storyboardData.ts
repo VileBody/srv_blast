@@ -3,9 +3,8 @@ import { create } from 'zustand';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { StoryboardCutsResponse } from '../../lib/types';
-import { recipeKeyOf, TimelinePace, TimelineStyleRange, useWizardStore } from '../../stores/wizardStore';
+import { footagePlaneOf, recipeKeyOf, TimelinePace, TimelineStyleRange, useWizardStore } from '../../stores/wizardStore';
 import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
-import { footageTypePlane } from '../../data/footageTypes';
 import type { WizardStateData } from '../../stores/wizardStore';
 
 /*
@@ -165,7 +164,8 @@ export function poolGuideId(id: 'total' | 'distribute' | 'storyboard' | 'replace
 
 /** Раскадровка «Пула» есть только у футажа из вайбов — от неё зависит длина тура «Пула». */
 export function poolStoryboardAvailable(bg: WizardStateData['background']): boolean {
-  return footageTypePlane(bg.footageType) === 'vibes' && bg.footage.length > 0;
+  // по подборке каждого футажа, а не по открытому сейчас списку типа на «Фоне»
+  return bg.footage.some((group) => footagePlaneOf(bg, group) === 'vibes');
 }
 
 /** Тур «Пула»: всего → распределение → [раскадровка → замена кадра] → таймлайн. */

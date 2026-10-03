@@ -7,10 +7,9 @@ import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { LimitsIndicator } from '../ui/LimitsIndicator';
 import { trackTitleOf } from '../funnel/useFunnel';
 import { Svg, W12, WizardActions } from './WizardFrame';
-import { FxVariant, HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
+import { backgroundUnits, Combo, combinationAt, combosOf, HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, staleMontageEdits, useWizardStore, WizardStateData } from '../../stores/wizardStore';
 import { ActionBar, Button, Dialog } from '../ui/kit';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
-import { footageTypePlane } from '../../data/footageTypes';
 import { PoolStoryboard, StoryboardSlot } from './PoolStoryboard';
 import { poolGuideId, poolStoryboardAvailable, poolTourTotal } from './storyboardData';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
@@ -131,20 +130,9 @@ function PoolCombosGuideVisual() {
  * под него с фейдом. Ручные значения не трогаем — показываем «нераспределено: ±N».
  */
 
-/** Ключ юнита — стабильный (идёт в allocation), подпись собирается через i18n при рендере. */
-export function backgroundUnits(bg: WizardStateData['background']): { key: string; labelKey: string; name: string; icon: 'tag' | 'photo'; noHook: boolean }[] {
-  return [
-    ...bg.sourceVideos.map((plan, index) => ({ key: `upload:${plan.id}`, labelKey: 'wizard.pool.ownVideoUnit', name: `${index + 1} · ${plan.format}`, icon: 'tag' as const, noHook: plan.format === '16:9' })),
-    ...bg.footage.map((vibe) => ({
-      key: `footage:${vibe}`,
-      labelKey: 'wizard.pool.vibeUnit',
-      name: vibe,
-      icon: 'tag' as const,
-      noHook: (bg.footageFormats?.[vibe] ?? (bg.footageType === 'cine16x9' ? '16:9' : '9:16')) === '16:9'
-    })),
-    ...bg.photo.map((vibe) => ({ key: `photo:${vibe}`, labelKey: 'wizard.pool.photoUnit', name: vibe, icon: 'photo' as const, noHook: true }))
-  ];
-}
+// Раскладка роликов живёт в сторе: по ней же stageData отбирает правки стола
+export { backgroundUnits, combinationAt, combosOf } from '../../stores/wizardStore';
+export type { Combo } from '../../stores/wizardStore';
 
 export function compatibleHookTarget(
   bg: WizardStateData['background'],
@@ -246,6 +234,19 @@ export function StageSlice() {
     if (hit.length) setPendingAlloc({ patch, hit });
     else state.setAllocation(patch);
   };
+  // Человек согласился сбросить правки — стираем их у роликов, чья комбинация поменялась,
+  // а не оставляем висеть до отправки (рендер ответил бы 422 «Правки стола устарели»).
+  const applyPendingAlloc = () => {
+    if (!pendingAlloc) return;
+    const after = combosOf({ ...state, allocation: { ...alloc, ...pendingAlloc.patch } });
+    const videos = Object.fromEntries(Object.entries(state.montage.videos).filter(([index, video]) => after[Number(index)]?.sig === video.sig));
+    state.setAllocation(pendingAlloc.patch);
+    if (Object.keys(videos).length !== Object.keys(state.montage.videos).length) state.setMontage({ videos });
+    setPendingAlloc(null);
+  };
+  // Правки стола, сделанные под другую настройку (вариант FX поменяли или убрали) — в
+  // генерацию они не уйдут (stageData их отбрасывает), говорим об этом здесь
+  const staleEdits = staleMontageEdits(state).length;
 
   const units = useMemo(() => backgroundUnits(state.background), [state.background]);
   const colorGroup = state.background.color
@@ -398,7 +399,7 @@ export function StageSlice() {
         footer={(
           <ActionBar>
             <Button variant="ghost" onClick={() => setPendingAlloc(null)}>{t('wizard.pool.resetEditsCancel')}</Button>
-            <Button variant="primary" onClick={() => { if (pendingAlloc) state.setAllocation(pendingAlloc.patch); setPendingAlloc(null); }}>{t('wizard.pool.resetEditsApply')}</Button>
+            <Button variant="primary" onClick={applyPendingAlloc}>{t('wizard.pool.resetEditsApply')}</Button>
           </ActionBar>
         )}
       >
@@ -429,6 +430,8 @@ export function StageSlice() {
         shell="track-top"
         visual={<PoolTotalGuideVisual />}
       />
+
+      {staleEdits > 0 && <p role="status" className="w12-set-note">{t('wizard.missing.montageStale', { count: staleEdits })}</p>}
 
       {/* Секции листаются сами, края тают там, где есть ещё — как список типов FX */}
       <div ref={distributeGuideTargetRef} className="w12-pool-scroll" data-fade-t={secFade.top || undefined} data-fade-b={secFade.bottom || undefined} onScroll={syncSecFade}>
@@ -541,87 +544,6 @@ export function StageSlice() {
   );
 }
 
-export function combinationAt(
-  index: number,
-  bg: [string, number][],
-  subs: [string, number][],
-  hooks: [string, number][],
-  styles: [string, number][],
-  units: ReturnType<typeof backgroundUnits>,
-  hasColor: boolean,
-  colorStyle?: string
-): { bg?: string; sub?: string; hook?: string; style?: string } {
-  const expand = (pairs: [string, number][]) => pairs.flatMap(([key, count]) => Array.from({ length: count }, () => key));
-  const bgList = expand(bg);
-  if (hasColor) bgList.push('__color__');
-  const subList = expand(subs);
-  const hookList = expand(hooks);
-  const styleList = expand(styles);
-  const bgKey = bgList[index];
-  const unit = units.find((candidate) => candidate.key === bgKey);
-  const hookAllowed = Boolean(unit && !unit.noHook);
-  const nonColorIndex = bgList.slice(0, index).filter((key) => key !== '__color__').length;
-  const hookIndex = bgList.slice(0, index).filter((key) => {
-    const previous = units.find((candidate) => candidate.key === key);
-    return previous && !previous.noHook;
-  }).length;
-  return {
-    bg: bgKey,
-    sub: bgKey === '__color__' ? colorStyle : subList[nonColorIndex],
-    hook: hookAllowed ? hookList[hookIndex] : undefined,
-    style: hookAllowed ? styleList[hookIndex] : undefined
-  };
-}
-
-/* ── ролики батча: номер, фон, стиль субтитров, вариант FX — общая раскладка «Пула» и стола ── */
-export interface Combo {
-  index: number;
-  /** номер видео в раскадровке и в рендере (index + 1) */
-  slotIndex: number;
-  /** вайб футажа — у фото, цвета и своих видео его нет */
-  group?: string;
-  /** ключ фона из распределения «Пула»: footage:…, photo:…, upload:…, __color__ */
-  bgKey?: string;
-  bgLabel: string;
-  sub?: string;
-  variant?: FxVariant;
-  /** хук возможен: вертикальное видео (не фото, не цвет, не 16:9) — как hook_allowed рендера */
-  hookAllowed: boolean;
-  /** выход 9:16 (всё, кроме 16:9-футажа и своего видео 16:9) — на нём встаёт рамка */
-  vertical: boolean;
-  /** комбинация целиком — под неё сделаны правки стола */
-  sig: string;
-}
-
-/** Ролики батча по распределению — та же раскладка, что у «Комбинаций» и рендера. */
-export function combosOf(state: Pick<WizardStateData, 'background' | 'allocation' | 'fxVariants' | 'subtitles'>): Combo[] {
-  const { background, allocation: alloc, fxVariants, subtitles } = state;
-  const units = backgroundUnits(background);
-  const live = fxVariants.filter((v) => !v.draft);
-  const hookEntries: [string, number][] = live.map((v) => [v.id, alloc.variants?.[v.id] ?? 0]);
-  const colorStyle = background.color ? (background.strobe ? alloc.strobeFont : alloc.colorFont) ?? subtitles.pool[0] : undefined;
-  const total = Math.max(1, alloc.total);
-  return Array.from({ length: total }, (_, i) => {
-    const c = combinationAt(i, Object.entries(alloc.background), Object.entries(alloc.subtitles), hookEntries, [], units, Boolean(background.color), colorStyle);
-    const unit = units.find((u) => u.key === c.bg);
-    const variant = live.find((v) => v.id === c.hook);
-    return {
-      index: i,
-      slotIndex: i + 1,
-      group: c.bg?.startsWith('footage:') ? c.bg.slice('footage:'.length) : undefined,
-      bgKey: c.bg,
-      bgLabel: c.bg === '__color__' ? (background.strobe ? 'Строб' : 'Цвет') : unit?.name ?? c.bg?.split(':')[1] ?? '—',
-      sub: c.sub,
-      variant,
-      // хук рендер ставит только на вертикальное видео (зеркало hook_allowed в render_job)
-      hookAllowed: Boolean(unit && !unit.noHook),
-      vertical: c.bg === '__color__' || Boolean(c.bg?.startsWith('photo:')) || Boolean(unit && !unit.noHook),
-      sig: [c.bg ?? '', c.sub ?? '', variant?.id ?? ''].join('|')
-    };
-  });
-}
-
-
 /** index/onIndex — видео на экране снаружи (его же открывает таймлайн); onOpenTimeline — кнопка «Таймлайн» в шапке;
  *  edited — у видео на экране есть ручные правки с таймлайна (пилюля «Изменён» над чипами ролика). */
 export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext, index: indexProp, onIndex, onOpenTimeline, edited }: {
@@ -675,8 +597,8 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext, ind
    * Раскадровка: у каждого видео батча — свой вайб и свои реальные клипы по склейкам
    * рецепта. Видео листаются пилюлей в шапке, стрелки ← → внутри — кадры видео.
    * Раскадровка есть у футажа из вайбов; у фото, строба и своих исходников — пояснение.
+   * Вайб ли это — по подборке самого футажа, а не по открытому сейчас списку типа на «Фоне».
    */
-  const plane = footageTypePlane(state.background.footageType);
 
   // Последний шаг тура «Пула» — вход на таймлайн. Ждёт живого закрытия предыдущего шага:
   // замены кадра (если раскадровка есть) или распределения.
@@ -692,14 +614,16 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext, ind
       i, Object.entries(alloc.background), Object.entries(alloc.subtitles), hookEntries,
       styleEntries, units, Boolean(state.background.color), colorStyle
     ).bg;
+    const plane = units.find((unit) => unit.key === bgKey)?.plane;
     if (bgKey?.startsWith('footage:') && plane === 'vibes') return { index: i + 1, group: bgKey.slice('footage:'.length) };
     const reason = bgKey === '__color__' ? 'Строб и цвет собираются из цветовых планов — исходники не нужны'
       : bgKey?.startsWith('photo:') ? 'Фото подберутся при генерации — раскадровка пока только для видео'
         : bgKey?.startsWith('upload:') ? 'Своё видео — ваши клипы пойдут в том порядке, в каком загружены'
-          : bgKey?.startsWith('footage:') ? 'Раскадровка пока только для вайбов — коллекция подберётся при генерации'
-            : 'Фон этого видео ещё не распределён';
+          : bgKey?.startsWith('footage:') && plane === 'films' ? t('wizard.track.poolFilmNoStoryboard')
+            : bgKey?.startsWith('footage:') ? 'Раскадровка пока только для вайбов — коллекция подберётся при генерации'
+              : 'Фон этого видео ещё не распределён';
     return { index: i + 1, reason };
-  }), [total, alloc, units, state.background.color, colorStyle, plane]);
+  }), [total, alloc, units, state.background.color, colorStyle, t]);
   const chips = [
     { icon: combo.bg === '__color__' ? strobeIcon(14) : combo.bg?.startsWith('photo') ? photoIcon(14) : tagIcon(14), text: bgLabel ?? t('wizard.pool.notSelected'), off: !bgLabel },
     { icon: tIcon(14), text: combo.sub ?? t('wizard.pool.notSelected'), off: !combo.sub },

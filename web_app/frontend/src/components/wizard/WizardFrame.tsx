@@ -43,7 +43,8 @@ const tabs: { stage: number; label: string; icon: ReactNode }[] = [
   { stage: 5, label: 'wizard.tabs.pool', icon: <span className="w12-t-it" aria-hidden="true">V</span> }
 ];
 
-export function StageTabs() {
+/** onSelect — переход по табу через страницу (она сохраняет черновик); без него — просто смена шага. */
+export function StageTabs({ onSelect }: { onSelect?: (stage: number) => void }) {
   const { t } = useTranslation();
   const stage = useWizardStore((state) => state.stage);
   const setStage = useWizardStore((state) => state.setStage);
@@ -66,7 +67,7 @@ export function StageTabs() {
             aria-label={t(tab.label)}
             aria-selected={current}
             disabled={index > reached}
-            onClick={() => setStage(tab.stage)}
+            onClick={() => (onSelect ? onSelect(tab.stage) : setStage(tab.stage))}
           >
             {done ? <span className="w12-done"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 8.4 6.9 10.6 11.4 5.6" /></svg></span> : tab.icon}
             <span className="w12-l">{t(tab.label)}</span>
@@ -77,7 +78,7 @@ export function StageTabs() {
   );
 }
 
-export function WizardHeaderCard({ title, artist, onRename }: { title: string; artist?: string; onRename?: (value: string) => void }) {
+export function WizardHeaderCard({ title, artist, onRename, onStageSelect }: { title: string; artist?: string; onRename?: (value: string) => void; onStageSelect?: (stage: number) => void }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -100,7 +101,7 @@ export function WizardHeaderCard({ title, artist, onRename }: { title: string; a
         )}
       </div>
       <p className="w12-artist">{artist ?? '—'}</p>
-      <StageTabs />
+      <StageTabs onSelect={onStageSelect} />
     </header>
   );
 }
@@ -113,7 +114,8 @@ export function WizardActions({ ready, loading, onBack, onNext, nextLabel, tone 
   const stage = useWizardStore((state) => state.stage);
   const missing = useWizardAttempt((state) => (state.stage === stage ? state.message : ''));
   const next = (
-    <button type="button" className={cn('w12-cta', tone === 'field' ? 'w12-cta-field' : ready && 'w12-ready')} onClick={onNext} aria-busy={loading || undefined}>
+    // пока сохраняем/отправляем — кнопка мёртвая: второй клик запустил бы второй батч
+    <button type="button" className={cn('w12-cta', tone === 'field' ? 'w12-cta-field' : ready && 'w12-ready')} onClick={onNext} disabled={loading} aria-busy={loading || undefined}>
       {loading ? <span className="spinner" aria-hidden="true" /> : <><span className="w12-l">{nextLabel ?? t('wizard.continue')}</span><Svg>{W12.arrow}</Svg></>}
     </button>
   );

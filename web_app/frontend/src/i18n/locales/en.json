@@ -444,7 +444,16 @@
       "needCut": "Select a fragment on the waveform.",
       "zoom": "Waveform zoom",
       "zoomIn": "Zoom in",
-      "zoomOut": "Zoom out"
+      "zoomOut": "Zoom out",
+      "poolFilmUnit": "Film — {{name}}",
+      "poolCollectionUnit": "Cinema 16:9 — {{name}}",
+      "poolFilmNoStoryboard": "Storyboards are for vibes only for now: film shots are picked at generation",
+      "resetTitle": "Start over?",
+      "resetText": "The track, text, background, FX and Pool split will be erased, here and in the saved draft. This can’t be undone.",
+      "resetCancel": "Cancel",
+      "resetApply": "Reset",
+      "resetFail": "Couldn’t reset the draft",
+      "secondsValue": "{{value}} s"
     },
     "text": {
       "placeholder": "Lines sung in the fragment, one per line.",
@@ -872,7 +881,15 @@
       "drop": "Pick the drop moment inside the fragment.",
       "subtitles": "Pick at least one subtitle style.",
       "storyboard": "The storyboard is still being built, give it a few seconds.",
-      "pool": "Distribute all videos: every section must add up to the total."
+      "pool": "Distribute all videos: every section must add up to the total.",
+      "montageStale_one": "Table edits for {{count}} video were reset: the Pool split or an FX setup changed.",
+      "montageStale_other": "Table edits for {{count}} videos were reset: the Pool split or an FX setup changed.",
+      "strobeGlue": "Strobe is on: pick a cut or turn strobe off.",
+      "photoStyle": "Photo effects are on: pick an effect or turn them off.",
+      "textFont": "Text · {{style}}: the chosen font isn’t available for this style, pick another.",
+      "textFontUnknown": "Text · {{style}}: this font is no longer in the catalog, pick another.",
+      "textDown": "Text · {{style}}: the “Down” position is for 16:9 only, pick another.",
+      "submitting": "Already sending, give it a few seconds."
     },
     "montage": {
       "guideFramesTitle": "Pick the shots",
