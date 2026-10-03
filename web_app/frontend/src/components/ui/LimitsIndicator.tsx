@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { activeJobOptions } from '../../lib/activeJob';
 import { isSubscriptionPlan } from '../../lib/types';
 import { cssZoom } from '../../lib/zoom';
 import { LimitsPopoutCard, TrackLimitBar, type PopoutVariant } from '../funnel/LimitsPopout';
@@ -143,7 +144,7 @@ export function LimitsIndicator({
   const funnelOpen = useFunnelUi((state) => Boolean(state.open));
   const badge = useFunnelUi((state) => state.badge);
   // тот же запрос, что у шапки (AppShell): идёт ли сейчас батч
-  const activeJobQuery = useQuery({ queryKey: ['active-job'], queryFn: api.activeJob, refetchInterval: 5000 });
+  const activeJobQuery = useQuery(activeJobOptions);
   const batchRunning = Boolean(activeJobQuery.data?.job);
   const [closedKey, setClosedKey] = useState<string | null>(null);
   const [shownKey, setShownKey] = useState<string | null>(null);

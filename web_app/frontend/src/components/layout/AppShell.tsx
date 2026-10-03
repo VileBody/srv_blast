@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '../../lib/api';
 import { currentAppPath } from '../../lib/appPath';
+import { activeJobOptions } from '../../lib/activeJob';
 import { ProfileSetupGate } from './ProfileSetupGate';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/Button';
@@ -259,7 +260,7 @@ export function AppShell() {
   const meId = meQuery.data?.user.id;
   useEffect(() => { if (meId) rememberSessionUser(meId); }, [meId]);
   // идёт генерация — следим часто; нет — раз в 30 с (раньше каждые 5 с на любой странице)
-  const activeJobQuery = useQuery({ queryKey: ['active-job'], queryFn: api.activeJob, refetchInterval: (query) => (query.state.data?.job ? 5000 : 30_000) });
+  const activeJobQuery = useQuery(activeJobOptions);
   const activeJob = activeJobQuery.data?.job;
   useJobFinishedToast(activeJobQuery.isSuccess ? (activeJob?.id ?? null) : undefined);
   const viewport = useAppViewport();
