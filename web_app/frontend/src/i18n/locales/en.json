@@ -596,6 +596,7 @@
       "dropAnalyzing": "Analysing drop moments in the fragment…",
       "dropManualOnly": "No automatic candidates — set the drop timing manually.",
       "dropOutsideClip": "The drop timing must be inside the selected clip.",
+      "dropTooEarly": "The drop is too close to the start of the clip: leave at least a second before it. Move the drop or the clip start.",
       "scopeLabel": "Apply:",
       "scopeDrop": "before drop",
       "scopeFull": "whole video",

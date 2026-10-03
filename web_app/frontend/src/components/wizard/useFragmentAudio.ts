@@ -50,6 +50,20 @@ export function dropToSeconds(value: string | null | undefined): number | null {
 }
 
 /**
+ * Минимум от начала отрывка до дропа. Сборка требует дроп СТРОГО позже начала окна (F1 —
+ * больше секунды), иначе оркестратор молча выкидывает весь хук-блок: ролик собирается,
+ * но без выбранных эффектов. Тот же порог — в бэке (`production_backend.MIN_DROP_LEAD_S`).
+ */
+export const MIN_DROP_LEAD_S = 1;
+
+/** Где дроп относительно отрывка: внутри, слишком близко к началу или вне окна. */
+export function dropPlacement(drop: number | null, from: number | null, to: number | null): 'ok' | 'early' | 'outside' | null {
+  if (drop === null || from === null || to === null) return null;
+  if (drop < from || drop > to) return 'outside';
+  return drop - from > MIN_DROP_LEAD_S ? 'ok' : 'early';
+}
+
+/**
  * Проигрывание ВЫБРАННОГО ОТРЫВКА загруженного трека — поверх любого превью визарда.
  *
  * До этого послушать трек можно было только на первом шаге, и превью футажа оставалось

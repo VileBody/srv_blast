@@ -11,6 +11,11 @@ from . import effect_map as em
 from . import montage as montage_edits
 from . import storyboard as storyboard_plans
 
+# Минимум от начала отрывка до дропа — тот же порог, что у визарда (useFragmentAudio.MIN_DROP_LEAD_S):
+# оркестратор требует дроп строго позже начала окна (F1 — больше секунды) и иначе молча
+# выкидывает весь хук-блок.
+MIN_DROP_LEAD_S = 1.0
+
 SCHEMA = "blast.render_job/1"
 OUTPUT_DEFAULT = {
     "resolution": [1080, 1920],

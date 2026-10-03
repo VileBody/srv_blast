@@ -20,6 +20,7 @@ import logging
 from botocore.config import Config
 
 from . import asr_preview, bot_import, media_proxy, subtitle_text
+from .render_job import MIN_DROP_LEAD_S
 from .runtime import SETTINGS
 
 
@@ -1441,6 +1442,10 @@ class ProductionBackend:
                 raise ProductionBackendError("Для хука нужны отрывок и тайминг дропа")
             if float(drop) < float(start) or float(drop) > float(end):
                 raise ProductionBackendError("Дроп должен находиться внутри выбранного отрывка")
+            if float(drop) - float(start) <= MIN_DROP_LEAD_S:
+                # Оркестратор требует дроп строго позже начала окна (F1 — больше секунды) и
+                # иначе выкидывает весь хук-блок молча: ролик без выбранных эффектов. Отказываем здесь.
+                raise ProductionBackendError("Дроп слишком близко к началу отрывка: до него нужна хотя бы секунда")
         if family == "warmup" and hook_config.get("warmupKind") == "video":
             if not hook_config.get("videoUrl") or not hook_config.get("videoDuration") or not hook_config.get("videoWidth") or not hook_config.get("videoHeight"):
                 raise ProductionBackendError("Загрузите видео для прогрева заново")

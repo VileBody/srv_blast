@@ -10,7 +10,7 @@ import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { useDragScroll } from './useDragScroll';
 import { PillsFooter } from './WizardFrame';
 import { HookConfig, HookKind, HOOK_LABELS, hookComplete, hookPills, useWizardStore } from '../../stores/wizardStore';
-import { dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
+import { dropPlacement, dropToSeconds, normalizeDropTime, timingToSeconds } from './useFragmentAudio';
 import { formatTimeAuto } from '../../lib/timeFormat';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
@@ -211,7 +211,7 @@ export function StageHooks() {
   });
   const [customDrop, setCustomDrop] = useState(false);
   // «12» — это не «дроп вне отрывка», а неполная запись: причины разные, и чинятся по-разному
-  const [dropError, setDropError] = useState<'format' | 'outside' | null>(null);
+  const [dropError, setDropError] = useState<'format' | 'outside' | 'early' | null>(null);
   const [hint, setHint] = useState<HookKind | null>(null);
   // Список типов листается сам: края тают там, где за ними есть ещё строки
   const [typeFade, setTypeFade] = useState({ top: false, bottom: false });
@@ -235,15 +235,13 @@ export function StageHooks() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Кандидаты ВНЕ отрывка не предлагаем: выбрав такой, человек упирался в неактивное
-  // «Продолжить» без объяснения (dropReady в визарде требует дроп внутри окна).
-  const drops = (dropsQuery.data?.drops ?? []).filter((d) => {
-    const s = dropToSeconds(normalizeDropTime(d.time));
-    return s !== null && clipFromS !== null && clipToS !== null && s >= clipFromS && s <= clipToS;
-  });
+  // Кандидаты ВНЕ отрывка и впритык к его началу не предлагаем: выбрав такой, человек упирался
+  // в неактивное «Продолжить», а дроп на старте окна сборка молча выкидывала вместе с эффектами.
+  const drops = (dropsQuery.data?.drops ?? []).filter((d) => dropPlacement(dropToSeconds(normalizeDropTime(d.time)), clipFromS, clipToS) === 'ok');
   // Сохранённый дроп вылетел из окна (окно поменяли после выбора) — говорим об этом сразу
-  const storedDropS = dropToSeconds(hooks.dropTime);
-  const storedDropOutside = storedDropS !== null && clipReady && (storedDropS < clipFromS! || storedDropS > clipToS!);
+  const storedPlacement = clipReady ? dropPlacement(dropToSeconds(hooks.dropTime), clipFromS, clipToS) : null;
+  const storedDropOutside = storedPlacement === 'outside';
+  const storedDropEarly = storedPlacement === 'early';
   // В сторе тайминг всегда трёхчастный, в списке — «mm:ss»: сравниваем в одной форме
   const customActive = Boolean(hooks.dropTime && !drops.some((d) => normalizeDropTime(d.time) === hooks.dropTime));
   // Пока анализ идёт, ряд занимают заглушки: иначе человек видит один «Свой вариант»
@@ -309,9 +307,9 @@ export function StageHooks() {
                   return;
                 }
                 const seconds = /^\d{2}:\d{2}(?::\d{2})?$/.test(value) ? dropToSeconds(value) : null;
-                const inClip = seconds !== null && clipFromS !== null && clipToS !== null && seconds >= clipFromS && seconds <= clipToS;
-                setDropError(seconds === null ? 'format' : inClip ? null : 'outside');
-                if (inClip) setHooks({ dropTime: value });
+                const placement = dropPlacement(seconds, clipFromS, clipToS);
+                setDropError(seconds === null ? 'format' : placement === 'ok' ? null : placement === 'early' ? 'early' : 'outside');
+                if (placement === 'ok') setHooks({ dropTime: value });
                 setCustomDrop(false);
               }}
               onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
@@ -324,6 +322,7 @@ export function StageHooks() {
         </div>
         {dropError === 'format' && <p role="alert" className="w12-miss">{t('wizard.fx.dropBadFormat')}</p>}
         {(dropError === 'outside' || (!dropError && storedDropOutside)) && <p role="alert" className="w12-miss">{t('wizard.fx.dropOutsideClip')}</p>}
+        {(dropError === 'early' || (!dropError && storedDropEarly)) && <p role="alert" className="w12-miss">{t('wizard.fx.dropTooEarly')}</p>}
       </div>
 
       <ActionGuideOverlay

@@ -476,3 +476,17 @@ def test_drop_analysis_is_cached_per_track_and_window(client, monkeypatch) -> No
     assert main._cached_hook_analysis("s3://raw/t.mp3", 10.0, 22.0) == first
     main._cached_hook_analysis("s3://raw/t.mp3", 11.0, 22.0)  # другое окно — свой анализ
     assert len(calls) == 2
+
+
+def test_drop_candidates_skip_the_window_start(client, monkeypatch) -> None:
+    """Дроп впритык к началу окна сборка молча выкидывает вместе с хук-блоком — не предлагаем его."""
+    import asyncio
+    import dataclasses
+    _, main, _ = client
+    monkeypatch.setattr(main, "RUNTIME", dataclasses.replace(main.RUNTIME, backend="production"))
+    monkeypatch.setattr(main.store, "saved_track", lambda track_id: {"s3Key": "s3://raw/t.mp3"})
+    monkeypatch.setattr(main, "_cached_hook_analysis", lambda url, start, end: {"bpm": 120.0, "drop_candidates": [
+        {"t": 0.0, "confidence": 0.88}, {"t": 1.0, "confidence": 0.8}, {"t": 4.2, "confidence": 0.74}, {"t": 10.0, "confidence": 0.65}]})
+    result = asyncio.run(main.api_drops(trackId="t1", clipFrom="00:00", clipTo="00:12"))
+    assert [d["seconds"] for d in result["drops"]] == [4.2, 10.0]
+    assert [d["best"] for d in result["drops"]] == [True, False]

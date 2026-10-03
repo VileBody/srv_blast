@@ -15,7 +15,7 @@ import { useStoryboardBusy } from '../components/wizard/storyboardData';
 import { LabWorkZone, useFxLab, useLegacyHooksToVariants } from '../components/wizard/FxLab';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
-import { dropToSeconds, timingToSeconds } from '../components/wizard/useFragmentAudio';
+import { dropPlacement, dropToSeconds, timingToSeconds } from '../components/wizard/useFragmentAudio';
 import { SEGMENT_SECONDS, segmentSeconds } from '../components/wizard/timing';
 import { TrackStage } from '../components/wizard/TrackStage';
 import { useWizardAttempt } from '../components/wizard/wizardAttempt';
@@ -313,11 +313,7 @@ export function WizardPage() {
   const dropSeconds = dropToSeconds(state.hooks.dropTime);
   const clipFromSeconds = timingToSeconds(state.timingFrom);
   const clipToSeconds = timingToSeconds(state.timingTo);
-  const dropReady = dropSeconds !== null
-    && clipFromSeconds !== null
-    && clipToSeconds !== null
-    && dropSeconds >= clipFromSeconds
-    && dropSeconds <= clipToSeconds;
+  const dropReady = dropPlacement(dropSeconds, clipFromSeconds, clipToSeconds) === 'ok';
   const configuredHooks = hookPills(state.hooks);
   const configuredHookCount = configuredHooks.length;
   const configuredHooksNeedDrop = configuredHooks.some((pill) => pill.kind !== 'none');
