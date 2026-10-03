@@ -12,6 +12,8 @@ import { useToast } from '../../contexts/ToastContext';
 import { SvgMaskIcon } from './SvgMaskIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { AppAnalytics } from '../analytics/AppAnalytics';
+import { FunnelBadge, FunnelHost } from '../funnel/FunnelHost';
+import { usePaymentReturn } from '../funnel/useFunnel';
 
 // The desktop screens were laid out for a 1600x900 canvas. Scaling from 1280x800
 // left a 1280x720 laptop at 90%, while the same page at browser zoom 80% got the
@@ -198,6 +200,8 @@ export function AppShell() {
   const [lastCompletedJob, setLastCompletedJob] = useState<string | null>(null);
   const notifiedJob = useRef<string | null>(null);
   const viewport = useAppViewport();
+  // возврат из банка после трипваера: на любую страницу /app (батч, визард, генерация)
+  usePaymentReturn();
 
   useLayoutEffect(() => {
     const root = document.documentElement;
@@ -246,6 +250,10 @@ export function AppShell() {
         <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} activeJobId={activeJob?.id} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />
         {/* вход через Telegram не спрашивает ФИО — добираем их до первого экрана */}
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
+        {/* модалки воронки после генерации: квиз и безлимит на трек */}
+        {meQuery.isSuccess && <FunnelHost />}
+        {/* модалку безлимита закрыли, не пройдя: плашка в углу открывает её снова */}
+        {meQuery.isSuccess && <FunnelBadge />}
         <main className="with-sidebar min-w-0 flex-1">
           <div className="app-content">
             <MobileHeader onOpen={() => setDrawerOpen(true)} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />

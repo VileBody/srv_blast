@@ -1,0 +1,475 @@
+"""Воронка сайта после генерации: квиз, действия, безлимит на трек, квоты (app/funnel.py)."""
+from __future__ import annotations
+
+import asyncio
+import importlib
+import sys
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from tests.test_web_asr_preview import _env
+
+
+@pytest.fixture
+def client(monkeypatch: pytest.MonkeyPatch):
+    _env(monkeypatch)
+    saved = {n: m for n, m in sys.modules.items() if n == "app" or n.startswith("app.")}
+    for name in saved:
+        sys.modules.pop(name, None)
+    main = importlib.import_module("app.main")
+    main.funnel._MEMORY.__init__()  # чистая память воронки на каждый тест
+    from fastapi.testclient import TestClient
+
+    with TestClient(main.app) as tc:
+        yield tc, main
+    for name in [n for n in sys.modules if n == "app" or n.startswith("app.")]:
+        sys.modules.pop(name, None)
+    sys.modules.update(saved)
+
+
+def _track_with_hash(main, audio_hash: str = "h" * 64) -> dict:
+    track = main.store.save_track("song.mp3", s3_url="s3://raw/x.mp3", playback_url="/x.mp3", audio_hash=audio_hash)
+    return track
+
+
+def test_survey_follows_the_bot_branches_and_ends_with_a_clean_bridge(client) -> None:
+    tc, _ = client
+    assert tc.post("/api/funnel/survey", json={"questionId": "q1", "answerId": "none"}).json() == {"next": "q2", "done": False}
+    assert tc.post("/api/funnel/survey", json={"questionId": "q2", "answerId": "no_edit"}).json()["next"] == "q3"
+    done = tc.post("/api/funnel/survey", json={"questionId": "q3", "answerId": "money"}).json()
+    assert done["done"] is True and done["branch"] == "money"
+    # мостик из бота свёрстан под Telegram: на сайте без ручных переносов и стрелки-эмодзи
+    assert "\n" not in done["bridge"] and "\U0001f447" not in done["bridge"]
+    state = tc.get("/api/funnel/state").json()
+    assert state["survey"]["completed"] is True and state["survey"]["branch"] == "money"
+
+
+def test_unknown_answer_is_rejected(client) -> None:
+    tc, _ = client
+    r = tc.post("/api/funnel/survey", json={"questionId": "q1", "answerId": "nope"})
+    assert r.status_code == 422 and r.json()["detail"]["code"] == "survey_unknown_answer"
+
+
+def test_unlock_needs_both_actions_and_stays_on_one_track(client) -> None:
+    tc, main = client
+    track = _track_with_hash(main)
+    other = _track_with_hash(main, "o" * 64)
+    r = tc.post("/api/funnel/unlock", json={"trackId": track["id"]})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "unlock_actions_missing"
+    assert tc.post("/api/funnel/actions/channel").json() == {"subscribed": True}  # mock: подписка есть
+    tc.post("/api/funnel/actions/manager")
+    state = tc.post("/api/funnel/unlock", json={"trackId": track["id"]}).json()
+    assert state["unlimited"]["trackId"] == track["id"]
+    assert state["unlimited"]["quota"]["allowed"] is True and state["unlimited"]["quota"]["maxVideos"] == 5
+    r = tc.post("/api/funnel/unlock", json={"trackId": other["id"]})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "unlimited_other_track"
+
+
+def test_plan_generation_uses_quota_then_credits_then_refuses(client) -> None:
+    _, main = client
+    funnel = main.funnel
+    run = asyncio.run
+    tg = 42
+    assert run(funnel.plan_generation(tg, "h", 5, 0))[0] == "credits"  # безлимита нет
+    run(funnel.repo().unlock_track_unlimited(tg, "h"))
+    assert run(funnel.plan_generation(tg, "h", 5, 0))[0] == "free"
+    run(funnel.repo().record_track_batch(tg_id=tg, audio_hash="h", job_id="j1", videos=5, mode="free"))
+    # перезарядка 4 часа: кредитов нет — отказ с причиной для окна у кружка
+    with pytest.raises(funnel.TrackLimitError) as exc:
+        run(funnel.plan_generation(tg, "h", 5, 0))
+    assert exc.value.code == "cooldown" and exc.value.quota.available_at is not None
+    # кредиты есть — идём за кредиты, квоту не трогаем
+    assert run(funnel.plan_generation(tg, "h", 3, 10))[0] == "credits"
+    # больше, чем за раз: отказ «не больше N»
+    run(funnel.repo().drop_track_batch("j1"))
+    with pytest.raises(funnel.TrackLimitError) as exc:
+        run(funnel.plan_generation(tg, "h", 6, 0))
+    assert exc.value.code == "track_batch_cap"
+
+
+def test_failed_videos_return_to_the_track_quota(client) -> None:
+    _, main = client
+    repo = main.funnel.repo()
+    run = asyncio.run
+    run(repo.unlock_track_unlimited(7, "h"))
+    run(repo.record_track_batch(tg_id=7, audio_hash="h", job_id="j", videos=5, mode="free"))
+    run(repo.release_track_batch("j", 5))
+    rows = run(repo.list_track_batches(7, "h"))
+    assert rows[0]["videos"] == 0
+
+
+def test_quota_endpoint_and_tripwire_mock_refusal(client) -> None:
+    tc, main = client
+    track = _track_with_hash(main)
+    assert tc.get(f"/api/funnel/quota?trackId={track['id']}").json() == {"quota": None}
+    r = tc.post("/api/funnel/tripwire", json={"trackId": track["id"], "returnPath": "/app/projects/p1", "idempotencyKey": "k" * 16})
+    assert r.status_code == 503 and r.json()["detail"]["code"] == "payments_unavailable"
+    bad = tc.post("/api/funnel/tripwire", json={"trackId": track["id"], "returnPath": "https://evil.example", "idempotencyKey": "k" * 16})
+    assert bad.status_code == 422  # вернуть после оплаты можно только внутрь приложения
+
+
+def test_ratings_round_trip(client) -> None:
+    tc, main = client
+    job = {"id": "job_x", "videos": [{"id": "v1"}, {"id": "v2"}], "projectId": "p", "userId": main.store.current_user_id()}
+    main.store.JOBS[job["id"]] = job
+    main.store.get_job = lambda job_id: job if job_id == "job_x" else None
+    assert tc.post("/api/funnel/rating", json={"videoId": "v1", "jobId": "job_x", "score": 4, "reasons": ["transitions"]}).json() == {"ok": True}
+    assert tc.post("/api/funnel/rating", json={"videoId": "v2", "jobId": "job_x", "score": 11}).status_code == 422
+    ratings = tc.get("/api/funnel/ratings?jobId=job_x").json()["ratings"]
+    assert ratings == {"v1": {"score": 4, "reasons": ["transitions"], "comment": ""}}
+    # оценка батча складывается из оценок роликов: job.rating и generation_rated живы
+    tc.post("/api/funnel/rating", json={"videoId": "v2", "jobId": "job_x", "score": 9})
+    assert job["rating"] == 6.5 and job["videoRatings"] == {"v1": 4, "v2": 9}
+    events = [e for e in main.analytics.EVENTS if e["name"] == "generation_rated"]
+    assert events[-1]["props"] == {"jobId": "job_x", "rating": 6.5, "scale": 10, "videos": 2}
+
+
+def test_rating_someone_elses_job_is_404(client) -> None:
+    tc, main = client
+    main.store.JOBS["job_y"] = {"id": "job_y", "videos": [], "userId": "someone-else"}
+    r = tc.post("/api/funnel/rating", json={"videoId": "v1", "jobId": "job_y", "score": 5})
+    assert r.status_code == 404
+
+
+def test_tripwire_package_is_known_to_billing() -> None:
+    from services.tg_bot_public.credits_db import normalize_package_code, package_video_credits
+    from services.tg_bot_public.track_unlimited import TRIPWIRE_PACKAGE
+
+    assert normalize_package_code(TRIPWIRE_PACKAGE) == TRIPWIRE_PACKAGE
+    assert package_video_credits(TRIPWIRE_PACKAGE) == 0
+
+
+def test_production_image_ships_the_bot_modules_credits_db_imports() -> None:
+    """credits_db импортирует track_unlimited, funnel — marketing_texts: без них прод-сайт не стартует."""
+    from pathlib import Path
+
+    dockerfile = (Path(__file__).resolve().parents[1] / "web_app/backend/Dockerfile.production").read_text(encoding="utf-8")
+    for module in ("credits_db.py", "track_unlimited.py", "marketing_texts.py"):
+        assert f"services/tg_bot_public/{module}" in dockerfile, module
+
+
+def test_quota_view_carries_tripwire_offer(client) -> None:
+    _, main = client
+    from services.tg_bot_public import track_unlimited as tu
+
+    now = datetime(2026, 10, 3, tzinfo=timezone.utc)
+    q = tu.evaluate(now=now, unlocked_at=now - timedelta(hours=1), tripwire=False,
+                    batches=[tu.TrackBatch(now - timedelta(minutes=30), 5, "credits")])
+    view = main.funnel.quota_view(q)
+    assert view["reason"] == "cooldown" and view["tripwirePriceRub"] == 399 and view["tripwireBatchCap"] == 25
+
+
+@pytest.fixture
+def dev_client(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("BLAST_DEV_TOOLS", "1")
+    yield from client.__wrapped__(monkeypatch)
+
+
+def test_dev_funnel_demo_scenes_build_real_states(dev_client) -> None:
+    """DEV-сцены для показа воронки на живых страницах: каждая собирает своё состояние."""
+    tc, main = dev_client
+    expected = {
+        "generating": None, "results": None, "unlocked": "ok", "cooldown": "cooldown",
+        "daily": "daily_limit", "credits-out": None, "other-track": "ok",
+    }
+    for scene, reason in expected.items():
+        body = tc.post(f"/api/dev/funnel-demo/{scene}").json()
+        assert body["open"].startswith("/app/"), scene
+        main.store.use_user(main.store.current_user_id())
+        state = tc.get("/api/funnel/state").json()
+        quota = (state["unlimited"] or {}).get("quota")
+        assert (quota or {}).get("reason") == reason, scene
+    assert tc.post("/api/dev/funnel-demo/nope").status_code == 422
+
+
+def test_tripwire_is_bought_for_any_track_and_lifts_its_limits(client) -> None:
+    _, main = client
+    funnel = main.funnel
+    run = asyncio.run
+    tg = 77
+    run(funnel.repo().unlock_track_unlimited(tg, "free-track"))
+    funnel._MEMORY.tripwire.add((tg, "pushed-track"))  # купил на другой трек
+    q = run(funnel.track_quota(tg, "pushed-track"))
+    assert q.tripwire and q.max_videos == 25
+    assert run(funnel.plan_generation(tg, "pushed-track", 25, 0))[0] == "free"
+
+
+def test_tripwire_offer_opens_at_first_limit_and_lives_a_day(client, monkeypatch) -> None:
+    _, main = client
+    funnel = main.funnel
+    run = asyncio.run
+    tg = 78
+    assert run(funnel.tripwire_offer(tg, None)) is None  # лимит ещё не упирался
+    now = datetime(2026, 10, 3, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(funnel, "now_utc", lambda: now)
+    blocked = funnel.tu.TrackQuota(False, "cooldown", 0, 5, now, False)
+    funnel._MEMORY.actions.setdefault(tg, {})
+    offer = run(funnel.tripwire_offer(tg, blocked))
+    funnel._MEMORY.actions[tg]["tripwire_offer"] = now
+    offer = run(funnel.tripwire_offer(tg, None))
+    assert offer["expiresAt"] == (now + timedelta(hours=24)).isoformat()
+    monkeypatch.setattr(funnel, "now_utc", lambda: now + timedelta(hours=25))
+    assert run(funnel.tripwire_offer(tg, None)) is None
+
+
+def test_site_copy_has_no_em_dash_and_no_emoji(client) -> None:
+    """Тексты квиза и мостики на сайте — свои (WEB_*), по правилам копирайта сайта."""
+    tc, main = client
+    questions = tc.get("/api/funnel/state").json()["questions"]
+    texts = [q["text"] for q in questions] + [o["label"] for q in questions for o in q["options"]]
+    for branch in ("time", "money", "ideas", "meaning", "unknown"):
+        texts.append(main.funnel.web_bridge(branch))
+    for text in texts:
+        assert "—" not in text and "\U0001f447" not in text and "\n" not in text, text
+    # вопрос на сайте — заголовок окна: короткая формулировка, а не ботовая
+    by_id = {q["id"]: q for q in questions}
+    assert by_id["q1"]["text"] == "Сколько роликов в месяц у тебя выходит в TikTok?"
+    assert by_id["q2"]["text"] == "Как ты монтируешь ролики?"
+    assert [o["label"] for o in by_id["q2"]["options"]] == ["Сам", "С монтажёром или сервисом", "Не монтирую"]
+    assert by_id["q2a"]["text"] == "Сколько времени уходит на один ролик?"
+    assert by_id["q2b"]["text"] == "Сколько в месяц уходит на монтаж?"
+    assert by_id["q3"]["text"] == "Что мешает выкладывать чаще?"
+    assert "Не хватает идей" in [o["label"] for o in by_id["q3"]["options"]]
+    # мостик — одно-два коротких предложения под «Держи методичку»
+    for branch in ("time", "money", "ideas", "meaning"):
+        assert len(main.funnel.web_bridge(branch)) <= 120, branch
+    assert main.funnel.web_bridge("time").startswith("Растут те, кто выкладывает 1–2 ролика в день.")
+
+
+def test_survey_stores_the_bot_label_for_the_shared_table(client) -> None:
+    """В survey_responses ответ пишется тем же текстом, что у бота: таблица общая."""
+    tc, main = client
+    tc.post("/api/funnel/survey", json={"questionId": "q2", "answerId": "no_edit"})
+    tc.post("/api/funnel/survey", json={"questionId": "q3", "answerId": "ideas"})
+    tg = next(iter(main.funnel._MEMORY.surveys))
+    answers = main.funnel._MEMORY.surveys[tg]["answers"]
+    assert answers["q2"]["label"] == "Не монтирую — ролики не делаю"
+    assert answers["q3"]["label"] == "Не хватает идей/вариантов подачи"
+    # и в state сайт получает тот же ботовый label (на нём строится фраза питча)
+    assert tc.get("/api/funnel/state").json()["survey"]["answers"]["q3"]["label"] == "Не хватает идей/вариантов подачи"
+
+
+def test_state_exposes_the_unlimited_track_hash(client) -> None:
+    """Трек безлимита сверяется по хэшу: SavedTrack мог пропасть, а безлимит остаётся."""
+    tc, main = client
+    track = _track_with_hash(main)
+    tc.post("/api/funnel/actions/channel")
+    tc.post("/api/funnel/actions/manager")
+    state = tc.post("/api/funnel/unlock", json={"trackId": track["id"]}).json()
+    assert state["unlimited"]["audioHash"] == "h" * 64
+    main.store.ws().saved_tracks.clear()
+    state = tc.get("/api/funnel/state").json()
+    assert state["unlimited"]["trackId"] is None and state["unlimited"]["audioHash"] == "h" * 64
+
+
+def test_paid_users_cannot_unlock(client) -> None:
+    tc, main = client
+    track = _track_with_hash(main)
+    tg = main._funnel_tg_id()
+    main.funnel._MEMORY.paid.add(tg)
+    tc.post("/api/funnel/actions/channel")
+    tc.post("/api/funnel/actions/manager")
+    r = tc.post("/api/funnel/unlock", json={"trackId": track["id"]})
+    assert r.status_code == 409 and r.json()["detail"]["code"] == "unlimited_paid"
+    assert main.funnel._MEMORY.unlimited == {}
+
+
+def test_unlimited_offer_only_for_free_without_unlimited(client) -> None:
+    _, main = client
+    funnel, run = main.funnel, asyncio.run
+    assert run(funnel.unlimited_offer_due(11)) is True
+    funnel._MEMORY.paid.add(12)
+    assert run(funnel.unlimited_offer_due(12)) is False
+    run(funnel.repo().unlock_track_unlimited(13, "h"))
+    assert run(funnel.unlimited_offer_due(13)) is False
+
+
+# ── сабмит: повтор, гонка, окно трипваера (ревью bot-to-web) ─────────────────
+
+def _credits(n: int):
+    async def left() -> int:
+        return n
+    return left
+
+
+def test_start_batch_replay_keeps_the_recorded_mode(client) -> None:
+    """Повтор сабмита / дозапуск частично поставленного батча: режим уже записан —
+    квоту заново не считаем, бесплатный батч не уходит за кредиты (и не 402)."""
+    _, main = client
+    funnel, run = main.funnel, asyncio.run
+    run(funnel.repo().unlock_track_unlimited(50, "h"))
+    assert run(funnel.start_batch(50, "h", "job-1", 5, _credits(0))) == "free"
+    # своя же запись съела квоту: план «с нуля» ответил бы перезарядкой
+    assert run(funnel.start_batch(50, "h", "job-1", 5, _credits(100))) == "free"
+    with pytest.raises(funnel.TrackLimitError):
+        run(funnel.start_batch(50, "h", "job-2", 5, _credits(0)))
+    # батч за кредиты при повторе остаётся за кредиты: запись делает вызывающий после резерва
+    assert run(funnel.start_batch(50, "h", "job-3", 5, _credits(10))) == "credits"
+    run(funnel.repo().record_track_batch(tg_id=50, audio_hash="h", job_id="job-3", videos=5, mode="credits"))
+    assert run(funnel.start_batch(50, "h", "job-3", 5, _credits(0))) == "credits"
+    assert [b["mode"] for b in funnel._MEMORY.batches] == ["free", "credits"]
+
+
+def test_start_batch_without_quota_or_credits_is_credits_exhausted(client) -> None:
+    _, main = client
+    funnel, run = main.funnel, asyncio.run
+    with pytest.raises(funnel.CreditsExhausted) as exc:
+        run(funnel.start_batch(51, "h", "job-1", 5, _credits(2)))
+    assert exc.value.available == 2
+
+
+def test_two_parallel_submits_do_not_both_go_free(client) -> None:
+    """Проверка квоты и запись батча — под одним замком: из двух одновременных
+    сабмитов бесплатным уходит один, второй — за кредиты."""
+    _, main = client
+    funnel = main.funnel
+    funnel._MEMORY.unlimited[52] = {"tg_id": 52, "audio_hash": "h", "unlocked_at": datetime.now(timezone.utc),
+                                    "tripwire_order_id": "", "tripwire_paid_at": None}
+
+    async def both():
+        return await asyncio.gather(
+            funnel.start_batch(52, "h", "job-a", 5, _credits(10)),
+            funnel.start_batch(52, "h", "job-b", 5, _credits(10)),
+        )
+
+    assert sorted(asyncio.run(both())) == ["credits", "free"]
+    assert [b["mode"] for b in funnel._MEMORY.batches] == ["free"]
+
+
+def test_mock_submit_records_the_batch_under_the_lock(client) -> None:
+    """Mock-сабмит берёт тот же замок на человека, что и claim_track_batch (asyncio.Lock)."""
+    _, main = client
+    repo = main.funnel.repo()
+
+    async def held():
+        async with repo.batch_lock(53):
+            return repo._lock(53).locked()
+
+    assert asyncio.run(held()) is True
+
+
+def test_unlock_after_a_starter_batch_does_not_open_the_tripwire_window(client) -> None:
+    """Перезарядка от стартового батча (до открытия безлимита) окно трипваера не
+    открывает: человек ещё ни во что не упирался. Батч уже по безлимиту — открывает."""
+    tc, main = client
+    track = _track_with_hash(main)
+    tg = main._funnel_tg_id()
+    repo = main.funnel.repo()
+    asyncio.run(repo.record_track_batch(tg_id=tg, audio_hash="h" * 64, job_id="starter", videos=5, mode="credits"))
+    tc.post("/api/funnel/actions/channel")
+    tc.post("/api/funnel/actions/manager")
+    state = tc.post("/api/funnel/unlock", json={"trackId": track["id"]}).json()
+    assert state["unlimited"]["quota"]["reason"] == "cooldown"
+    assert tc.get("/api/funnel/state").json()["tripwireOffer"] is None
+    assert "tripwire_offer" not in main.funnel._MEMORY.actions.get(tg, {})
+    # первый батч уже по безлимиту → перезарядка → это упор, окно открыто
+    main.funnel._MEMORY.batches.clear()
+    asyncio.run(repo.record_track_batch(tg_id=tg, audio_hash="h" * 64, job_id="free-1", videos=5, mode="free"))
+    assert tc.get("/api/funnel/state").json()["tripwireOffer"] is not None
+
+
+def test_quota_refusal_on_submit_opens_the_tripwire_window(client) -> None:
+    _, main = client
+    funnel, run = main.funnel, asyncio.run
+    run(funnel.repo().unlock_track_unlimited(54, "h"))
+    run(funnel.repo().record_track_batch(tg_id=54, audio_hash="h", job_id="j1", videos=5, mode="free"))
+    with pytest.raises(funnel.TrackLimitError) as exc:
+        run(funnel.start_batch(54, "h", "j2", 5, _credits(0)))
+    http = run(main._track_limit_http(54, exc.value))
+    assert http.status_code == 402 and http.detail["code"] == "cooldown"
+    assert http.detail["tripwireOffer"]["priceRub"] == 399
+    assert "tripwire_offer" in funnel._MEMORY.actions[54]
+
+
+def test_other_track_screen_opens_the_tripwire_window(client) -> None:
+    """Безлимит уже на другом треке: экран с трипваером (или покупка с него) открывает
+    окно — трипваер на любой трек. Платящим — нет."""
+    tc, main = client
+    funnel, run = main.funnel, asyncio.run
+    run(funnel.repo().unlock_track_unlimited(55, "free-track"))
+    assert run(funnel.open_tripwire_offer(55, "free-track")) is None  # тот же трек, упора нет
+    assert run(funnel.open_tripwire_offer(55, "other-track"))["priceRub"] == 399
+    run(funnel.repo().unlock_track_unlimited(56, "free-track"))
+    funnel._MEMORY.paid.add(56)
+    assert run(funnel.open_tripwire_offer(56, "other-track")) is None
+    # ручка для показа окна: трек страницы — другой, окно открывается
+    other = _track_with_hash(main, "o" * 64)
+    tg = main._funnel_tg_id()
+    run(funnel.repo().unlock_track_unlimited(tg, "h" * 64))
+    assert tc.post("/api/funnel/tripwire/offer", json={"trackId": other["id"]}).json()["tripwireOffer"] is not None
+
+
+class _TripwireBilling:
+    def __init__(self) -> None:
+        self.orders: list[dict] = []
+
+    async def create_tripwire_order(self, **kw):
+        self.orders.append(kw)
+        return {"orderId": "o1", "paymentUrl": "https://pay.example/o1"}
+
+
+def test_tripwire_bought_from_the_other_track_screen_is_not_410(client, monkeypatch) -> None:
+    import dataclasses
+
+    tc, main = client
+    other = _track_with_hash(main, "o" * 64)
+    billing = _TripwireBilling()
+    monkeypatch.setattr(main, "RUNTIME", dataclasses.replace(main.RUNTIME, backend="production"))
+    monkeypatch.setattr(main, "_telegram_chat_id", lambda: 57)
+    monkeypatch.setattr(main, "_billing_backend", lambda: billing)
+    asyncio.run(main.funnel.repo().unlock_track_unlimited(57, "free-track"))
+
+    r = tc.post("/api/funnel/tripwire", json={
+        "trackId": other["id"], "returnPath": "/app/generate?project=project_1a2b", "idempotencyKey": "k" * 16,
+    })
+
+    assert r.status_code == 200, r.text
+    assert billing.orders[0]["return_path"] == "/app/generate?project=project_1a2b"
+    # без упора (безлимита нет вовсе) — по-прежнему «предложение закончилось»
+    monkeypatch.setattr(main, "_telegram_chat_id", lambda: 58)
+    r = tc.post("/api/funnel/tripwire", json={"trackId": other["id"], "returnPath": "/app", "idempotencyKey": "k" * 16})
+    assert r.status_code == 410
+
+
+def test_return_path_keeps_the_query_but_never_leaves_the_app(client) -> None:
+    security = client[1].security
+
+    assert security.safe_app_path("/app/generate?project=project_1a2b&step=3") == "/app/generate?project=project_1a2b&step=3"
+    assert security.safe_app_path("/app/projects/p1?unlimited=1") == "/app/projects/p1?unlimited=1"
+    for bad in ("https://evil.example", "//evil.example", "/app//evil.example", "/app/../x", "/apps",
+                "/app?next=https://evil", "/app\\evil", "/app#x", "/app@evil.example", ""):
+        assert security.safe_app_path(bad) is None, bad
+    assert security.with_query_param("https://a/app/x?project=1", "payment", "success") == "https://a/app/x?project=1&payment=success"
+    assert security.with_query_param("https://a/app/x", "payment", "failed") == "https://a/app/x?payment=failed"
+
+
+def test_google_login_returns_to_the_page_it_was_sent_from(client, monkeypatch) -> None:
+    """Кнопка уведомления вела на /app/…?unlimited=1, сессии не было — /login?next=…;
+    после входа через Google человек возвращается туда же (чужой адрес — нет)."""
+    from types import SimpleNamespace
+    from urllib.parse import quote
+
+    tc, main = client
+    captured: dict[str, str] = {}
+
+    def authorize(state: str) -> str:
+        captured["state"] = state
+        return "https://accounts.example/o"
+
+    monkeypatch.setattr(main.google_auth, "load", lambda: SimpleNamespace(configured=True))
+    monkeypatch.setattr(main.security, "google_allowed", lambda request: True)
+    monkeypatch.setattr(main.google_auth, "authorize_url", authorize)
+    monkeypatch.setattr(main.google_auth, "exchange_code", lambda code: {})
+    monkeypatch.setattr(main.google_auth, "profile_from_tokens", lambda tokens: {})
+    user = main.auth_store.create_user_from_telegram(4242, {"name": "Лена"})
+    monkeypatch.setattr(main.auth_store, "get_or_create_google_user", lambda profile: user)
+
+    nxt = "/app/projects/project_1a2b?unlimited=1"
+    tc.get(f"/api/auth/google?next={quote(nxt)}", follow_redirects=False)
+    r = tc.get(f"/api/auth/google/callback?code=c&state={captured['state']}", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"].endswith(nxt)
+
+    tc.get(f"/api/auth/google?next={quote('https://evil.example')}", follow_redirects=False)
+    r = tc.get(f"/api/auth/google/callback?code=c&state={captured['state']}", follow_redirects=False)
+    assert r.headers["location"].endswith("/app")

@@ -483,6 +483,20 @@ interface WizardStore extends WizardStateData {
   /** закрыть подсказку «вводные перенесены из прошлого батча» */
   ackCarriedOver: () => void;
   restoreSession: (projectId: string | null | undefined, stage: number, data: Record<string, unknown>) => void;
+  /**
+   * «Докрутить на сайте»: черновик целиком из ролика бота (stores/wizardImport.ts) — сразу
+   * на «Пуле» со всеми пройденными шагами, монтажный стол откроется сам (openTableOnLoad).
+   */
+  importEdit: (data: Partial<WizardStateData>) => void;
+  /**
+   * «Открыть таймлайн» у готового батча: черновик целиком из job.stageData (то, что визард
+   * отправил в сабмит) — сразу на «Пуле» с открытым монтажным столом. Раскадровку
+   * дособирает stores/reopenJob.ts.
+   */
+  reopenFromJob: (projectId: string, data: Record<string, unknown>) => void;
+  /** разовый флаг: WizardPage открывает монтажный стол и сбрасывает его; в localStorage не едет */
+  openTableOnLoad: boolean;
+  consumeOpenTable: () => void;
   stageData: () => Record<string, unknown>;
 }
 
@@ -533,11 +547,73 @@ const initialData = (projectId?: string | null): WizardStateData => ({
   final: { subtitleColor: '#ffffff', accentColor: '#8b6fe6', videosToGenerate: 1, idempotencyKey: crypto.randomUUID() }
 });
 
+/**
+ * Черновик визарда из формата stageData() — серверная копия сессии или job.stageData
+ * готового батча. Раскадровка сюда не входит: в stageData у неё только планы без превью.
+ */
+export function dataFromStageData(projectId: string | null | undefined, raw: Record<string, unknown>): WizardStateData {
+  const fresh = initialData(projectId);
+  const timing = (raw.timing ?? {}) as Record<string, unknown>;
+  const lyrics = typeof raw.lyrics === 'string' ? raw.lyrics : '';
+  const fragment = typeof raw.fragment === 'string' ? raw.fragment : '';
+  return {
+    ...fresh,
+    projectId,
+    track: (raw.track as SavedTrack | null | undefined) ?? null,
+    lyrics,
+    // stageData() кладёт в fragment сам текст, когда отдельного отрывка нет: такой
+    // fragment — не отдельный отрывок, иначе шаг «Трек» показал бы его включённым.
+    fragmentEnabled: Boolean(fragment.trim()) && fragment !== lyrics,
+    fragmentLyrics: fragment !== lyrics ? fragment : '',
+    timingMode: 'manual',
+    timingFrom: typeof timing.from === 'string' ? timing.from : '',
+    timingTo: typeof timing.to === 'string' ? timing.to : '',
+    background: (() => {
+      const merged = { ...fresh.background, ...((raw.background as Partial<WizardStateData['background']>) ?? {}) };
+      // Черновик мог быть сохранён на прошлой версии реестра типов футажей
+      // (standard/persons/movies). Приводим здесь, иначе id уедет в render_job
+      // как есть и подбор не найдёт такой план.
+      merged.footageType = normalizeFootageType(merged.footageType);
+      if (!merged.sourceVideos.length && merged.uploads.length) {
+        merged.sourceVideos = [{ id: 'source-video-legacy', format: merged.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...merged.uploads] }];
+      }
+      return merged;
+    })(),
+    hooks: migrateHooks({ ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) }),
+    subtitles: (() => {
+      const saved = (raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {};
+      const { text: _legacy, ...rest } = saved as Partial<WizardStateData['subtitles']> & { text?: unknown };
+      return { ...fresh.subtitles, ...rest, textByStyle: normalizeTextByStyle(rest.textByStyle) };
+    })(),
+    // Серверная копия едет без цвета (он только для экрана) — раздаём заново.
+    fxVariants: Array.isArray(raw.fxVariants)
+      ? (raw.fxVariants as FxVariant[]).map((v, i) => ({ ...v, color: v.color ?? FX_VARIANT_PALETTE[i % FX_VARIANT_PALETTE.length] }))
+      : [],
+    allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },
+    timeline: { ...fresh.timeline, ...((raw.timeline as Partial<TimelineRecipe>) ?? {}) },
+    // stageData() отправляет только правленые ролики и без флага edited — возвращаем его,
+    // иначе следующий сабмит отфильтровал бы эти правки как нетронутые.
+    montage: {
+      ...fresh.montage,
+      videos: Object.fromEntries(Object.entries(((raw.montage as { videos?: Record<number, MontageVideo> } | undefined)?.videos) ?? {})
+        .map(([index, video]) => [index, { ...video, transitions: video.transitions ?? {}, styles: video.styles ?? [], edited: true }]))
+    },
+    asr: (() => {
+      const saved = raw.asr as Partial<AsrPreviewState> | null | undefined;
+      if (!saved || !saved.jobId || !Array.isArray(saved.words)) return fresh.asr;
+      // Сессия хранит только правки; source дотянется поллингом по тому же key
+      return { ...fresh.asr, key: String(saved.key ?? ''), jobId: saved.jobId, status: 'COMPLETED', words: saved.words, source: saved.words, edited: Boolean(saved.edited) };
+    })(),
+    final: { ...fresh.final, ...((raw.final as Partial<WizardStateData['final']>) ?? {}) }
+  };
+}
+
 export const useWizardStore = create<WizardStore>()(
   persist(
     (set, get) => ({
       ...initialData(),
       stage: 1,
+      openTableOnLoad: false,
       setStage: (stage) => set((state) => {
         const next = Math.max(1, Math.min(5, stage));
         return { stage: next, reachedIndex: Math.max(state.reachedIndex, stageIndex(next)) };
@@ -657,54 +733,42 @@ export const useWizardStore = create<WizardStore>()(
         // Browser state is newer and wins. The server copy is for a cleared
         // browser or a second device, not for overwriting an active draft.
         if (state.track || state.lyrics.trim()) return state;
-        const fresh = initialData(projectId);
-        const timing = (raw.timing ?? {}) as Record<string, unknown>;
-        const fragment = typeof raw.fragment === 'string' ? raw.fragment : '';
         return {
-          ...fresh,
-          projectId,
-          track: (raw.track as SavedTrack | null | undefined) ?? null,
-          lyrics: typeof raw.lyrics === 'string' ? raw.lyrics : '',
-          fragmentEnabled: Boolean(fragment),
-          fragmentLyrics: fragment,
-          timingMode: 'manual',
-          timingFrom: typeof timing.from === 'string' ? timing.from : '',
-          timingTo: typeof timing.to === 'string' ? timing.to : '',
-          background: (() => {
-            const merged = { ...fresh.background, ...((raw.background as Partial<WizardStateData['background']>) ?? {}) };
-            // Черновик мог быть сохранён на прошлой версии реестра типов футажей
-            // (standard/persons/movies). Приводим здесь, иначе id уедет в render_job
-            // как есть и подбор не найдёт такой план.
-            merged.footageType = normalizeFootageType(merged.footageType);
-            if (!merged.sourceVideos.length && merged.uploads.length) {
-              merged.sourceVideos = [{ id: 'source-video-legacy', format: merged.sourceFormat === '16:9' ? '16:9' : '9:16', sourceIds: [...merged.uploads] }];
-            }
-            return merged;
-          })(),
-          hooks: migrateHooks({ ...fresh.hooks, ...((raw.hooks as Partial<WizardStateData['hooks']>) ?? {}) }),
-          subtitles: (() => {
-            const saved = (raw.subtitles as Partial<WizardStateData['subtitles']>) ?? {};
-            const { text: _legacy, ...rest } = saved as Partial<WizardStateData['subtitles']> & { text?: unknown };
-            return { ...fresh.subtitles, ...rest, textByStyle: normalizeTextByStyle(rest.textByStyle) };
-          })(),
-          // Серверная копия едет без цвета (он только для экрана) — раздаём заново.
-          fxVariants: Array.isArray(raw.fxVariants)
-            ? (raw.fxVariants as FxVariant[]).map((v, i) => ({ ...v, color: v.color ?? FX_VARIANT_PALETTE[i % FX_VARIANT_PALETTE.length] }))
-            : [],
-          allocation: { ...fresh.allocation, ...((raw.allocation as Partial<WizardStateData['allocation']>) ?? {}) },
-          timeline: { ...fresh.timeline, ...((raw.timeline as Partial<TimelineRecipe>) ?? {}) },
-          montage: { ...fresh.montage, videos: ((raw.montage as { videos?: Record<number, MontageVideo> } | undefined)?.videos) ?? {} },
-          asr: (() => {
-            const saved = raw.asr as Partial<AsrPreviewState> | null | undefined;
-            if (!saved || !saved.jobId || !Array.isArray(saved.words)) return fresh.asr;
-            // Сессия хранит только правки; source дотянется поллингом по тому же key
-            return { ...fresh.asr, key: String(saved.key ?? ''), jobId: saved.jobId, status: 'COMPLETED', words: saved.words, source: saved.words, edited: Boolean(saved.edited) };
-          })(),
-          final: { ...fresh.final, ...((raw.final as Partial<WizardStateData['final']>) ?? {}) },
+          ...dataFromStageData(projectId, raw),
           stage: Math.max(1, Math.min(5, Number(stage) || 1)),
           reachedIndex: stageIndex(Math.max(1, Math.min(5, Number(stage) || 1)))
         };
       }),
+      importEdit: (data) => set(() => ({
+        ...initialData(data.projectId),
+        ...data,
+        carriedOverInputs: false,
+        stage: 5,
+        reachedIndex: STAGE_ORDER.length - 1,
+        openTableOnLoad: true
+      })),
+      reopenFromJob: (projectId, raw) => set(() => {
+        // В отличие от restoreSession — без проверки «в браузере свежее»: человек сам
+        // попросил открыть этот батч, текущий черновик заменяется целиком.
+        const data = dataFromStageData(projectId, raw);
+        // Склейки батча — ровно те, что ушли в рендер: ключ рецепта считаем от тех же
+        // вводных, иначе useRecipeCuts принял бы их за чужие и пересчитал. cuts === null
+        // (на сабмите они были от других вводных) — пусть посчитаются заново.
+        const timeline = data.timeline.cuts ? { ...data.timeline, key: recipeKeyOf(data) } : { ...data.timeline, key: '', cuts: null };
+        return {
+          ...data,
+          timeline,
+          // раскадровку собирает reopenJob.ts: ей нужна раскладка роликов «Пула» (combosOf)
+          storyboard: emptyStoryboard(),
+          // Новый ключ: это новый батч, а не повтор старого сабмита (бэк отдал бы старую джобу).
+          final: { ...data.final, idempotencyKey: crypto.randomUUID() },
+          carriedOverInputs: false,
+          stage: 5,
+          reachedIndex: STAGE_ORDER.length - 1,
+          openTableOnLoad: true
+        };
+      }),
+      consumeOpenTable: () => set({ openTableOnLoad: false }),
       stageData: () => {
         const state = get();
         return {

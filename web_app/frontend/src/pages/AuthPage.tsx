@@ -5,6 +5,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { safeAppPath } from '../lib/appPath';
 import { cn } from '../lib/cn';
 import { LEGAL_LINKS } from '../lib/legal';
 import { LanguageSwitcher } from '../components/layout/LanguageSwitcher';
@@ -284,6 +285,8 @@ export function AuthPage({ mode }: { mode: Mode }) {
    * Возврат с Google: бэк редиректит сюда с ?auth=<исход>. Показываем причину и чистим
    * query, иначе тост всплывал бы на каждом рендере.
    */
+  // Куда вернуть после входа (/login?next=/app/…): туда вела ссылка, когда сессии не было
+  const nextPath = safeAppPath(params.get('next'));
   const authResult = params.get('auth');
   const shownAuthResult = useRef<string | null>(null);
   useEffect(() => {
@@ -325,7 +328,7 @@ export function AuthPage({ mode }: { mode: Mode }) {
 
   const onVerified = async () => {
     await queryClient.invalidateQueries({ queryKey: ['me'] });
-    navigate('/app');
+    navigate(nextPath ?? '/app');
   };
 
   const busy = tgStartMutation.isPending;
@@ -369,7 +372,7 @@ export function AuthPage({ mode }: { mode: Mode }) {
               onClick={() => onSubmit()}
             />
             {providersQuery.data?.google && (
-              <ProviderButton kind="google" label={mode === 'register' ? t('auth.googleCtaRegister') : t('auth.googleCtaLogin')} href={api.googleAuthUrl()} />
+              <ProviderButton kind="google" label={mode === 'register' ? t('auth.googleCtaRegister') : t('auth.googleCtaLogin')} href={api.googleAuthUrl(nextPath)} />
             )}
 
           </div>
@@ -389,7 +392,7 @@ export function AuthPage({ mode }: { mode: Mode }) {
           </p>
           <p className="auth-small">
             {mode === 'register' ? t('auth.haveAccount') : t('auth.noAccount')}{' '}
-            <Link className="auth-link" to={mode === 'register' ? '/login' : '/register'}>
+            <Link className="auth-link" to={`${mode === 'register' ? '/login' : '/register'}${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ''}`}>
               {mode === 'register' ? t('auth.loginCta') : t('auth.registerCta')}
             </Link>
           </p>

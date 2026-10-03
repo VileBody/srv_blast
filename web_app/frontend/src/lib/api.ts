@@ -8,6 +8,10 @@ import type {
   AnalyticsResponse,
   Subscription,
   SavedTrack,
+  FunnelState,
+  FunnelQuota,
+  RatingReason,
+  VideoRating,
   TrackUsageEntry,
   StoryboardCandidate,
   StoryboardCutsResponse,
@@ -22,6 +26,7 @@ import type {
   SubtitleFontCatalog
 } from './types';
 import type { SubtitleGeometry } from './subtitleGeometry';
+import { currentAppPath } from './appPath';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
@@ -120,7 +125,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       typeof detail === 'object' && detail !== null &&
       (detail as { code?: string }).code === 'auth_required';
     if (authRequired && !/^\/(login|register)/.test(window.location.pathname)) {
-      window.location.replace('/login');
+      // Возврат туда же после входа: кнопка уведомления в Telegram ведёт на
+      // /app/projects/…?unlimited=1, без сессии иначе терялась бы и страница, и модалка.
+      const back = currentAppPath();
+      window.location.replace(back ? `/login?next=${encodeURIComponent(back)}` : '/login');
     }
 
     /*
@@ -155,7 +163,58 @@ export const api = {
     }),
   tgVerify: (token: string) =>
     request<{ verified: boolean; noAccount?: boolean; user?: { id: string; email: string; name: string } }>(`/api/auth/tg-verify?token=${encodeURIComponent(token)}`),
+  /**
+   * Ссылка «на сайт» из публичного бота (`/go/<token>`): бэк логинит по токену и,
+   * если в ссылке трек, заводит проект с этим треком. Протухшая ссылка — 410.
+   * В браузере открыт другой аккаунт — 409 handoff_other_account; аккаунт без
+   * Telegram — 409 handoff_link_account (с его почтой и именем). Ответ человека:
+   * `force` — «Сменить аккаунт» / «Войти отдельно» (выйти из открытого и войти по
+   * Telegram), `link` — «Привязать» Telegram к открытому аккаунту.
+   */
+  botHandoff: (token: string, answer: { force?: boolean; link?: boolean } = {}) =>
+    request<{
+      ok: boolean;
+      created: boolean;
+      redirectTo: string;
+      projectId?: string;
+      track?: SavedTrack | null;
+      repeat?: boolean;
+      trackError?: 'tracks_limit';
+      /** «Докрутить на сайте»: отрезок и текст ролика из бота */
+      draft?: { clipStart: number; clipEnd: number; lyrics: string };
+      /** …и весь монтаж роликов бота для стола (stores/wizardImport.ts) */
+      wizardImport?: import('../stores/wizardImport').WizardImport;
+      /** монтаж не переехал: почему (визард откроется только с треком, окном и текстом) */
+      wizardImportError?: string;
+    }>('/api/auth/handoff', { method: 'POST', body: JSON.stringify({ token, ...answer }) }),
   logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
+  /* ---------------- воронка после генерации (docs/BOT_TO_WEB_FLOW.md) ---------------- */
+  funnelState: () => request<FunnelState>('/api/funnel/state'),
+  funnelSurvey: (questionId: string, answerId: string) =>
+    request<{ next: string | null; done: boolean; branch?: string; bridge?: string }>('/api/funnel/survey', {
+      method: 'POST',
+      body: JSON.stringify({ questionId, answerId })
+    }),
+  funnelMethodology: () =>
+    request<{ url: string | null; sent: boolean; botLink?: string }>('/api/funnel/methodology', { method: 'POST' }),
+  funnelRate: (payload: { videoId: string; jobId: string; projectId: string; score: number; reasons: RatingReason[]; comment?: string }) =>
+    request<{ ok: boolean }>('/api/funnel/rating', { method: 'POST', body: JSON.stringify(payload) }),
+  funnelRatings: (jobId: string) =>
+    request<{ ratings: Record<string, VideoRating> }>(`/api/funnel/ratings?jobId=${encodeURIComponent(jobId)}`),
+  funnelChannel: () => request<{ subscribed: boolean }>('/api/funnel/actions/channel', { method: 'POST' }),
+  funnelManager: () => request<{ ok: boolean }>('/api/funnel/actions/manager', { method: 'POST' }),
+  funnelUnlock: (trackId: string) =>
+    request<FunnelState>('/api/funnel/unlock', { method: 'POST', body: JSON.stringify({ trackId }) }),
+  funnelQuota: (trackId: string) =>
+    request<{ quota: FunnelQuota | null }>(`/api/funnel/quota?trackId=${encodeURIComponent(trackId)}`),
+  /** Показали окно перезарядки / экран «безлимит на другом треке»: открыть окно трипваера */
+  funnelTripwireOffer: (trackId?: string) =>
+    request<{ tripwireOffer: FunnelState['tripwireOffer'] }>('/api/funnel/tripwire/offer', {
+      method: 'POST',
+      body: JSON.stringify({ trackId: trackId ?? '' })
+    }),
+  funnelTripwire: (payload: { trackId: string; returnPath: string; idempotencyKey: string }) =>
+    request<{ orderId: string; paymentUrl: string }>('/api/funnel/tripwire', { method: 'POST', body: JSON.stringify(payload) }),
   /** Причина блокировки аккаунта — единственная ручка, которая забаненному отвечает 200 */
   banStatus: () => request<{ banned: boolean; reason: string | null; bannedAt: string | null }>('/api/auth/ban-status'),
   /**
@@ -164,7 +223,9 @@ export const api = {
    */
   authProviders: () => request<{ telegram: boolean; google: boolean; googleBlocked: boolean; country: string | null }>('/api/auth/providers'),
   /** Вход через Google: уходим на бэк, он редиректит на экран выбора аккаунта */
-  googleAuthUrl: () => `${API_BASE}/api/auth/google`,
+  /** `next` — путь внутри /app, куда вернуть после входа (бэк проверяет его ещё раз) */
+  googleAuthUrl: (next?: string | null) =>
+    `${API_BASE}/api/auth/google${next ? `?next=${encodeURIComponent(next)}` : ''}`,
   /** Привязка Google к уже открытому аккаунту (кнопка в профиле) */
   googleLinkUrl: () => `${API_BASE}/api/auth/google/link`,
   unlinkGoogle: () => request<{ ok: boolean }>('/api/auth/google/link', { method: 'DELETE' }),

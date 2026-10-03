@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import logging
@@ -11,6 +12,7 @@ import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -23,7 +25,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import mock_store as store
-from . import analytics, asr_preview, auth_store, fraud_guard, google_auth, persistence, security, telegram_bot
+from . import analytics, asr_preview, auth_store, bot_import, fraud_guard, funnel, google_auth, persistence, security, telegram_bot
 from . import render_job as render_job_builder
 from . import demo_media, effect_map
 from . import media_proxy
@@ -560,7 +562,7 @@ def api_auth_providers(request: Request) -> dict[str, Any]:
     }
 
 
-def _start_google(request: Request, *, link: bool) -> RedirectResponse:
+def _start_google(request: Request, *, link: bool, next_path: str | None = None) -> RedirectResponse:
     """Общий старт OAuth. `link=True` — привязка к текущему аккаунту, иначе вход.
 
     `state` кладём в сессию и сверяем на возврате — без него чужой сайт мог бы подсунуть
@@ -575,15 +577,24 @@ def _start_google(request: Request, *, link: bool) -> RedirectResponse:
     state = secrets.token_urlsafe(24)
     request.session["google_state"] = state
     request.session["google_link"] = link
+    # Куда вернуть после входа: кнопка уведомления вела на /app/…?unlimited=1, без
+    # сессии фронт ушёл на /login?next=… — после входа человек должен оказаться там же.
+    safe_next = security.safe_app_path(next_path)
+    if safe_next:
+        request.session["login_next"] = safe_next
+    else:
+        request.session.pop("login_next", None)
     if not link:
         analytics.track("signup_started", store.current_user_id(), {"provider": "google"})
     return RedirectResponse(google_auth.authorize_url(state), status_code=302)
 
 
 @app.get("/api/auth/google", tags=["auth"])
-def api_google_auth(request: Request) -> RedirectResponse:
-    """Старт входа через Google: уводим на экран выбора аккаунта."""
-    return _start_google(request, link=False)
+def api_google_auth(request: Request, next: str | None = None) -> RedirectResponse:
+    """Старт входа через Google: уводим на экран выбора аккаунта.
+
+    `next` — путь внутри /app, куда вернуть после входа (проверяется security.safe_app_path)."""
+    return _start_google(request, link=False, next_path=next)
 
 
 @app.get("/api/auth/google/link", tags=["auth"])
@@ -652,13 +663,14 @@ def api_google_callback(request: Request, code: str | None = None, state: str | 
     except ValueError:
         return RedirectResponse(f"{back}?auth=error", status_code=302)
 
+    next_path = security.safe_app_path(request.session.pop("login_next", None)) or "/app"
     request.session["user_id"] = user["id"]
     _sync_current_user(user)
     analytics.track("signup_completed", user["id"], {"source": "google"})
     # Колбэк — GET, а сброс состояния в middleware висит на мутирующих методах:
     # без явного вызова воркспейс нового аккаунта не попал бы в БД до первой правки.
     persistence.flush_user(user["id"])
-    return RedirectResponse(f"{_app_url()}/app", status_code=302)
+    return RedirectResponse(f"{_app_url()}{next_path}", status_code=302)
 
 
 @app.post("/api/auth/logout", tags=["auth"])
@@ -676,6 +688,393 @@ def api_ban_status(request: Request) -> dict[str, Any]:
     """
     ban = fraud_guard.ban_status(request.session.get("user_id"))
     return ban or {"banned": False, "reason": None, "bannedAt": None}
+
+
+# DEV (mock + dev-ручки): `/go#t=dev-remix-demo-0001` проигрывает «Докрутить на сайте»
+# на демо-ролике — тот же импорт и тот же HandoffPage, без бота и оркестратора.
+DEV_REMIX_TOKEN_PREFIX = "dev-remix-"
+
+
+def _dev_remix_edit_states(*, start: float, end: float, drop: float, lyrics: str) -> tuple[list[dict[str, Any]], bot_import.ImportCatalog]:
+    vibe = next(v for v in store.VIBES if v.get("plane") == "vibes")
+    catalog = bot_import.ImportCatalog(
+        subtitle_modes=dict(bot_import.MOCK_SUBTITLE_MODES),
+        footage={str(v["name"]): {"rotationTheme": "mock", "rotationTagsGroup": str(v["id"]), "plane": str(v.get("plane") or "vibes"),
+                                  "renderPreset": "wide" if v.get("plane") == "cine16x9" else "vertical"} for v in store.VIBES},
+    )
+    # окно плана уже окна слов, как у бота, когда субтитры прибили окно к фразам
+    plan_start, plan_end = start + 0.4, end - 0.3
+    cuts = storyboard_svc.mock_cuts(start=plan_start, end=plan_end, drop=drop)["cuts"]["auto"]
+    picked = storyboard_svc.mock_pick(vibes=list(store.VIBES), start=plan_start, end=plan_end, cuts=cuts, videos=[
+        {"index": i, "group": vibe["name"], "seedKey": f"dev-remix:{i}"} for i in (1, 2)
+    ])["videos"]
+    words = [{"text": w["text"], "t_start": w["tStart"], "t_end": w["tEnd"]} for w in asr_preview.mock_words(lyrics, start, end)]
+    request = {
+        "subtitles_mode": "brat_5th", "user_clip_start_sec": start, "user_clip_end_sec": end,
+        "hook_enabled": True, "user_drop_t": drop, "f2_shape": "rhomb",
+        "effect_transition": "minimax", "effect_extra": "xerox", "effect_extra_full": True,
+        "frame_id": "rounded", "subtitle_color_hex": "f6f5fd", "accent_color_hex": "#e38fb5",
+        "rotation_theme": "mock", "rotation_tags_group": str(vibe["id"]), "bg_mode": "footage", "render_preset": "vertical",
+    }
+    states = [{
+        "job_id": f"dev-remix-job-{p['index']}", "status": "SUCCEEDED", "request": dict(request),
+        "window": {"clip_start_abs": start, "clip_end_abs": end},
+        "footage_plan": p["plan"], "footage_plan_meta": {"bg_mode": "footage", "exact_slot": True},
+        "switch_points_abs": list(cuts), "words": words,
+        "asr": {"available": True, "mode": "local_ctc", "alignment_backend": "local_ctc", "reference_text": lyrics},
+    } for p in picked]
+    return states, catalog
+
+
+async def _dev_remix_handoff() -> dict[str, Any]:
+    lyrics = "Я знаю этот город не уснёт\nПока музыка ведёт нас вперёд"
+    start, end, drop = 10.234, 21.987, 15.5
+    states, catalog = _dev_remix_edit_states(start=start, end=end, drop=drop, lyrics=lyrics)
+    project = store.create_project("Ролик из бота", "TRIAL", "auto")
+    track = store.save_track("Ролик из бота.mp3", s3_url="s3://demo/bot-remix.mp3", playback_url=None,
+                             audio_hash=f"dev-remix-{uuid4().hex[:8]}")
+    imported = bot_import.build_wizard_import(states, catalog)
+
+    def _mock_clone(source: str) -> str:
+        return f"mock_asr_clone_{source}"
+
+    def _mock_state(job_id: str) -> dict[str, Any]:
+        return {"status": "COMPLETED", "words": asr_preview.words_from_orchestrator(states[0]["words"]),
+                "clipStart": start, "clipEnd": end, "error": None, "notes": [], "workingEnd": None}
+
+    imported = await _finish_remix_import(imported, track, asr_job=_mock_clone, asr_state=_mock_state)
+    return {
+        "ok": True, "created": False, "redirectTo": f"/app/generate?project={project['id']}",
+        "projectId": project["id"], "track": track, "repeat": False,
+        "draft": {"clipStart": start, "clipEnd": end, "lyrics": lyrics},
+        "wizardImport": imported, "mock": True,
+    }
+
+
+class HandoffPayload(BaseModel):
+    # Длину схемой не режем: битая или обрезанная ссылка — тот же экран «ссылка
+    # устарела» (410), а не 422 «не получилось открыть» (см. _handoff_token_ok).
+    token: str = Field(default="", max_length=4096)
+    # В браузере открыт другой аккаунт: входим по ссылке только после подтверждения.
+    # Для аккаунта без Telegram это ответ «Войти отдельно»: выйти из него и войти по
+    # Telegram (аккаунт найдётся по chat_id или заведётся).
+    force: bool = False
+    # В браузере аккаунт без Telegram: ответ «Привязать» — chat_id из ссылки
+    # привязывается к нему, второй аккаунт не заводим.
+    link: bool = False
+
+
+_HANDOFF_TOKEN_LEN = (16, 128)
+
+
+def _handoff_token_ok(token: str) -> bool:
+    return _HANDOFF_TOKEN_LEN[0] <= len(token) <= _HANDOFF_TOKEN_LEN[1]
+
+
+# Двойной клик или два открытых таба по одной ссылке не должны завести два проекта.
+# Замок живёт в памяти процесса — это держится на том, что API крутится ОДНИМ воркером
+# uvicorn (как и production_monitor). Запись удаляем, когда замок никто не держит и не ждёт,
+# иначе словарь рос бы на каждую открытую ссылку.
+_HANDOFF_LOCKS: dict[str, list[Any]] = {}  # key -> [asyncio.Lock, сколько держат/ждут]
+
+
+@contextlib.asynccontextmanager
+async def _handoff_lock(token: str) -> AsyncIterator[None]:
+    key = hashlib.sha256(token.encode()).hexdigest()
+    entry = _HANDOFF_LOCKS.setdefault(key, [asyncio.Lock(), 0])
+    entry[1] += 1
+    try:
+        async with entry[0]:
+            yield
+    finally:
+        entry[1] -= 1
+        if entry[1] == 0:
+            _HANDOFF_LOCKS.pop(key, None)
+
+
+async def _handoff_track_project(token: str, record: dict[str, Any], tg_id: int) -> dict[str, Any]:
+    """Проект с треком из бота. Повторное открытие той же ссылки ведёт в тот же проект.
+
+    Проект заводим только после того, как трек проверен (слот, объект в S3): сбой на
+    середине не должен оставлять пустой проект, а повтор — плодить ещё один."""
+    known = record["result"]
+    if known.get("projectId") and store.get_project(str(known["projectId"])):
+        project_id = str(known["projectId"])
+        track = store.saved_track(str(known["trackId"])) if known.get("trackId") else None
+        return {"projectId": project_id, "track": track, "repeat": True}
+
+    payload = record["payload"]
+    audio_s3_url = str(payload.get("audioS3Url") or "")
+    audio_hash = str(payload.get("audioHash") or "")
+    filename = security.sanitize_filename(str(payload.get("filename") or ""), "track.mp3")
+    if not audio_s3_url or not audio_hash:
+        raise HTTPException(status_code=422, detail={"code": "handoff_invalid", "message": "Ссылка без трека."})
+
+    billing = _billing_backend()
+    remix_key = _remix_project_key(audio_hash, payload) if record["kind"] == "remix" else ""
+    # Каждая ссылка — свой токен (напоминание, перевыпуск, /site, вторая кнопка
+    # «Докрутить» под тем же батчем). Уже заведённый проект — ведём туда же: трек — по
+    # его хэшу, ролики бота — по хэшу трека и id джоб батча.
+    reused = store.bot_remix_project(remix_key) if remix_key else (
+        store.bot_track_project(audio_hash) if record["kind"] == "track" else None
+    )
+    if reused is not None:
+        project, track = reused
+        await billing.set_handoff_result(token, {"projectId": project["id"], "trackId": track["id"]})
+        return {"projectId": project["id"], "track": track, "repeat": True}
+
+    try:
+        # Слот трека здесь НЕ тратим: открыть ссылку «посмотреть» не значит взять трек.
+        # Слот спишется при первой генерации на сайте (consume_track в сабмите). Здесь
+        # только предупреждаем, если генерация по треку упрётся в лимит треков.
+        allowed = await billing.can_upload_track(tg_id, audio_hash)
+        registered = await run_in_threadpool(_production_backend().register_bot_track, audio_s3_url, filename=filename)
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    project = store.create_project(Path(filename).stem or "Новый проект", "TRIAL", "auto")
+    analytics.track("project_created", store.current_user_id(), {"projectId": project["id"], "source": "bot_handoff"})
+    track = store.save_track(
+        filename,
+        s3_url=registered["s3_url"],
+        playback_url=registered["playback_url"],
+        audio_hash=audio_hash,
+    )
+    store.mark_bot_track_project(project["id"], audio_hash)
+    if remix_key:
+        store.mark_bot_remix_project(project["id"], remix_key)
+    analytics.track("track_uploaded", store.current_user_id(), {"trackId": track["id"], "source": "bot_handoff"})
+    await billing.set_handoff_result(token, {"projectId": project["id"], "trackId": track["id"]})
+    out: dict[str, Any] = {"projectId": project["id"], "track": track, "repeat": False}
+    if not allowed:
+        analytics.track("limit_hit", store.current_user_id(), {"limit": "tracks", "source": "bot_handoff"})
+        out["trackError"] = "tracks_limit"
+    return out
+
+
+# Ссылка «на сайт» из публичного бота: бот уже знает chat_id, поэтому подтверждать вход
+# через бота верификации не нужно — токен из общей с ботом БД и есть подтверждение.
+@app.post("/api/auth/handoff", tags=["auth"])
+async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[str, Any]:
+    if RUNTIME.backend != "production" and DEV_TOOLS and payload.token.startswith(DEV_REMIX_TOKEN_PREFIX):
+        return await _dev_remix_handoff()
+    if RUNTIME.backend != "production":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "handoff_unavailable", "message": "Вход по ссылке из бота работает только в проде."},
+        )
+    expired = HTTPException(
+        status_code=410,
+        detail={"code": "handoff_expired", "message": "Ссылка устарела. Новую пришлёт бот по команде /site."},
+    )
+    if not _handoff_token_ok(payload.token):
+        raise expired
+    async with _handoff_lock(payload.token):
+        billing = _billing_backend()
+        try:
+            # Аккаунт сверяем ДО погашения: одноразовая ссылка (/site, напоминания) иначе
+            # сгорела бы на вопросе «войти как другой аккаунт?», и «Сменить» получил бы 410.
+            peek_tg = await billing.peek_handoff_owner(payload.token)
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        if peek_tg is None:
+            raise expired
+        current = auth_store.user_by_id(str(request.session.get("user_id") or ""))
+        owner = auth_store.get_user_by_chat(peek_tg)
+        can_link = current is not None and owner is None and not current.get("tgChatId")
+        if can_link and not payload.link and not payload.force:
+            # В браузере аккаунт без Telegram (вход через Google). Тот же это человек или
+            # нет, мы не знаем — молча привязывать нельзя. Спрашиваем ДО погашения ссылки:
+            # одноразовая (/site, напоминания) иначе сгорела бы на вопросе.
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "handoff_link_account",
+                    "message": "В браузере открыт аккаунт без Telegram.",
+                    "email": str(current.get("email") or current.get("googleEmail") or ""),
+                    "name": str(current.get("name") or ""),
+                },
+            )
+        link_current = can_link and payload.link
+        if current is not None and not link_current and (owner or {}).get("id") != current["id"] and not payload.force:
+            # Открыт ДРУГОЙ аккаунт: молча переключать нельзя — фронт спросит
+            # «Войти как другой аккаунт?» и повторит запрос с force.
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "handoff_other_account", "message": "В браузере открыт другой аккаунт."},
+            )
+        try:
+            record = await billing.redeem_handoff(payload.token)
+        except Exception as exc:
+            raise _production_error(exc) from exc
+        if record is None:
+            raise expired
+        tg_id = int(record["tg_id"])
+        profile = dict(record["payload"].get("profile") or {})
+        created = False
+        if link_current:
+            # В браузере уже открыт аккаунт без Telegram (вход через Google): это тот же
+            # человек — привязываем chat_id к нему, второй аккаунт не заводим.
+            user = auth_store.link_telegram(current["id"], tg_id, profile)
+        else:
+            user = owner
+            if user is None:
+                user = auth_store.create_user_from_telegram(tg_id, profile)
+                created = True
+            if current is not None and current["id"] != user["id"]:
+                # Смена аккаунта: ничего из старой сессии не переносим.
+                request.session.clear()
+        request.session["user_id"] = user["id"]
+        _sync_current_user(user)
+        auth_store.set_notify_bot(user["id"], "public")
+        if created:
+            analytics.track("signup_completed", user["id"], {"source": "bot_handoff"})
+        analytics.track("bot_handoff", user["id"], {"kind": record["kind"], "redeemCount": record["redeem_count"]})
+        if record["kind"] not in {"track", "remix"}:
+            return {"ok": True, "created": created, "redirectTo": "/app"}
+        project = await _handoff_track_project(payload.token, record, tg_id)
+        out: dict[str, Any] = {
+            "ok": True,
+            "created": created,
+            "redirectTo": f"/app/generate?project={project['projectId']}",
+            **project,
+        }
+        if record["kind"] == "remix":
+            # «Докрутить на сайте»: отрезок и текст ролика из бота — в черновик визарда.
+            draft = dict(record["payload"].get("draft") or {})
+            out["draft"] = {
+                "clipStart": float(draft.get("clipStart") or 0.0),
+                "clipEnd": float(draft.get("clipEnd") or 0.0),
+                "lyrics": str(draft.get("lyrics") or ""),
+            }
+            # …и весь монтаж ролика сразу на столе — только при первом открытии ссылки:
+            # повтор не должен затирать правки, сделанные на сайте.
+            if not project.get("repeat") and record["payload"].get("jobIds"):
+                out.update(await _remix_import_or_error(record["payload"], project))
+        return out
+
+
+def _remix_project_key(audio_hash: str, payload: dict[str, Any]) -> str:
+    """Ключ проекта «Докрутить на сайте»: трек + ролики батча бота (порядок не важен).
+
+    Без ключа две remix-ссылки на один батч заводили два проекта, а клон слов ASR у них
+    был общий — правка слов в одном проекте меняла другой."""
+    job_ids = sorted({str(j) for j in payload.get("jobIds") or [] if str(j or "").strip()})
+    if not job_ids:
+        return ""
+    return hashlib.sha256(f"{audio_hash}|{','.join(job_ids)}".encode()).hexdigest()
+
+
+async def _remix_import_or_error(payload: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
+    """{"wizardImport": …} или {"wizardImportError": текст}. Ошибка не роняет вход по
+    ссылке: визард откроется по-старому (трек, окно, текст), а человек увидит, почему
+    монтаж не переехал (No Fallback — не молча)."""
+    try:
+        return {"wizardImport": await _remix_wizard_import(payload, project)}
+    except bot_import.BotImportError as exc:
+        logger.warning("bot_remix_import_refused jobs=%s reason=%s", payload.get("jobIds"), exc)
+        return {"wizardImportError": str(exc)}
+    except Exception:
+        logger.exception("bot_remix_import_failed jobs=%s", payload.get("jobIds"))
+        return {"wizardImportError": "Монтаж ролика из бота не загрузился"}
+
+
+def _remix_edit_states(job_ids: list[str]) -> list[dict[str, Any]]:
+    backend = _production_backend()
+    states: list[dict[str, Any]] = []
+    for job_id in job_ids:
+        try:
+            states.append(backend.job_edit_state(job_id))
+        except Exception as exc:  # один ролик без состояния не отменяет остальные
+            logger.warning("bot_remix_edit_state_unavailable job=%s err=%s", job_id, exc)
+            states.append({"job_id": job_id, "status": bot_import.STATUS_UNAVAILABLE})
+    return states
+
+
+async def _remix_wizard_import(payload: dict[str, Any], project: dict[str, Any]) -> dict[str, Any]:
+    job_ids = [str(j) for j in payload.get("jobIds") or [] if str(j or "").strip()][:20]
+    backend = _production_backend()
+    states = await run_in_threadpool(_remix_edit_states, job_ids)
+    imported = bot_import.build_wizard_import(
+        states, backend.remix_catalog(),
+        snapshot=dict(payload.get("settings") or {}), draft=dict(payload.get("draft") or {}),
+    )
+    # Клон слов ASR — свой на каждый проект: правки слов на таймлайне пишутся в него.
+    clone_key = f"{store.current_user_id()}:{project['projectId']}"
+    return await _finish_remix_import(imported, project.get("track") or {},
+                                      asr_job=lambda src: backend.asr_preview_from_job(src, clone_key=clone_key),
+                                      asr_state=backend.asr_preview_state)
+
+
+async def _finish_remix_import(imported: dict[str, Any], track: dict[str, Any], *, asr_job, asr_state) -> dict[str, Any]:
+    """Превью клипов раскадровки + примерка субтитров со словами ролика."""
+    notes: list[str] = list(imported.get("notes") or [])
+    imported["storyboard"] = await _remix_storyboard_views(imported, notes)
+    imported["asr"] = None
+    if imported.get("asrAvailable") and imported.get("asrSourceJobId"):
+        try:
+            job_id = await run_in_threadpool(asr_job, imported["asrSourceJobId"])
+            fresh = await run_in_threadpool(asr_state, job_id)
+            if fresh.get("status") != "COMPLETED":
+                raise RuntimeError(f"asr clone status {fresh.get('status')}")
+            text = asr_preview.target_fragment({"fragment": imported["lyrics"], "lyrics": imported["lyrics"]})
+            window = imported["window"]
+            key = asr_preview.preview_key(str(track.get("s3Key") or ""), window["start"], window["end"], text)
+            state = {**asr_preview.empty_state(key), **fresh, "key": key, "jobId": job_id}
+            store.set_asr_preview(state)
+            imported["asr"] = state
+        except Exception as exc:
+            logger.warning("bot_remix_asr_clone_failed source=%s err=%s", imported.get("asrSourceJobId"), exc)
+    if imported["asr"] is None:
+        notes.append("Слова ролика не перенеслись: примерка субтитров посчитается заново.")
+    imported["notes"] = notes
+    for internal in ("asrSourceJobId", "asrAvailable", "words"):
+        imported.pop(internal, None)
+    return imported
+
+
+async def _remix_storyboard_views(imported: dict[str, Any], notes: list[str]) -> list[dict[str, Any]]:
+    """Превью клипов плана: тот же подбор «Пула», что и на сайте, с закреплёнными клипами
+    бота на каждом кадре. План остаётся ботовым (смещения в исходниках — те же кадры)."""
+    entries = list(imported.get("storyboard") or [])
+    if not entries:
+        return []
+    window, cuts = imported["window"], list(imported["timeline"]["cuts"])
+    by_group: dict[str, list[dict[str, Any]]] = {}
+    for entry in entries:
+        by_group.setdefault(entry["group"], []).append(entry)
+    out: list[dict[str, Any]] = []
+    try:
+        for group, items in by_group.items():
+            videos = [
+                {"index": e["index"], "group": group, "seedKey": f"bot:{e['index']}",
+                 "pins": {str(k): c["file_name"] for k, c in enumerate(e["plan"]["clips"])}}
+                for e in items
+            ]
+            if RUNTIME.backend == "production":
+                res = await run_in_threadpool(
+                    lambda: _production_backend().storyboard_pick(
+                        group_name=group, clip_start_abs=window["start"], clip_end_abs=window["end"],
+                        switch_points_abs=cuts,
+                        videos=[{"seed_key": v["seedKey"], "pins": v["pins"]} for v in videos],
+                    )
+                )
+                picked = [
+                    {"clips": [storyboard_svc.clip_view(c) for c in p.get("clips") or []]}
+                    for p in res.get("videos") or []
+                ]
+            else:
+                picked = storyboard_svc.mock_pick(vibes=list(store.VIBES), start=window["start"], end=window["end"],
+                                                  cuts=cuts, videos=videos)["videos"]
+            for entry, view in zip(items, picked, strict=True):
+                names = [c["file_name"] for c in entry["plan"]["clips"]]
+                if [c.get("fileName") for c in view["clips"]] != names:
+                    raise bot_import.BotImportError("подбор вернул другие клипы")
+                out.append({**entry, "clips": view["clips"], "repeats": []})
+    except Exception as exc:
+        logger.warning("bot_remix_storyboard_unavailable err=%s", exc)
+        notes.append("Клипы роликов из бота на сайте больше недоступны: склейки те же, клипы подберутся заново.")
+        return []
+    return sorted(out, key=lambda e: e["index"])
 
 
 @app.get("/api/auth/tg-verify", tags=["auth"])
@@ -914,7 +1313,7 @@ async def api_create_order(payload: PaymentPayload) -> dict[str, Any]:
             order = await _billing_backend().create_order(
                 tg_id=tg_id,
                 package_type=payload.packageType,
-                email=str(store.USER.get("email") or store.USER.get("googleEmail") or ""),
+                email=_billing_email(),
                 recurrent_accepted=payload.recurrentAccepted,
                 idempotency_key=payload.idempotencyKey,
             )
@@ -1021,7 +1420,7 @@ async def api_payment_retry() -> dict[str, Any]:
         order = await _billing_backend().create_order(
             tg_id=_telegram_chat_id(),
             package_type=tier,
-            email=str(store.USER.get("email") or store.USER.get("googleEmail") or ""),
+            email=_billing_email(),
             recurrent_accepted=True,
         )
         return {"ok": True, "subscription": data["subscription"], "paymentUrl": order["paymentUrl"], "mock": False}
@@ -2041,13 +2440,116 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
     credits_total = store.video_limit()
     # Повтор по тому же ключу возвращает уже созданный джоб — и не должен упираться в лимит
     replay = payload.idempotencyKey and payload.idempotencyKey in store.JOB_IDEMPOTENCY
-    if RUNTIME.backend == "mock" and credits_total is not None and not replay:
-        credits_left = credits_total - store.SUBSCRIPTION["creditsUsed"]
-        if payload.videosToGenerate > credits_left:
-            analytics.track("limit_hit", store.current_user_id(), {"limit": "videos", "left": credits_left})
-            raise HTTPException(status_code=402, detail=f"Доступно {credits_left} генераций")
+    if RUNTIME.backend == "mock":
+        # Проверка квоты и запись батча — под одним замком на человека (как
+        # claim_track_batch в проде): два сабмита подряд не уходят бесплатно оба.
+        tg_mock = _funnel_tg_id()
+        mock_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
+        async with funnel.repo().batch_lock(tg_mock):
+            mock_batch_mode = "credits"
+            if credits_total is not None and not replay:
+                credits_left = credits_total - store.SUBSCRIPTION["creditsUsed"]
+                mock_batch_mode = await _plan_generation_or_402(
+                    tg_mock, mock_hash, payload.videosToGenerate, credits_left,
+                )
+            job = _create_job_or_422(project_id, stage_data, payload)
+            if not replay and mock_hash:
+                await funnel.repo().record_track_batch(
+                    tg_id=tg_mock, audio_hash=mock_hash, job_id=job["id"],
+                    videos=int(job.get("versions") or payload.videosToGenerate), mode=mock_batch_mode,
+                )
+    else:
+        job = _create_job_or_422(project_id, stage_data, payload)
+    if RUNTIME.backend == "production":
+        live_job = store.JOBS[job["id"]]
+        try:
+            _production_backend().validate_job(live_job)
+        except (ValueError, RuntimeError) as exc:
+            _rollback_unless_enqueued(live_job["id"])
+            raise HTTPException(422, detail=str(exc)) from exc
+        tg_id = _telegram_chat_id()
+        track_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
+        if not track_hash:
+            _rollback_unless_enqueued(live_job["id"])
+            raise HTTPException(status_code=422, detail="Uploaded track has no content hash")
+        # Примерка субтитров: ещё считается → «подожди» ДО резерва кредитов и списания
+        # трека, чтобы откатывать было нечего. Упала/протухла → reuse снимается явно
+        # внутри prepare_asr_reuse, генерация идёт со свежим ASR.
+        from .production_backend import AsrPreviewPending
+
+        try:
+            await run_in_threadpool(_production_backend().prepare_asr_reuse, live_job)
+        except AsrPreviewPending as exc:
+            _rollback_unless_enqueued(live_job["id"])
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "asr_preview_pending", "message": str(exc)},
+            ) from exc
+        except Exception as exc:
+            _rollback_unless_enqueued(live_job["id"])
+            raise _production_error(exc) from exc
+        videos_n = len(live_job.get("videos") or [])
+        # Безлимит на трек (docs/BOT_TO_WEB_FLOW.md, раздел 5): батч по открытому
+        # треку идёт без кредитов, пока хватает квоты; иначе — обычный путь. Повтор
+        # сабмита / дозапуск частично поставленного батча берёт уже записанный режим.
+        try:
+            batch_mode = await _start_batch_or_402(tg_id, track_hash, live_job["id"], videos_n)
+        except HTTPException:
+            _rollback_unless_enqueued(live_job["id"])
+            raise
+        except Exception as exc:
+            _rollback_unless_enqueued(live_job["id"])
+            raise _production_error(exc) from exc
+        free_batch = batch_mode == "free"
+        if free_batch:
+            live_job["freeUnlimited"] = True
+        try:
+            if not free_batch:
+                await _billing_backend().reserve(tg_id, live_job["id"], videos_n)
+                await funnel.repo().record_track_batch(
+                    tg_id=tg_id, audio_hash=track_hash, job_id=live_job["id"], videos=videos_n, mode=batch_mode,
+                )
+            await _billing_backend().consume_track(tg_id, track_hash)
+            from . import production_monitor
+            await production_monitor.enqueue_job(live_job)
+        except Exception as exc:
+            from .billing_backend import InsufficientCredits, TrackQuotaExhausted
+
+            async def _undo() -> None:
+                await funnel.repo().drop_track_batch(live_job["id"])
+                if not free_batch:
+                    await _billing_backend().refund(tg_id, live_job["id"], videos_n)
+
+            if isinstance(exc, InsufficientCredits):
+                await funnel.repo().drop_track_batch(live_job["id"])
+                _rollback_unless_enqueued(live_job["id"])
+                raise HTTPException(status_code=402, detail=await _credits_exhausted_detail(tg_id, exc.available)) from exc
+            if isinstance(exc, TrackQuotaExhausted):
+                await _undo()
+                _rollback_unless_enqueued(live_job["id"])
+                raise HTTPException(status_code=402, detail="Лимит уникальных треков исчерпан") from exc
+            partial = any(
+                video.get("orchestratorJobId")
+                for video in live_job.get("videos", [])
+            )
+            if partial:
+                live_job["enqueueError"] = str(exc)[:2000]
+                persistence.save_job(live_job["id"])
+            else:
+                await _undo()
+                _rollback_unless_enqueued(live_job["id"])
+            raise _production_error(exc) from exc
+        live_job.pop("enqueueError", None)
+        live_job["productionNotifications"] = True
+        persistence.save_job(live_job["id"])
+        job = store.get_job(live_job["id"]) or live_job
+    analytics.track("generation_started", store.current_user_id(), {"jobId": job["id"], "videos": job["versions"], "projectId": project_id})
+    return {"job": job, "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
+
+
+def _create_job_or_422(project_id: str, stage_data: dict[str, Any], payload: SubmitPayload) -> dict[str, Any]:
     try:
-        job = store.create_job(
+        return store.create_job(
             project_id,
             stage_data,
             payload.videosToGenerate,
@@ -2058,70 +2560,276 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         # Раскладка батча не сошлась (пул, варианты FX, устаревшая раскадровка) — это
         # ошибка вводных, которую человек может поправить, а не 500.
         raise HTTPException(422, detail=str(exc)) from exc
+
+
+def _rollback_unless_enqueued(job_id: str) -> None:
+    """Откатить джоб, который не ушёл в работу.
+
+    Частично поставленный батч (часть роликов уже в оркестраторе) не откатывается
+    никогда: он сохранён с `enqueueError`, и повтор того же сабмита дозапускает его с
+    первого недостающего ролика. Раньше повтор такого батча падал в
+    `rollback_job_creation` → ValueError → 500 вместо понятного ответа."""
+    job = store.JOBS.get(job_id)
+    if job is not None and any(video.get("orchestratorJobId") for video in job.get("videos") or []):
+        return
+    store.rollback_job_creation(job_id)
+
+
+async def _start_batch_or_402(tg_id: int, track_hash: str, job_id: str, videos: int) -> str:
+    """Режим батча («free» / «credits») с записью бесплатного батча; отказ — 402 с причиной."""
+    try:
+        return await funnel.start_batch(
+            tg_id, track_hash, job_id, videos, credits_left=lambda: _billing_backend().balance(tg_id),
+        )
+    except funnel.TrackLimitError as exc:
+        raise await _track_limit_http(tg_id, exc) from exc
+    except funnel.CreditsExhausted as exc:
+        raise HTTPException(status_code=402, detail=await _credits_exhausted_detail(tg_id, exc.available)) from exc
+
+
+async def _track_limit_http(tg_id: int, exc: "funnel.TrackLimitError") -> HTTPException:
+    """402 по квоте трека. Отказ из-за перезарядки или суточного лимита — это и есть
+    первый реальный упор: здесь открывается окно трипваера (сутки)."""
+    analytics.track("limit_hit", store.current_user_id(), {"limit": "track_quota", "reason": exc.code})
+    offer = await funnel.tripwire_offer(tg_id, exc.quota)
+    return HTTPException(
+        status_code=402,
+        detail={"code": exc.code, "message": exc.message, "quota": funnel.quota_view(exc.quota), "tripwireOffer": offer},
+    )
+
+
+def _billing_email() -> str:
+    """Контакт для чека T-Bank: почта аккаунта, иначе привязанного Google — одна для всех оплат."""
+    return str(store.USER.get("email") or store.USER.get("googleEmail") or "")
+
+
+def _funnel_tg_id() -> int:
+    """Кто для воронки этот человек: в проде — его chat_id (общий с ботом ключ).
+
+    В mock chat_id может не быть — берём стабильное число из id аккаунта, чтобы
+    флоу прокликивался локально."""
     if RUNTIME.backend == "production":
-        live_job = store.JOBS[job["id"]]
-        try:
-            _production_backend().validate_job(live_job)
-        except (ValueError, RuntimeError) as exc:
-            store.rollback_job_creation(live_job["id"])
-            raise HTTPException(422, detail=str(exc)) from exc
-        tg_id = _telegram_chat_id()
-        track_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
-        if not track_hash:
-            store.rollback_job_creation(live_job["id"])
-            raise HTTPException(status_code=422, detail="Uploaded track has no content hash")
-        # Примерка субтитров: ещё считается → «подожди» ДО резерва кредитов и списания
-        # трека, чтобы откатывать было нечего. Упала/протухла → reuse снимается явно
-        # внутри prepare_asr_reuse, генерация идёт со свежим ASR.
-        from .production_backend import AsrPreviewPending
+        return _telegram_chat_id()
+    raw = store.ws().user.get("tgChatId")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return int(hashlib.sha256(store.current_user_id().encode()).hexdigest()[:12], 16)
 
-        try:
-            await run_in_threadpool(_production_backend().prepare_asr_reuse, live_job)
-        except AsrPreviewPending as exc:
-            store.rollback_job_creation(live_job["id"])
-            raise HTTPException(
-                status_code=409,
-                detail={"code": "asr_preview_pending", "message": str(exc)},
-            ) from exc
-        except Exception as exc:
-            store.rollback_job_creation(live_job["id"])
-            raise _production_error(exc) from exc
-        try:
-            await _billing_backend().reserve(tg_id, live_job["id"], len(live_job.get("videos") or []))
-            await _billing_backend().consume_track(tg_id, track_hash)
-            from . import production_monitor
-            await production_monitor.enqueue_job(live_job)
-        except Exception as exc:
-            from .billing_backend import InsufficientCredits, TrackQuotaExhausted
 
-            if isinstance(exc, InsufficientCredits):
-                store.rollback_job_creation(live_job["id"])
-                raise HTTPException(status_code=402, detail=f"Доступно {exc.available} генераций") from exc
-            if isinstance(exc, TrackQuotaExhausted):
-                await _billing_backend().refund(
-                    tg_id, live_job["id"], len(live_job.get("videos") or [])
-                )
-                store.rollback_job_creation(live_job["id"])
-                raise HTTPException(status_code=402, detail="Лимит уникальных треков исчерпан") from exc
-            partial = any(
-                video.get("orchestratorJobId")
-                for video in live_job.get("videos", [])
-            )
-            if partial:
-                live_job["enqueueError"] = str(exc)[:2000]
-                persistence.save_job(live_job["id"])
-            else:
-                await _billing_backend().refund(
-                    tg_id, live_job["id"], len(live_job.get("videos") or [])
-                )
-                store.rollback_job_creation(live_job["id"])
-            raise _production_error(exc) from exc
-        live_job.pop("enqueueError", None)
-        live_job["productionNotifications"] = True
-        persistence.save_job(live_job["id"])
-        job = store.get_job(live_job["id"]) or live_job
-    analytics.track("generation_started", store.current_user_id(), {"jobId": job["id"], "videos": job["versions"], "projectId": project_id})
-    return {"job": job, "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
+async def _credits_exhausted_detail(tg_id: int, available: int) -> dict[str, Any]:
+    """402 «кредиты кончились»: фронт по `unlimitedOffer` открывает модалку безлимита."""
+    # Бесплатным — всегда: нет безлимита — модалка его откроет, открыт на другом
+    # треке — объяснит, что он не переносится (на том же треке сюда не попадаем:
+    # там отказ приходит кодом квоты).
+    offer = not await funnel.repo().has_paid(tg_id)
+    analytics.track("limit_hit", store.current_user_id(), {"limit": "videos", "left": available})
+    return {
+        "code": "credits_exhausted",
+        "message": f"Доступно {available} генераций",
+        "available": available,
+        "unlimitedOffer": offer,
+    }
+
+
+async def _plan_generation_or_402(tg_id: int, track_hash: str, videos: int, credits_left: int) -> str:
+    """«free» или «credits»; не хватает ни квоты трека, ни кредитов — 402 с причиной."""
+    try:
+        mode, _quota = await funnel.plan_generation(tg_id, track_hash, videos, credits_left)
+    except funnel.TrackLimitError as exc:
+        raise await _track_limit_http(tg_id, exc) from exc
+    if mode == "credits" and videos > credits_left:
+        raise HTTPException(status_code=402, detail=await _credits_exhausted_detail(tg_id, credits_left))
+    return mode
+
+
+def _funnel_http(exc: funnel.FunnelError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message})
+
+
+def _track_hash_for(track_id: str) -> tuple[dict[str, Any], str]:
+    track = store.saved_track(track_id)
+    if not track or not track.get("audioHash"):
+        raise HTTPException(status_code=404, detail={"code": "track_not_found", "message": "Трек не найден."})
+    return track, str(track["audioHash"])
+
+
+class FunnelSurveyPayload(BaseModel):
+    questionId: str = Field(min_length=1, max_length=16)
+    answerId: str = Field(min_length=1, max_length=32)
+
+
+class FunnelRatingPayload(BaseModel):
+    videoId: str = Field(min_length=1, max_length=64)
+    jobId: str = Field(default="", max_length=64)
+    projectId: str = Field(default="", max_length=64)
+    score: int = Field(ge=1, le=10)
+    reasons: list[Literal["subtitles", "footage", "transitions", "other"]] = Field(default_factory=list)
+    comment: str = Field(default="", max_length=1000)
+
+
+class FunnelTrackPayload(BaseModel):
+    trackId: str = Field(min_length=1, max_length=64)
+
+
+class FunnelTripwireOfferPayload(BaseModel):
+    # трек страницы: безлимит открыт на другом треке — тоже упор (экран «другой трек»)
+    trackId: str = Field(default="", max_length=64)
+
+
+class FunnelTripwirePayload(BaseModel):
+    trackId: str = Field(min_length=1, max_length=64)
+    # куда вернуть после оплаты: только путь внутри приложения, не внешний адрес.
+    # Query можно (?project=… — визард вернётся в свой проект), но без `//`, `\`,
+    # `#`, `@` и схем: адрес собирается как APP_URL + путь, наружу он не уведёт.
+    returnPath: str = Field(default="/app", max_length=300, pattern=security.APP_RETURN_PATH_RE)
+    idempotencyKey: str = Field(min_length=8, max_length=128)
+
+
+@app.get("/api/funnel/state", tags=["funnel"])
+async def api_funnel_state() -> dict[str, Any]:
+    return await funnel.state(_funnel_tg_id(), saved_tracks=store.ws().saved_tracks)
+
+
+@app.post("/api/funnel/survey", tags=["funnel"])
+async def api_funnel_survey(payload: FunnelSurveyPayload) -> dict[str, Any]:
+    try:
+        result = await funnel.answer_survey(_funnel_tg_id(), payload.questionId, payload.answerId)
+    except funnel.FunnelError as exc:
+        raise _funnel_http(exc) from exc
+    analytics.track("survey_answered", store.current_user_id(), {"question": payload.questionId, "answer": payload.answerId})
+    return result
+
+
+@app.post("/api/funnel/methodology", tags=["funnel"])
+async def api_funnel_methodology() -> dict[str, Any]:
+    try:
+        return await run_in_threadpool(funnel.send_methodology, _funnel_tg_id())
+    except funnel.FunnelError as exc:
+        raise _funnel_http(exc) from exc
+
+
+@app.post("/api/funnel/rating", tags=["funnel"])
+async def api_funnel_rating(payload: FunnelRatingPayload) -> dict[str, Any]:
+    job = store.JOBS.get(payload.jobId) if payload.jobId else None
+    if job is not None and job.get("userId") != store.current_user_id():
+        raise HTTPException(status_code=404, detail="Job not found")
+    await funnel.repo().save_video_rating(
+        _funnel_tg_id(),
+        video_id=payload.videoId,
+        job_id=payload.jobId,
+        project_id=payload.projectId,
+        score=payload.score,
+        reasons=list(payload.reasons),
+        comment=payload.comment,
+    )
+    analytics.track("video_rated", store.current_user_id(), {"videoId": payload.videoId, "score": payload.score})
+    if job is not None:
+        # Оценка батча теперь складывается из оценок роликов (шкала 1–10): job.rating и
+        # событие generation_rated, которые писала старая оценка 1–5, не пропадают.
+        scores = dict(job.get("videoRatings") or {})
+        scores[payload.videoId] = payload.score
+        job["videoRatings"] = scores
+        job["rating"] = round(sum(scores.values()) / len(scores), 1)
+        persistence.save_job(job["id"])
+        analytics.track(
+            "generation_rated",
+            store.current_user_id(),
+            {"jobId": job["id"], "rating": job["rating"], "scale": 10, "videos": len(scores)},
+        )
+    return {"ok": True}
+
+
+@app.get("/api/funnel/ratings", tags=["funnel"])
+async def api_funnel_ratings(jobId: str) -> dict[str, Any]:
+    job = store.get_job(jobId)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    ids = [str(v["id"]) for v in job.get("videos") or []]
+    return {"ratings": await funnel.repo().list_video_ratings(_funnel_tg_id(), ids)}
+
+
+@app.post("/api/funnel/actions/channel", tags=["funnel"])
+async def api_funnel_channel() -> dict[str, Any]:
+    tg_id = _funnel_tg_id()
+    try:
+        subscribed = await run_in_threadpool(funnel.check_channel_member, tg_id)
+    except funnel.FunnelError as exc:
+        raise _funnel_http(exc) from exc
+    if subscribed:
+        await funnel.repo().mark_funnel_action(tg_id, funnel.ACTION_CHANNEL)
+        analytics.track("funnel_action", store.current_user_id(), {"action": "channel"})
+    return {"subscribed": subscribed}
+
+
+@app.post("/api/funnel/actions/manager", tags=["funnel"])
+async def api_funnel_manager() -> dict[str, Any]:
+    # Факт отправки сообщения проверить нельзя — засчитываем переход по диплинку.
+    await funnel.repo().mark_funnel_action(_funnel_tg_id(), funnel.ACTION_MANAGER)
+    analytics.track("funnel_action", store.current_user_id(), {"action": "manager"})
+    return {"ok": True}
+
+
+@app.post("/api/funnel/unlock", tags=["funnel"])
+async def api_funnel_unlock(payload: FunnelTrackPayload) -> dict[str, Any]:
+    _, audio_hash = _track_hash_for(payload.trackId)
+    tg_id = _funnel_tg_id()
+    try:
+        await funnel.unlock(tg_id, audio_hash)
+    except funnel.FunnelError as exc:
+        raise _funnel_http(exc) from exc
+    analytics.track("unlimited_unlocked", store.current_user_id(), {"trackId": payload.trackId})
+    return await funnel.state(tg_id, saved_tracks=store.ws().saved_tracks)
+
+
+@app.get("/api/funnel/quota", tags=["funnel"])
+async def api_funnel_quota(trackId: str) -> dict[str, Any]:
+    _, audio_hash = _track_hash_for(trackId)
+    q = await funnel.track_quota(_funnel_tg_id(), audio_hash)
+    return {"quota": funnel.quota_view(q) if q else None}
+
+
+@app.post("/api/funnel/tripwire/offer", tags=["funnel"])
+async def api_funnel_tripwire_offer(payload: FunnelTripwireOfferPayload) -> dict[str, Any]:
+    """Показали окно перезарядки у кружка или экран «безлимит на другом треке»: открыть
+    окно трипваера (сутки), если человек и правда упёрся в лимит. Ответ — само окно
+    (или null, если упора нет / предложение уже закончилось)."""
+    audio_hash = _track_hash_for(payload.trackId)[1] if payload.trackId else ""
+    return {"tripwireOffer": await funnel.open_tripwire_offer(_funnel_tg_id(), audio_hash)}
+
+
+@app.post("/api/funnel/tripwire", tags=["funnel"])
+async def api_funnel_tripwire(payload: FunnelTripwirePayload) -> dict[str, Any]:
+    if RUNTIME.backend != "production":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "payments_unavailable", "message": "Оплата работает только в проде."},
+        )
+    _, audio_hash = _track_hash_for(payload.trackId)
+    tg_id = _telegram_chat_id()
+    # Трипваер — на любой трек; предложение живёт сутки с первого упора в лимит. Покупка
+    # с экрана «безлимит уже на другом треке» сама и есть такой упор — окно открывается.
+    if await funnel.open_tripwire_offer(tg_id, audio_hash) is None:
+        raise HTTPException(
+            status_code=410,
+            detail={"code": "tripwire_expired", "message": "Предложение уже закончилось."},
+        )
+    if await funnel.repo().has_track_tripwire(tg_id, audio_hash):
+        raise HTTPException(status_code=409, detail={"code": "tripwire_owned", "message": "Лимиты с этого трека уже сняты."})
+    from .billing_backend import PaymentInitError
+
+    try:
+        order = await _billing_backend().create_tripwire_order(
+            tg_id=tg_id,
+            audio_hash=audio_hash,
+            return_path=payload.returnPath,
+            email=_billing_email(),
+            idempotency_key=payload.idempotencyKey,
+        )
+    except PaymentInitError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}) from exc
+    analytics.track("tripwire_started", store.current_user_id(), {"trackId": payload.trackId})
+    return order
 
 
 # ------------------------- Mock API: preview -------------------------
@@ -3127,6 +3835,83 @@ def api_dev_billing(state: str, monthsAgo: int = 0) -> dict[str, Any]:
     else:
         raise HTTPException(status_code=422, detail="state: past_due | active | canceled")
     return {"ok": True, "subscription": sub}
+
+
+FUNNEL_DEMO_SCENES = (
+    "generating", "results", "results-surveyed", "unlocked", "cooldown", "daily", "credits-out", "other-track",
+)
+_FUNNEL_DEMO_PROJECT = "Демо воронки"
+_FUNNEL_DEMO_HASH = "demo-funnel-track"
+
+
+@app.post("/api/dev/funnel-demo/{scene}", tags=["system"])
+async def api_dev_funnel_demo(scene: str) -> dict[str, Any]:
+    """DEV-ручка (только mock): настоящий проект и батч в нужном состоянии воронки.
+
+    Чтобы прокликать квиз, оценки, модалку безлимита и окно перезарядки на живых
+    страницах сайта, не дожидаясь рендера. Каждая сцена пересобирает демо-проект.
+    """
+    if RUNTIME.backend != "mock":
+        raise HTTPException(status_code=404, detail="Not found")
+    if scene not in FUNNEL_DEMO_SCENES:
+        raise HTTPException(status_code=422, detail={"code": "unknown_scene", "scenes": list(FUNNEL_DEMO_SCENES)})
+    space = store.ws()
+    tg_id = _funnel_tg_id()
+    mem = funnel._MEMORY
+    # чистое состояние воронки этого человека
+    mem.surveys.pop(tg_id, None)
+    mem.actions.pop(tg_id, None)
+    mem.unlimited.pop(tg_id, None)
+    mem.ratings = {k: v for k, v in mem.ratings.items() if k[0] != tg_id}
+    mem.batches = [b for b in mem.batches if b["tg_id"] != tg_id]
+    mem.paid.discard(tg_id)
+    for old in [p for p in space.projects if p.get("name") == _FUNNEL_DEMO_PROJECT]:
+        store.delete_project(old["id"])
+    space.saved_tracks = [t for t in space.saved_tracks if t.get("audioHash") != _FUNNEL_DEMO_HASH]
+
+    project = store.create_project(_FUNNEL_DEMO_PROJECT, "TRIAL", "auto")
+    track = store.save_track("Нет любви.mp3", s3_url="s3://demo/no-love.mp3", playback_url=None, audio_hash=_FUNNEL_DEMO_HASH)
+    now = datetime.now(timezone.utc)
+    generating = scene == "generating"
+    job_id = f"job_demo_{uuid4().hex[:6]}"
+    videos = []
+    for index in (1, 2, 3):
+        status = "COMPLETED" if not generating or index == 1 else ("PROCESSING" if index == 2 else "PENDING")
+        videos.append({
+            "id": f"{job_id}_v{index}", "index": index, "status": status, "progress": 100 if status == "COMPLETED" else 40,
+            "source": "Тревожная природа", "format": "9:16", "subtitleStyle": "Jakson", "hook": "none",
+            "thumbnailUrl": None, "downloadUrl": None,
+        })
+    store.JOBS[job_id] = {
+        "id": job_id, "projectId": project["id"], "userId": space.user["id"], "orchestratorJobId": None,
+        "stageData": {"track": track}, "renderJob": {"variations": []},
+        "status": "PROCESSING" if generating else "COMPLETED", "versions": 3, "rating": None, "outputUrls": [],
+        "createdAt": store.iso(now - timedelta(minutes=8)), "completedAt": None if generating else store.iso(now),
+        "videos": videos, "mock": True,
+    }
+    total = store.video_limit() or 5
+    space.subscription["creditsUsed"] = total if scene in {"cooldown", "daily", "credits-out", "unlocked", "other-track"} else 3
+
+    if scene in {"results-surveyed", "unlocked", "cooldown", "daily", "other-track"}:
+        for qid, aid in (("q1", "1_10"), ("q2", "self"), ("q2a", "1_3h"), ("q3", "time")):
+            await funnel.answer_survey(tg_id, qid, aid)
+    if scene in {"unlocked", "cooldown", "daily", "other-track"}:
+        for action in funnel.UNLOCK_ACTIONS:
+            await mem.mark_funnel_action(tg_id, action)
+        row = await mem.unlock_track_unlimited(tg_id, "other-track-hash" if scene == "other-track" else _FUNNEL_DEMO_HASH)
+        if scene == "other-track":
+            store.save_track("Последний танец.mp3", s3_url="s3://demo/last-dance.mp3", playback_url=None, audio_hash="other-track-hash")
+        if scene == "cooldown":
+            row["unlocked_at"] = now - timedelta(hours=2)
+            await mem.record_track_batch(tg_id=tg_id, audio_hash=_FUNNEL_DEMO_HASH, job_id=job_id, videos=5, mode="free")
+            mem.batches[-1]["created_at"] = now - timedelta(hours=1, minutes=19)
+        if scene == "daily":
+            row["unlocked_at"] = now - timedelta(hours=6)
+            for jid, ago in (("demo_a", timedelta(hours=5, minutes=30)), ("demo_b", timedelta(hours=4, minutes=40))):
+                await mem.record_track_batch(tg_id=tg_id, audio_hash=_FUNNEL_DEMO_HASH, job_id=jid, videos=5, mode="free")
+                mem.batches[-1]["created_at"] = now - ago
+    page = f"/app/processing/{job_id}" if generating else f"/app/projects/{project['id']}"
+    return {"scene": scene, "projectId": project["id"], "jobId": job_id, "trackId": track["id"], "open": page}
 
 
 @app.post("/api/dev/mark-posted/{video_id}", tags=["system"])

@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
@@ -9,6 +9,9 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { BatchLayout, BatchTrack, GenerationsCard, PreviewColumn, TrackCard } from '../components/project/BatchCards';
 import { startNextBatch } from '../stores/wizardStore';
+import { trackOfJob, useVideoRatings } from '../components/funnel/FunnelHost';
+import { useFunnelState } from '../components/funnel/useFunnel';
+import { useFunnelUi } from '../stores/funnelUi';
 
 /** Батч видео (Figma W36, состояние с лимитами — W47). Раскладка общая с W51 (генерация). */
 export function ProjectDetailPage() {
@@ -28,7 +31,34 @@ export function ProjectDetailPage() {
   const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[jobs.length - 1];
   const videos = selectedJob?.videos ?? [];
   const completedVideos = videos.filter((video) => video.status === 'COMPLETED');
-  const rateableJob = selectedJob?.status === 'COMPLETED' ? selectedJob : undefined;
+  const ratings = useVideoRatings(selectedJob, id);
+  const [search, setSearch] = useSearchParams();
+  const funnelQuery = useFunnelState();
+  const openUnlimited = useFunnelUi((state) => state.openUnlimited);
+
+  // «Оценить и получить безлимит» из Telegram (?unlimited=1): сразу модалка безлимита
+  // по последнему батчу. Параметр снимаем, чтобы обновление страницы её не открывало.
+  const unlimitedParam = search.get('unlimited') === '1';
+  const funnelReady = Boolean(funnelQuery.data) || funnelQuery.isError;
+  useEffect(() => {
+    if (!unlimitedParam || !selectedJob || !funnelReady) return;
+    if (funnelQuery.data && !funnelQuery.data.hasPaid) {
+      const track = trackOfJob(selectedJob);
+      openUnlimited({
+        source: 'results',
+        jobId: selectedJob.id,
+        projectId: id,
+        trackId: track.id,
+        audioHash: track.audioHash,
+        trackTitle: track.title,
+        videos: selectedJob.videos
+      });
+    }
+    search.delete('unlimited');
+    setSearch(search, { replace: true });
+  }, [unlimitedParam, selectedJob, funnelReady, funnelQuery.data, openUnlimited, id, search, setSearch]);
+
+  // Возврат из банка после трипваера (?payment=…) разбирает AppShell (usePaymentReturn).
 
   const activateMutation = useMutation({
     mutationFn: () => api.activateProject(id ?? ''),
@@ -38,15 +68,6 @@ export function ProjectDetailPage() {
         queryClient.invalidateQueries({ queryKey: ['projects'] })
       ]);
       push({ variant: 'success', title: t('projectDetail.madeCurrent') });
-    },
-    onError: () => push({ variant: 'error', title: t('simple.error') })
-  });
-
-  const ratingMutation = useMutation({
-    mutationFn: (rating: number) => api.rateJob(rateableJob?.id ?? '', { rating }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['project', id] });
-      push({ variant: 'success', title: t('projectDetail.ratingThanks') });
     },
     onError: () => push({ variant: 'error', title: t('simple.error') })
   });
@@ -101,9 +122,8 @@ export function ProjectDetailPage() {
               navigate(`/app/projects/${id}/post?batch=${selectedJob?.id}&video=${Math.max(0, index)}`);
             }}
             onEmptyAction={addBatch}
-            rating={rateableJob?.rating}
-            onRate={rateableJob ? (rating) => ratingMutation.mutate(rating) : undefined}
-            ratingPending={ratingMutation.isPending}
+            videoFooter={ratings.render}
+            track={{ ...trackOfJob(selectedJob), projectId: id }}
           />
         </>
       }

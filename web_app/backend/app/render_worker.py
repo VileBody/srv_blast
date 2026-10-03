@@ -78,9 +78,26 @@ def _notify(job: dict, *, index: int | None = None, total: int = 0) -> None:
         return
     project_id = job.get("projectId") or ""
     if index is None:
-        telegram_bot.notify_batch_done(chat_id, total, project_id, _app_url())
+        telegram_bot.notify_batch_done(chat_id, total, project_id, _app_url(), unlimited_offer=_unlimited_offer_due(chat_id))
     else:
         telegram_bot.notify_video_ready(chat_id, index, total, project_id, _app_url())
+
+
+def _unlimited_offer_due(chat_id: object) -> bool:
+    """Вторая кнопка «Оценить и получить безлимит» в «батч готов» (см. funnel).
+
+    Воркер живёт в своём потоке без event loop, поэтому асинхронный репозиторий
+    воронки гоняем через asyncio.run. Сбой не держит уведомление — лог и без кнопки."""
+    import asyncio
+    import logging
+
+    from . import funnel
+
+    try:
+        return asyncio.run(funnel.unlimited_offer_due(int(chat_id)))
+    except Exception:
+        logging.getLogger(__name__).exception("render_worker: unlimited offer check failed chat=%s", chat_id)
+        return False
 
 
 def _refund(store: RenderStore, job: dict) -> None:

@@ -555,3 +555,70 @@ export interface SubtitleFontCatalog {
   /** все шрифты, которыми может рисовать превью */
   required?: string[];
 }
+
+/* ------------------------------------------------------------------ воронка
+ * docs/BOT_TO_WEB_FLOW.md, разделы 4–6: квиз «как делаешь контент», оценки роликов,
+ * бесплатный «безлимит на трек» и его квоты (правила — на бэке, track_unlimited.py). */
+
+export interface FunnelQuestion {
+  id: string;
+  text: string;
+  options: { id: string; label: string }[];
+  /** куда ведёт каждый ответ; пустая строка — квиз закончен */
+  next: Record<string, string>;
+}
+
+export type FunnelQuotaReason = 'ok' | 'locked' | 'cooldown' | 'daily_limit';
+
+export interface FunnelQuota {
+  allowed: boolean;
+  reason: FunnelQuotaReason;
+  maxVideos: number;
+  batchCap: number;
+  availableAt: string | null;
+  tripwire: boolean;
+  tripwirePriceRub: number;
+  tripwireBatchCap: number;
+}
+
+export interface FunnelRules {
+  batchCap: number;
+  cooldownHours: number;
+  firstDayBatches: number;
+  dailyVideos: number;
+  tripwirePriceRub: number;
+  tripwireBatchCap: number;
+}
+
+export interface FunnelState {
+  hasPaid: boolean;
+  survey: {
+    answers: Record<string, { id: string; label: string }>;
+    completed: boolean;
+    branch: string;
+    bridge: string | null;
+  };
+  actions: { channel_subscribed: boolean; manager_contacted: boolean };
+  /** предложение трипваера: сутки с первого упора в лимит; null — закрыто или не открывалось */
+  tripwireOffer: { expiresAt: string; priceRub: number } | null;
+  unlimited: null | {
+    /** хэш трека безлимита: по нему сверяем трек (SavedTrack мог пропасть, тогда trackId null) */
+    audioHash: string;
+    trackId: string | null;
+    trackTitle: string | null;
+    unlockedAt: string;
+    tripwire: boolean;
+    quota: FunnelQuota | null;
+  };
+  links: { channel: string; manager: string; managerCode: string; bot: string };
+  rules: FunnelRules;
+  questions: FunnelQuestion[];
+}
+
+export type RatingReason = 'subtitles' | 'footage' | 'transitions' | 'other';
+
+export interface VideoRating {
+  score: number;
+  reasons: RatingReason[];
+  comment: string;
+}

@@ -161,3 +161,92 @@ def test_production_monitor_advances_without_browser_and_refunds_owner(outbox, m
     asyncio.run(run())
     assert job["status"] == "FAILED"
     assert refunds == [(777, "j", 1)]
+
+
+def test_user_notifications_follow_the_account_bot_flag(outbox, monkeypatch):
+    """Пришедшим по ссылке из бота пишем от публичного бота: бота входа они не запускали."""
+    auth = importlib.import_module("web_app.backend.app.auth_store")
+    monkeypatch.setattr(auth, "notify_bot_for_chat", lambda chat: "public" if chat == 555 else "auth")
+    monkeypatch.setattr(outbox.time, "time", lambda: 1000)
+    outbox.enqueue("video:a", chat_id=555, text="ready", user_route=True)
+    outbox.enqueue("video:b", chat_id=666, text="ready", user_route=True)
+    outbox.enqueue("login:x", chat_id=555, text="welcome")  # ответ на вход — всегда бот входа
+    sent = []
+    monkeypatch.setattr(outbox.telegram_bot, "_send",
+                        lambda chat, text, markup=None, **kw: sent.append((chat, text, kw.get("via"))) or True)
+    outbox.deliver_pending()
+    assert sorted(sent) == [(555, "ready", "public"), (555, "welcome", "auth"), (666, "ready", "auth")]
+
+
+def test_send_via_public_bot_uses_its_token(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "web_app" / "backend"))
+    bot = importlib.import_module("web_app.backend.app.telegram_bot")
+    calls = []
+    monkeypatch.setattr(bot, "_api", lambda method, params, token=None: calls.append(token) or {"ok": True})
+    monkeypatch.setenv("WEB_PUBLIC_BOT_TOKEN", "public-token")
+    assert bot._send(1, "hi", via="public") is True
+    monkeypatch.delenv("WEB_PUBLIC_BOT_TOKEN")
+    assert bot._send(1, "hi", via="public") is False  # не настроено — явный отказ, не бот входа
+    assert calls == ["public-token"]
+
+
+def test_batch_done_offers_unlimited_to_free_users(outbox, monkeypatch):
+    """«Батч готов» бесплатному без безлимита: вторая кнопка ведёт на модалку B."""
+    auth = importlib.import_module("web_app.backend.app.auth_store")
+    monkeypatch.setattr(auth, "chat_id_for_user", lambda owner: 555)
+    monkeypatch.setenv("APP_URL", "https://app.blast808.com")
+    done = {"id": "b1", "projectId": "p1", "userId": "owner", "status": "COMPLETED",
+            "videos": [{"id": "v1", "status": "COMPLETED"}]}
+    outbox.queue_job(done, unlimited_offer=True)
+    partial = {"id": "b2", "projectId": "p1", "userId": "owner", "status": "FAILED",
+               "videos": [{"id": "v2", "status": "COMPLETED"}, {"id": "v3", "status": "FAILED", "error": "x"}]}
+    outbox.queue_job(partial, unlimited_offer=True)
+    nothing = {"id": "b3", "projectId": "p1", "userId": "owner", "status": "FAILED",
+               "videos": [{"id": "v4", "status": "FAILED", "error": "x"}]}
+    outbox.queue_job(nothing, unlimited_offer=True)
+    with outbox.db.read() as cursor:
+        cursor.execute("SELECT event_key, payload FROM notification_outbox")
+        rows = {key: outbox.db.json_value(raw) for key, raw in cursor.fetchall()}
+    offer = [{"text": "Оценить и получить безлимит", "url": "https://app.blast808.com/app/projects/p1?unlimited=1"}]
+    assert rows["job:b1:terminal"]["markup"]["inline_keyboard"][1] == offer
+    assert rows["job:b2:terminal"]["markup"]["inline_keyboard"][1] == offer
+    assert len(rows["job:b3:terminal"]["markup"]["inline_keyboard"]) == 1  # оценивать нечего
+    # поштучные «Ролик N готов» — без второй кнопки
+    assert len(rows["job:b1:video:v1"]["markup"]["inline_keyboard"]) == 1
+
+
+def test_notify_batch_done_carries_the_offer_button(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / "web_app" / "backend"))
+    bot = importlib.import_module("web_app.backend.app.telegram_bot")
+    sent = []
+    monkeypatch.setattr(bot, "configured", lambda: True)
+    monkeypatch.setattr(bot, "_send", lambda chat, text, markup=None, **kw: sent.append(markup) or True)
+    monkeypatch.setattr(bot.auth_store, "notify_bot_for_chat", lambda chat: "public")
+    bot.notify_batch_done(1, 5, "p9", "https://app.blast808.com", unlimited_offer=True)
+    bot.notify_batch_done(1, 5, "p9", "https://app.blast808.com")
+    assert sent[0]["inline_keyboard"][1][0]["url"] == "https://app.blast808.com/app/projects/p9?unlimited=1"
+    assert len(sent[1]["inline_keyboard"]) == 1
+
+
+def test_production_monitor_decides_the_offer_from_the_funnel(outbox, monkeypatch):
+    monitor = importlib.import_module("web_app.backend.app.production_monitor")
+    funnel = importlib.import_module("web_app.backend.app.funnel")
+    monkeypatch.setattr(monitor.auth_store, "chat_id_for_user", lambda owner: 777)
+    seen = []
+
+    async def due(tg_id):
+        seen.append(tg_id)
+        return True
+
+    monkeypatch.setattr(funnel, "unlimited_offer_due", due)
+    running = {"id": "j", "userId": "owner", "status": "PROCESSING"}
+    done = {"id": "j", "userId": "owner", "status": "COMPLETED"}
+    assert asyncio.run(monitor._unlimited_offer_due(running)) is False  # только итоговое
+    assert asyncio.run(monitor._unlimited_offer_due(done)) is True and seen == [777]
+
+    async def broken(tg_id):
+        raise RuntimeError("pg down")
+
+    monkeypatch.setattr(funnel, "unlimited_offer_due", broken)
+    # сбой воронки не держит «батч готов»: без второй кнопки, с логом
+    assert asyncio.run(monitor._unlimited_offer_due(done)) is False

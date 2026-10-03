@@ -328,6 +328,21 @@ class Settings:
         "RESEND_METHODOLOGY_EVERY_GENERATION", False
     )
     jobstore_prefix: str = _env("JOBSTORE_PREFIX", "blast")
+
+    # Bot → site handoff (docs/BOT_TO_WEB_FLOW.md). WEB_APP_URL is the site
+    # origin; empty disables the fork, /site and the «на сайте ещё N» lines —
+    # the bot then behaves exactly as before (generation in the bot only).
+    web_app_url: str = _env("WEB_APP_URL", "")
+    web_handoff_ttl_s: int = _int_env("WEB_HANDOFF_TTL_S", 48 * 3600)
+    # The @impulsemarketing subscription gate on onboarding. Off by default:
+    # «Едем!» leads straight to the track upload.
+    onboarding_subscription_required: bool = _bool_env("ONBOARDING_SUBSCRIPTION_REQUIRED", False)
+    # Подписка на канал — шаг прямо перед «Запустить» генерацию в боте. По умолчанию вкл.
+    generation_subscription_required: bool = _bool_env("GENERATION_SUBSCRIPTION_REQUIRED", True)
+
+    @property
+    def web_handoff_enabled(self) -> bool:
+        return bool(self.web_app_url)
     windows_render_url: str = _env("WINDOWS_RENDER_URL", "")
     windows_donor_host: str = _env("WINDOWS_DONOR_HOST", "")
     windows_donor_url: str = _env("WINDOWS_DONOR_URL", "http://85.239.48.31:8000")
@@ -369,6 +384,10 @@ class Settings:
         return p.resolve()
 
     def __post_init__(self) -> None:
+        if self.web_app_url and not self.web_app_url.startswith(("https://", "http://")):
+            raise RuntimeError("WEB_APP_URL must be an absolute http(s) origin, e.g. https://app.blast808.com")
+        if self.web_handoff_ttl_s <= 0:
+            raise RuntimeError("WEB_HANDOFF_TTL_S must be positive")
         if self.tg_test_bypass_subscription and self.tg_bot_api_env != TELEGRAM_API_ENV_TEST:
             raise RuntimeError("TG_TEST_BYPASS_SUBSCRIPTION=1 is allowed only when TG_BOT_API_ENV=test")
         if self.tg_bot_api_env == TELEGRAM_API_ENV_TEST:

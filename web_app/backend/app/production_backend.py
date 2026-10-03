@@ -16,7 +16,7 @@ import httpx
 import logging
 from botocore.config import Config
 
-from . import asr_preview, subtitle_text
+from . import asr_preview, bot_import, subtitle_text
 from .runtime import SETTINGS
 
 
@@ -490,6 +490,57 @@ class ProductionBackend:
             "error": None,
         }
 
+    def job_edit_state(self, job_id: str) -> dict[str, Any]:
+        """Состояние монтажа готовой джобы бота (`GET /jobs/{id}/edit_state`)."""
+        response = self._http.get(f"{self.config.orchestrator_url}/jobs/{job_id}/edit_state")
+        if response.status_code == 404:
+            raise ProductionBackendError(f"orchestrator has no edit state for job {job_id}")
+        if response.status_code >= 300:
+            raise ProductionBackendError(
+                f"orchestrator /jobs/{job_id}/edit_state failed status={response.status_code}"
+            )
+        return dict(response.json())
+
+    def asr_preview_from_job(self, source_job_id: str, *, clone_key: str) -> str:
+        """Примерка субтитров со словами джобы бота, без нового выравнивания.
+
+        Готова сразу (SUCCEEDED): дальше это обычная asr_preview-джоба — правки слов,
+        `reuse_text_job_id` в рендере. Источник не local_ctc — отказ оркестратора (422).
+        `clone_key` — чей это клон (пользователь + проект сайта): у каждого проекта свой,
+        иначе правки слов в одном проекте меняли бы слова в другом.
+        """
+        if not str(clone_key or "").strip():
+            raise ProductionBackendError("asr clone requires a clone_key (user + project)")
+        response = self._http.post(
+            f"{self.config.orchestrator_url}/asr/preview/from-job",
+            json={"source_job_id": str(source_job_id), "clone_key": str(clone_key)},
+        )
+        if response.status_code >= 300:
+            raise ProductionBackendError(
+                f"orchestrator /asr/preview/from-job failed status={response.status_code} "
+                f"body={response.text[:300]}"
+            )
+        job_id = str(response.json().get("job_id") or "").strip()
+        if not job_id:
+            raise ProductionBackendError("orchestrator /asr/preview/from-job returned empty job_id")
+        return job_id
+
+    def remix_catalog(self) -> "bot_import.ImportCatalog":
+        """Каталоги сайта в форме, нужной обратной карте «ролик бота → визард»."""
+        footage = {
+            str(item["name"]): {**dict(item.get("selector") or {}), "plane": str(item.get("plane") or "vibes")}
+            for item in self.config.footage_catalog
+            if (item.get("selector") or {}).get("rotationTheme")
+        }
+        photo = {
+            str(item["name"]): dict(item.get("selector") or {})
+            for item in self.config.photo_catalog
+            if (item.get("selector") or {}).get("rotationTheme")
+        }
+        return bot_import.ImportCatalog(
+            subtitle_modes=dict(self.config.subtitle_modes), footage=footage, photo=photo,
+        )
+
     def update_asr_words(self, job_id: str, words: list[dict[str, Any]]) -> None:
         response = self._http.put(
             f"{self.config.orchestrator_url}/jobs/{job_id}/asr-words",
@@ -579,6 +630,20 @@ class ProductionBackend:
                 attachment=False,
             ),
             "key": key,
+        }
+
+    def register_bot_track(self, s3_url: str, *, filename: str) -> dict[str, str]:
+        """Трек, который уже залил публичный бот (ссылка «на сайт»), без повторной загрузки.
+
+        Берём только из бакета сырых треков — тот же, куда пишет и бот, и сайт.
+        Объект проверяем на месте: без него визард упал бы позже, на генерации."""
+        bucket, key = self._parse_s3_locator(s3_url)
+        if bucket != self.config.raw_audio_bucket:
+            raise ProductionBackendError(f"bot track is outside the raw audio bucket: {bucket}")
+        self._s3.head_object(Bucket=bucket, Key=key)
+        return {
+            "s3_url": f"s3://{bucket}/{key}",
+            "playback_url": self._presign(bucket, key, filename=filename, attachment=False),
         }
 
     def upload_source(

@@ -28,6 +28,8 @@ const ProjectsPage = page(() => import('../pages/ProjectsPage'), 'ProjectsPage')
 const StatsPage = page(() => import('../pages/StatsPage'), 'StatsPage');
 const WizardPage = page(() => import('../pages/WizardPage'), 'WizardPage');
 const KitPage = page(() => import('../pages/KitPage'), 'KitPage');
+const HandoffPage = page(() => import('../pages/HandoffPage'), 'HandoffPage');
+const FunnelShowcasePage = page(() => import('../pages/FunnelShowcasePage'), 'FunnelShowcasePage');
 
 /** Пока кусок страницы грузится — спокойный спиннер на её месте (оболочка сайта остаётся). */
 function Lazy({ children }: { children: ReactNode }) {
@@ -46,12 +48,17 @@ export function App() {
       <Route path="/login" element={<AuthPage mode="login" />} />
       <Route path="/register" element={<AuthPage mode="register" />} />
       <Route path="/blocked" element={<BlockedPage />} />
+      {/* ссылка «на сайт» из публичного бота: вход по токену + трек в визарде */}
+      <Route path="/go" element={<Lazy><HandoffPage /></Lazy>} />
+      <Route path="/go/:token" element={<Lazy><HandoffPage /></Lazy>} />
       <Route path="/not-found" element={<SimplePage kind="404" />} />
       <Route path="/error" element={<SimplePage kind="error" />} />
       <Route path="/legal/policy" element={<Lazy><LegalPage kind="policy" /></Lazy>} />
       <Route path="/legal/offer" element={<Lazy><LegalPage kind="offer" /></Lazy>} />
       {/* витрина компонентов единой шкалы UI — только dev-сборка, в прод не попадает */}
       {import.meta.env.DEV && <Route path="/dev/kit" element={<Lazy><KitPage /></Lazy>} />}
+      {/* витрина воронки после генерации: все модалки и состояния — только dev */}
+      {import.meta.env.DEV && <Route path="/dev/funnel" element={<Lazy><FunnelShowcasePage /></Lazy>} />}
       <Route path="/app" element={<AppShell />}>
         <Route index element={<Lazy><DashboardPage /></Lazy>} />
         <Route path="generate" element={<Lazy><WizardPage /></Lazy>} />

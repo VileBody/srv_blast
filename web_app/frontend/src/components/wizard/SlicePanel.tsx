@@ -5,6 +5,7 @@ import { cn } from '../../lib/cn';
 import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { LimitsIndicator } from '../ui/LimitsIndicator';
+import { trackTitleOf } from '../funnel/useFunnel';
 import { Svg, W12, WizardActions } from './WizardFrame';
 import { FxVariant, HOOK_LABELS, HookKind, hookPills, selectedEffectStyles, useWizardStore, WizardStateData } from '../../stores/wizardStore';
 import { ActionBar, Button, Dialog } from '../ui/kit';
@@ -412,7 +413,7 @@ export function StageSlice() {
             <button type="button" className="w12-small-btn w12-accent" onClick={distributeEvenly}><span className="w12-l">{t('wizard.pool.distributeEven')}</span></button>
           )}
           <Stepper value={alloc.total} min={fixedCount + (units.length ? 1 : 0)} onChange={(total) => setAllocation({ total })} />
-          <LimitsIndicator />
+          <LimitsIndicator track={{ id: state.track?.id, audioHash: state.track?.audioHash, title: trackTitleOf(state.track?.filename), projectId: state.projectId ?? undefined }} />
         </span>
       </div>
 
