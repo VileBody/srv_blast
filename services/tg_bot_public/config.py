@@ -333,10 +333,11 @@ class Settings:
     # origin; empty disables the fork, /site and the «на сайте ещё N» lines —
     # the bot then behaves exactly as before (generation in the bot only).
     web_app_url: str = _env("WEB_APP_URL", "")
-    web_handoff_ttl_s: int = _int_env("WEB_HANDOFF_TTL_S", 48 * 3600)
-    # The @impulsemarketing subscription gate on onboarding. Off by default:
-    # «Едем!» leads straight to the track upload.
-    onboarding_subscription_required: bool = _bool_env("ONBOARDING_SUBSCRIPTION_REQUIRED", False)
+    web_handoff_ttl_s: int = _int_env("WEB_HANDOFF_TTL_S", 24 * 3600)
+    # Гейт «подписка на @impulsemarketing» на онбординге. По умолчанию ВКЛ: без него
+    # стартовые кредиты выдавались без подписки (решение продукта 2026-10). Выключить —
+    # только явным ONBOARDING_SUBSCRIPTION_REQUIRED=0.
+    onboarding_subscription_required: bool = _bool_env("ONBOARDING_SUBSCRIPTION_REQUIRED", True)
     # Подписка на канал — шаг прямо перед «Запустить» генерацию в боте. По умолчанию вкл.
     generation_subscription_required: bool = _bool_env("GENERATION_SUBSCRIPTION_REQUIRED", True)
 

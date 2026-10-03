@@ -15,6 +15,7 @@ from pathlib import Path
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any, Literal
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -26,10 +27,10 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import mock_store as store
-from . import analytics, asr_preview, auth_store, bot_import, fraud_guard, funnel, google_auth, persistence, security, telegram_bot
+from . import analytics, asr_preview, auth_store, bot_import, fraud_guard, funnel, google_auth, handoff_link, persistence, security, telegram_bot
 from . import render_job as render_job_builder
 from . import demo_media, effect_map
-from . import media_proxy
+from . import job_errors, media_proxy
 from . import storyboard as storyboard_svc
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
@@ -877,8 +878,25 @@ async def _handoff_track_project_locked(
 
 # Ссылка «на сайт» из публичного бота: бот уже знает chat_id, поэтому подтверждать вход
 # через бота верификации не нужно — токен из общей с ботом БД и есть подтверждение.
+# Каждая ссылка одноразовая (Telegram сохраняет URL-кнопки в пересланных сообщениях).
+def _handoff_gone(status: str) -> HTTPException:
+    """410 «ссылка использована / устарела» + кнопка «новая ссылка в боте» (botUrl)."""
+    if status == "used":
+        code, message = "handoff_used", "Ссылка уже использована: она одноразовая. Новую пришлёт бот."
+    else:
+        code, message = "handoff_expired", "Ссылка устарела. Новую пришлёт бот."
+    return HTTPException(
+        status_code=410, detail={"code": code, "message": message, "botUrl": handoff_link.bot_relogin_url()}
+    )
+
+
+def _handoff_token_hash(token: str) -> str:
+    # Та же функция, что CreditsDB.hash_handoff_token: запрос привязки хранит хэш ссылки.
+    return hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+
 @app.post("/api/auth/handoff", tags=["auth"])
-async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[str, Any]:
+async def api_auth_handoff(request: Request, payload: HandoffPayload) -> Any:
     if RUNTIME.backend != "production" and DEV_TOOLS and payload.token.startswith(DEV_REMIX_TOKEN_PREFIX):
         return await _dev_remix_handoff()
     if RUNTIME.backend != "production":
@@ -886,29 +904,35 @@ async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[st
             status_code=503,
             detail={"code": "handoff_unavailable", "message": "Вход по ссылке из бота работает только в проде."},
         )
-    expired = HTTPException(
-        status_code=410,
-        detail={"code": "handoff_expired", "message": "Ссылка устарела. Новую пришлёт бот по команде /site."},
-    )
     if not _handoff_token_ok(payload.token):
-        raise expired
+        raise _handoff_gone("expired")
     async with _handoff_lock(payload.token):
         billing = _billing_backend()
         try:
-            # Аккаунт сверяем ДО погашения: одноразовая ссылка (/site, напоминания) иначе
-            # сгорела бы на вопросе «войти как другой аккаунт?», и «Сменить» получил бы 410.
-            peek_tg = await billing.peek_handoff_owner(payload.token)
+            # Аккаунт сверяем ДО погашения: ссылка одноразовая и иначе сгорела бы на
+            # вопросе «войти как другой аккаунт?» / «привязать Telegram?».
+            info = await billing.inspect_handoff(payload.token)
         except Exception as exc:
             raise _production_error(exc) from exc
-        if peek_tg is None:
-            raise expired
+        if info is None:
+            raise _handoff_gone("expired")
         current = auth_store.user_by_id(str(request.session.get("user_id") or ""))
-        owner = auth_store.get_user_by_chat(peek_tg)
+        owner = auth_store.get_user_by_chat(info["tg_id"])
+        if info["status"] != "live":
+            # Свою же ссылку открыли повторно в том же аккаунте — входить заново не нужно,
+            # ведём туда, куда она вела. Любому другому браузеру она больше не откроется.
+            if current is not None and owner is not None and owner["id"] == current["id"]:
+                return _reopen_own_handoff(info)
+            raise _handoff_gone(info["status"])
+        # Какой Telegram войдёт/привяжется — называем в каждом вопросе: ссылку могли
+        # подсунуть, и человек должен видеть, что это не его аккаунт.
+        telegram = handoff_link.telegram_label(info["payload"].get("profile"))
         can_link = current is not None and owner is None and not current.get("tgChatId")
-        if can_link and not payload.link and not payload.force:
+        if can_link and payload.link:
+            return await _handoff_link_via_bot(request, payload, info, current, telegram)
+        if can_link and not payload.force:
             # В браузере аккаунт без Telegram (вход через Google). Тот же это человек или
-            # нет, мы не знаем — молча привязывать нельзя. Спрашиваем ДО погашения ссылки:
-            # одноразовая (/site, напоминания) иначе сгорела бы на вопросе.
+            # нет, мы не знаем — молча привязывать нельзя, спрашиваем.
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -916,34 +940,147 @@ async def api_auth_handoff(request: Request, payload: HandoffPayload) -> dict[st
                     "message": "В браузере открыт аккаунт без Telegram.",
                     "email": str(current.get("email") or current.get("googleEmail") or ""),
                     "name": str(current.get("name") or ""),
+                    "telegram": telegram,
                 },
             )
-        link_current = can_link and payload.link
-        if current is not None and not link_current and (owner or {}).get("id") != current["id"] and not payload.force:
-            # Открыт ДРУГОЙ аккаунт: молча переключать нельзя — фронт спросит
-            # «Войти как другой аккаунт?» и повторит запрос с force.
+        if current is not None and (owner or {}).get("id") != current["id"] and not payload.force:
+            # Открыт ДРУГОЙ аккаунт: молча переключать нельзя — фронт спросит «Войти как
+            # <этот Telegram>?» и повторит запрос с force.
             raise HTTPException(
                 status_code=409,
-                detail={"code": "handoff_other_account", "message": "В браузере открыт другой аккаунт."},
+                detail={"code": "handoff_other_account", "message": "В браузере открыт другой аккаунт.",
+                        "telegram": telegram},
             )
+        return await _redeem_and_complete(request, payload, current=current, owner=owner, link_current=False)
+
+
+def _reopen_own_handoff(info: dict[str, Any]) -> dict[str, Any]:
+    """Уже использованная ссылка в том же аккаунте: туда же, без входа и без нового проекта."""
+    known = info["result"]
+    project_id = str(known.get("projectId") or "")
+    if info["kind"] in {"track", "remix"} and project_id and store.get_project(project_id):
+        track = store.saved_track(str(known["trackId"])) if known.get("trackId") else None
+        return {"ok": True, "created": False, "redirectTo": f"/app/generate?project={project_id}",
+                "projectId": project_id, "track": track, "repeat": True}
+    return {"ok": True, "created": False, "redirectTo": "/app", "repeat": True}
+
+
+async def _redeem_and_complete(
+    request: Request,
+    payload: HandoffPayload,
+    *,
+    current: dict[str, Any] | None,
+    owner: dict[str, Any] | None,
+    link_current: bool,
+) -> dict[str, Any]:
+    billing = _billing_backend()
+    try:
+        record = await billing.redeem_handoff(payload.token)
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    if record is None:
+        # погасили между проверкой и погашением (другой браузер успел раньше)
+        raise _handoff_gone("used")
+    try:
+        return await _complete_handoff(request, payload, record, current=current, owner=owner,
+                                       link_current=link_current)
+    except BaseException:
+        # Погашение — до входа и проекта (иначе гонка двух табов), но засчитываться
+        # должно только удачное открытие: упади S3/слот/привязка — одноразовая ссылка
+        # сгорала бы, и человек упирался в «ссылка использована».
         try:
-            record = await billing.redeem_handoff(payload.token)
-        except Exception as exc:
-            raise _production_error(exc) from exc
-        if record is None:
-            raise expired
-        try:
-            return await _complete_handoff(request, payload, record, current=current, owner=owner,
-                                           link_current=link_current)
-        except BaseException:
-            # Погашение — до входа и проекта (иначе гонка двух табов), но засчитываться
-            # должно только удачное открытие: упади S3/слот/привязка — одноразовая ссылка
-            # (/site, напоминания) сгорала бы, и человек упирался в «ссылка устарела».
-            try:
-                await billing.release_handoff(payload.token)
-            except Exception:
-                logger.exception("handoff_release_failed: single-use link stays redeemed after a failed open")
-            raise
+            await billing.release_handoff(payload.token)
+        except Exception:
+            logger.exception("handoff_release_failed: single-use link stays redeemed after a failed open")
+        raise
+
+
+async def _handoff_link_via_bot(
+    request: Request,
+    payload: HandoffPayload,
+    info: dict[str, Any],
+    current: dict[str, Any],
+    telegram: dict[str, str],
+) -> Any:
+    """«Привязать»: привязка — только после «Привязать» в том самом Telegram.
+
+    Первый запрос заводит запрос и шлёт в чат кнопки (202 pending), сайт опрашивает
+    `GET /api/auth/handoff/link-status`; увидев confirmed, повторяет этот же запрос —
+    тогда ссылка гасится и Telegram привязывается. Запрос живёт в сессии браузера,
+    который его завёл, и привязан к ссылке, аккаунту и chat_id."""
+    billing = _billing_backend()
+    request_id = str(request.session.get(handoff_link.SESSION_KEY) or "")
+    try:
+        link_req = await billing.link_request(request_id) if request_id else None
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    if link_req is not None and (
+        link_req["handoff_hash"] != _handoff_token_hash(payload.token)
+        or link_req["web_user_id"] != current["id"]
+        or int(link_req["tg_id"]) != int(info["tg_id"])
+    ):
+        link_req = None  # запрос другой ссылки или другого аккаунта — начинаем заново
+    status = link_req["status"] if link_req else "none"
+    pending = JSONResponse(status_code=202, content={
+        "ok": False, "pending": True, "telegram": telegram, "expiresInS": handoff_link.LINK_REQUEST_TTL_S,
+    })
+    if status == "pending":
+        return pending
+    if status == "rejected":
+        request.session.pop(handoff_link.SESSION_KEY, None)
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "handoff_link_rejected", "message": "В Telegram ответили «Это не я» — привязка отменена.",
+                    "telegram": telegram},
+        )
+    if status == "confirmed":
+        out = await _redeem_and_complete(request, payload, current=current, owner=None, link_current=True)
+        request.session.pop(handoff_link.SESSION_KEY, None)
+        if not await billing.complete_link_request(link_req["id"]):
+            logger.warning("handoff_link_complete_twice request=%s", link_req["id"])
+        return out
+    # Запроса нет, он протух или уже отработал — новый запрос и новое сообщение в бот.
+    try:
+        request_id = await billing.create_link_request(
+            tg_id=int(info["tg_id"]), web_user_id=current["id"], token=payload.token,
+            ttl_seconds=handoff_link.LINK_REQUEST_TTL_S,
+        )
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    sent = await run_in_threadpool(handoff_link.send_confirmation, int(info["tg_id"]), request_id, current)
+    if not sent.ok:
+        # Без сообщения в Telegram подтвердить нечем — явный отказ, а не молчаливое ожидание.
+        logger.error("handoff_link_confirmation_undeliverable tg=%s err=%s", info["tg_id"], sent.error)
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "handoff_link_undeliverable",
+                    "message": "Не получилось написать в Telegram. Открой бота, нажми «Старт» и попробуй ещё раз.",
+                    "botUrl": handoff_link.bot_relogin_url()},
+        )
+    request.session[handoff_link.SESSION_KEY] = request_id
+    logger.info("handoff_link_requested tg=%s user=%s request=%s", info["tg_id"], current["id"], request_id)
+    return pending
+
+
+@app.get("/api/auth/handoff/link-status", tags=["auth"])
+async def api_auth_handoff_link_status(request: Request) -> dict[str, Any]:
+    """Опрос «подтвердили ли привязку в Telegram» (GET — не тратит лимит POST /api/auth/*)."""
+    if RUNTIME.backend != "production":
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "handoff_unavailable", "message": "Вход по ссылке из бота работает только в проде."},
+        )
+    request_id = str(request.session.get(handoff_link.SESSION_KEY) or "")
+    current = auth_store.user_by_id(str(request.session.get("user_id") or ""))
+    if not request_id or current is None:
+        return {"status": "none"}
+    try:
+        link_req = await _billing_backend().link_request(request_id)
+    except Exception as exc:
+        raise _production_error(exc) from exc
+    if link_req is None or link_req["web_user_id"] != current["id"]:
+        return {"status": "none"}
+    return {"status": link_req["status"]}
 
 
 async def _complete_handoff(
@@ -1197,34 +1334,81 @@ def api_tg_verify(request: Request, token: str | None = None) -> dict[str, Any]:
     return {"verified": False}
 
 
+def _upload_tiktok_avatar(avatar_url: str, user_id: str) -> str:
+    """Скачать TikTok-аватар и положить в наш S3; вернуть `s3://`. Ошибка — исключением."""
+    response = httpx.get(str(avatar_url), timeout=10.0, follow_redirects=True)
+    response.raise_for_status()
+    content = response.content
+    security.check_image(content, max_mb=8)
+    content_type = response.headers.get("content-type", "").split(";")[0].strip() or "image/jpeg"
+    ext = ".png" if "png" in content_type else ".jpg"
+    uploaded = _production_backend().upload_user_image(
+        content=content,
+        user_id=user_id,
+        filename=f"tiktok_avatar{ext}",
+        content_type=content_type,
+        kind="avatars",
+    )
+    return uploaded["s3_url"]
+
+
 def _mirror_tiktok_avatar(avatar_url: str | None, user_id: str) -> str | None:
     """Копия TikTok-аватара в нашем S3.
 
     TikTok отдаёт подписанную CDN-ссылку с коротким сроком — через несколько дней
     она протухает, и в профиле «аватар не подтянулся». Скачиваем один раз при
     подключении и храним `s3://` (свежую подпись выдаёт /api/me через image_url).
-    Не скачалось — оставляем исходную ссылку, подключение из-за картинки не ломаем.
+    Не скачалось — оставляем исходную ссылку, подключение из-за картинки не ломаем;
+    /api/me потом перезапросит профиль и зеркалит заново (_refresh_tiktok_avatar).
     """
     if not avatar_url or RUNTIME.backend != "production":
         return avatar_url
     try:
-        response = httpx.get(str(avatar_url), timeout=10.0, follow_redirects=True)
-        response.raise_for_status()
-        content = response.content
-        security.check_image(content, max_mb=8)
-        content_type = response.headers.get("content-type", "").split(";")[0].strip() or "image/jpeg"
-        ext = ".png" if "png" in content_type else ".jpg"
-        uploaded = _production_backend().upload_user_image(
-            content=content,
-            user_id=user_id,
-            filename=f"tiktok_avatar{ext}",
-            content_type=content_type,
-            kind="avatars",
-        )
-        return uploaded["s3_url"]
+        return _upload_tiktok_avatar(avatar_url, user_id)
     except Exception as exc:  # noqa: BLE001 — картинка не должна ломать OAuth-колбэк
         logger.warning("tiktok avatar mirror failed: %s", exc)
         return avatar_url
+
+
+def _is_foreign_avatar(url: str | None) -> bool:
+    """Ссылка на чужой CDN (TikTok), а не наш `s3://` / presign нашего же S3."""
+    if not url or not str(url).startswith("https://"):
+        return False
+    host = urlparse(str(url)).hostname or ""
+    ours = urlparse(_production_backend().config.s3_endpoint_url).hostname or ""
+    return not (ours and (host == ours or host.endswith(f".{ours}")))
+
+
+def _refresh_tiktok_avatar(user_id: str) -> str | None:
+    """Аккаунты, подключённые до зеркалирования (#338), держат подписанную CDN-ссылку
+    с протухшим `x-expires` — скачать её уже нельзя. Перезапрашиваем профиль по
+    сохранённому токену и зеркалим свежую ссылку в S3.
+
+    Один раз: результат (s3:// или None при неудаче) пишем и в воркспейс, и в
+    запись токена — иначе рефреш токена (_apply_token_profile) вернул бы протухшую
+    ссылку. При неудаче аватара просто нет (фронт рисует инициалы), а не битая картинка.
+    """
+    current = (store.ws().tiktok or {}).get("avatarUrl")
+    if not _is_foreign_avatar(current):
+        return current
+    try:
+        fresh = (tiktok_api.fetch_user_info(_access_token()) or {}).get("avatar_url")
+        if not fresh:
+            raise RuntimeError("TikTok user info has no avatar_url")
+        mirrored: str | None = _upload_tiktok_avatar(str(fresh), user_id)
+    except Exception as exc:  # noqa: BLE001 — профиль не должен падать из-за картинки
+        logger.warning("tiktok avatar refresh failed user=%s: %s", user_id, exc)
+        mirrored = None
+    # воркспейс перечитываем: рефреш токена внутри _access_token пересоздаёт ws().tiktok
+    live = store.ws().tiktok
+    if live is not None:
+        live["avatarUrl"] = mirrored
+    record = tiktok_token_store.load(user_id)
+    if record is not None:
+        record["avatarUrl"] = mirrored
+        tiktok_token_store.save(user_id, record)
+    persistence.flush_user(user_id)
+    return mirrored
 
 
 @app.get("/api/me", tags=["profile"])
@@ -1248,25 +1432,17 @@ async def api_me() -> dict[str, Any]:
             data["user"]["avatarUrl"] = _production_backend().image_url(data["user"]["avatarUrl"])
         tiktok = data.get("tiktok") or {}
         if tiktok.get("avatarUrl"):
-            # аккаунты, подключённые до зеркалирования, ещё держат протухающую CDN-ссылку —
-            # зеркалим лениво, один раз (после неудачи больше не пробуем)
-            live = store.ws().tiktok or {}
-            if str(live.get("avatarUrl") or "").startswith("https://") and not live.get("avatarMirrorTried"):
-                live["avatarMirrorTried"] = True
-                live["avatarUrl"] = _mirror_tiktok_avatar(live["avatarUrl"], store.current_user_id() or "")
-                data["tiktok"]["avatarUrl"] = live["avatarUrl"]
-                persistence.flush_user(store.current_user_id())
-            data["tiktok"]["avatarUrl"] = _production_backend().image_url(data["tiktok"]["avatarUrl"])
+            # CDN-ссылка TikTok протухает: перезапрос профиля + зеркало в S3, один раз
+            if _is_foreign_avatar(tiktok["avatarUrl"]):
+                tiktok["avatarUrl"] = await asyncio.to_thread(_refresh_tiktok_avatar, store.current_user_id() or "")
+            tiktok["avatarUrl"] = _production_backend().image_url(tiktok["avatarUrl"])
     # Экран ожидания обещает «пришлём в Telegram» — обещать это можно только когда бот
     # реально настроен И у юзера есть привязанный чат. Иначе фронт молчит про уведомления.
     data["telegramNotifications"] = bool(
         telegram_bot.configured() and auth_store.chat_id_for_user(store.current_user_id() or "")
     )
     data["mock"] = RUNTIME.backend == "mock"
-    data["isAdmin"] = bool(
-        store.current_user_id() in ADMIN_USER_IDS
-        or (not ADMIN_USER_IDS and not RUNTIME.production)
-    )
+    data["isAdmin"] = _viewer_is_admin()
     data["capabilities"] = {
         "customSources": True,
         # Кандидаты дропа есть в обоих режимах: в моке — фикстура, в проде —
@@ -1349,7 +1525,7 @@ def api_project(project_id: str) -> dict[str, Any]:
                 project["coverUrl"] = backend.image_url(project["coverUrl"])
         except Exception as exc:
             raise _production_error(exc) from exc
-    return {"project": project, "mock": RUNTIME.backend == "mock"}
+    return {"project": job_errors.public_project(project, admin=_viewer_is_admin()), "mock": RUNTIME.backend == "mock"}
 
 
 @app.patch("/api/projects/{project_id}", tags=["projects"])
@@ -2650,6 +2826,8 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         # claim_track_batch в проде): два сабмита подряд не уходят бесплатно оба.
         tg_mock = _funnel_tg_id()
         mock_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
+        if not replay:
+            await _require_channel_or_http(tg_mock, mock_hash)
         async with funnel.repo().batch_lock(tg_mock):
             mock_batch_mode = "credits"
             if credits_total is not None and not replay:
@@ -2664,6 +2842,13 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
                     videos=int(job.get("versions") or payload.videosToGenerate), mode=mock_batch_mode,
                 )
     else:
+        if RUNTIME.backend == "production" and not replay:
+            # Подписка на канал — до заведения джоба: откатывать нечего. Без привязанного
+            # Telegram сюда не доходим — _telegram_chat_id отвечает 409 telegram_required
+            # (бесплатные кредиты на сайте тоже только у привязавших Telegram).
+            await _require_channel_or_http(
+                _telegram_chat_id(), str((stage_data.get("track") or {}).get("audioHash") or ""),
+            )
         job = _create_job_or_422(project_id, stage_data, payload)
     if RUNTIME.backend == "production":
         live_job = store.JOBS[job["id"]]
@@ -2749,7 +2934,7 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         persistence.save_job(live_job["id"])
         job = store.get_job(live_job["id"]) or live_job
     analytics.track("generation_started", store.current_user_id(), {"jobId": job["id"], "videos": job["versions"], "projectId": project_id})
-    return {"job": job, "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
+    return {"job": _public_job(job), "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
 
 
 def _create_job_or_422(project_id: str, stage_data: dict[str, Any], payload: SubmitPayload) -> dict[str, Any]:
@@ -2849,7 +3034,17 @@ async def _plan_generation_or_402(tg_id: int, track_hash: str, videos: int, cred
 
 
 def _funnel_http(exc: funnel.FunnelError) -> HTTPException:
-    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message})
+    return HTTPException(status_code=exc.status_code, detail={**exc.extra, "code": exc.code, "message": exc.message})
+
+
+async def _require_channel_or_http(tg_id: int, track_hash: str) -> None:
+    """Гейт сабмита: бесплатный — только с подпиской на канал (fail-closed)."""
+    try:
+        await funnel.require_channel_for_free(tg_id, track_hash)
+    except funnel.FunnelError as exc:
+        if exc.code == "channel_subscription_required":
+            analytics.track("limit_hit", store.current_user_id(), {"limit": "channel_subscription"})
+        raise _funnel_http(exc) from exc
 
 
 def _track_hash_for(track_id: str) -> tuple[dict[str, Any], str]:
@@ -2961,7 +3156,7 @@ async def api_funnel_ratings(jobId: str) -> dict[str, Any]:
 async def api_funnel_channel() -> dict[str, Any]:
     tg_id = _funnel_tg_id()
     try:
-        subscribed = await run_in_threadpool(funnel.check_channel_member, tg_id)
+        subscribed = await run_in_threadpool(funnel.check_channel_member, tg_id, where="funnel")
     except funnel.FunnelError as exc:
         raise _funnel_http(exc) from exc
     if subscribed:
@@ -2972,7 +3167,8 @@ async def api_funnel_channel() -> dict[str, Any]:
 
 @app.post("/api/funnel/actions/manager", tags=["funnel"])
 async def api_funnel_manager() -> dict[str, Any]:
-    # Факт отправки сообщения проверить нельзя — засчитываем переход по диплинку.
+    # Только аналитика перехода по ссылке менеджеру: факт сообщения не проверить, поэтому
+    # условием безлимита этот шаг больше НЕ является (funnel.UNLOCK_ACTIONS).
     await funnel.repo().mark_funnel_action(_funnel_tg_id(), funnel.ACTION_MANAGER)
     analytics.track("funnel_action", store.current_user_id(), {"action": "manager"})
     return {"ok": True}
@@ -3070,7 +3266,7 @@ async def api_active_job() -> dict[str, Any]:
             job = store.get_job(live_job["id"])
         except Exception as exc:
             raise _production_error(exc) from exc
-    return {"job": job, "mock": RUNTIME.backend == "mock"}
+    return {"job": _public_job(job), "mock": RUNTIME.backend == "mock"}
 
 
 @app.get("/api/jobs/{job_id}", tags=["jobs"])
@@ -3086,7 +3282,7 @@ async def api_job(job_id: str) -> dict[str, Any]:
             job = store.get_job(job_id) or live_job
         except Exception as exc:
             raise _production_error(exc) from exc
-    return {"job": job, "mock": RUNTIME.backend == "mock"}
+    return {"job": _public_job(job), "mock": RUNTIME.backend == "mock"}
 
 
 @app.post("/api/jobs/{job_id}/rate", tags=["jobs"])
@@ -3102,7 +3298,7 @@ def api_rate_job(job_id: str, payload: RatePayload) -> dict[str, Any]:
         store.current_user_id(),
         {"jobId": job_id, "rating": payload.rating, "hasFeedback": bool(payload.feedback)},
     )
-    return {"ok": True, "job": store.get_job(job_id), "mock": RUNTIME.backend == "mock"}
+    return {"ok": True, "job": _public_job(store.get_job(job_id)), "mock": RUNTIME.backend == "mock"}
 
 
 # ------------------------- Content iterations -------------------------
@@ -3138,7 +3334,7 @@ def api_create_iteration(project_id: str, payload: IterationPayload) -> dict[str
     )
     return {
         "iteration": iteration,
-        "job": job,
+        "job": _public_job(job),
         "redirectTo": f"/app/processing/{job['id']}",
         "mock": True,
     }
@@ -3864,6 +4060,19 @@ def api_dev_ban(request: Request, on: bool = True, reason: str = fraud_guard.BAN
 
 # Кто видит админку. Пусто → в деве доступна всем залогиненным, в проде — никому.
 ADMIN_USER_IDS = {uid.strip() for uid in os.getenv("BLAST_ADMIN_USER_IDS", "").split(",") if uid.strip()}
+
+
+def _viewer_is_admin() -> bool:
+    """Тот же признак, что `isAdmin` в /api/me: им же решаем, кому отдавать сырые ошибки."""
+    return bool(
+        store.current_user_id() in ADMIN_USER_IDS
+        or (not ADMIN_USER_IDS and not RUNTIME.production)
+    )
+
+
+def _public_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
+    # трейсбек оркестратора (пути ноды, render_id) видит только админ, юзер — категорию
+    return job_errors.public_job(job, admin=_viewer_is_admin())
 
 
 def _require_admin() -> None:

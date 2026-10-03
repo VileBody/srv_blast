@@ -370,9 +370,21 @@ class BillingBackend:
         """Откатить погашение ссылки, если открыть её не удалось (вход/проект упали)."""
         await self._db.release_web_handoff(token)
 
-    async def peek_handoff_owner(self, token: str) -> int | None:
-        """chat_id владельца живого токена, не погашая его."""
-        return await self._db.peek_web_handoff_owner(token)
+    async def inspect_handoff(self, token: str) -> dict[str, Any] | None:
+        """Состояние ссылки (live/used/expired) и её владелец — без погашения."""
+        return await self._db.inspect_web_handoff(token)
+
+    async def create_link_request(self, *, tg_id: int, web_user_id: str, token: str, ttl_seconds: int) -> str:
+        """Запрос «привязать Telegram к аккаунту сайта», который подтверждают в боте."""
+        return await self._db.create_web_link_request(
+            tg_id=int(tg_id), web_user_id=web_user_id, handoff_token=token, ttl_seconds=ttl_seconds,
+        )
+
+    async def link_request(self, request_id: str) -> dict[str, Any] | None:
+        return await self._db.get_web_link_request(request_id)
+
+    async def complete_link_request(self, request_id: str) -> bool:
+        return await self._db.complete_web_link_request(request_id)
 
     async def set_handoff_result(self, token: str, result: dict[str, Any]) -> None:
         await self._db.set_web_handoff_result(token, result)

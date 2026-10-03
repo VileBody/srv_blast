@@ -200,8 +200,10 @@ export interface VideoVersion {
   /** Inline media URL without attachment disposition; use downloadUrl for saving the file. */
   playbackUrl?: string | null;
   downloadUrl?: string | null;
-  /** Renderer diagnostic for a failed variation. */
+  /** Сырой текст ошибки рендера — бэк отдаёт его только админам. */
   error?: string | null;
+  /** Категория падения (app/job_errors.py) — по ней показываем причину человеку. */
+  failureKind?: string | null;
   stage?: string | null;
   /** проставляется бэком после успешной публикации в TikTok */
   postedAt?: string | null;
@@ -599,6 +601,8 @@ export interface FunnelState {
     bridge: string | null;
   };
   actions: { channel_subscribed: boolean; manager_contacted: boolean };
+  /** второе условие безлимита: оценка ролика своего батча или пройденный опрос (считает сервер) */
+  feedback: { rated: boolean; surveyCompleted: boolean; done: boolean };
   /** предложение трипваера: сутки с первого упора в лимит; null — закрыто или не открывалось */
   tripwireOffer: { expiresAt: string; priceRub: number } | null;
   unlimited: null | {

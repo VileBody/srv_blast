@@ -9,6 +9,7 @@ import { FigIcon } from '../components/ui/FigIcon';
 import { TiktokButton } from '../components/ui/TiktokButton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { useToast } from '../contexts/ToastContext';
+import { AvatarImg } from '../components/ui/AvatarImg';
 import type { AnalysisDimension, IterationAnalysis } from '../lib/types';
 import {
   DIMENSION_KEY,
@@ -447,7 +448,7 @@ export function StatsPage() {
             {tiktok?.handle && (
               <span className="mt-[16px] flex items-center gap-[10px] max-md:mt-[9px]">
                 <span className="h-[21px] w-[21px] shrink-0 overflow-hidden rounded-full bg-accent-20">
-                  {meQuery.data?.user.avatarUrl && <img src={meQuery.data.user.avatarUrl} alt="" className="h-full w-full object-cover" />}
+                  <AvatarImg src={meQuery.data?.user.avatarUrl} className="h-full w-full object-cover" />
                 </span>
                 <span className="text-[16px] font-[400] leading-none text-text-80">@{tiktok.handle}</span>
               </span>

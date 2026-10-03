@@ -49,8 +49,8 @@ class _CreditsDB:
     async def log_event(self, tg_id, event, detail=""):
         self.events.append((tg_id, event))
 
-    async def create_web_handoff(self, tg_id, kind, payload=None, *, ttl_seconds, single_use=False):
-        self.handoffs.append({"tg_id": tg_id, "kind": kind, "payload": payload, "ttl": ttl_seconds, "single_use": single_use})
+    async def create_web_handoff(self, tg_id, kind, payload=None, *, ttl_seconds):
+        self.handoffs.append({"tg_id": tg_id, "kind": kind, "payload": payload, "ttl": ttl_seconds})
         return f"tok{len(self.handoffs)}"
 
     async def grant_initial_credits_once(self, tg_id, credits, track_credits, *, actor=""):
@@ -159,7 +159,8 @@ def test_fork_failure_is_reported_and_continues_in_bot(tmp_path):
     assert app.store.by_id[CHAT].stage == STAGE_WAIT_TIMING_INPUT
 
 
-def test_typing_at_fork_resends_the_same_link(tmp_path):
+def test_typing_at_fork_sends_a_fresh_single_use_link(tmp_path):
+    """Ссылка одноразовая, а открыта ли прежняя, бот не знает — повтор = новая ссылка."""
     app = _make_app()
     st = _state_with_track(tmp_path)
     _run(app._offer_web_fork(_Msg(), st))
@@ -169,8 +170,9 @@ def test_typing_at_fork_resends_the_same_link(tmp_path):
 
     text, markup = msg.answers[-1]
     assert text == mt.WEB_FORK_REMINDER
-    assert markup.inline_keyboard[0][0].url == "https://app.blast808.com/go#t=tok1"
-    assert len(app.credits_db.handoffs) == 1  # новый токен не выпускаем
+    assert markup.inline_keyboard[0][0].url == "https://app.blast808.com/go#t=tok2"
+    assert app.store.by_id[CHAT].web_handoff_url == "https://app.blast808.com/go#t=tok2"
+    assert app.credits_db.handoffs[1]["payload"]["source"] == "refresh"
 
 
 def test_choosing_bot_continues_the_current_flow(tmp_path):
@@ -232,7 +234,7 @@ def test_site_command_sends_a_fresh_login_link():
     app = _make_app()
     msg = _Msg(text="/site")
     _run(app._send_site_link(msg))
-    assert app.credits_db.handoffs[0]["kind"] == "site" and app.credits_db.handoffs[0]["single_use"] is True
+    assert app.credits_db.handoffs[0]["kind"] == "site"
     text, markup = msg.answers[0]
     assert text == mt.WEB_SITE_TEXT
     assert markup.inline_keyboard[0][0].url == "https://app.blast808.com/go#t=tok1"
@@ -504,9 +506,10 @@ def test_paid_users_launch_without_the_channel_step(monkeypatch):
     assert app.store.by_id[CHAT].stage != pub.STAGE_WAIT_GEN_SUBSCRIPTION
 
 
-def test_failed_subscription_check_lets_the_launch_through_with_an_event(monkeypatch):
-    """getChatMember сломался (бот не админ, флуд) — это не «не подписан»: пускаем, но
-    со следом в логе и событием. «Не подписан» при рабочей проверке — не пускаем."""
+def test_failed_subscription_check_blocks_the_launch_with_a_retry(monkeypatch):
+    """getChatMember сломался (бот не админ, флуд) — это не «не подписан», но и не пропуск:
+    fail-closed, человеку «не смогли проверить», событие в activity_log. Дальше — повтор
+    кнопкой «Я подписался» на шаге подписки."""
     app = _make_app(generation_subscription_required=True)
     result = {"value": None}
 
@@ -517,7 +520,8 @@ def test_failed_subscription_check_lets_the_launch_through_with_an_event(monkeyp
     monkeypatch.setattr(app, "_has_timing_window", lambda st: False, raising=False)
     msg = _Msg(text=pub.BTN_LAUNCH)
     _run(pub.BlastBotApp._handle_wait_confirm(app, msg, ChatState(chat_id=CHAT)))
-    assert app.store.by_id[CHAT].stage != pub.STAGE_WAIT_GEN_SUBSCRIPTION
+    assert app.store.by_id[CHAT].stage == pub.STAGE_WAIT_GEN_SUBSCRIPTION
+    assert msg.answers[-1][0] == mt.SUBSCRIPTION_CHECK_UNAVAILABLE
     assert (CHAT, "subscription_check_failed") in app.credits_db.events
 
     result["value"] = False
@@ -631,8 +635,8 @@ def test_release_web_handoff_returns_one_redemption_never_below_zero():
     assert "GREATEST(redeem_count - 1, 0)" in sql and args == (CreditsDB.hash_handoff_token("tok-123"),)
 
 
-def test_fail_open_subscription_check_is_counted_and_logged_as_error(monkeypatch, caplog):
-    """Поведение fail-open не меняем (решение не принято), но сбой обязан быть виден:
+def test_failed_subscription_check_is_blocked_counted_and_logged_as_error(monkeypatch, caplog):
+    """Сбой проверки — fail-closed (None, не пропуск), и он обязан быть виден:
     error-лог со счётчиком по месту проверки, а не warning."""
     import logging
 
@@ -644,8 +648,8 @@ def test_fail_open_subscription_check_is_counted_and_logged_as_error(monkeypatch
     monkeypatch.setattr(app, "_check_subscription", _broken, raising=False)
     monkeypatch.setattr(pub, "SUBSCRIPTION_CHECK_FAILURES", pub.collections.Counter())
     with caplog.at_level(logging.ERROR, logger="tg_bot"):
-        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is True
-        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is True
+        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is None
+        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is None
     assert pub.SUBSCRIPTION_CHECK_FAILURES["launch"] == 2
     errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert any("subscription_check_failed_passed" in m and "count=2" in m for m in errors)
+    assert any("subscription_check_failed_blocked" in m and "count=2" in m for m in errors)

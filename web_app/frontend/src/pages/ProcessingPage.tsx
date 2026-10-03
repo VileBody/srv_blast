@@ -7,6 +7,7 @@ import { Button } from '../components/ui/kit';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { BatchLayout, GenerationsCard, ProcessingAside, ProgressTrack, TrackCard } from '../components/project/BatchCards';
 import { useQuizOnGeneration, useVideoRatings } from '../components/funnel/FunnelHost';
+import { failureKey, useIsAdmin } from '../lib/failure';
 
 /** Средняя длительность рендера одной вариации — из неё считаем «осталось NN минут». */
 const MINUTES_PER_VIDEO = 3;
@@ -70,16 +71,11 @@ export function ProcessingPage() {
   const activeVariation = job?.renderJob?.variations?.find((variation) => variation.index === activeVideo?.index);
   const activeFormat = activeVideo?.format ?? activeVariation?.background?.sourceFormat;
   const rootFailure = failedVideos.find((video) => video.stage !== 'skipped') ?? failedVideos[0];
-  const rawFailure = rootFailure?.error?.split('\n')[0].trim() ?? '';
-  const failureReason = rawFailure.includes('stage2_style_rotation_missing_artist_id')
-    ? t('processing.reasonSourceMetadata')
-    : rawFailure.includes('collection not found')
-      ? t('processing.reasonCollectionMissing')
-      : rawFailure.includes('solid backgrounds')
-        ? t('processing.reasonSolidColor')
-        : rawFailure
-          ? t('processing.reasonStage', { stage: rootFailure?.stage || 'render' })
-          : t('processing.reasonUnknown');
+  // Причина — категория с бэка (failureKind). Сырой текст приходит только админу: раньше
+  // юзер видел трейсбек Celery с путями рендер-ноды и render_id.
+  const isAdmin = useIsAdmin();
+  const rawFailure = isAdmin ? rootFailure?.error?.trim() ?? '' : '';
+  const failureReason = t(failureKey(rootFailure));
   const allDone = videos.length > 0 && done.length === videos.length;
   const project = projectQuery.data?.project;
   // Воронка: квиз, пока идёт рендер; оценка под каждым готовым роликом (первая 7+ — безлимит)
@@ -184,9 +180,9 @@ export function ProcessingPage() {
               {rawFailure && (
                 <details className="group mt-[12px] text-ui-14 text-text-60">
                   <summary className="w-fit cursor-pointer list-none text-accent-light transition-colors hover:text-text [&::-webkit-details-marker]:hidden">
-                    {t('processing.technicalReason')} <span className="inline-block transition-transform duration-200 group-open:rotate-90" aria-hidden="true">›</span>
+                    {t('processing.details')} <span className="inline-block transition-transform duration-200 group-open:rotate-90" aria-hidden="true">›</span>
                   </summary>
-                  <code className="mt-[8px] block max-h-[120px] overflow-auto whitespace-pre-wrap break-words rounded-r10 bg-field p-[12px] font-mono text-ui-12 text-text-60">{rawFailure}</code>
+                  <code className="mt-[8px] block max-h-[240px] overflow-auto whitespace-pre-wrap break-words rounded-r10 bg-field p-[12px] font-mono text-ui-12 text-text-60">{rawFailure}</code>
                 </details>
               )}
             </div>

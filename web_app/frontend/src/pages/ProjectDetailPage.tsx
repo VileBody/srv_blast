@@ -28,7 +28,10 @@ export function ProjectDetailPage() {
     [project]
   );
   const [selectedJobId, setSelectedJobId] = useState<string>();
-  const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? jobs[jobs.length - 1];
+  // По умолчанию — последний батч, где собрался хоть один ролик (или ещё идёт сборка):
+  // целиком упавший последний батч открывал страницу без единого ролика. Нет таких — последний.
+  const defaultJob = [...jobs].reverse().find((job) => job.videos.some((video) => video.status !== 'FAILED')) ?? jobs[jobs.length - 1];
+  const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? defaultJob;
   const videos = selectedJob?.videos ?? [];
   const completedVideos = videos.filter((video) => video.status === 'COMPLETED');
   const ratings = useVideoRatings(selectedJob, id);

@@ -884,10 +884,12 @@ class CreditsDB:
         # (optionally bound to an already-uploaded track); the web backend
         # redeems it to log the user in without the verification bot. Only a
         # SHA-256 of the token is stored, so a DB read does not leak live links.
-        # Tokens are multi-use until `expires_at`: the link stays in the chat
-        # and may be opened later from a computer. `result` remembers what the
-        # first redemption created (project id), so repeat opens land on the
-        # same project instead of creating a new one each time.
+        # Every token is single-use: Telegram keeps URL buttons on forwarded
+        # messages, so a multi-use link let anyone with a forward log into the
+        # account until `expires_at`. A used link sends the person back to the
+        # bot for a fresh one. `result` remembers what the redemption created
+        # (project id) — the same logged-in account re-opening its own link
+        # lands on that project without a new login.
         await conn.execute(
             "CREATE TABLE IF NOT EXISTS web_handoff_tokens ("
             "token_hash        TEXT PRIMARY KEY,"
@@ -920,8 +922,9 @@ class CreditsDB:
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_web_handoff_tg_created ON web_handoff_tokens(tg_id, created_at)"
         )
-        # NULL — многоразовая (развилка: открыть позже с компьютера), 1 — одноразовая
-        # (/site, напоминания: человек всегда может попросить новую).
+        # Сейчас всегда 1. NULL остался у ссылок, выпущенных до перехода на одноразовые
+        # (раньше NULL = многоразовая): запросы читают его как 1 — COALESCE(max_redeems, 1),
+        # так уже открытые старые ссылки гаснут сразу, без миграции данных.
         await conn.execute("ALTER TABLE web_handoff_tokens ADD COLUMN IF NOT EXISTS max_redeems INTEGER")
         # Выборка развилок для напоминаний (site_handoff_reminder_rows) идёт по kind и
         # возрасту по всем людям сразу — индекс по tg_id ей не помогает.
@@ -931,6 +934,26 @@ class CreditsDB:
         # Чистка протухших (purge_expired_web_handoffs) идёт по expires_at.
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_web_handoff_expires ON web_handoff_tokens(expires_at)"
+        )
+        # Привязка Telegram к уже открытому на сайте аккаунту (вход через Google) — только
+        # после подтверждения в ЭТОМ Telegram: сайт заводит запрос и шлёт в чат кнопки,
+        # колбэк бота переводит pending → confirmed/rejected, сайт доводит до completed.
+        # Иначе чужая ссылка (переслали, подсунули) молча клеила чужой Telegram к аккаунту.
+        await conn.execute(
+            "CREATE TABLE IF NOT EXISTS web_link_requests ("
+            "id                TEXT PRIMARY KEY,"
+            "tg_id             BIGINT NOT NULL,"
+            "web_user_id       TEXT NOT NULL,"
+            "handoff_hash      TEXT NOT NULL,"
+            "status            TEXT NOT NULL DEFAULT 'pending',"
+            "created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),"
+            "expires_at        TIMESTAMPTZ NOT NULL,"
+            "decided_at        TIMESTAMPTZ,"
+            "completed_at      TIMESTAMPTZ"
+            ")"
+        )
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_web_link_requests_expires ON web_link_requests(expires_at)"
         )
         # Бесплатный «безлимит на трек» (services/tg_bot_public/track_unlimited.py).
         # PRIMARY KEY tg_id: безлимит открывается на ОДИН трек и не переносится.
@@ -2166,9 +2189,8 @@ class CreditsDB:
         payload: Optional[Dict[str, Any]] = None,
         *,
         ttl_seconds: int,
-        single_use: bool = False,
     ) -> str:
-        """Mint a link token for the site and return the raw token.
+        """Mint a single-use link token for the site and return the raw token.
 
         Only the hash is persisted; the raw token lives in the link alone."""
         if kind not in WEB_HANDOFF_KINDS:
@@ -2186,15 +2208,14 @@ class CreditsDB:
                 kind,
                 json.dumps(payload or {}, ensure_ascii=False),
                 int(ttl_seconds),
-                1 if single_use else None,
+                1,
             )
         return token
 
     async def redeem_web_handoff(self, token: str) -> Optional[Dict[str, Any]]:
-        """Count a redemption and return the token row, or None if unknown/expired.
+        """Count a redemption and return the token row, or None if unknown/expired/used.
 
-        Multi-use by design (see the table comment). The returned `result` is
-        whatever an earlier redemption stored via `set_web_handoff_result`."""
+        Single-use (see the table comment); a legacy NULL `max_redeems` counts as 1."""
         token = str(token or "").strip()
         if not token:
             return None
@@ -2204,7 +2225,7 @@ class CreditsDB:
                 "UPDATE web_handoff_tokens SET redeem_count = redeem_count + 1, "
                 "first_redeemed_at = COALESCE(first_redeemed_at, NOW()), last_redeemed_at = NOW() "
                 "WHERE token_hash = $1 AND expires_at > NOW() "
-                "AND (max_redeems IS NULL OR redeem_count < max_redeems) "
+                "AND redeem_count < COALESCE(max_redeems, 1) "
                 "RETURNING tg_id, kind, payload, result, redeem_count",
                 self.hash_handoff_token(token),
             )
@@ -2232,20 +2253,134 @@ class CreditsDB:
                 self.hash_handoff_token(token),
             )
 
-    async def peek_web_handoff_owner(self, token: str) -> Optional[int]:
-        """Чей живой токен — без погашения. Сайт сперва сверяет аккаунт в браузере:
-        одноразовую ссылку нельзя тратить на вопрос «войти как другой аккаунт?»."""
+    async def inspect_web_handoff(self, token: str) -> Optional[Dict[str, Any]]:
+        """Состояние ссылки без погашения, или None, если такой нет (битая, вычищена).
+
+        `status`: live — можно войти; used — уже открыта; expired — протухла. Сайт сперва
+        сверяет аккаунт в браузере (вопрос «войти как другой?» не должен тратить ссылку),
+        а по used/expired отличает «открыл свою ссылку повторно» от входа по чужой."""
         token = str(token or "").strip()
         if not token:
             return None
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
-            tg_id = await conn.fetchval(
-                "SELECT tg_id FROM web_handoff_tokens WHERE token_hash = $1 AND expires_at > NOW() "
-                "AND (max_redeems IS NULL OR redeem_count < max_redeems)",
+            row = await conn.fetchrow(
+                "SELECT tg_id, kind, payload, result, "
+                "redeem_count >= COALESCE(max_redeems, 1) AS used, expires_at <= NOW() AS expired "
+                "FROM web_handoff_tokens WHERE token_hash = $1",
                 self.hash_handoff_token(token),
             )
-        return None if tg_id is None else int(tg_id)
+        if row is None:
+            return None
+        status = "used" if row["used"] else ("expired" if row["expired"] else "live")
+        return {
+            "tg_id": int(row["tg_id"]),
+            "kind": str(row["kind"]),
+            "payload": _jsonb_dict(row["payload"]),
+            "result": _jsonb_dict(row["result"]),
+            "status": status,
+        }
+
+    # Подтверждение привязки Telegram к аккаунту сайта (таблица web_link_requests)
+
+    async def create_web_link_request(
+        self, *, tg_id: int, web_user_id: str, handoff_token: str, ttl_seconds: int
+    ) -> str:
+        """Завести запрос «привязать этот Telegram к аккаунту сайта»; вернуть его id.
+
+        id уходит в callback_data кнопок (лимит Telegram — 64 байта), поэтому короткий."""
+        if int(ttl_seconds) <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        if not str(web_user_id or "").strip():
+            raise ValueError("web_user_id is required")
+        request_id = secrets.token_urlsafe(16)
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO web_link_requests (id, tg_id, web_user_id, handoff_hash, expires_at) "
+                "VALUES ($1, $2, $3, $4, NOW() + make_interval(secs => $5))",
+                request_id,
+                int(tg_id),
+                str(web_user_id),
+                self.hash_handoff_token(handoff_token),
+                int(ttl_seconds),
+            )
+        return request_id
+
+    async def get_web_link_request(self, request_id: str) -> Optional[Dict[str, Any]]:
+        """Запрос привязки или None. Протухший pending отдаётся как `expired`."""
+        request_id = str(request_id or "").strip()
+        if not request_id:
+            return None
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id, tg_id, web_user_id, handoff_hash, status, expires_at <= NOW() AS expired "
+                "FROM web_link_requests WHERE id = $1",
+                request_id,
+            )
+        if row is None:
+            return None
+        status = str(row["status"])
+        if status == "pending" and row["expired"]:
+            status = "expired"
+        return {
+            "id": str(row["id"]),
+            "tg_id": int(row["tg_id"]),
+            "web_user_id": str(row["web_user_id"]),
+            "handoff_hash": str(row["handoff_hash"]),
+            "status": status,
+        }
+
+    async def decide_web_link_request(self, request_id: str, *, tg_id: int, approve: bool) -> str:
+        """Ответ из Telegram: pending → confirmed/rejected ровно один раз.
+
+        Решает только тот чат, чей Telegram привязывают (tg_id запроса). Возвращает новый
+        статус, либо текущий (повторное нажатие), либо `expired` / `unknown`."""
+        request_id = str(request_id or "").strip()
+        new_status = "confirmed" if approve else "rejected"
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            updated = await conn.fetchval(
+                "UPDATE web_link_requests SET status = $3, decided_at = NOW() "
+                "WHERE id = $1 AND tg_id = $2 AND status = 'pending' AND expires_at > NOW() "
+                "RETURNING status",
+                request_id,
+                int(tg_id),
+                new_status,
+            )
+            if updated == "rejected":
+                # «Это не я»: ссылка, по которой пытались привязать этот Telegram, гаснет
+                # сразу — иначе с неё можно было бы слать новые запросы в этот чат.
+                await conn.execute(
+                    "UPDATE web_handoff_tokens SET redeem_count = GREATEST(redeem_count, COALESCE(max_redeems, 1)) "
+                    "WHERE token_hash = (SELECT handoff_hash FROM web_link_requests WHERE id = $1)",
+                    request_id,
+                )
+            if updated is not None:
+                return str(updated)
+            row = await conn.fetchrow(
+                "SELECT status, expires_at <= NOW() AS expired FROM web_link_requests "
+                "WHERE id = $1 AND tg_id = $2",
+                request_id,
+                int(tg_id),
+            )
+        if row is None:
+            return "unknown"
+        if str(row["status"]) == "pending" and row["expired"]:
+            return "expired"
+        return str(row["status"])
+
+    async def complete_web_link_request(self, request_id: str) -> bool:
+        """confirmed → completed: сайт привязал Telegram. Повтор — False."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            done = await conn.fetchval(
+                "UPDATE web_link_requests SET status = 'completed', completed_at = NOW() "
+                "WHERE id = $1 AND status = 'confirmed' RETURNING id",
+                str(request_id or ""),
+            )
+        return done is not None
 
     async def purge_expired_web_handoffs(self, older_than_days: int) -> int:
         """Удалить ссылки, протухшие больше `older_than_days` дней назад; вернуть, сколько.
@@ -2259,6 +2394,12 @@ class CreditsDB:
         async with pool.acquire() as conn:
             status = await conn.execute(
                 "DELETE FROM web_handoff_tokens WHERE expires_at < NOW() - make_interval(days => $1)",
+                int(older_than_days),
+            )
+            # Запросы привязки живут минуты; держим столько же, сколько ссылки, — на разбор
+            # «Это не я» хватает, а таблица не растёт.
+            await conn.execute(
+                "DELETE FROM web_link_requests WHERE expires_at < NOW() - make_interval(days => $1)",
                 int(older_than_days),
             )
         # asyncpg отдаёт статус команды строкой вида "DELETE 12"
@@ -2559,6 +2700,19 @@ class CreditsDB:
                 _norm_text(comment, max_len=1000),
                 str(source or "web"),
             )
+
+    async def has_video_rating(self, tg_id: int) -> bool:
+        """Есть ли у человека хоть одна оценка ролика своего батча.
+
+        Условие безлимита на сайте (оценка ИЛИ пройденный опрос). job_id пишет только
+        сайт после проверки, что батч принадлежит человеку, — строки без него не считаем."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT 1 FROM video_ratings WHERE tg_id = $1 AND job_id <> '' LIMIT 1",
+                int(tg_id),
+            )
+        return row is not None
 
     async def list_video_ratings(self, tg_id: int, video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         pool = self._pool_or_fail()

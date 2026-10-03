@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import hashlib
 import logging
@@ -32,7 +33,19 @@ log = logging.getLogger(__name__)
 
 ACTION_CHANNEL = "channel_subscribed"
 ACTION_MANAGER = "manager_contacted"
-UNLOCK_ACTIONS = (ACTION_CHANNEL, ACTION_MANAGER)
+# Действия, которые требует безлимит. Сообщение менеджеру — больше НЕ условие: его
+# засчитывал голый POST без проверки (скрипт открывал безлимит). Его роль «человек
+# вовлёкся» теперь играет оценка ролика или пройденный опрос — их сервер проверяет
+# по своим данным (video_ratings / survey_responses). Ссылка на менеджера осталась
+# необязательной; ACTION_MANAGER пишется только для аналитики.
+UNLOCK_ACTIONS = (ACTION_CHANNEL,)
+# Все действия, которые видит фронт в state.actions (старые бандлы ждут оба ключа).
+KNOWN_ACTIONS = (ACTION_CHANNEL, ACTION_MANAGER)
+
+CHANNEL_CHECK_UNAVAILABLE_MESSAGE = "Не смогли проверить подписку, попробуй через минуту."
+# Сколько раз проверка подписки на сайте сломалась (и человека не пустили), по месту.
+# Счётчик процесса: пишется в каждый error-лог сбоя (алерт в Loki по ключу лога).
+CHANNEL_CHECK_FAILURES: "collections.Counter[str]" = collections.Counter()
 
 MANAGER_USERNAME = os.getenv("WEB_MANAGER_USERNAME", "impulsemanage").strip().lstrip("@")
 SUBSCRIPTION_CHANNEL = os.getenv("SUBSCRIPTION_CHANNEL", "@impulsemarketing").strip()
@@ -42,11 +55,13 @@ METHODOLOGY_URL = os.getenv("METHODOLOGY_URL", "").strip()
 
 
 class FunnelError(Exception):
-    def __init__(self, code: str, message: str, status_code: int = 409) -> None:
+    def __init__(self, code: str, message: str, status_code: int = 409, extra: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        # доп. поля в detail ответа (например, чего не хватает для безлимита)
+        self.extra = dict(extra or {})
 
 
 class _Repo(Protocol):
@@ -55,6 +70,7 @@ class _Repo(Protocol):
     async def save_survey_answer(self, tg_id: int, **kw: Any) -> None: ...
     async def save_video_rating(self, tg_id: int, **kw: Any) -> None: ...
     async def list_video_ratings(self, tg_id: int, video_ids: list[str]) -> dict[str, dict[str, Any]]: ...
+    async def has_video_rating(self, tg_id: int) -> bool: ...
     async def mark_funnel_action(self, tg_id: int, action: str, detail: str = "") -> bool: ...
     async def funnel_actions(self, tg_id: int) -> dict[str, datetime]: ...
     async def get_track_unlimited(self, tg_id: int) -> dict[str, Any] | None: ...
@@ -74,6 +90,7 @@ class MemoryRepo:
         self.paid: set[int] = set()
         self.surveys: dict[int, dict[str, Any]] = {}
         self.ratings: dict[tuple[int, str], dict[str, Any]] = {}
+        self.rating_jobs: dict[tuple[int, str], str] = {}
         self.actions: dict[int, dict[str, datetime]] = {}
         self.unlimited: dict[int, dict[str, Any]] = {}
         self.batches: list[dict[str, Any]] = []
@@ -110,9 +127,13 @@ class MemoryRepo:
                                 project_id: str = "", reasons: list[str] | None = None, comment: str = "",
                                 source: str = "web") -> None:
         self.ratings[(int(tg_id), video_id)] = {"score": int(score), "reasons": list(reasons or []), "comment": comment}
+        self.rating_jobs[(int(tg_id), video_id)] = str(job_id or "")
 
     async def list_video_ratings(self, tg_id: int, video_ids: list[str]) -> dict[str, dict[str, Any]]:
         return {v: self.ratings[(int(tg_id), v)] for v in video_ids if (int(tg_id), v) in self.ratings}
+
+    async def has_video_rating(self, tg_id: int) -> bool:
+        return any(t == int(tg_id) and job for (t, _v), job in self.rating_jobs.items())
 
     async def mark_funnel_action(self, tg_id: int, action: str, detail: str = "") -> bool:
         acts = self.actions.setdefault(int(tg_id), {})
@@ -255,17 +276,58 @@ def channel_link() -> str:
     return f"https://t.me/{SUBSCRIPTION_CHANNEL.lstrip('@')}"
 
 
-def check_channel_member(tg_id: int) -> bool:
-    """Подписан ли человек на канал — тем же публичным ботом, что проверял онбординг."""
+def _channel_check_failed(tg_id: int, where: str, reason: str) -> FunnelError:
+    """Проверка подписки сломалась: fail-closed. Человека НЕ пускаем, но и не говорим
+    «не подписан» — просим повторить; сбой виден error-логом со счётчиком."""
+    CHANNEL_CHECK_FAILURES[where] += 1
+    log.error(
+        "web_channel_check_failed_blocked tg_id=%s where=%s reason=%s count=%s total=%s",
+        tg_id, where, reason, CHANNEL_CHECK_FAILURES[where], sum(CHANNEL_CHECK_FAILURES.values()),
+    )
+    return FunnelError("channel_check_unavailable", CHANNEL_CHECK_UNAVAILABLE_MESSAGE, 503)
+
+
+def check_channel_member(tg_id: int, *, where: str = "funnel") -> bool:
+    """Подписан ли человек на канал — тем же публичным ботом, что проверял онбординг.
+
+    True/False — ответ Telegram; любой сбой (нет токена, ошибка API, сеть) —
+    FunnelError `channel_check_unavailable` (503, повторяемая), не False и не True."""
     if RUNTIME.backend != "production":
         return True
     token = os.getenv("WEB_PUBLIC_BOT_TOKEN", "").strip()
     if not token:
-        raise FunnelError("channel_check_unavailable", "Проверка подписки не настроена.", 503)
-    result = telegram_bot._api("getChatMember", {"chat_id": SUBSCRIPTION_CHANNEL, "user_id": int(tg_id)}, token=token)
+        raise _channel_check_failed(tg_id, where, "no_token")
+    try:
+        result = telegram_bot._api("getChatMember", {"chat_id": SUBSCRIPTION_CHANNEL, "user_id": int(tg_id)}, token=token)
+    except Exception as exc:  # urllib кидает HTTPError на 4xx/5xx — это тоже «не проверили»
+        raise _channel_check_failed(tg_id, where, f"{type(exc).__name__}: {exc}"[:300]) from exc
     if not result.get("ok"):
-        raise FunnelError("channel_check_failed", "Не получилось проверить подписку, попробуй ещё раз.", 503)
+        raise _channel_check_failed(tg_id, where, str(result.get("description") or "not ok")[:300])
     return str((result.get("result") or {}).get("status") or "") in {"member", "administrator", "creator"}
+
+
+async def require_channel_for_free(tg_id: int, audio_hash: str = "") -> None:
+    """Гейт сабмита на сайте: бесплатный человек запускает генерацию только с подпиской
+    на канал (бесплатные кредиты и безлимит на трек). Платящих не трогаем вовсе; купивший
+    трипваер на этот трек тоже заплатил за него — его не гейтим.
+
+    Проверка живая (getChatMember на каждый сабмит): отписаться после выдачи кредитов
+    и генерить дальше нельзя. Успех заодно засчитывает шаг «подписка» в воронке."""
+    r = repo()
+    tg_id = int(tg_id)
+    if await r.has_paid(tg_id):
+        return
+    if audio_hash and await r.has_track_tripwire(tg_id, audio_hash):
+        return
+    subscribed = await asyncio.to_thread(check_channel_member, tg_id, where="submit")
+    if not subscribed:
+        raise FunnelError(
+            "channel_subscription_required",
+            "Подпишись на канал, чтобы запускать бесплатные генерации.",
+            403,
+            {"channel": channel_link()},
+        )
+    await r.mark_funnel_action(tg_id, ACTION_CHANNEL)
 
 
 def send_methodology(tg_id: int) -> dict[str, Any]:
@@ -412,7 +474,10 @@ async def state(tg_id: int, *, saved_tracks: list[dict[str, Any]]) -> dict[str, 
             "branch": str(survey.get("branch_q3") or ""),
             "bridge": web_bridge(str(survey.get("branch_q3") or "")) if survey.get("completed_at") else None,
         },
-        "actions": {a: a in actions for a in UNLOCK_ACTIONS},
+        "actions": {a: a in actions for a in KNOWN_ACTIONS},
+        # Второе условие безлимита (вместо сообщения менеджеру): оценка ролика своего
+        # батча ИЛИ пройденный опрос — по данным сервера, не по отметке фронта.
+        "feedback": await _feedback_view(tg_id, survey),
         # Окно открывает только упор после реальной генерации по безлимиту (иначе — только
         # чтение): отказ сабмита и экран «другой трек» открывают его сами.
         "tripwireOffer": await tripwire_offer(
@@ -437,17 +502,34 @@ async def state(tg_id: int, *, saved_tracks: list[dict[str, Any]]) -> dict[str, 
     }
 
 
+async def _feedback_view(tg_id: int, survey: dict[str, Any] | None) -> dict[str, bool]:
+    rated = await repo().has_video_rating(int(tg_id))
+    surveyed = bool(survey) and survey.get("completed_at") is not None
+    return {"rated": rated, "surveyCompleted": surveyed, "done": rated or surveyed}
+
+
 async def unlock(tg_id: int, audio_hash: str) -> dict[str, Any]:
-    """Открыть безлимит: оба действия выполнены. Повторно на другой трек — отказ."""
+    """Открыть безлимит: подписка на канал + (оценка ролика ИЛИ пройденный опрос).
+    Повторно на другой трек — отказ."""
     r = repo()
-    # Воронка конверсионная: платящим безлимит не открываем (у них тариф).
-    if await r.has_paid(int(tg_id)):
-        raise FunnelError("unlimited_paid", "Безлимит на трек открывается только на бесплатном тарифе.", 409)
-    actions = await r.funnel_actions(int(tg_id))
-    missing = [a for a in UNLOCK_ACTIONS if a not in actions]
-    if missing:
-        raise FunnelError("unlock_actions_missing", "Сначала выполни оба шага.", 409)
-    row = await r.unlock_track_unlimited(int(tg_id), audio_hash)
+    tg_id = int(tg_id)
+    # Уже открытый безлимит не отзываем и условий заново не спрашиваем: открывшие его по
+    # старым правилам (подписка + менеджер) остаются с ним.
+    existing = await r.get_track_unlimited(tg_id)
+    if existing is None:
+        # Воронка конверсионная: платящим безлимит не открываем (у них тариф).
+        if await r.has_paid(tg_id):
+            raise FunnelError("unlimited_paid", "Безлимит на трек открывается только на бесплатном тарифе.", 409)
+        actions = await r.funnel_actions(tg_id)
+        feedback = await _feedback_view(tg_id, await r.get_survey_response(tg_id))
+        missing = [name for name, ok in (("channel", ACTION_CHANNEL in actions), ("feedback", feedback["done"])) if not ok]
+        if "feedback" in missing:
+            raise FunnelError(
+                "unlock_feedback_missing", "Сначала оцени ролик или пройди короткий опрос.", 409, {"missing": missing},
+            )
+        if missing:
+            raise FunnelError("unlock_channel_missing", "Сначала подпишись на канал.", 409, {"missing": missing})
+    row = existing or await r.unlock_track_unlimited(tg_id, audio_hash)
     if row["audio_hash"] != audio_hash:
         raise FunnelError("unlimited_other_track", "Безлимит уже открыт на другом треке.", 409)
     return row

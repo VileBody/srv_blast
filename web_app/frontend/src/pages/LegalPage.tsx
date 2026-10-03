@@ -44,8 +44,15 @@ export function LegalPage({ kind }: { kind: LegalKind }) {
 
   useEffect(() => {
     // Модерация Google/TikTok смотрит на заголовок вкладки — он должен называть документ
+    const previousTitle = document.title;
+    const previousLang = document.documentElement.lang;
     document.title = `${doc.title} — Blast`;
     document.documentElement.lang = lang;
+    // после ухода со страницы вкладка называлась «Пользовательское соглашение — Blast»
+    return () => {
+      document.title = previousTitle;
+      document.documentElement.lang = previousLang;
+    };
   }, [doc.title, lang]);
 
   const updated = new Date(LEGAL_UPDATED).toLocaleDateString(lang === 'en' ? 'en-GB' : 'ru-RU', {

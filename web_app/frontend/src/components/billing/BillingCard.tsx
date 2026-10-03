@@ -38,11 +38,15 @@ function forgetRetryAttempt(): void {
   window.sessionStorage.removeItem(RETRY_ATTEMPT_KEY);
 }
 
-function formatDate(iso: string | null | undefined, locale: string): string {
+function formatDate(iso: string | null | undefined, locale: string, options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' }): string {
   if (!iso) return '';
   const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(locale, { day: 'numeric', month: 'short', year: 'numeric' });
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString(locale, options);
 }
+
+// В истории платежей — короткая числовая дата: длинная («12 мая 2026 г.») на телефоне
+// обрезалась до «12 мая 202…».
+const HISTORY_DATE: Intl.DateTimeFormatOptions = { day: '2-digit', month: '2-digit', year: 'numeric' };
 
 export function BillingCard({ subscription }: { subscription: Subscription }) {
   const { t, i18n } = useTranslation();
@@ -101,7 +105,7 @@ export function BillingCard({ subscription }: { subscription: Subscription }) {
         ? { title: t('billing.canceledTitle'), text: renews ? t('billing.canceledText', { date: renews }) : t('billing.canceledTextNoDate'), tone: 'muted' }
         : { title: t('billing.activeTitle'), text: renews ? t('billing.activeText', { date: renews }) : '', tone: 'ok' };
   const payments = subscription.payments ?? [];
-  return <section className="card-2 shrink-0 p-[40px]">
+  return <section className="card-2 shrink-0 p-[40px] max-md:p-[20px]">
     <h2 className="text-[24px] font-[350] leading-none text-text">{t('billing.title')}</h2>
     <div className="mt-[28px] grid gap-[20px] lg:grid-cols-[minmax(280px,.8fr)_minmax(420px,1.2fr)]">
       <div className="relative flex min-h-[190px] flex-col rounded-r15 border border-[rgba(139,111,230,.28)] bg-[rgba(16,9,34,.32)] p-[24px]">
@@ -119,11 +123,11 @@ export function BillingCard({ subscription }: { subscription: Subscription }) {
         </div>
       </div>
 
-      <div className="min-w-0 px-[24px] py-[8px]">
+      <div className="min-w-0 px-[24px] py-[8px] max-md:px-0">
         <h3 className="text-[18px] font-[400] text-text">{t('billing.history')}</h3>
         {payments.length ? <div className="mt-[16px] divide-y divide-[rgba(246,245,253,.08)]">
-          {payments.map(payment => <div key={payment.orderId} className="grid grid-cols-[1fr_auto_auto] items-center gap-[18px] py-[13px] text-[14px]">
-            <span className="min-w-0 truncate text-text-80">{formatDate(payment.createdAt, locale)}</span>
+          {payments.map(payment => <div key={payment.orderId} className="grid grid-cols-[1fr_auto_auto] items-center gap-[18px] py-[13px] text-[14px] max-md:gap-[12px]">
+            <span className="whitespace-nowrap tabular-nums text-text-80">{formatDate(payment.createdAt, locale, HISTORY_DATE)}</span>
             <span className="text-text">{payment.amountRub.toLocaleString(locale)} ₽</span>
             <span className="min-w-[92px] text-right text-text-60">{t(`billing.paymentStatus.${PAYMENT_STATE[payment.status.toUpperCase()] ?? 'unfinished'}`)}</span>
           </div>)}

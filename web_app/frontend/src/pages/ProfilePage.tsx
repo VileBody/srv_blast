@@ -11,6 +11,7 @@ import { FigIcon } from '../components/ui/FigIcon';
 import { BillingCard } from '../components/billing/BillingCard';
 import { TrackUsageCard } from '../components/billing/TrackUsageCard';
 import { useToast } from '../contexts/ToastContext';
+import { AvatarImg } from '../components/ui/AvatarImg';
 import { SvgMaskIcon } from '../components/layout/SvgMaskIcon';
 import { Modal } from '../components/ui/Modal';
 import { clearUserState } from '../stores/session';
@@ -149,10 +150,15 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
    * нужен четвёртый месяц. Раньше у текущего сегмента брался месяц i+1, а у будущих — i,
    * и первые два сегмента показывали один и тот же месяц.
    */
-  const availableIn = (index: number) => {
-    const date = new Date(start.getFullYear(), start.getMonth() + index + 1, 1);
-    return t(`profile.monthLocative.${date.getMonth()}`);
-  };
+  const unlockMonth = (index: number) => new Date(start.getFullYear(), start.getMonth() + index + 1, 1);
+  const availableIn = (index: number) => t(`profile.monthLocative.${unlockMonth(index).getMonth()}`);
+  /*
+   * Месяц открытия уже прошёл, а бонус не заработан (подписка не продлилась) — сегмент
+   * «пропущен». Иначе в октябре висело «доступно в июне»: подпись в прошедшем месяце.
+   * В сам месяц открытия ещё ждём продления (списание могло не дойти) — «доступно в …».
+   */
+  const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const missed = (index: number) => unlockMonth(index) < thisMonth;
   // телефон: «+1 трек» и «к лимиту» — двумя строками (whitespace-pre-line в labelCls)
   const twoLine = (s: string) => s.replace(' к лимиту', '\nк лимиту').replace(' без лимита', '\nбез лимита');
   const rewards = [twoLine(t('profile.bonusTrack')), twoLine(t('profile.bonusTrack')), twoLine(t('profile.bonusUnlimited'))];
@@ -165,6 +171,7 @@ function BlastProgress({ startedAt, earned, claimed, onClaim, claiming }: {
   const segs = months.map((_, i) => {
     if (i < claimed) return { def: t('profile.claimed'), hov: t('profile.claimed'), bg: 'bg-grad-main', claimable: false };
     if (i < safeEarned) return { def: rewards[i], hov: t('profile.claim'), bg: CURRENT_BG, claimable: i === claimed };
+    if (missed(i)) return { def: t('profile.bonusMissed'), hov: t('profile.bonusMissedHint'), bg: '', claimable: false };
     if (i === safeEarned) return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: CURRENT_BG, claimable: false };
     return { def: rewards[i], hov: t('profile.availableIn', { month: availableIn(i) }), bg: '', claimable: false };
   });
@@ -516,9 +523,12 @@ export function ProfilePage() {
           <span className="absolute inset-0 rounded-full border-2 border-accent-light" aria-hidden="true" />
           <span className="absolute inset-[8px] overflow-hidden rounded-full bg-accent-20">
             {/* свой аватар важнее подтянутого из TikTok; инициал — последний фолбэк */}
-            {avatarSrc
-              ? <img src={avatarSrc} alt="" className="h-full w-full object-cover" />
-              : <span className="flex h-full w-full items-center justify-center text-[32px] font-[400] text-text">{initial}</span>}
+            {/* битая ссылка (протухший TikTok CDN) — инициал вместо пустой рамки */}
+            <AvatarImg
+              src={avatarSrc}
+              className="h-full w-full object-cover"
+              fallback={<span className="flex h-full w-full items-center justify-center text-[32px] font-[400] text-text">{initial}</span>}
+            />
           </span>
           <input type="file" accept="image/*" className="sr-only" onChange={onAvatar} />
         </label>
