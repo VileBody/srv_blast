@@ -428,7 +428,7 @@ export function TripwireOffer({
   return (
     <div className={cn('flex gap-[16px] rounded-r15 border border-accent-line bg-accent-soft p-[16px]', stacked ? 'flex-col' : 'items-center max-md:flex-col max-md:items-stretch')}>
       {!stacked && (
-        <span className="grid h-[44px] w-[44px] shrink-0 place-items-center rounded-r10 bg-card text-ui-20 text-accent-light max-md:hidden">
+        <span className="grid h-ctl w-ctl shrink-0 place-items-center rounded-r10 bg-card text-ui-20 text-accent-light max-md:hidden">
           <Icon>{FN_GLYPH.bolt}</Icon>
         </span>
       )}
