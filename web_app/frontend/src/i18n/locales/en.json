@@ -1380,7 +1380,8 @@
     "retry": "Retry",
     "retrying": "Retrying…",
     "code": "Error code: {{code}}",
-    "inlineRetry": "Refresh"
+    "inlineRetry": "Refresh",
+    "generic": "Something went wrong. Please try again."
   },
   "trackUsage": {
     "title": "Where your tracks went",
