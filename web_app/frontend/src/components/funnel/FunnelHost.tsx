@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
@@ -165,6 +165,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const { t } = useTranslation();
   const titleId = useId();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const { push } = useToast();
   const clearBadge = useFunnelUi((state) => state.clearBadge);
@@ -340,6 +341,10 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
           },
           onGenerate: () => {
             onClose();
+            // Упёрлись в лимит посреди настройки или окно открыто прямо в визарде: настройка
+            // батча — работа человека, «новый батч» стёр бы фон, хуки, субтитры и правки стола.
+            // Просто возвращаем к визарду, «Сгенерировать» он нажмёт сам.
+            if (ctx.source === 'gate' || location.pathname.startsWith('/app/generate')) return;
             navigate(ctx.projectId ? startNextBatch(ctx.projectId) : '/app/generate');
           },
           onClose,
