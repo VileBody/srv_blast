@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, dateLocale } from '../lib/api';
 import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 
@@ -210,7 +210,7 @@ export function AdminAnalyticsPage() {
                 {(data?.bot?.recent ?? []).slice(0, 16).map((row) => (
                   <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_110px] gap-[12px] py-[10px] text-[14px]">
                     <span className="truncate text-text-80">{t(`admin.botActionsMap.${row.name}`, { defaultValue: row.name })}</span>
-                    <span className="text-right text-text-40">{new Date(row.ts).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                    <span className="text-right text-text-40">{new Date(row.ts).toLocaleString(dateLocale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                   </div>
                 ))}
               </div>
@@ -369,7 +369,7 @@ export function AdminAnalyticsPage() {
                         row.failedGenerations > 0 && t('delivery.flagFail')].filter(Boolean).join(' · ') || '—'}
                     </td>
                     <td className="py-[12px] text-[13px] text-text-40">
-                      {row.lastSeen ? new Date(row.lastSeen).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }) : '—'}
+                      {row.lastSeen ? new Date(row.lastSeen).toLocaleDateString(dateLocale(), { day: 'numeric', month: 'short' }) : '—'}
                     </td>
                   </tr>
                 ))}
