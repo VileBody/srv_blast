@@ -15,6 +15,7 @@ import { poolGuideId, poolStoryboardAvailable, poolTourTotal } from './storyboar
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { TimelineEntryGuideVisual } from './timelineGuides';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
+import { useGuideAction, useGuideActed } from '../guidance/useGuideAction';
 import { useScrollGuideIntoView } from '../guidance/useScrollGuideIntoView';
 import { useFxLab, useLabPoolRows, variantHookLabel } from './FxLab';
 import { selectedStyles } from './hookCatalog';
@@ -377,11 +378,20 @@ export function StageSlice() {
   // на его dismissed-значение ссылается. visible=false у distribute: точный
   // пререквизит «total уже закрыт» тут не собрать (totalGuideDismissed объявлен
   // НИЖЕ) — показ отмечаем отдельно через useMarkGuideSeen после showDistributeGuide.
+  //
+  // Тур «Пула» идёт «подсказка → действие → подсказка» (useGuideAction): следующий шаг ждёт
+  // не только закрытия предыдущего, но и его действия — иначе «Дальше» пролистывало все
+  // подсказки разом, до того как человек успевал что-то сделать. Действие засчитывается
+  // кликом по цели подсказки (счётчик «Всего видео» / секции распределения), а сделанное при
+  // открытой подсказке ещё и закрывает её.
   const [distributeGuideDismissed, setDistributeGuideDismissed] = useGuideDismiss(poolGuideId('distribute', fxLab), hasUnallocated, false);
   const [totalGuideDismissed, setTotalGuideDismissed] = useGuideDismiss(poolGuideId('total', fxLab), !distributeGuideDismissed, true);
+  const [totalActed] = useGuideAction(poolGuideId('total', fxLab), true, { targetRef: totalGuideTargetRef, onAct: () => { if (!totalGuideDismissed) setTotalGuideDismissed(true); } });
+  const distributeTurn = totalGuideDismissed && totalActed;
+  const [, markDistributeActed] = useGuideAction(poolGuideId('distribute', fxLab), distributeTurn, { targetRef: distributeGuideTargetRef, onAct: () => { if (!distributeGuideDismissed) setDistributeGuideDismissed(true); } });
   const showTotalGuide = !totalGuideDismissed;
-  const showDistributeGuide = totalGuideDismissed && !distributeGuideDismissed;
-  useMarkGuideSeen(poolGuideId('distribute', fxLab), totalGuideDismissed);
+  const showDistributeGuide = distributeTurn && !distributeGuideDismissed;
+  useMarkGuideSeen(poolGuideId('distribute', fxLab), distributeTurn);
   // Шаги 3–4 — раскадровка справа (PoolStoryboard, только у футажа из вайбов), последний —
   // вход на таймлайн в футере (SliceWorkZone).
   const poolGuideTotal = poolTourTotal(state.background);
@@ -414,7 +424,7 @@ export function StageSlice() {
         {/* Кнопка «Распределить» появляется, только когда счётчики разошлись с раскладкой */}
         <span className="w12-pool-total-side">
           {hasUnallocated && (
-            <button type="button" className="w12-small-btn w12-accent" onClick={distributeEvenly}><span className="w12-l">{t('wizard.pool.distributeEven')}</span></button>
+            <button type="button" className="w12-small-btn w12-accent" onClick={() => { distributeEvenly(); markDistributeActed(); }}><span className="w12-l">{t('wizard.pool.distributeEven')}</span></button>
           )}
           <Stepper value={alloc.total} min={fixedCount + (units.length ? 1 : 0)} onChange={(total) => setAllocation({ total })} />
           <LimitsIndicator track={{ id: state.track?.id, audioHash: state.track?.audioHash, title: trackTitleOf(state.track?.filename), projectId: state.projectId ?? undefined }} />
@@ -603,13 +613,14 @@ export function SliceWorkZone({ ready, canContinue, loading, onBack, onNext, ind
    * Вайб ли это — по подборке самого футажа, а не по открытому сейчас списку типа на «Фоне».
    */
 
-  // Последний шаг тура «Пула» — вход на таймлайн. Ждёт живого закрытия предыдущего шага:
-  // замены кадра (если раскадровка есть) или распределения.
+  // Последний шаг тура «Пула» — вход на таймлайн. Ждёт живого закрытия предыдущего шага и
+  // его действия: замены кадра (если раскадровка есть) или распределения.
   const timelineGuideRef = useRef<HTMLButtonElement>(null);
   const withStoryboard = poolStoryboardAvailable(state.background);
   const prevGuideDismissed = useGuideLiveDismissed(poolGuideId(withStoryboard ? 'replace' : 'distribute', fxLab));
+  const prevGuideActed = useGuideActed(poolGuideId(withStoryboard ? 'replace' : 'distribute', fxLab));
   const [timelineGuideDismissed, setTimelineGuideDismissed] = useGuideDismiss(poolGuideId('timeline', fxLab), false);
-  const showTimelineGuide = Boolean(onOpenTimeline) && prevGuideDismissed && !timelineGuideDismissed;
+  const showTimelineGuide = Boolean(onOpenTimeline) && prevGuideDismissed && prevGuideActed && !timelineGuideDismissed;
   useMarkGuideSeen(poolGuideId('timeline', fxLab), showTimelineGuide);
   const openTimeline = () => { if (!timelineGuideDismissed) setTimelineGuideDismissed(true); onOpenTimeline?.(safeIndex); };
   const slots: StoryboardSlot[] = useMemo(() => Array.from({ length: total }, (_, i) => {
