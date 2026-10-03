@@ -24,11 +24,12 @@ const queryClient = new QueryClient({
 void i18nReady.then(() => ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      <ToastProvider>
-        <BrowserRouter>
+      {/* тосты внутри роутера: их кнопки ведут клиентским переходом (useNavigate) */}
+      <BrowserRouter>
+        <ToastProvider>
           <App />
-        </BrowserRouter>
-      </ToastProvider>
+        </ToastProvider>
+      </BrowserRouter>
     </QueryClientProvider>
   </React.StrictMode>
 ));
