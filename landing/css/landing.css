@@ -16,12 +16,13 @@ body{background:var(--lp-bg);color:var(--text);font-family:var(--font);font-weig
 a{color:inherit;text-decoration:none}
 h1,h2,h3,p{margin:0}
 .lp-wrap{max-width:var(--lp-maxw);margin-inline:auto;padding-inline:var(--lp-gutter)}
-section{position:relative;scroll-margin-top:100px}
+section{position:relative;scroll-margin-top:24px}
 video{display:block}
 .lp-ic{display:inline-block;flex:none;background:currentColor;-webkit-mask:var(--m) center/contain no-repeat;mask:var(--m) center/contain no-repeat}
 
 /* ── Хедер: та же полоса, что шапка приложения (rounded-r15, border, bg-nav), ширина = контейнер ── */
-.lp-hdr{position:sticky;top:0;z-index:60;padding-top:calc(env(safe-area-inset-top,0px) + 16px)}
+/* хедер стоит на своём месте вверху страницы и уходит со скроллом */
+.lp-hdr{position:relative;z-index:60;padding-top:calc(env(safe-area-inset-top,0px) + 16px)}
 .lp-bar{display:flex;align-items:center;gap:12px;height:64px;padding:0 10px 0 16px;background:rgba(21,15,37,.82);-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
 .lp-brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:400;letter-spacing:-.02em;margin-right:auto}
 .lp-brand img{width:26px;height:26px;display:block}
