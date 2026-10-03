@@ -4,6 +4,8 @@ import { Button, buttonClass } from '../components/ui/kit';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
+import { useToast } from '../contexts/ToastContext';
+import { clearUserState } from '../stores/session';
 import { LEGAL_ENTITY } from '../data/legal-docs';
 import { LEGAL_LINKS } from '../lib/legal';
 
@@ -20,9 +22,15 @@ export function BlockedPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const statusQuery = useQuery({ queryKey: ['ban-status'], queryFn: api.banStatus, retry: false });
+  const { push } = useToast();
   const logoutMutation = useMutation({
     mutationFn: api.logout,
-    onSuccess: () => window.location.replace('/login')
+    onSuccess: () => {
+      clearUserState();
+      window.location.replace('/login');
+    },
+    // молча зависшая кнопка выглядела бы как ещё одна блокировка
+    onError: (error) => push({ variant: 'error', title: t('common.logoutFailed'), text: error.message })
   });
 
   const banned = statusQuery.data?.banned;

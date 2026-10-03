@@ -57,6 +57,8 @@ CLIENT_EVENTS = {
     "wizard_guide_dismissed",
     "wizard_guide_idle_reactivated",
     "pitch_objection",
+    "waiting_opened",
+    "waiting_left",
 }
 
 # Browser payloads must stay both useful and privacy-safe. Unknown fields are
@@ -84,6 +86,10 @@ CLIENT_EVENT_PROPS: dict[str, set[str]] = {
     "wizard_guide_idle_reactivated": {"guideId"},
     # Возражение в питче модалки безлимита («Почему не сейчас?»): какой ответ выбрали.
     "pitch_objection": {"reason"},
+    # Экран ожидания генерации: открыли / ушли (сколько секунд, дождались ли батча).
+    # waiting_left читает flow_metrics — без этих имён ручка отвечала 422 и метрики не было.
+    "waiting_opened": {"jobId"},
+    "waiting_left": {"jobId", "seconds", "completed"},
 }
 
 MAX_EVENTS = 50_000  # верхняя граница буфера в памяти, чтобы мок не съел RAM

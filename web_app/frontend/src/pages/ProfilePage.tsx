@@ -13,6 +13,7 @@ import { TrackUsageCard } from '../components/billing/TrackUsageCard';
 import { useToast } from '../contexts/ToastContext';
 import { SvgMaskIcon } from '../components/layout/SvgMaskIcon';
 import { Modal } from '../components/ui/Modal';
+import { clearUserState } from '../stores/session';
 import { Button, buttonClass } from '../components/ui/kit';
 
 /*
@@ -287,11 +288,20 @@ export function ProfilePage() {
   const [params, setParams] = useSearchParams();
   const queryClient = useQueryClient();
   const { push } = useToast();
-  const logout = async () => {
-    try { await api.logout(); } catch { /* всё равно чистим клиент */ }
-    queryClient.clear();
-    navigate('/login');
-  };
+  /*
+   * Выход — только когда бэк его подтвердил: при сбое сессия жива, и «чистый» клиент
+   * поверх живой cookie вводил бы в заблуждение. Черновик визарда и окна воронки
+   * прежнего аккаунта стираем (clearUserState), иначе их унаследует следующий вход.
+   */
+  const logoutMutation = useMutation({
+    mutationFn: api.logout,
+    onSuccess: () => {
+      clearUserState();
+      queryClient.clear();
+      navigate('/login', { replace: true });
+    },
+    onError: (error) => push({ variant: 'error', title: t('common.logoutFailed'), text: error.message })
+  });
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
   const [nick, setNick] = useState<string | null>(null);
   const [editingNick, setEditingNick] = useState(false);
@@ -337,7 +347,8 @@ export function ProfilePage() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['me'] });
       push({ variant: 'success', title: t('profile.avatarUpdated') });
-    }
+    },
+    onError: (error) => push({ variant: 'error', title: t('profile.avatarFailed'), text: error.message })
   });
 
   const nickMutation = useMutation({
@@ -409,14 +420,17 @@ export function ProfilePage() {
   const deleteMutation = useMutation({
     mutationFn: api.deleteAccount,
     onSuccess: () => {
+      clearUserState();
       queryClient.clear();
       navigate('/register', { replace: true });
     },
-    onError: () => push({ variant: 'error', title: t('profile.deleteFailed') })
+    onError: (error) => push({ variant: 'error', title: t('profile.deleteFailed'), text: error.message })
   });
 
   const onAvatar = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    // сбрасываем значение: иначе тот же файл после ошибки повторно не выбрать (change не придёт)
+    event.target.value = '';
     if (file) avatarMutation.mutate(file);
   };
 
@@ -605,10 +619,11 @@ export function ProfilePage() {
 
           <button
             type="button"
-            onClick={logout}
+            onClick={() => logoutMutation.mutate()}
+            disabled={logoutMutation.isPending}
             aria-label={t('profile.logout')}
             title={t('profile.logout')}
-            className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-r15 border border-[rgba(246,245,253,0.2)] text-text-60 transition hover:border-accent-light hover:text-text"
+            className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-r15 border border-[rgba(246,245,253,0.2)] text-text-60 transition hover:border-accent-light hover:text-text disabled:cursor-wait disabled:opacity-50"
           >
             <SvgMaskIcon src="/assets/icon-logout.svg" style={{ width: 24, height: 24, color: 'currentColor' }} />
           </button>
@@ -684,10 +699,11 @@ export function ProfilePage() {
         </div>
       </Modal>
 
-      <Modal open={deleteOpen} title={t('profile.deleteTitle')} onClose={() => setDeleteOpen(false)}>
+      {/* пока удаление идёт, окно не закрыть: иначе исход необратимого действия не увидеть */}
+      <Modal open={deleteOpen} title={t('profile.deleteTitle')} onClose={() => setDeleteOpen(false)} dismissable={!deleteMutation.isPending}>
         <p className="text-[18px] leading-[25px] text-text-60">{t('profile.deleteConfirm')}</p>
         <div className="mt-[28px] flex justify-end gap-[12px]">
-          <button type="button" className="soft-btn h-[52px] px-[22px]" onClick={() => setDeleteOpen(false)}>{t('common.cancel')}</button>
+          <button type="button" className="soft-btn h-[52px] px-[22px]" disabled={deleteMutation.isPending} data-autofocus onClick={() => setDeleteOpen(false)}>{t('common.cancel')}</button>
           <button type="button" className="soft-btn h-[52px] px-[22px] text-[var(--warning)]" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate()}>{t('profile.deleteAction')}</button>
         </div>
       </Modal>

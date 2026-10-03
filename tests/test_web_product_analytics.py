@@ -145,6 +145,18 @@ def test_browser_analytics_rejects_unknown_properties() -> None:
     assert caught.value.status_code == 422
 
 
+def test_waiting_screen_events_are_accepted_and_feed_flow_metrics(monkeypatch) -> None:
+    monkeypatch.setattr(persistence, "save_event", lambda event: None)
+    monkeypatch.setattr(analytics, "EVENTS", [])
+
+    main.api_track(main.TrackPayload(name="waiting_opened", props={"jobId": "j1"}))
+    main.api_track(main.TrackPayload(name="waiting_left", props={"jobId": "j1", "seconds": 42, "completed": False}))
+
+    metrics = analytics.flow_metrics(30)
+    assert metrics["waitSessions"] == 1
+    assert metrics["waitAbandonRate"] == 100.0
+
+
 def test_rate_limit_identity_ignores_spoofable_forwarded_chain() -> None:
     request = Request(
         {

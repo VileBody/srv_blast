@@ -41,7 +41,10 @@
     "back": "Back",
     "close": "Close",
     "play": "Play",
-    "pause": "Pause"
+    "pause": "Pause",
+    "closeDialog": "Close dialog",
+    "logoutFailed": "Couldn't sign out",
+    "closeMenu": "Close menu"
   },
   "legal": {
     "policyTitle": "Privacy policy",
@@ -1468,7 +1471,9 @@
     "whatHappened": "What happened",
     "failedDone": "{{done}} of {{total}} ready",
     "stopped": "Stopped",
-    "failedNoReason": "The server sent no reason — contact support with the batch number"
+    "failedNoReason": "The server sent no reason — contact support with the batch number",
+    "toastReady": "Your videos are ready",
+    "toastDetails": "Details"
   },
   "tiktok": {
     "captionPlaceholder": "What is this video about?",
@@ -1640,7 +1645,8 @@
     "deleteText": "Your profile, projects, drafts, uploaded files, and generation history will be deleted.",
     "deleteConfirm": "This cannot be undone. Paid services and generated materials cannot be restored.",
     "deleteAction": "Delete account",
-    "deleteFailed": "Could not delete the account"
+    "deleteFailed": "Could not delete the account",
+    "avatarFailed": "Couldn't update the avatar"
   },
   "pricing": {
     "title": "Expand your options",
@@ -1731,7 +1737,11 @@
     "retry": "Retry",
     "retrying": "Retrying…",
     "code": "Error code: {{code}}",
-    "inlineRetry": "Refresh"
+    "inlineRetry": "Refresh",
+    "generic": "Something went wrong. Please try again.",
+    "meTitle": "Couldn't load your account",
+    "meText": "The server didn't respond. Try again or sign in again — your data is safe.",
+    "relogin": "Sign in again"
   },
   "trackUsage": {
     "title": "Where your tracks went",

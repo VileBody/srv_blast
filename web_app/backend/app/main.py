@@ -1408,23 +1408,46 @@ async def api_cancel_sub(immediate: bool = False) -> dict[str, Any]:
     return {"ok": True, "subscription": sub, "mock": RUNTIME.backend == "mock"}
 
 
-@app.post("/api/payments/retry", tags=["payments"])
-async def api_payment_retry() -> dict[str, Any]:
-    """Повторить списание после неудачной оплаты (в моке — всегда успешно).
+class RetryPaymentPayload(BaseModel):
+    # тот же ключ идемпотентности, что у create-order: повторный клик / ретрай браузера
+    # не должен заводить в банке второй заказ
+    idempotencyKey: str = Field(min_length=32, max_length=128)
 
-    Реальный провайдер здесь вернёт ссылку на оплату; контракт ответа не изменится.
+
+@app.post("/api/payments/retry", tags=["payments"])
+async def api_payment_retry(payload: RetryPaymentPayload) -> dict[str, Any]:
+    """Повторить оплату после неудачного автосписания (в моке — сразу успешно).
+
+    Прод: новый заказ BLAST в Т-банке, фронт уводит на `paymentUrl`. Мок: `paymentUrl` null —
+    оплата уже отмечена.
     """
     if RUNTIME.backend == "production":
+        from .billing_backend import PaymentInitError
+
         data = await _sync_billing_bundle(store.get_user_bundle())
         tier = str(data["subscription"].get("tier") or "")
         if tier != "BLAST":
             raise HTTPException(status_code=409, detail="No BLAST subscription to retry")
-        order = await _billing_backend().create_order(
-            tg_id=_telegram_chat_id(),
-            package_type=tier,
-            email=_billing_email(),
-            recurrent_accepted=True,
-        )
+        try:
+            # раньше сюда не передавался idempotency_key (обязательный аргумент) — кнопка
+            # «Обновить оплату» в проде падала 500-кой
+            order = await _billing_backend().create_order(
+                tg_id=_telegram_chat_id(),
+                package_type=tier,
+                email=_billing_email(),
+                recurrent_accepted=True,
+                idempotency_key=payload.idempotencyKey,
+            )
+        except PaymentInitError as exc:
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={"code": exc.code, "message": str(exc)},
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "payment_init_failed", "message": str(exc)},
+            ) from exc
         return {"ok": True, "subscription": data["subscription"], "paymentUrl": order["paymentUrl"], "mock": False}
     sub = store.mark_payment_ok()
     return {"ok": True, "subscription": sub, "paymentUrl": None, "mock": True}

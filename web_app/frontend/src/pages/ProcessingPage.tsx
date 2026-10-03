@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { api, ApiError } from '../lib/api';
 import { Button } from '../components/ui/kit';
+import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { BatchLayout, GenerationsCard, ProcessingAside, ProgressTrack, TrackCard } from '../components/project/BatchCards';
 import { useQuizOnGeneration, useVideoRatings } from '../components/funnel/FunnelHost';
 
@@ -133,6 +134,15 @@ export function ProcessingPage() {
         <Button variant="primary" size="lg" onClick={() => navigate('/app/projects')}>{t('common.toProjects')}</Button>
       </div>
     );
+  }
+
+  /*
+   * Статус не загрузился (5xx, нет сети) и показать нечего — раньше страница вечно рисовала
+   * «загрузку» 0/0. Явная ошибка с «Повторить»; генерация на бэке от этого не страдает.
+   * Если данные уже были, а упал очередной опрос — оставляем последний известный прогресс.
+   */
+  if (!job && queryDown(jobQuery)) {
+    return <QueryError query={jobQuery} />;
   }
 
   /*

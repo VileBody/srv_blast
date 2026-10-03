@@ -27,16 +27,62 @@ import type {
 } from './types';
 import type { SubtitleGeometry } from './subtitleGeometry';
 import { currentAppPath } from './appPath';
+import i18n from '../i18n';
+import { clearUserState } from '../stores/session';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
+/** Строка с текстом, а не пустышка из пробелов. */
+function text(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+/*
+ * Человеческий текст ошибки из тела ответа. FastAPI отдаёт `{"detail": "…"}`, наши ручки —
+ * ещё `{"detail": {"code", "message"}}` / `{"detail": {"detail": "…"}}`, middleware —
+ * `{"detail": "…", "code": "…"}`. Список валидации pydantic (422) — технический английский,
+ * его юзеру не показываем. Раньше любой объект превращался в «API error 409».
+ */
+export function apiErrorMessage(body: unknown): string | null {
+  const direct = text(body);
+  if (direct) return direct;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const outer = body as { detail?: unknown; message?: unknown };
+  const detail = outer.detail;
+  const flat = text(detail) ?? text(outer.message);
+  if (flat) return flat;
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    const inner = detail as { message?: unknown; detail?: unknown };
+    return text(inner.message) ?? text(inner.detail);
+  }
+  return null;
+}
+
+/** Машинный код ошибки: верхний уровень (`auth_required` из middleware) или внутри detail. */
+export function apiErrorBodyCode(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object') return undefined;
+  const outer = body as { code?: unknown; detail?: unknown };
+  if (typeof outer.code === 'string') return outer.code;
+  if (outer.detail && typeof outer.detail === 'object') {
+    const inner = (outer.detail as { code?: unknown }).code;
+    if (typeof inner === 'string') return inner;
+  }
+  return undefined;
+}
+
 export class ApiError extends Error {
   status: number;
+  /** сырое тело ответа (объект JSON или текст) — старые проверки читают `.detail.detail.code` */
   detail: unknown;
+  /** машинный код (`auth_required`, `asr_preview_pending`…), если бэк его прислал */
+  code: string | undefined;
   constructor(status: number, detail: unknown) {
-    super(typeof detail === 'string' ? detail : `API error ${status}`);
+    // Текста нет вовсе — общий понятный, а не «API error 502»; статус виден в .status
+    super(apiErrorMessage(detail) ?? i18n.t('error.generic'));
+    this.name = 'ApiError';
     this.status = status;
     this.detail = detail;
+    this.code = apiErrorBodyCode(detail);
   }
 }
 
@@ -120,11 +166,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
      * отвечает TikTok при протухшем токене, и выкидывать из аккаунта за это нельзя.
      * Со страниц входа не редиректим — там 401 нормальный ответ формы.
      */
-    const authRequired =
-      response.status === 401 &&
-      typeof detail === 'object' && detail !== null &&
-      (detail as { code?: string }).code === 'auth_required';
+    const code = apiErrorBodyCode(detail);
+    const authRequired = response.status === 401 && code === 'auth_required';
     if (authRequired && !/^\/(login|register)/.test(window.location.pathname)) {
+      // Сессии нет — черновик и память прежнего аккаунта следующему входу не достаются
+      clearUserState();
       // Возврат туда же после входа: кнопка уведомления в Telegram ведёт на
       // /app/projects/…?unlimited=1, без сессии иначе терялась бы и страница, и модалка.
       const back = currentAppPath();
@@ -136,10 +182,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
      * кроме статуса бана и выхода. Уводим на экран блокировки — без этого человек видел
      * бы «сервер прилёг» на каждом экране и считал бы бан сбоем.
      */
-    const banned =
-      response.status === 403 &&
-      typeof detail === 'object' && detail !== null &&
-      (detail as { code?: string }).code === 'account_banned';
+    const banned = response.status === 403 && code === 'account_banned';
     if (banned && window.location.pathname !== '/blocked') {
       window.location.replace('/blocked');
     }
@@ -234,8 +277,13 @@ export const api = {
   adminAnalytics: (days = 30, source: 'site' | 'bot' | 'all' = 'all') =>
     request<AnalyticsResponse>(`/api/admin/analytics?days=${days}&source=${source}`),
   /** Клиентское событие воронки (то, чего не видно на бэке) */
-  trackEvent: (name: string, props: Record<string, unknown> = {}) =>
-    request<{ ok: boolean; id: string }>('/api/analytics/track', { method: 'POST', body: JSON.stringify({ name, props }) }),
+  /*
+   * Никогда не отклоняется: аналитика не должна ломать экран и сыпать unhandled rejection
+   * (часть вызовов идёт из cleanup эффектов без .catch). Сбой виден в консоли.
+   */
+  trackEvent: (name: string, props: Record<string, unknown> = {}): Promise<void> =>
+    request<{ ok: boolean; id: string }>('/api/analytics/track', { method: 'POST', body: JSON.stringify({ name, props }) })
+      .then(() => undefined, (error: unknown) => { console.warn(`analytics event "${name}" rejected`, error); }),
 
   projects: () => request<ProjectsResponse>('/api/projects'),
   project: (projectId: string) => request<{ project: Project }>(`/api/projects/${projectId}`),
@@ -265,7 +313,12 @@ export const api = {
   cancelSubscription: (immediate = false) =>
     request<{ ok: boolean; subscription: Subscription }>(`/api/payments/cancel-sub?immediate=${immediate}`, { method: 'POST' }),
   /** Повтор списания после неудачной оплаты */
-  retryPayment: () => request<{ ok: boolean; subscription: Subscription; paymentUrl: string | null }>('/api/payments/retry', { method: 'POST' }),
+  /** Повторная оплата подписки: прод отдаёт `paymentUrl` заказа в банке, мок — null (уже оплачено) */
+  retryPayment: (idempotencyKey: string) =>
+    request<{ ok: boolean; subscription: Subscription; paymentUrl: string | null }>('/api/payments/retry', {
+      method: 'POST',
+      body: JSON.stringify({ idempotencyKey })
+    }),
   /** Вернуть автопродление после запланированной отмены */
   resumeSubscription: () => request<{ ok: boolean; subscription: Subscription }>('/api/payments/resume', { method: 'POST' }),
   /** Забрать бонус со шкалы месяцев (+1 трек, за третий месяц — снятие лимита) */
