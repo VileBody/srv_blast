@@ -109,8 +109,14 @@ from .marketing_texts import (
     WEB_FORK_REMINDER,
     WEB_FORK_TEXT,
     WEB_FORK_UNAVAILABLE,
+    WEB_LINK_ALREADY,
+    WEB_LINK_CALLBACK_PREFIX,
+    WEB_LINK_CONFIRMED,
+    WEB_LINK_EXPIRED,
+    WEB_LINK_REJECTED,
     WEB_REMIX_TEXT,
     WEB_SITE_DISABLED,
+    WEB_SITE_LOGIN_START,
     WEB_SITE_TEXT,
     bridge_text_for_branch,
     versions_warning_text,
@@ -3184,6 +3190,11 @@ class BlastBotApp:
             user_changed = self._sync_state_user_from_message(st, message)
             if user_changed:
                 await self.store.set(st)
+            # Кнопка «Получить новую ссылку» на сайте (ссылка входа одноразовая): свежая
+            # ссылка сразу, без онбординга и до проверки «трек в процессе» — генерацию она
+            # не трогает. Отдельный payload, а не UTM: в источники трафика он не пишется.
+            if await self._maybe_send_site_login_from_start(message):
+                return
             if st.stage == STAGE_PROCESSING:
                 await message.answer("Трек в процессе, подожди завершения.")
                 return
@@ -3524,6 +3535,10 @@ class BlastBotApp:
         @self.router.callback_query(lambda c: c.data == WEB_FORK_CALLBACK_BOT)
         async def _on_web_fork_bot(callback: CallbackQuery) -> None:
             await self._handle_web_fork_bot_callback(callback)
+
+        @self.router.callback_query(lambda c: str(c.data or "").startswith(WEB_LINK_CALLBACK_PREFIX))
+        async def _on_web_link_decision(callback: CallbackQuery) -> None:
+            await self._handle_web_link_decision(callback)
 
         @self.router.message(Command("sendtrack"))
         async def _on_sendtrack(message: Message) -> None:
@@ -6794,6 +6809,62 @@ class BlastBotApp:
         }
 
     @staticmethod
+    async def _chat_profile(bot: Bot, chat_id: int, *, username: str = "") -> Dict[str, str]:
+        """Имя и @username чата для ссылки, когда сообщения под рукой нет (ролик, напоминание).
+
+        Сайт показывает их в вопросе «привязать этот Telegram?». Это только подпись: если
+        Telegram не ответил, ссылку не роняем, а пишем в лог и отдаём что знаем."""
+        try:
+            chat = await bot.get_chat(int(chat_id))
+        except Exception as exc:
+            log.warning("web_handoff_profile_unavailable chat=%s err=%r", chat_id, exc)
+            return {"username": username} if username else {}
+        return {
+            "name": str(getattr(chat, "first_name", "") or "").strip(),
+            "surname": str(getattr(chat, "last_name", "") or "").strip(),
+            "username": str(getattr(chat, "username", "") or username or "").strip(),
+        }
+
+    async def _handle_web_link_decision(self, callback: CallbackQuery) -> None:
+        """Ответ на вопрос сайта «привязать этот Telegram к аккаунту …?» (app/handoff_link.py).
+
+        Привязку завершает сайт, когда увидит confirmed. Решение принимается только из
+        того чата, чей Telegram привязывают: запрос хранит tg_id, и чужой колбэк не пройдёт."""
+        data = str(callback.data or "")
+        parts = data[len(WEB_LINK_CALLBACK_PREFIX):].split(":", 1)
+        user = callback.from_user
+        if len(parts) != 2 or parts[0] not in {"y", "n"} or not parts[1] or user is None:
+            await callback.answer(WEB_LINK_EXPIRED)
+            return
+        approve = parts[0] == "y"
+        request_id = parts[1]
+        tg_id = int(user.id)
+        status = await self.credits_db.decide_web_link_request(request_id, tg_id=tg_id, approve=approve)
+        if status == "confirmed" and approve:
+            text = WEB_LINK_CONFIRMED
+            await self.credits_db.log_event(tg_id, "web_link_confirmed", request_id)
+        elif status == "rejected" and not approve:
+            text = WEB_LINK_REJECTED
+            # Событие безопасности: кто-то с сайта пытался привязать этот Telegram к своему
+            # аккаунту, а владелец Telegram это не подтвердил.
+            log.warning("security web_link_rejected chat=%s request=%s", tg_id, request_id)
+            await self.credits_db.log_event(tg_id, "web_link_rejected", request_id)
+        elif status in {"expired", "unknown"}:
+            if status == "unknown":
+                log.warning("web_link_decision_unknown chat=%s request=%s", tg_id, request_id)
+            text = WEB_LINK_EXPIRED
+        else:
+            await callback.answer(WEB_LINK_ALREADY)
+            return
+        await callback.answer()
+        if callback.message is not None:
+            try:
+                await callback.message.edit_text(text)
+            except Exception as exc:
+                # Решение уже записано — сайт его увидит; не вышло только убрать кнопки.
+                log.warning("web_link_decision_edit_failed chat=%s err=%r", tg_id, exc)
+
+    @staticmethod
     def _file_signature(path: Path) -> str:
         stat = path.stat()
         return f"{stat.st_size}:{stat.st_mtime_ns}"
@@ -6915,10 +6986,10 @@ class BlastBotApp:
         if str(message.text or "").strip() == BTN_WEB_FORK_BOT:
             await self._choose_bot_at_fork(message, st)
             return
-        # Развилка может ждать днями: протухшую ссылку не повторяем, выпускаем новую.
-        if time.time() > st.web_handoff_expires_at - 600:
-            await self._mint_track_handoff(message, st, source="refresh")
-            await self.store.set(st)
+        # Ссылка одноразовая, и бот не знает, открыта ли прежняя (её гасит сайт), — поэтому
+        # при каждом повторе выпускаем новую. `refresh` не перезапускает напоминания.
+        await self._mint_track_handoff(message, st, source="refresh")
+        await self.store.set(st)
         await self._send_web_fork(message, st, text=WEB_FORK_REMINDER)
 
     def _site_remix_source(self, st: ChatState) -> Optional[Dict[str, Any]]:
@@ -6991,7 +7062,7 @@ class BlastBotApp:
                 "jobIds": list(source.get("jobIds") or []),
                 "masterJobId": str(source.get("masterJobId") or ""),
                 "settings": dict(source.get("settings") or {}),
-                "profile": {"username": str(st.chat_username or "")},
+                "profile": await self._chat_profile(bot, int(st.chat_id), username=str(st.chat_username or "")),
             }
             # Тот же трек понадобится и после оценки ролика (ссылка на сайт вместо
             # приглашения друга / анкеты) — помним его в состоянии чата.
@@ -7018,9 +7089,11 @@ class BlastBotApp:
         chat_id = int(st.chat_id)
         payload = dict(st.web_remix_payload or {})
         kind = "remix" if payload.get("audioS3Url") else "site"
+        # Профиль — из этого сообщения: сайт показывает его в вопросе «привязать какой
+        # Telegram?», а в сохранённом remix-снимке имени могло не быть.
+        payload["profile"] = self._web_handoff_profile(message)
         token = await self.credits_db.create_web_handoff(
-            chat_id, kind, payload or {"profile": self._web_handoff_profile(message)},
-            ttl_seconds=self.settings.web_handoff_ttl_s,
+            chat_id, kind, payload, ttl_seconds=self.settings.web_handoff_ttl_s,
         )
         st.stage = STAGE_IDLE
         await self.store.set(st)
@@ -7031,6 +7104,14 @@ class BlastBotApp:
                 [InlineKeyboardButton(text=BTN_WEB_FORK_SITE, url=self._web_handoff_link(token))],
             ]),
         )
+
+    async def _maybe_send_site_login_from_start(self, message: Message) -> bool:
+        """`/start site_login` — кнопка «Получить новую ссылку в боте» со страницы сайта."""
+        if _extract_start_payload(message) != WEB_SITE_LOGIN_START:
+            return False
+        await self.credits_db.log_event(int(message.chat.id), "web_site_login_start")
+        await self._send_site_link(message)
+        return True
 
     async def _send_site_link(self, message: Message) -> None:
         """/site: a fresh login link (no track) — straight into the account."""
@@ -7043,7 +7124,6 @@ class BlastBotApp:
             "site",
             {"profile": self._web_handoff_profile(message)},
             ttl_seconds=self.settings.web_handoff_ttl_s,
-            single_use=True,
         )
         await self.credits_db.log_event(chat_id, "web_site_link")
         await message.answer(
@@ -10168,8 +10248,10 @@ class BlastBotApp:
             return 0
         done.add(tg_id)
         try:
+            # Профиль — для вопроса на сайте «привязать какой Telegram?» (сообщения тут нет).
+            link_payload = {**payload, "profile": await self._chat_profile(self._require_bot(), tg_id)}
             token = await self.credits_db.create_web_handoff(
-                tg_id, link_kind, payload, ttl_seconds=self.settings.web_handoff_ttl_s, single_use=True,
+                tg_id, link_kind, link_payload, ttl_seconds=self.settings.web_handoff_ttl_s,
             )
             await self._require_bot().send_message(
                 tg_id,
