@@ -979,6 +979,8 @@ input, textarea, [contenteditable] { caret-color: var(--accent-light); }
 
 @media (max-width: 768px) {
   .app-content { padding: 12px; gap: 12px; }
+  /* Плашка «Безлимит на трек» (FunnelBadge) висит в углу: 32 высота + 16 от края + 16 зазор */
+  :root[data-funnel-badge] .app-content { padding-bottom: 64px; }
   /* строки пула: подпись ужимается с многоточием, степпер не сжимается */
   .mini-pill { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count-stepper { flex-shrink: 0; }

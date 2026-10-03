@@ -142,6 +142,8 @@ export interface UnlimitedHandlers {
   onAnswer: (answerId: string) => void;
   onMethodology: () => void;
   onNext: () => void;
+  /** пропустить квиз вместе с методичкой — сразу к следующему шагу окна */
+  onSkipQuiz?: () => void;
   onChannelOpen: () => void;
   onChannelCheck: () => void;
   onManager: () => void;
@@ -208,7 +210,14 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
       const quiz = view.quiz;
       if (!quiz || quiz.kind !== 'question') return null;
       return (
-        <FunnelSheet {...common} stepKey={`quiz-${quiz.question.id}`} title={quiz.question.text} description={quiz.index === 0 ? t('funnel.quiz.description') : undefined}>
+        <FunnelSheet
+          {...common}
+          stepKey={`quiz-${quiz.question.id}`}
+          title={quiz.question.text}
+          description={quiz.index === 0 ? t('funnel.quiz.description') : undefined}
+          // квиз — не условие безлимита: без «Пропустить» окно держало бы до ответа
+          actions={on.onSkipQuiz ? <Button variant="ghost" onClick={on.onSkipQuiz}>{t('funnel.quiz.skip')}</Button> : undefined}
+        >
           <QuizQuestion question={quiz.question} onAnswer={on.onAnswer} pendingId={quiz.pendingId} />
         </FunnelSheet>
       );
@@ -219,7 +228,16 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
           {...common}
           title={t('funnel.quiz.doneTitle')}
           description={view.bridge ?? undefined}
-          actions={<MethodologyAction state={view.methodology ?? 'idle'} url={view.methodologyUrl} botLink={view.botLink} onGet={on.onMethodology} onOpened={on.onNext} />}
+          actions={
+            <>
+              {/* Ручка методички падает или бот не запущен (и ссылки на него нет): без «Дальше»
+                  до действий и безлимита было бы не дойти */}
+              {(view.methodology === 'error' || view.methodology === 'needBot') && (
+                <Button variant="secondary" onClick={on.onNext}>{t('funnel.next')}</Button>
+              )}
+              <MethodologyAction state={view.methodology ?? 'idle'} url={view.methodologyUrl} botLink={view.botLink} onGet={on.onMethodology} onOpened={on.onNext} />
+            </>
+          }
         >
           <MethodologyStatus state={view.methodology ?? 'idle'} />
         </FunnelSheet>

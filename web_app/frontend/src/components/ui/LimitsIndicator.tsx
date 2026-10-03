@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { activeJobOptions } from '../../lib/activeJob';
 import { isSubscriptionPlan } from '../../lib/types';
 import { cssZoom } from '../../lib/zoom';
 import { LimitsPopoutCard, TrackLimitBar, type PopoutVariant } from '../funnel/LimitsPopout';
@@ -143,7 +144,7 @@ export function LimitsIndicator({
   const funnelOpen = useFunnelUi((state) => Boolean(state.open));
   const badge = useFunnelUi((state) => state.badge);
   // тот же запрос, что у шапки (AppShell): идёт ли сейчас батч
-  const activeJobQuery = useQuery({ queryKey: ['active-job'], queryFn: api.activeJob, refetchInterval: 5000 });
+  const activeJobQuery = useQuery(activeJobOptions);
   const batchRunning = Boolean(activeJobQuery.data?.job);
   const [closedKey, setClosedKey] = useState<string | null>(null);
   const [shownKey, setShownKey] = useState<string | null>(null);
@@ -162,9 +163,12 @@ export function LimitsIndicator({
   // Перезарядка — только у трека безлимита (или где трека страницы нет): в визарде другого
   // трека окно про «Нет любви» было бы чужим.
   const sameTrack = !track || isUnlimitedTrack(unlimited, track) !== false;
-  const popout: { variant: PopoutVariant; key: string } | null = quota && !quota.allowed && !quota.tripwire && sameTrack
+  // Платящим ни перезарядка, ни трипваер за 399 ₽ не предлагаются: воронка конверсионная,
+  // а безлимит на трек мог остаться у них с бесплатного периода.
+  const free = Boolean(funnel && !funnel.hasPaid);
+  const popout: { variant: PopoutVariant; key: string } | null = free && quota && !quota.allowed && !quota.tripwire && sameTrack
     ? { variant: quota.reason === 'daily_limit' ? 'daily' : 'cooldown', key: `limit:${quota.availableAt}` }
-    : funnel && !funnel.hasPaid && creditsOut && (!unlimited || isUnlimitedTrack(unlimited, track) === false)
+    : free && creditsOut && (!unlimited || isUnlimitedTrack(unlimited, track) === false)
       ? { variant: 'creditsOut', key: unlimited ? `credits-out:${track?.audioHash ?? track?.id}` : 'credits-out' }
       : null;
   // «Ролики кончились» не перебивает воронку: пока батч собирается (бесплатные 5 роликов
@@ -184,7 +188,7 @@ export function LimitsIndicator({
     setShownKey(popout.key);
     // Первый упор в перезарядку открывает 24-часовое окно трипваера: показ окна — это и
     // есть упор. Не открылось — кнопка покупки ответит понятной ошибкой, окно не прячем.
-    if (popout.variant !== 'creditsOut' && funnel && !funnel.tripwireOffer) {
+    if (popout.variant !== 'creditsOut' && funnel && !funnel.hasPaid && !funnel.tripwireOffer) {
       api.funnelTripwireOffer(track?.id)
         .then(() => queryClient.invalidateQueries({ queryKey: ['funnel-state'] }))
         .catch(() => {});
@@ -245,7 +249,7 @@ export function LimitsIndicator({
               trackTitle={unlimited?.trackTitle}
               availableAt={quota?.availableAt}
               rules={funnel.rules}
-              onBuy={funnel.tripwireOffer && (track?.id || unlimited?.trackId)
+              onBuy={!funnel.hasPaid && funnel.tripwireOffer && (track?.id || unlimited?.trackId)
                 // трипваер — на любой трек: покупаем на трек этой страницы, иначе на трек безлимита
                 ? () => tripwire.mutate((track?.id || unlimited?.trackId) as string)
                 : undefined}

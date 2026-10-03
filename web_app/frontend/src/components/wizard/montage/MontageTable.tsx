@@ -20,6 +20,7 @@ import { useGuideDismiss, useMarkGuideSeen } from '../../guidance/useGuideDismis
 import { useTranslation } from 'react-i18next';
 import { useChip } from '../../../i18n/useChip';
 import { ActionGuideOverlay } from '../../guidance/ActionGuideOverlay';
+import { useCoverCount, useModalCount } from '../../ui/Modal';
 import '../FxTimeline.css';
 import './montage.css';
 import './montage.mobile.css';
@@ -724,6 +725,8 @@ function PickPopover({ title, options, current, left, bottom, preview, onApply, 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      // поверх стола модалка (безлимит после генерации со стола) — стрелки её
+      if (useModalCount.getState().count > 0) return;
       e.preventDefault(); e.stopImmediatePropagation();
       browse(e.key === 'ArrowRight' ? 1 : -1);
     };
@@ -778,6 +781,11 @@ function PickPopover({ title, options, current, left, bottom, preview, onApply, 
  */
 export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false }: { index: number; onIndex: (i: number) => void; onClose: () => void; onGenerate: () => string | null; busy?: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // стол накрывает весь экран: плашка воронки в углу легла бы на его кнопки
+  useEffect(() => {
+    useCoverCount.getState().inc();
+    return () => useCoverCount.getState().dec();
+  }, []);
   useTooltips(rootRef);
   const { t: tr, i18n } = useTranslation();
   const fxName = useFxName();
@@ -1554,6 +1562,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     const key = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.matches?.('input, textarea, select, [contenteditable="true"]')) return;
+      // Поверх стола модалка (генерация со стола → безлимит воронки): Esc, Ctrl+Z, [ ] —
+      // её клавиши, иначе Esc закрывал бы и стол, а отмена правила его под подложкой.
+      if (useModalCount.getState().count > 0) return;
       // Esc закрывает сначала то, что открыто поверх: подсказку клавиш, меню роликов, шторку,
       // окно склейки, выбор — и только когда открытого ничего нет, сам стол
       if (e.key === 'Escape') {

@@ -183,3 +183,18 @@ export function markFunnelSeen(key: string): void {
     /* приватный режим — просто покажем ещё раз */
   }
 }
+
+/*
+ * Квиз пропустили (крестик, Esc, «Пропустить»): без памяти он открывался бы на каждом новом
+ * батче, пока не пройден. Помним неделю — по ключу аккаунта, как и всё «показанное».
+ */
+const QUIZ_SKIPPED = 'quiz:skipped';
+const QUIZ_SKIP_MAX_AGE_MS = 7 * 24 * 3600 * 1000;
+
+export function markQuizSkipped(): void {
+  markFunnelSeen(QUIZ_SKIPPED);
+}
+
+export function quizSkippedRecently(): boolean {
+  return funnelSeen(QUIZ_SKIPPED, QUIZ_SKIP_MAX_AGE_MS);
+}

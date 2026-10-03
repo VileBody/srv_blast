@@ -72,7 +72,7 @@ export function LimitsPopoutCard({
     <div
       role="dialog"
       aria-label={t(`funnel.popout.${variant}.title`)}
-      className="fn-step pointer-events-auto flex w-[400px] flex-col gap-[16px] rounded-r15 border border-line-strong bg-card p-[20px] shadow-[0_24px_60px_rgba(5,1,15,0.5)] max-md:w-auto"
+      className="fn-step pointer-events-auto flex w-[400px] flex-col gap-[16px] rounded-r15 border border-line-strong bg-card p-[20px] shadow-soft max-md:w-auto"
     >
       <div className="flex items-start justify-between gap-[12px]">
         <div className="min-w-0">
@@ -102,7 +102,7 @@ export function LimitsPopoutCard({
           <div className="flex items-center gap-[14px] rounded-r10 bg-panel px-[16px] py-[12px]">
             <span className="text-ui-20 text-accent-light"><Icon>{FN_GLYPH.clock}</Icon></span>
             <div className="min-w-0">
-              <p className="text-ui-32 leading-none tabular-nums text-text" aria-live="polite">{timer.text}</p>
+              <p className="text-ui-32 tabular-nums text-text" aria-live="polite">{timer.text}</p>
               <p className="mt-[6px] text-ui-12 text-text-60">{t(`funnel.popout.${variant}.until`)}</p>
             </div>
           </div>

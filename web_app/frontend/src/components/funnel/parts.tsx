@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient } from '@tanstack/react-query';
 import { cn } from '../../lib/cn';
 import type { FunnelQuestion, FunnelQuota, FunnelRules, RatingReason } from '../../lib/types';
 import { Button, ButtonLink, GLYPH, Icon, Pill } from '../ui/kit';
@@ -382,13 +383,21 @@ export function UnlockedTicket({
 /* ------------------------------------------------------------------ перезарядка */
 
 export function useCountdown(target: string | null, now?: number) {
+  const queryClient = useQueryClient();
   const [tick, setTick] = useState(() => now ?? Date.now());
+  const ms = target ? Math.max(0, new Date(target).getTime() - (now ?? tick)) : 0;
+  const expired = Boolean(target) && ms === 0;
   useEffect(() => {
-    if (now !== undefined || !target) return undefined;
+    if (now !== undefined || !target || expired) return undefined;
     const id = window.setInterval(() => setTick(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [now, target]);
-  const ms = target ? Math.max(0, new Date(target).getTime() - (now ?? tick)) : 0;
+  }, [now, target, expired]);
+  // Время вышло: перезарядка или окно трипваера на бэке уже кончились — дочитываем
+  // воронку, иначе таймер так и висел на 0:00:00 до перезагрузки. Раз на каждый срок.
+  useEffect(() => {
+    if (now !== undefined || !expired) return;
+    void queryClient.invalidateQueries({ queryKey: ['funnel-state'] });
+  }, [now, expired, target, queryClient]);
   const total = Math.floor(ms / 1000);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
@@ -419,7 +428,7 @@ export function TripwireOffer({
   return (
     <div className={cn('flex gap-[16px] rounded-r15 border border-accent-line bg-accent-soft p-[16px]', stacked ? 'flex-col' : 'items-center max-md:flex-col max-md:items-stretch')}>
       {!stacked && (
-        <span className="grid h-[44px] w-[44px] shrink-0 place-items-center rounded-r10 bg-card text-ui-20 text-accent-light max-md:hidden">
+        <span className="grid h-ctl w-ctl shrink-0 place-items-center rounded-r10 bg-card text-ui-20 text-accent-light max-md:hidden">
           <Icon>{FN_GLYPH.bolt}</Icon>
         </span>
       )}

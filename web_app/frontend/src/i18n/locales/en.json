@@ -1854,12 +1854,14 @@
     "remixReady": "Your bot video is on the editing table",
     "remixReadyText": "Same cuts, clips, transitions and subtitles. Edit and generate.",
     "remixFailed": "The video edit did not carry over",
-    "remixApplyFailed": "The project is open with your track, but the bot video edit didn't load.",
     "linkAccount": "Link Telegram to {{account}}?",
     "linkAccountNoName": "Link Telegram to this account?",
     "linkAccountText": "A Blast account without Telegram is open in this browser. Link Telegram and the track from the bot lands there. Or log in as a separate account with Telegram.",
     "linkAccountConfirm": "Link",
-    "linkAccountSeparate": "Log in separately"
+    "linkAccountSeparate": "Log in separately",
+    "importFailedText": "Couldn't bring over the video setup from the bot: the wizard only has your track. Pick the clip and add the lyrics again.",
+    "keptDraft": "Kept your current setup",
+    "keptDraftText": "The track from the bot is in Projects — open it from there."
   },
   "funnel": {
     "step": "{{n}} of {{total}}",
@@ -2030,6 +2032,59 @@
       "batches_other": "{{count}} batches",
       "videos_one": "{{count}} video",
       "videos_other": "{{count}} videos"
+    },
+    "replaceDraft": {
+      "title": "Replace the current setup?",
+      "text": "The wizard has a setup for “{{track}}” in progress. It will be replaced, and its lyrics, background, hooks, subtitles, video split and montage table edits will be lost.",
+      "textNoTrack": "The wizard has an unfinished setup. It will be replaced, and its lyrics, background, hooks, subtitles, video split and montage table edits will be lost.",
+      "keep": "Keep current",
+      "replace": "Replace"
+    },
+    "quizCopy": {
+      "q": {
+        "q1": "How many TikTok videos do you post a month?",
+        "q2": "How do you edit your videos?",
+        "q2a": "How long does one video take?",
+        "q2b": "How much do you spend on editing a month?",
+        "q3": "What keeps you from posting more often?"
+      },
+      "o": {
+        "q1": {
+          "none": "I don't post at all",
+          "1_10": "1–10",
+          "10_30": "10–30",
+          "30_plus": "30+"
+        },
+        "q2": {
+          "self": "Myself",
+          "helper": "With an editor or a service",
+          "no_edit": "I don't edit"
+        },
+        "q2a": {
+          "lt_hour": "Under an hour",
+          "1_3h": "1–3 hours",
+          "half_day": "Half a day or more",
+          "a_lot": "Never counted, but a lot"
+        },
+        "q2b": {
+          "zero": "Nothing",
+          "2_5k": "2,000–5,000 ₽",
+          "5_10k": "5,000–10,000 ₽",
+          "10k_plus": "10,000 ₽+"
+        },
+        "q3": {
+          "time": "Not enough time",
+          "money": "Not enough money for editing",
+          "ideas": "Not enough ideas",
+          "meaning": "I don't really see the point"
+        }
+      },
+      "bridge": {
+        "time": "People who grow post 1–2 videos a day. Here's how to keep up without hours of editing.",
+        "money": "People who grow post 1–2 videos a day. Here's how to do it without spending a fortune.",
+        "ideas": "One track can become dozens of videos. Here's how to find the one that takes off.",
+        "meaning": "Reach comes when there are lots of videos. Here are three examples where it worked."
+      }
     }
   }
 }
