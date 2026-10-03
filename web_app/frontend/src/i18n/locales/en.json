@@ -736,6 +736,8 @@
       "guideVariantsText": "One type can have several variants, each with its own transition and style. In the Pool every variant gets its own share of videos.",
       "example": "Example",
       "picked": "selected",
+      "noneGlueHint": "The video has no transition between shots. Use the arrows — the option you stop on is picked automatically.",
+      "noneStyleHint": "The video has no stylization. Use the arrows — the option you stop on is picked automatically.",
       "prev": "Previous example",
       "next": "Next example",
       "settings": "Variant settings",
