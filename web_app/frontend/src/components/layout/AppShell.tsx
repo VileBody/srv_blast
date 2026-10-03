@@ -3,8 +3,9 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '../../lib/api';
+import { AvatarImg } from '../ui/AvatarImg';
 import { currentAppPath } from '../../lib/appPath';
-import { activeJobOptions } from '../../lib/activeJob';
+import { activeJobPollingOptions } from '../../lib/activeJob';
 import { ProfileSetupGate } from './ProfileSetupGate';
 import { cn } from '../../lib/cn';
 import { Button } from '../ui/Button';
@@ -73,10 +74,13 @@ const AVATAR_CLASS = 'flex h-[60px] w-[60px] items-center justify-center overflo
 
 /** Сам кружок аватара, без ссылки — для мест, где ссылка уже снаружи (пункт меню в шторке). */
 function AvatarFace({ name, avatarUrl }: { name?: string; avatarUrl?: string }) {
-  return avatarUrl ? (
-    <img src={avatarUrl} alt="" className="h-full w-full rounded-full object-cover p-[2px]" />
-  ) : (
-    <span className="leading-none">{(name ?? 'B').slice(0, 1).toUpperCase()}</span>
+  // битая ссылка (протухший TikTok CDN) — инициал, а не пустой кружок
+  return (
+    <AvatarImg
+      src={avatarUrl}
+      className="h-full w-full rounded-full object-cover p-[2px]"
+      fallback={<span className="leading-none">{(name ?? 'B').slice(0, 1).toUpperCase()}</span>}
+    />
   );
 }
 
@@ -260,7 +264,7 @@ export function AppShell() {
   const meId = meQuery.data?.user.id;
   useEffect(() => { if (meId) rememberSessionUser(meId); }, [meId]);
   // идёт генерация — следим часто; нет — раз в 30 с (раньше каждые 5 с на любой странице)
-  const activeJobQuery = useQuery(activeJobOptions);
+  const activeJobQuery = useQuery(activeJobPollingOptions);
   const activeJob = activeJobQuery.data?.job;
   useJobFinishedToast(activeJobQuery.isSuccess ? (activeJob?.id ?? null) : undefined);
   const viewport = useAppViewport();
@@ -309,7 +313,7 @@ export function AppShell() {
             <MobileHeader onOpen={() => setDrawerOpen(true)} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />
             {meQuery.isLoading ? (
               <Skeleton className="h-[120px]" />
-            ) : meQuery.error ? (
+            ) : meQuery.error && !meQuery.data ? (
               /* аккаунт не загрузился: повторить или войти заново (с возвратом на эту страницу) */
               <div className="card-2 flex min-h-[260px] flex-col items-center justify-center px-[28px] py-[40px] text-center" role="alert">
                 <h1 className="text-ui-24 font-[400] text-text">{t('error.meTitle')}</h1>
@@ -326,6 +330,8 @@ export function AppShell() {
                 </div>
               </div>
             ) : (
+              // упавший ФОНОВЫЙ перезапрос /api/me (данные уже есть) не должен размонтировать
+              // страницу: перемонтирование заново слало все её запросы и сбрасывало состояние
               <ErrorBoundary>
                 <Outlet />
               </ErrorBoundary>

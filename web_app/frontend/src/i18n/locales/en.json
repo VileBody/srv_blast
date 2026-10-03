@@ -1545,7 +1545,22 @@
     "stopped": "Stopped",
     "failedNoReason": "The server sent no reason — contact support with the batch number",
     "toastReady": "Your videos are ready",
-    "toastDetails": "Details"
+    "toastDetails": "Details",
+    "details": "Details",
+    "failure": {
+      "timeout": "The render server ran out of time — it was overloaded. Try again.",
+      "busy": "The render server was busy and did not accept the video. Try again a bit later.",
+      "lost": "The render server restarted during the build. Try again.",
+      "render": "The video failed at the rendering step. Try again.",
+      "footage": "The footage for the background could not be found. Pick another background or try again.",
+      "lyrics": "The lyrics could not be timed — check the text for stray symbols.",
+      "source": "The selected source pool is incompatible with the render settings. Pick another background.",
+      "color": "The render server did not support the selected background colour. Pick another colour.",
+      "previous": "Not built: the batch stopped at the previous video.",
+      "cancelled": "The generation was cancelled.",
+      "service": "The build service is temporarily unavailable. Try again a bit later.",
+      "unknown": "The video could not be built — its credits have been returned."
+    }
   },
   "tiktok": {
     "captionPlaceholder": "What is this video about?",
@@ -1718,7 +1733,9 @@
     "deleteConfirm": "This cannot be undone. Paid services and generated materials cannot be restored.",
     "deleteAction": "Delete account",
     "deleteFailed": "Could not delete the account",
-    "avatarFailed": "Couldn't update the avatar"
+    "avatarFailed": "Couldn't update the avatar",
+    "bonusMissed": "missed",
+    "bonusMissedHint": "subscription not renewed"
   },
   "pricing": {
     "title": "Expand your options",

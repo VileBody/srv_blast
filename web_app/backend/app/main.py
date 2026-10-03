@@ -15,6 +15,7 @@ from pathlib import Path
 from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any, Literal
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -29,7 +30,7 @@ from . import mock_store as store
 from . import analytics, asr_preview, auth_store, bot_import, fraud_guard, funnel, google_auth, handoff_link, persistence, security, telegram_bot
 from . import render_job as render_job_builder
 from . import demo_media, effect_map
-from . import media_proxy
+from . import job_errors, media_proxy
 from . import storyboard as storyboard_svc
 from . import tiktok_api, tiktok_config, tiktok_token_store
 from .runtime import SETTINGS as RUNTIME
@@ -1333,34 +1334,81 @@ def api_tg_verify(request: Request, token: str | None = None) -> dict[str, Any]:
     return {"verified": False}
 
 
+def _upload_tiktok_avatar(avatar_url: str, user_id: str) -> str:
+    """Скачать TikTok-аватар и положить в наш S3; вернуть `s3://`. Ошибка — исключением."""
+    response = httpx.get(str(avatar_url), timeout=10.0, follow_redirects=True)
+    response.raise_for_status()
+    content = response.content
+    security.check_image(content, max_mb=8)
+    content_type = response.headers.get("content-type", "").split(";")[0].strip() or "image/jpeg"
+    ext = ".png" if "png" in content_type else ".jpg"
+    uploaded = _production_backend().upload_user_image(
+        content=content,
+        user_id=user_id,
+        filename=f"tiktok_avatar{ext}",
+        content_type=content_type,
+        kind="avatars",
+    )
+    return uploaded["s3_url"]
+
+
 def _mirror_tiktok_avatar(avatar_url: str | None, user_id: str) -> str | None:
     """Копия TikTok-аватара в нашем S3.
 
     TikTok отдаёт подписанную CDN-ссылку с коротким сроком — через несколько дней
     она протухает, и в профиле «аватар не подтянулся». Скачиваем один раз при
     подключении и храним `s3://` (свежую подпись выдаёт /api/me через image_url).
-    Не скачалось — оставляем исходную ссылку, подключение из-за картинки не ломаем.
+    Не скачалось — оставляем исходную ссылку, подключение из-за картинки не ломаем;
+    /api/me потом перезапросит профиль и зеркалит заново (_refresh_tiktok_avatar).
     """
     if not avatar_url or RUNTIME.backend != "production":
         return avatar_url
     try:
-        response = httpx.get(str(avatar_url), timeout=10.0, follow_redirects=True)
-        response.raise_for_status()
-        content = response.content
-        security.check_image(content, max_mb=8)
-        content_type = response.headers.get("content-type", "").split(";")[0].strip() or "image/jpeg"
-        ext = ".png" if "png" in content_type else ".jpg"
-        uploaded = _production_backend().upload_user_image(
-            content=content,
-            user_id=user_id,
-            filename=f"tiktok_avatar{ext}",
-            content_type=content_type,
-            kind="avatars",
-        )
-        return uploaded["s3_url"]
+        return _upload_tiktok_avatar(avatar_url, user_id)
     except Exception as exc:  # noqa: BLE001 — картинка не должна ломать OAuth-колбэк
         logger.warning("tiktok avatar mirror failed: %s", exc)
         return avatar_url
+
+
+def _is_foreign_avatar(url: str | None) -> bool:
+    """Ссылка на чужой CDN (TikTok), а не наш `s3://` / presign нашего же S3."""
+    if not url or not str(url).startswith("https://"):
+        return False
+    host = urlparse(str(url)).hostname or ""
+    ours = urlparse(_production_backend().config.s3_endpoint_url).hostname or ""
+    return not (ours and (host == ours or host.endswith(f".{ours}")))
+
+
+def _refresh_tiktok_avatar(user_id: str) -> str | None:
+    """Аккаунты, подключённые до зеркалирования (#338), держат подписанную CDN-ссылку
+    с протухшим `x-expires` — скачать её уже нельзя. Перезапрашиваем профиль по
+    сохранённому токену и зеркалим свежую ссылку в S3.
+
+    Один раз: результат (s3:// или None при неудаче) пишем и в воркспейс, и в
+    запись токена — иначе рефреш токена (_apply_token_profile) вернул бы протухшую
+    ссылку. При неудаче аватара просто нет (фронт рисует инициалы), а не битая картинка.
+    """
+    current = (store.ws().tiktok or {}).get("avatarUrl")
+    if not _is_foreign_avatar(current):
+        return current
+    try:
+        fresh = (tiktok_api.fetch_user_info(_access_token()) or {}).get("avatar_url")
+        if not fresh:
+            raise RuntimeError("TikTok user info has no avatar_url")
+        mirrored: str | None = _upload_tiktok_avatar(str(fresh), user_id)
+    except Exception as exc:  # noqa: BLE001 — профиль не должен падать из-за картинки
+        logger.warning("tiktok avatar refresh failed user=%s: %s", user_id, exc)
+        mirrored = None
+    # воркспейс перечитываем: рефреш токена внутри _access_token пересоздаёт ws().tiktok
+    live = store.ws().tiktok
+    if live is not None:
+        live["avatarUrl"] = mirrored
+    record = tiktok_token_store.load(user_id)
+    if record is not None:
+        record["avatarUrl"] = mirrored
+        tiktok_token_store.save(user_id, record)
+    persistence.flush_user(user_id)
+    return mirrored
 
 
 @app.get("/api/me", tags=["profile"])
@@ -1384,25 +1432,17 @@ async def api_me() -> dict[str, Any]:
             data["user"]["avatarUrl"] = _production_backend().image_url(data["user"]["avatarUrl"])
         tiktok = data.get("tiktok") or {}
         if tiktok.get("avatarUrl"):
-            # аккаунты, подключённые до зеркалирования, ещё держат протухающую CDN-ссылку —
-            # зеркалим лениво, один раз (после неудачи больше не пробуем)
-            live = store.ws().tiktok or {}
-            if str(live.get("avatarUrl") or "").startswith("https://") and not live.get("avatarMirrorTried"):
-                live["avatarMirrorTried"] = True
-                live["avatarUrl"] = _mirror_tiktok_avatar(live["avatarUrl"], store.current_user_id() or "")
-                data["tiktok"]["avatarUrl"] = live["avatarUrl"]
-                persistence.flush_user(store.current_user_id())
-            data["tiktok"]["avatarUrl"] = _production_backend().image_url(data["tiktok"]["avatarUrl"])
+            # CDN-ссылка TikTok протухает: перезапрос профиля + зеркало в S3, один раз
+            if _is_foreign_avatar(tiktok["avatarUrl"]):
+                tiktok["avatarUrl"] = await asyncio.to_thread(_refresh_tiktok_avatar, store.current_user_id() or "")
+            tiktok["avatarUrl"] = _production_backend().image_url(tiktok["avatarUrl"])
     # Экран ожидания обещает «пришлём в Telegram» — обещать это можно только когда бот
     # реально настроен И у юзера есть привязанный чат. Иначе фронт молчит про уведомления.
     data["telegramNotifications"] = bool(
         telegram_bot.configured() and auth_store.chat_id_for_user(store.current_user_id() or "")
     )
     data["mock"] = RUNTIME.backend == "mock"
-    data["isAdmin"] = bool(
-        store.current_user_id() in ADMIN_USER_IDS
-        or (not ADMIN_USER_IDS and not RUNTIME.production)
-    )
+    data["isAdmin"] = _viewer_is_admin()
     data["capabilities"] = {
         "customSources": True,
         # Кандидаты дропа есть в обоих режимах: в моке — фикстура, в проде —
@@ -1485,7 +1525,7 @@ def api_project(project_id: str) -> dict[str, Any]:
                 project["coverUrl"] = backend.image_url(project["coverUrl"])
         except Exception as exc:
             raise _production_error(exc) from exc
-    return {"project": project, "mock": RUNTIME.backend == "mock"}
+    return {"project": job_errors.public_project(project, admin=_viewer_is_admin()), "mock": RUNTIME.backend == "mock"}
 
 
 @app.patch("/api/projects/{project_id}", tags=["projects"])
@@ -2894,7 +2934,7 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         persistence.save_job(live_job["id"])
         job = store.get_job(live_job["id"]) or live_job
     analytics.track("generation_started", store.current_user_id(), {"jobId": job["id"], "videos": job["versions"], "projectId": project_id})
-    return {"job": job, "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
+    return {"job": _public_job(job), "redirectTo": f"/app/processing/{job['id']}", "mock": RUNTIME.backend == "mock"}
 
 
 def _create_job_or_422(project_id: str, stage_data: dict[str, Any], payload: SubmitPayload) -> dict[str, Any]:
@@ -3226,7 +3266,7 @@ async def api_active_job() -> dict[str, Any]:
             job = store.get_job(live_job["id"])
         except Exception as exc:
             raise _production_error(exc) from exc
-    return {"job": job, "mock": RUNTIME.backend == "mock"}
+    return {"job": _public_job(job), "mock": RUNTIME.backend == "mock"}
 
 
 @app.get("/api/jobs/{job_id}", tags=["jobs"])
@@ -3242,7 +3282,7 @@ async def api_job(job_id: str) -> dict[str, Any]:
             job = store.get_job(job_id) or live_job
         except Exception as exc:
             raise _production_error(exc) from exc
-    return {"job": job, "mock": RUNTIME.backend == "mock"}
+    return {"job": _public_job(job), "mock": RUNTIME.backend == "mock"}
 
 
 @app.post("/api/jobs/{job_id}/rate", tags=["jobs"])
@@ -3258,7 +3298,7 @@ def api_rate_job(job_id: str, payload: RatePayload) -> dict[str, Any]:
         store.current_user_id(),
         {"jobId": job_id, "rating": payload.rating, "hasFeedback": bool(payload.feedback)},
     )
-    return {"ok": True, "job": store.get_job(job_id), "mock": RUNTIME.backend == "mock"}
+    return {"ok": True, "job": _public_job(store.get_job(job_id)), "mock": RUNTIME.backend == "mock"}
 
 
 # ------------------------- Content iterations -------------------------
@@ -3294,7 +3334,7 @@ def api_create_iteration(project_id: str, payload: IterationPayload) -> dict[str
     )
     return {
         "iteration": iteration,
-        "job": job,
+        "job": _public_job(job),
         "redirectTo": f"/app/processing/{job['id']}",
         "mock": True,
     }
@@ -4020,6 +4060,19 @@ def api_dev_ban(request: Request, on: bool = True, reason: str = fraud_guard.BAN
 
 # Кто видит админку. Пусто → в деве доступна всем залогиненным, в проде — никому.
 ADMIN_USER_IDS = {uid.strip() for uid in os.getenv("BLAST_ADMIN_USER_IDS", "").split(",") if uid.strip()}
+
+
+def _viewer_is_admin() -> bool:
+    """Тот же признак, что `isAdmin` в /api/me: им же решаем, кому отдавать сырые ошибки."""
+    return bool(
+        store.current_user_id() in ADMIN_USER_IDS
+        or (not ADMIN_USER_IDS and not RUNTIME.production)
+    )
+
+
+def _public_job(job: dict[str, Any] | None) -> dict[str, Any] | None:
+    # трейсбек оркестратора (пути ноды, render_id) видит только админ, юзер — категорию
+    return job_errors.public_job(job, admin=_viewer_is_admin())
 
 
 def _require_admin() -> None:
