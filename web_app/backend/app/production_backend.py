@@ -381,6 +381,17 @@ class ProductionBackend:
             raise ProductionBackendError(f"exact rotation selector required for footage {group_name!r}")
         return selector
 
+    def _footage_selector_in_plane(self, group_name: str, plane: str) -> dict[str, Any]:
+        """Selector записи футаж-каталога с этой подписью в этой подборке.
+
+        Нет такой записи — явная ошибка: подставить одноимённую запись из другой
+        подборки значило бы молча отрендерить не тот футаж (и не в той геометрии).
+        """
+        for item in self.config.footage_catalog:
+            if str(item.get("name")) == group_name and str(item.get("plane") or "") == plane:
+                return dict(item.get("selector") or {})
+        raise ProductionBackendError(f"footage {group_name!r} not found in plane {plane!r}")
+
     def _storyboard_post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         response = self._http.post(f"{self.config.orchestrator_url}{path}", json=body)
         if response.status_code == 422:
@@ -1323,10 +1334,17 @@ class ProductionBackend:
             if not groups:
                 raise ProductionBackendError("footage/photo variation has no selected group")
             group_name = str(groups[0])
-            # Ищем в карте СВОЕГО режима: одинаковые подписи есть и у футажа, и у фото.
-            selector = dict(
-                self.config.selector_by_mode.get(background_mode, {}).get(group_name) or {}
-            )
+            footage_plane = background.get("footagePlane") if background_mode == "footage" else None
+            if footage_plane:
+                # Батч смешивает вайбы и фильмы: берём запись каталога ИМЕННО той
+                # подборки, из которой выбран футаж, — карта по имени отдала бы
+                # последнюю запись с такой подписью из любой подборки.
+                selector = self._footage_selector_in_plane(group_name, str(footage_plane))
+            else:
+                # Ищем в карте СВОЕГО режима: одинаковые подписи есть и у футажа, и у фото.
+                selector = dict(
+                    self.config.selector_by_mode.get(background_mode, {}).get(group_name) or {}
+                )
             if not selector.get("rotationTheme") or not selector.get("rotationTagsGroup"):
                 raise ProductionBackendError(f"exact rotation selector required for {background_mode} {group_name!r}")
 

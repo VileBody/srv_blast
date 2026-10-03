@@ -189,6 +189,38 @@ def _split_bg_key(key: str, default_mode: str) -> tuple[str, str]:
     return ("color" if key == "__color__" else default_mode), key
 
 
+# План подборки (background.footagePlanes[группа]) → id типа футажей из
+# frontend/src/data/footage-types.json — тот же, что лежит в background.footageType.
+FOOTAGE_TYPE_BY_PLANE = {"vibes": "vertical", "cine16x9": "cine16x9", "films": "films"}
+
+
+def _footage_plane(bg: dict[str, Any], group: str) -> str | None:
+    """План подборки, из которой взят этот футаж; None — черновик его не записал.
+
+    Тип в выпадающем списке — только какая подборка открыта сейчас: батч может
+    смешивать вайбы и фильмы, и каждый ролик обязан идти со своим планом. Черновики
+    до footagePlanes (и группы, выбранные до его появления) плана не знают — для
+    них остаётся прежнее поведение: общий footageType батча.
+    """
+    planes = bg.get("footagePlanes")
+    if not isinstance(planes, dict) or group not in planes:
+        return None
+    plane = planes[group]
+    if plane not in FOOTAGE_TYPE_BY_PLANE:
+        raise ValueError(f"Футаж {group!r}: неизвестная подборка {plane!r}")
+    return str(plane)
+
+
+def _footage_format(bg: dict[str, Any], group: str) -> str:
+    """Формат исходника футажа: записанный при выборе, иначе — по его подборке."""
+    recorded = (bg.get("footageFormats") or {}).get(group)
+    if recorded:
+        return str(recorded)
+    plane = _footage_plane(bg, group)
+    footage_type = FOOTAGE_TYPE_BY_PLANE[plane] if plane else bg.get("footageType")
+    return "16:9" if footage_type == "cine16x9" else "9:16"
+
+
 def build_render_job(batch_id: str, project_id: str | None, user_id: str,
                      stage_data: dict[str, Any], videos_to_generate: int) -> dict[str, Any]:
     bg = stage_data.get("background") or {}
@@ -255,7 +287,6 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         )
 
     expanded_backgrounds: list[tuple[str, str, dict[str, Any] | None, bool]] = []
-    footage_formats = bg.get("footageFormats") or {}
     for group_key in bg_seq:
         v_mode, group = _split_bg_key(group_key, mode)
         source_plan = next((plan for plan in source_plans if plan["id"] == group), None) if v_mode == "upload" else None
@@ -264,13 +295,7 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         hook_allowed = not (
             v_mode in {"photo", "color"}
             or (v_mode == "upload" and (source_plan or {}).get("format") == "16:9")
-            or (
-                v_mode == "footage"
-                and footage_formats.get(
-                    group,
-                    "16:9" if bg.get("footageType") == "cine16x9" else "9:16",
-                ) == "16:9"
-            )
+            or (v_mode == "footage" and _footage_format(bg, group) == "16:9")
         )
         expanded_backgrounds.append((v_mode, group, source_plan, hook_allowed))
 
@@ -346,16 +371,22 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
         if v_mode == "upload":
             source_format = str((source_plan or {}).get("format") or "")
         elif v_mode == "footage":
-            source_format = str(footage_formats.get(
-                group,
-                "16:9" if bg.get("footageType") == "cine16x9" else "9:16",
-            ))
+            source_format = _footage_format(bg, group)
         elif v_mode == "photo":
             # Photo assets are 4:3, but the emitted video uses the vertical
             # render preset; this field describes the output shown to users.
             source_format = "9:16"
         else:
             source_format = "9:16"
+
+        # План/тип — у каждого ролика свой (см. _footage_plane); без записи — общий тип батча.
+        footage_plane = _footage_plane(bg, group) if v_mode == "footage" else None
+        if v_mode != "footage":
+            footage_type = None
+        elif footage_plane:
+            footage_type = FOOTAGE_TYPE_BY_PLANE[footage_plane]
+        else:
+            footage_type = bg.get("footageType")
 
         branding = em.HOOK_BRANDING.get(resolved["hook"], {"enabled": False}) if resolved["hook"] else {"enabled": False}
         variations.append({
@@ -376,7 +407,10 @@ def build_render_job(batch_id: str, project_id: str | None, user_id: str,
                 "mode": v_mode,
                 "groups": [] if group.startswith("__") or v_mode == "upload" else [group],
                 # тип футажей (Figma W12) — из какой библиотеки берём группы; id из footage-types.json
-                "footageType": bg.get("footageType") if v_mode == "footage" else None,
+                "footageType": footage_type,
+                # план подборки этого футажа (vibes/cine16x9/films): по нему рендер берёт
+                # запись каталога именно этой подборки; None — черновик до footagePlanes
+                "footagePlane": footage_plane,
                 # свои исходники (Figma W39/W49) — вместо библиотечного футажа
                 "uploads": list((source_plan or {}).get("sourceIds") or []),
                 "sourceAssets": variation_sources,
