@@ -77,6 +77,7 @@ from .marketing_texts import (
     GEN_SUBSCRIPTION_MISSING,
     GEN_SUBSCRIPTION_REMINDER,
     GEN_SUBSCRIPTION_TEXT,
+    SUBSCRIPTION_CHECK_UNAVAILABLE,
     SITE_CTA_AFTER_LOW,
     SITE_CTA_AFTER_MID,
     SITE_CTA_AFTER_PITCH,
@@ -479,8 +480,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] tg_bot: %(message)s",
 )
 log = logging.getLogger("tg_bot")
-# Сколько раз гейт подписки пропустил человека из-за сбоя getChatMember (fail-open),
-# по месту проверки. Счётчик процесса: пишется в каждый error-лог сбоя.
+# Сколько раз гейт подписки НЕ смог проверить человека (сбой getChatMember) и
+# остановил его (fail-closed), по месту проверки. Счётчик процесса: пишется в каждый
+# error-лог сбоя (алерт в Loki по `subscription_check_failed_blocked`).
 SUBSCRIPTION_CHECK_FAILURES: "collections.Counter[str]" = collections.Counter()
 
 
@@ -4014,27 +4016,25 @@ class BlastBotApp:
             )
             return None
 
-    async def _subscription_gate_passes(self, user_id: int, chat_id: int, *, where: str) -> bool:
-        """Гейт «подписка на канал»: не подписан — не пускаем; подписан — пускаем.
+    async def _subscription_gate_passes(self, user_id: int, chat_id: int, *, where: str) -> Optional[bool]:
+        """Гейт «подписка на канал»: True — подписан, False — не подписан, None — проверить
+        не удалось.
 
-        Проверка сломалась (getChatMember ответил ошибкой) — пускаем: из-за нашего
-        сбоя человек не должен застревать перед генерацией. Сбой не молчаливый:
-        warning в логе и событие `subscription_check_failed` (видно в активности и
-        в метриках по событиям), с местом, где он случился."""
+        None — НЕ пропуск (fail-closed, решение продукта 2026-10): при сбое пускали
+        бесплатного без подписки, и сбой getChatMember (бот не админ канала) открывал
+        бесплатные кредиты всем. Вызывающий обязан различать None и False: человеку
+        пишем «не смогли проверить, попробуй через минуту», а не «ты не подписан».
+        Сбой не молчаливый: error-лог со счётчиком + событие в activity_log."""
         result = await self._check_subscription(int(user_id))
         if result is None:
-            # TODO(product): fail-open — решение не принято (пускать ли при сбое
-            # getChatMember). До решения поведение прежнее, но сбой видно: error-лог
-            # со счётчиком процесса (алерт в Loki по `subscription_check_failed_passed`)
-            # + событие в activity_log.
             SUBSCRIPTION_CHECK_FAILURES[where] += 1
             log.error(
-                "subscription_check_failed_passed chat=%s user_id=%s where=%s count=%s total=%s",
+                "subscription_check_failed_blocked chat=%s user_id=%s where=%s count=%s total=%s",
                 chat_id, user_id, where, SUBSCRIPTION_CHECK_FAILURES[where],
                 sum(SUBSCRIPTION_CHECK_FAILURES.values()),
             )
             await self.credits_db.log_event(int(chat_id), "subscription_check_failed", where)
-            return True
+            return None
         return bool(result)
 
     async def _handle_wait_start(self, message: Message, st: ChatState) -> None:
@@ -4061,6 +4061,15 @@ class BlastBotApp:
             return
         user_id = int(message.from_user.id) if message.from_user else 0
         subscribed = await self._subscription_gate_passes(user_id, int(message.chat.id), where="onboarding")
+        if subscribed is None:
+            # Не проверили — остаёмся на шаге подписки, повтор той же кнопкой.
+            await self._timed_answer(
+                message,
+                SUBSCRIPTION_CHECK_UNAVAILABLE,
+                op="subscription_check_unavailable",
+                reply_markup=_kb([BTN_SUBSCRIBED]),
+            )
+            return
         if not subscribed:
             await self._timed_answer(message, "Думаешь, мы не будем проверять подписку?)", op="subscription_not_ok")
             await self._move_to_subscription(int(message.chat.id), message)
@@ -7657,7 +7666,11 @@ class BlastBotApp:
                 return  # первое нажатие уже запустило генерацию
             st = fresh
             user_id = int(message.from_user.id) if message.from_user else chat_id
-            if not await self._subscription_gate_passes(user_id, chat_id, where="before_generation"):
+            gate = await self._subscription_gate_passes(user_id, chat_id, where="before_generation")
+            if gate is None:
+                await message.answer(SUBSCRIPTION_CHECK_UNAVAILABLE, reply_markup=_kb([BTN_SUBSCRIBED], [BTN_RESTART]))
+                return
+            if not gate:
                 await message.answer(
                     GEN_SUBSCRIPTION_MISSING.format(channel=self.settings.subscription_channel),
                     reply_markup=_kb([BTN_SUBSCRIBED], [BTN_RESTART]),
@@ -7714,10 +7727,18 @@ class BlastBotApp:
             not subscribed
             and self.settings.generation_subscription_required
             and await self._is_free_funnel_chat(chat_id)
-            and not await self._subscription_gate_passes(int(user_id), chat_id, where="launch")
         ):
-            await self._ask_generation_subscription(message, st)
-            return
+            gate = await self._subscription_gate_passes(int(user_id), chat_id, where="launch")
+            if gate is None:
+                # Не проверили — паркуем на шаге «Я подписался»: его нажатие — повтор
+                # проверки. Текст «подпишись» здесь не шлём: человек мог быть подписан.
+                st.stage = STAGE_WAIT_GEN_SUBSCRIPTION
+                await self.store.set(st)
+                await message.answer(SUBSCRIPTION_CHECK_UNAVAILABLE, reply_markup=_kb([BTN_SUBSCRIBED], [BTN_RESTART]))
+                return
+            if not gate:
+                await self._ask_generation_subscription(message, st)
+                return
         # Order mirrors the flow: window first, lines second.
         if not self._has_timing_window(st):
             st.stage = STAGE_WAIT_TIMING_INPUT
