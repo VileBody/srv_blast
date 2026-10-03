@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import type { FunnelState, GenerationJob, RatingReason, VideoRating, VideoVersion } from '../../lib/types';
 import { useToast } from '../../contexts/ToastContext';
-import { bindFunnelUser, funnelSeen, markFunnelSeen, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
+import { bindFunnelUser, funnelSeen, markFunnelSeen, markQuizSkipped, quizSkippedRecently, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
 import { startNextBatch } from '../../stores/wizardStore';
 import { guardDraft } from '../../stores/draftGuard';
 import { FunnelDialog, FunnelSheet } from './FunnelSheet';
@@ -147,6 +147,12 @@ function QuizModal({ jobId, onClose, onDismiss }: { jobId?: string; onClose: () 
   const [bridge, setBridge] = useState<string | null | undefined>(undefined);
   const quiz = useQuiz(funnel.data, (b) => setBridge(b));
   useEffect(() => { if (jobId) markFunnelSeen(`quiz:${jobId}`); }, [jobId]);
+  // закрыли до конца квиза — это пропуск: на следующих батчах неделю не открываем
+  const finished = bridge !== undefined;
+  const skip = useCallback(() => {
+    if (!finished) markQuizSkipped();
+    onClose();
+  }, [finished, onClose]);
   const view: QuizView | null = bridge !== undefined
     ? { kind: 'done', bridge, methodology: methodology.state, url: methodology.url, botLink: methodology.botLink }
     : quiz.view;
@@ -158,8 +164,8 @@ function QuizModal({ jobId, onClose, onDismiss }: { jobId?: string; onClose: () 
   useEffect(() => { if (nothing) onDismiss(); }, [nothing, onDismiss]);
   if (!view || nothing) return null;
   return (
-    <FunnelDialog open onClose={onClose} labelledBy={titleId}>
-      <QuizPanel titleId={titleId} view={view} onAnswer={quiz.answer} onSkip={onClose} onMethodology={methodology.get} onClose={onClose} />
+    <FunnelDialog open onClose={skip} labelledBy={titleId}>
+      <QuizPanel titleId={titleId} view={view} onAnswer={quiz.answer} onSkip={skip} onMethodology={methodology.get} onClose={skip} />
     </FunnelDialog>
   );
 }
@@ -241,7 +247,8 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
     && (!ctx.jobId || (ratingsQuery.isFetched && (Boolean(ctx.videos) || jobQuery.isFetched)));
   if (!plan && ready && funnel) {
     const rated = ratingsQuery.data?.ratings ?? {};
-    setPlan({ rate: videos.some((video) => !rated[video.id]), quiz: !funnel.survey.completed });
+    // квиз, пропущенный недавно (в окне квиза или здесь), шагом безлимита не возвращаем
+    setPlan({ rate: videos.some((video) => !rated[video.id]), quiz: !funnel.survey.completed && !quizSkippedRecently() });
   }
 
   // Без привязанного Telegram воронки нет (409 telegram_required): окно не держим и плашку не ставим.
@@ -340,6 +347,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
           onMethodology: methodology.get,
           onNext: next,
           onSkipQuiz: () => {
+            markQuizSkipped();
             // квиз и методичка идут парой: пропуск ведёт сразу за методичку
             const methodologyAt = steps.indexOf('methodology');
             setIndex(methodologyAt >= 0 ? methodologyAt + 1 : index + 1);
@@ -523,7 +531,7 @@ export function useQuizOnGeneration(job: GenerationJob | undefined) {
   const openQuiz = useFunnelUi((state) => state.openQuiz);
   useEffect(() => {
     const data = funnel.data;
-    if (!job || !data || data.hasPaid || data.survey.completed) return undefined;
+    if (!job || !data || data.hasPaid || data.survey.completed || quizSkippedRecently()) return undefined;
     if (job.status === 'COMPLETED' || job.status === 'FAILED' || funnelSeen(`quiz:${job.id}`)) return undefined;
     const timer = window.setTimeout(() => openQuiz(job.id), 2500);
     return () => window.clearTimeout(timer);
