@@ -1,4 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { formatTimePrecise } from '../../../lib/timeFormat';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
@@ -46,7 +47,8 @@ const TD = 0.36;
 const X0 = 20;
 const pad = (n: number) => String(n).padStart(2, '0');
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
-const tc = (t: number) => { const f = Math.floor(Math.max(0, t) * FPS + 1e-6); return `${pad(Math.floor(f / FPS / 60))}:${pad(Math.floor(f / FPS) % 60)}.${pad(f % FPS)}`; };
+// время в подписях стола — тот же вид, что на всём визарде (мм:сс.сс), а не кадры: «.12» читали как сотые
+const tc = (t: number) => formatTimePrecise(t);
 const eOut = (p: number) => 1 - Math.pow(1 - p, 4);
 const zoomScale = () => Number.parseFloat(getComputedStyle(document.documentElement).zoom) || 1;
 const eIO = (p: number) => p < 0.5 ? 8 * p ** 4 : 1 - Math.pow(-2 * p + 2, 4) / 2;

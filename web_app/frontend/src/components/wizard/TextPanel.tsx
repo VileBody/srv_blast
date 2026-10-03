@@ -5,7 +5,7 @@ import { useGuideDismiss } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { cn } from '../../lib/cn';
 import { useWizardStore } from '../../stores/wizardStore';
-import { formatClock } from './timing';
+import { formatTimeRange } from '../../lib/timeFormat';
 import { timingToSeconds } from './useFragmentAudio';
 import { WizardActions } from './WizardFrame';
 import { useLyricsUndo, useTried } from './wizardAttempt';
@@ -63,7 +63,7 @@ export function TextPanel({ ready, loading, timingReady, timingToComplete, onNex
       <div className="w12-card w12-aside">
         <div className="w12-aside-head">
           <h2>{t('wizard.text.title')}</h2>
-          <span className="w12-meta w12-num">{timingReady && from !== null && to !== null ? `${formatClock(from)} – ${formatClock(to)}` : ''}</span>
+          <span className="w12-meta w12-num">{timingReady && from !== null && to !== null ? formatTimeRange(from, to) : ''}</span>
         </div>
         <div ref={guideTargetRef} className={cn('w12-lyr', tried && timingReady && !lineCount && 'w12-invalid')}>
           {!timingReady ? (

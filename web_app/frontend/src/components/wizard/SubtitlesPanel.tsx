@@ -17,13 +17,9 @@ import {
 import { SubtitleTimeline } from './SubtitleTimeline';
 import { SubtitleCanvas, type SubtitleCanvasProps } from './SubtitleCanvas';
 import { useSubtitleClock } from '../../lib/subtitleClock';
+import { formatTimePrecise } from '../../lib/timeFormat';
 import { useSubtitleFonts } from '../../lib/useSubtitleFonts';
 
-const clockLabel = (s: number) => {
-  const v = Math.max(0, s);
-  const m = Math.floor(v / 60);
-  return `${m}:${(v - m * 60).toFixed(1).padStart(4, '0')}`;
-};
 import { InlineError, queryDown } from '../ui/ErrorState';
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
@@ -567,7 +563,7 @@ function PreviewPlay({ clipStart }: { clipStart: number }) {
     <button type="button" className="w12-drop-play" onClick={() => toggle()}
       aria-label={playing ? t('wizard.subs.timeline.pause') : t('wizard.subs.timeline.play')}>
       <span className="w12-dot">{playing ? PAUSE : PLAY}</span>
-      <span className="w12-num w12-drop-clock">{clockLabel((time ?? clipStart) - clipStart)}</span>
+      <span className="w12-num w12-drop-clock">{formatTimePrecise(time ?? clipStart)}</span>
     </button>
   );
 }
