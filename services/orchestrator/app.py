@@ -802,6 +802,13 @@ def create_app() -> FastAPI:
         queued = store.get(st.job_id) or st
         return AsrPreviewEnqueueResponse(job_id=queued.job_id, status=queued.status, created=True)
 
+    # Ни эта ручка, ни GET /jobs/{id}/edit_state (как и остальные /jobs/*) не требуют
+    # токена: у оркестратора нет внутреннего API-ключа для вызовов сайта. Защита — сеть:
+    # порт публикуется только на 127.0.0.1 (ORCHESTRATOR_API_BIND_HOST, compose), сайт
+    # ходит по docker-сети. Публиковать оркестратор наружу (nginx
+    # orchestrator.locations.conf.example) без allowlist по IP нельзя — edit_state
+    # отдаёт слова, окно и настройки чужих роликов. Инвариант держит
+    # tests/test_orchestrator_internal_bind.py.
     @app.post("/asr/preview/from-job", response_model=AsrPreviewEnqueueResponse)
     def asr_preview_from_job(req: AsrPreviewFromJobRequest) -> AsrPreviewEnqueueResponse:
         """«Докрутить на сайте»: asr_preview-джоба со словами готовой джобы (без выравнивания).
