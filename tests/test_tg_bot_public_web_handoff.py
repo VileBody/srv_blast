@@ -504,9 +504,10 @@ def test_paid_users_launch_without_the_channel_step(monkeypatch):
     assert app.store.by_id[CHAT].stage != pub.STAGE_WAIT_GEN_SUBSCRIPTION
 
 
-def test_failed_subscription_check_lets_the_launch_through_with_an_event(monkeypatch):
-    """getChatMember сломался (бот не админ, флуд) — это не «не подписан»: пускаем, но
-    со следом в логе и событием. «Не подписан» при рабочей проверке — не пускаем."""
+def test_failed_subscription_check_blocks_the_launch_with_a_retry(monkeypatch):
+    """getChatMember сломался (бот не админ, флуд) — это не «не подписан», но и не пропуск:
+    fail-closed, человеку «не смогли проверить», событие в activity_log. Дальше — повтор
+    кнопкой «Я подписался» на шаге подписки."""
     app = _make_app(generation_subscription_required=True)
     result = {"value": None}
 
@@ -517,7 +518,8 @@ def test_failed_subscription_check_lets_the_launch_through_with_an_event(monkeyp
     monkeypatch.setattr(app, "_has_timing_window", lambda st: False, raising=False)
     msg = _Msg(text=pub.BTN_LAUNCH)
     _run(pub.BlastBotApp._handle_wait_confirm(app, msg, ChatState(chat_id=CHAT)))
-    assert app.store.by_id[CHAT].stage != pub.STAGE_WAIT_GEN_SUBSCRIPTION
+    assert app.store.by_id[CHAT].stage == pub.STAGE_WAIT_GEN_SUBSCRIPTION
+    assert msg.answers[-1][0] == mt.SUBSCRIPTION_CHECK_UNAVAILABLE
     assert (CHAT, "subscription_check_failed") in app.credits_db.events
 
     result["value"] = False
@@ -631,8 +633,8 @@ def test_release_web_handoff_returns_one_redemption_never_below_zero():
     assert "GREATEST(redeem_count - 1, 0)" in sql and args == (CreditsDB.hash_handoff_token("tok-123"),)
 
 
-def test_fail_open_subscription_check_is_counted_and_logged_as_error(monkeypatch, caplog):
-    """Поведение fail-open не меняем (решение не принято), но сбой обязан быть виден:
+def test_failed_subscription_check_is_blocked_counted_and_logged_as_error(monkeypatch, caplog):
+    """Сбой проверки — fail-closed (None, не пропуск), и он обязан быть виден:
     error-лог со счётчиком по месту проверки, а не warning."""
     import logging
 
@@ -644,8 +646,8 @@ def test_fail_open_subscription_check_is_counted_and_logged_as_error(monkeypatch
     monkeypatch.setattr(app, "_check_subscription", _broken, raising=False)
     monkeypatch.setattr(pub, "SUBSCRIPTION_CHECK_FAILURES", pub.collections.Counter())
     with caplog.at_level(logging.ERROR, logger="tg_bot"):
-        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is True
-        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is True
+        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is None
+        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is None
     assert pub.SUBSCRIPTION_CHECK_FAILURES["launch"] == 2
     errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-    assert any("subscription_check_failed_passed" in m and "count=2" in m for m in errors)
+    assert any("subscription_check_failed_blocked" in m and "count=2" in m for m in errors)

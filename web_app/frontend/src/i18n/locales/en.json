@@ -1952,7 +1952,7 @@
     },
     "actions": {
       "title": "Two steps to unlimited",
-      "description": "Both in Telegram, under a minute together.",
+      "description": "Subscribe to the channel and rate a video or take a short survey.",
       "unlock": "Unlock unlimited",
       "channelTitle": "Subscribe to the Blast channel",
       "channelText": "Video breakdowns and promo tips for artists.",
@@ -1960,11 +1960,13 @@
       "channelMissing": "We don't see the subscription yet. Subscribe and check again.",
       "channelOpen": "Open channel",
       "channelCheck": "Check",
-      "managerTitle": "Message the manager",
-      "managerText": "You'll talk about how to make Blast better for you. The message is ready, just send it.",
-      "managerDone": "Done, the manager will reply soon.",
-      "managerOpen": "Message",
-      "managerMessage": "Hi! I'd like unlimited on “{{track}}” and I'm happy to share what to improve in Blast. Code: {{code}}"
+      "channelCheckFailed": "Couldn't check the subscription, try again in a minute.",
+      "feedbackTitle": "Rate a video or take the survey",
+      "feedbackText": "Rate any video or answer three questions about how you make content.",
+      "feedbackDone": "Thanks, got it.",
+      "feedbackMissing": "We don't see a rating or a survey yet. Do one of the two.",
+      "feedbackRate": "Rate a video",
+      "feedbackSurvey": "Take the survey"
     },
     "done": {
       "title": "Unlimited is on",
@@ -2024,7 +2026,9 @@
       "save": "Couldn't save. Try again.",
       "reopen": "Couldn't open the batch. Try again.",
       "load": "Couldn't load. Try again.",
-      "retry": "Retry"
+      "retry": "Retry",
+      "unlockFeedback": "Rate a video or take the short survey first.",
+      "unlockChannel": "Subscribe to the channel first."
     },
     "badge": "Track unlimited",
     "units": {
@@ -2087,6 +2091,11 @@
         "ideas": "One track can become dozens of videos. Here's how to find the one that takes off.",
         "meaning": "Reach comes when there are lots of videos. Here are three examples where it worked."
       }
+    },
+    "channelGate": {
+      "title": "Subscribe to the Blast channel",
+      "description": "Free generations are for channel subscribers. Video breakdowns and promo tips for artists.",
+      "subscribed": "I've subscribed"
     }
   }
 }

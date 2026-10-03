@@ -245,7 +245,6 @@ export const api = {
   funnelRatings: (jobId: string) =>
     request<{ ratings: Record<string, VideoRating> }>(`/api/funnel/ratings?jobId=${encodeURIComponent(jobId)}`),
   funnelChannel: () => request<{ subscribed: boolean }>('/api/funnel/actions/channel', { method: 'POST' }),
-  funnelManager: () => request<{ ok: boolean }>('/api/funnel/actions/manager', { method: 'POST' }),
   funnelUnlock: (trackId: string) =>
     request<FunnelState>('/api/funnel/unlock', { method: 'POST', body: JSON.stringify({ trackId }) }),
   funnelQuota: (trackId: string) =>

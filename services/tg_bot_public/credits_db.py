@@ -2560,6 +2560,19 @@ class CreditsDB:
                 str(source or "web"),
             )
 
+    async def has_video_rating(self, tg_id: int) -> bool:
+        """Есть ли у человека хоть одна оценка ролика своего батча.
+
+        Условие безлимита на сайте (оценка ИЛИ пройденный опрос). job_id пишет только
+        сайт после проверки, что батч принадлежит человеку, — строки без него не считаем."""
+        pool = self._pool_or_fail()
+        async with pool.acquire() as conn:
+            row = await conn.fetchval(
+                "SELECT 1 FROM video_ratings WHERE tg_id = $1 AND job_id <> '' LIMIT 1",
+                int(tg_id),
+            )
+        return row is not None
+
     async def list_video_ratings(self, tg_id: int, video_ids: List[str]) -> Dict[str, Dict[str, Any]]:
         pool = self._pool_or_fail()
         async with pool.acquire() as conn:
