@@ -7,6 +7,7 @@ import type { FunnelState, GenerationJob, RatingReason, VideoRating, VideoVersio
 import { useToast } from '../../contexts/ToastContext';
 import { bindFunnelUser, funnelSeen, markFunnelSeen, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
 import { startNextBatch } from '../../stores/wizardStore';
+import { guardDraft } from '../../stores/draftGuard';
 import { FunnelDialog, FunnelSheet } from './FunnelSheet';
 import { QuizPanel, UnlimitedPanel, quizPath, type QuizView, type UnlimitedStep } from './panels';
 import { FN_GLYPH, VideoRatingRow, type ActionStatus, type LadderTier, type MethodologyState } from './parts';
@@ -350,7 +351,13 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
             // батча — работа человека, «новый батч» стёр бы фон, хуки, субтитры и правки стола.
             // Просто возвращаем к визарду, «Сгенерировать» он нажмёт сам.
             if (ctx.source === 'gate' || location.pathname.startsWith('/app/generate')) return;
-            navigate(ctx.projectId ? startNextBatch(ctx.projectId) : '/app/generate');
+            const projectId = ctx.projectId;
+            if (!projectId) {
+              navigate('/app/generate');
+              return;
+            }
+            // другой проект в черновике стёрся бы молча — сначала спрашиваем
+            guardDraft({ projectId }, () => navigate(startNextBatch(projectId)));
           },
           onClose,
           onFix: () => {
@@ -383,12 +390,19 @@ function useOpenJobOnTable() {
   return useCallback((projectId?: string, jobId?: string) => {
     if (!projectId) return;
     if (!jobId) {
-      navigate(startNextBatch(projectId));
+      guardDraft({ projectId }, () => navigate(startNextBatch(projectId)));
       return;
     }
     // модуль тянет раскладку «Пула» — грузим по требованию, как импорт из бота
     Promise.all([api.job(jobId), import('../../stores/reopenJob')])
-      .then(([{ job }, { openJobOnTable }]) => navigate(openJobOnTable(job)))
+      .then(([{ job }, { openJobOnTable }]) => {
+        // Батч заменяет черновик целиком: недоделанную настройку другого трека — только по «Заменить»
+        const key = (job.stageData?.final as { idempotencyKey?: unknown } | undefined)?.idempotencyKey;
+        guardDraft(
+          { projectId: job.projectId, idempotencyKey: typeof key === 'string' ? key : undefined },
+          () => navigate(openJobOnTable(job))
+        );
+      })
       .catch(() => push({ variant: 'error', title: t('funnel.errors.reopen') }));
   }, [navigate, push, t]);
 }

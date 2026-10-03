@@ -15,6 +15,8 @@ import { SvgMaskIcon } from './SvgMaskIcon';
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { AppAnalytics } from '../analytics/AppAnalytics';
 import { FunnelBadge, FunnelHost } from '../funnel/FunnelHost';
+import { rememberSessionUser } from '../../stores/session';
+import { DraftReplaceDialog } from './DraftReplaceDialog';
 import { usePaymentReturn } from '../funnel/useFunnel';
 
 // The desktop screens were laid out for a 1600x900 canvas. Scaling from 1280x800
@@ -253,6 +255,9 @@ export function AppShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, staleTime: 15_000 });
+  // чей черновик в браузере — ссылка из бота сверит с вошедшим аккаунтом (HandoffPage)
+  const meId = meQuery.data?.user.id;
+  useEffect(() => { if (meId) rememberSessionUser(meId); }, [meId]);
   // идёт генерация — следим часто; нет — раз в 30 с (раньше каждые 5 с на любой странице)
   const activeJobQuery = useQuery({ queryKey: ['active-job'], queryFn: api.activeJob, refetchInterval: (query) => (query.state.data?.job ? 5000 : 30_000) });
   const activeJob = activeJobQuery.data?.job;
@@ -296,6 +301,8 @@ export function AppShell() {
         {meQuery.isSuccess && <FunnelHost />}
         {/* модалку безлимита закрыли, не пройдя: плашка в углу открывает её снова */}
         {meQuery.isSuccess && <FunnelBadge />}
+        {/* «Заменить текущую настройку?» перед подменой черновика визарда */}
+        <DraftReplaceDialog />
         <main className="with-sidebar min-w-0 flex-1">
           <div className="app-content">
             <MobileHeader onOpen={() => setDrawerOpen(true)} userName={userName} avatarUrl={meQuery.data?.user.avatarUrl || meQuery.data?.tiktok?.avatarUrl || undefined} />

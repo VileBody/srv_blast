@@ -1854,12 +1854,14 @@
     "remixReady": "Your bot video is on the editing table",
     "remixReadyText": "Same cuts, clips, transitions and subtitles. Edit and generate.",
     "remixFailed": "The video edit did not carry over",
-    "remixApplyFailed": "The project is open with your track, but the bot video edit didn't load.",
     "linkAccount": "Link Telegram to {{account}}?",
     "linkAccountNoName": "Link Telegram to this account?",
     "linkAccountText": "A Blast account without Telegram is open in this browser. Link Telegram and the track from the bot lands there. Or log in as a separate account with Telegram.",
     "linkAccountConfirm": "Link",
-    "linkAccountSeparate": "Log in separately"
+    "linkAccountSeparate": "Log in separately",
+    "importFailedText": "Couldn't bring over the video setup from the bot: the wizard only has your track. Pick the clip and add the lyrics again.",
+    "keptDraft": "Kept your current setup",
+    "keptDraftText": "The track from the bot is in Projects — open it from there."
   },
   "funnel": {
     "step": "{{n}} of {{total}}",
@@ -2030,6 +2032,13 @@
       "batches_other": "{{count}} batches",
       "videos_one": "{{count}} video",
       "videos_other": "{{count}} videos"
+    },
+    "replaceDraft": {
+      "title": "Replace the current setup?",
+      "text": "The wizard has a setup for “{{track}}” in progress. It will be replaced, and its lyrics, background, hooks, subtitles, video split and montage table edits will be lost.",
+      "textNoTrack": "The wizard has an unfinished setup. It will be replaced, and its lyrics, background, hooks, subtitles, video split and montage table edits will be lost.",
+      "keep": "Keep current",
+      "replace": "Replace"
     }
   }
 }
