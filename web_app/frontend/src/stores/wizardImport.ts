@@ -1,5 +1,5 @@
 import type { SavedTrack, StoryboardPickedClip } from '../lib/types';
-import { footageTypePlane, normalizeFootageType } from '../data/footageTypes';
+import { normalizeFootageType } from '../data/footageTypes';
 import { combosOf } from '../components/wizard/SlicePanel';
 import { NO_GLUE } from '../components/wizard/hookCatalog';
 import { seedKeyFor } from '../components/wizard/storyboardData';
@@ -8,6 +8,7 @@ import {
   FX_VARIANT_PALETTE,
   emptyAsr,
   emptyMontage,
+  footagePlaneOf,
   recipeKeyOf,
   useWizardStore,
   type FxVariant,
@@ -102,8 +103,10 @@ export function applyWizardImport(projectId: string, track: SavedTrack | null | 
 
   // Раскладка роликов — та же, что у «Пула» и стола: по ней и ключ раскадровки, и подписи правок.
   const combos = combosOf({ background, allocation, fxVariants, subtitles });
-  const plane = footageTypePlane(background.footageType);
-  const footageSlots = plane === 'vibes' ? combos.filter((c) => c.group).map((c) => ({ index: c.slotIndex, group: String(c.group) })) : [];
+  // раскадровка — только у вайбов, план у каждого футажа свой: как unit.plane в «Пуле»
+  const footageSlots = combos
+    .filter((c) => c.group && footagePlaneOf(background, c.group) === 'vibes')
+    .map((c) => ({ index: c.slotIndex, group: String(c.group) }));
   const videos: Record<number, StoryboardVideo> = {};
   for (const entry of imp.storyboard) {
     const seedKey = seedKeyFor(idempotencyKey, entry.index, 0);

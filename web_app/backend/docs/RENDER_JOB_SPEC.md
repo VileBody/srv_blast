@@ -224,8 +224,17 @@ manifest `extra` также содержит `pixel_grain`, `warm_map` (нет �
   "background": {
     "mode": "footage",            // footage | photo | color
     "groups": ["neon", "cars"],   // background.footage[] / photo[] (id групп)
-    "footageType": "standard",    // mode:footage — тип футажей (id из frontend/src/data/footage-types.json,
-                                  // реестр пополняемый: standard|persons|movies|…), иначе null
+    "footageType": "vertical",    // mode:footage — тип футажей ЭТОГО ролика (id из frontend/src/data/
+                                  // footage-types.json: vertical|cine16x9|films), иначе null. Берётся из
+                                  // плана группы (footagePlane); без записанного плана — общий
+                                  // stageData.background.footageType батча (черновики до footagePlanes)
+    "footagePlane": "vibes",      // mode:footage — подборка, из которой выбрана группа
+                                  // (stageData.background.footagePlanes[группа]: vibes|cine16x9|films);
+                                  // null — черновик плана не записал. Батч может смешивать вайбы и
+                                  // фильмы: production_backend берёт selector записи каталога с этой
+                                  // подписью ИМЕННО в этой подборке (нет такой — явная ошибка), без
+                                  // плана — по подписи, как раньше. Раскадровка «Пула» (footagePlan)
+                                  // допустима только при footagePlane = vibes или null
     "uploads": [],                // свои исходники (Figma W39/W49): имена файлов из background.uploads
     "color": null,                // background.color (для mode:color)
     "strobe": false,              // background.strobe
