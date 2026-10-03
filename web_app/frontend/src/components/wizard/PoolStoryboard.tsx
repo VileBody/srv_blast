@@ -1,5 +1,7 @@
 import { ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { posterOf } from '../../lib/media';
+import { useLowData } from '../../lib/network';
+import { useVideoLoad, VideoLoadingBadge } from './VideoLoading';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { cssZoom } from '../../lib/zoom';
@@ -12,6 +14,7 @@ import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import { useFxLab } from './FxLab';
 import { useStripFollow } from './useStripFollow';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
+import { useGuideAction, useGuideActed } from '../guidance/useGuideAction';
 import { StoryboardGuideVisual, StoryboardReplaceGuideVisual } from './timelineGuides';
 import './PoolStoryboard.css';
 
@@ -71,6 +74,23 @@ const LOCK = 'M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6z';
 // подписи «Отмена/Готово» не помещались в кнопки дока рядом со счётчиком — знаки вместо слов
 const CROSS = 'M7 7l10 10M17 7L7 17';
 const CHECK = 'M5.5 12.5l4.2 4.2L18.5 7.8';
+
+/**
+ * Клип кадра раскадровки. Пока клип не дал живой кадр, видна его обложка (JPEG) — но с явной
+ * загрузкой поверх, иначе раскадровка выглядела бы картинками вместо видео.
+ */
+function ShotVideo({ src, poster, visible, style, videoRef }: {
+  src?: string; poster: string | null; visible: boolean; style: React.CSSProperties; videoRef: (el: HTMLVideoElement | null) => void;
+}) {
+  const ref = useRef<HTMLVideoElement | null>(null);
+  const load = useVideoLoad(ref, src);
+  return (
+    <>
+      <video ref={(el) => { ref.current = el; videoRef(el); }} className={`shot${visible ? ' on' : ''}`} src={src} poster={poster ?? undefined} muted playsInline preload="auto" style={style} />
+      {visible && load !== 'ready' && <VideoLoadingBadge state={load} />}
+    </>
+  );
+}
 
 /** edited — у видео есть ручные правки с таймлайна: пилюля «Изменён» закреплена слева над чипами. */
 export function PoolStoryboard({ slots, current, chips, edited }: { slots: StoryboardSlot[]; current: number; chips: StoryboardChip[]; edited?: boolean }) {
@@ -195,6 +215,10 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   const since = t - (bounds[s] ?? 0);
   const inTr = !edit && s > 0 && since < TD;
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
+  // сколько кадров вперёд качать заранее (см. ShotVideo)
+  const ahead = useLowData() ? 1 : 2;
+  // предыдущий кадр (переход) и `ahead` следующих, по кругу — после последнего идёт первый
+  const near = (i: number, n: number) => { const d = (i - s + n) % n; return d <= ahead || d === n - 1; };
   useEffect(() => {
     videoRefs.current.forEach((el, i) => {
       const clip = video?.clips[i];
@@ -275,9 +299,10 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
     seekTo(bounds[edit.k] + 0.001);
   };
   // отмена в т.ч. пока варианты ещё грузятся: поздний ответ не должен снова открыть замену
-  const cancelEdit = () => { if (!edit) return; abandonEdit(); setEdit(null); };
+  const cancelEdit = () => { if (!edit) return; abandonEdit(); setEdit(null); markReplaceActed(); };
   const doneEdit = () => {
     if (!edit || !video) return;
+    markReplaceActed();
     const chosen = edit.candidates[edit.pos];
     if (chosen) setStoryboardVideo({ ...video, pins: { ...video.pins, [edit.k]: chosen.fileName } });
     editReq.current += 1;
@@ -290,6 +315,7 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   };
   const shuffle = async () => {
     if (!video || !cuts || edit || shuffling !== null || status.loading) return;
+    markReplaceActed();
     const seedKey = seedKeyFor(batchKey, video.index, shuffleOf(video.seedKey) + 1);
     // Остальные видео того же вайба закреплены целиком: не меняются и не отдают свои клипы.
     const others = Object.values(storyboard.videos).filter((v) => v.group === video.group && v.index !== video.index);
@@ -351,17 +377,26 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
   const clip = video?.clips[s];
   const pinned = video ? Object.keys(video.pins).length : 0;
   /* ── подсказки 3–4 серии «Пула»: после «Распредели видео» (соседняя панель — поэтому
-        её ЖИВОЙ dismissed), только когда у видео на экране есть раскадровка. Замена кадра
-        ждёт действия: пока ни один кадр не закреплён, после простоя она вернётся. ── */
+        её ЖИВОЙ dismissed и сделанное действие), только когда у видео на экране есть
+        раскадровка. Каждая ждёт действия предыдущей (useGuideAction): раскадровка — что
+        человек потрогал ролик (стрелки, кадры, play), замена — что он прошёл замену кадра
+        до конца («Готово»/отмена) или перемешал кадры. Замена кадра к тому же после простоя
+        вернётся, пока ни один кадр не закреплён. ── */
   const frameGuideRef = useRef<HTMLDivElement>(null);
   const dockGuideRef = useRef<HTMLDivElement>(null);
   const fxLab = useFxLab();
   const distributeGuideDismissed = useGuideLiveDismissed(poolGuideId('distribute', fxLab));
-  const sbReady = Boolean(video && clip) && !edit && distributeGuideDismissed;
+  const distributeActed = useGuideActed(poolGuideId('distribute', fxLab));
+  // очередь раскадровки дошла; в режиме замены подсказки молчат, но действие засчитывается
+  const sbTurn = Boolean(video && clip) && distributeGuideDismissed && distributeActed;
+  const sbReady = sbTurn && !edit;
   const [replaceGuideDismissed, setReplaceGuideDismissed] = useGuideDismiss(poolGuideId('replace', fxLab), sbReady && pinned === 0, false);
   const [frameGuideDismissed, setFrameGuideDismissed] = useGuideDismiss(poolGuideId('storyboard', fxLab), false);
+  const [frameActed] = useGuideAction(poolGuideId('storyboard', fxLab), sbTurn, { targetRef: frameGuideRef, onAct: () => { if (!frameGuideDismissed) setFrameGuideDismissed(true); } });
+  const replaceTurn = sbTurn && frameGuideDismissed && frameActed;
+  const [, markReplaceActed] = useGuideAction(poolGuideId('replace', fxLab), replaceTurn, { onAct: () => { if (!replaceGuideDismissed) setReplaceGuideDismissed(true); } });
   const showFrameGuide = sbReady && !frameGuideDismissed;
-  const showReplaceGuide = sbReady && frameGuideDismissed && !replaceGuideDismissed;
+  const showReplaceGuide = sbReady && replaceTurn && !replaceGuideDismissed;
   useMarkGuideSeen(poolGuideId('storyboard', fxLab), showFrameGuide);
   useMarkGuideSeen(poolGuideId('replace', fxLab), showReplaceGuide);
 
@@ -388,9 +423,13 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
             // демо-превью мока — анимированный SVG: <video> его не откроет
             return isSvg(c.previewUrl)
               ? <img key={`${c.fileName}:${i}`} className={`shot${visible ? ' on' : ''}`} src={c.previewUrl} alt="" draggable={false} style={style} />
-              // качаем только соседей текущего кадра (предыдущий — для перехода, следующий — к склейке):
-              // раньше все кадры ролика грузились разом, на слабой сети это забивало канал
-              : <video key={`${c.fileName}:${i}`} ref={(el) => { videoRefs.current[i] = el; }} className={`shot${visible ? ' on' : ''}`} src={Math.abs(i - s) <= 1 || (s === video.clips.length - 1 && i === 0) ? c.previewUrl : undefined} poster={posterOf(c.previewUrl, c.previewOffset + 0.1) ?? undefined} muted playsInline preload="auto" style={style} />;
+              // качаем текущий кадр и соседей (предыдущий — для перехода, следующие — к склейкам):
+              // раньше все кадры ролика грузились разом, на слабой сети это забивало канал.
+              // Два кадра вперёд (на медленной сети — один): первый показ клипа сервер ещё
+              // сжимает, и запрос заранее успевает к склейке.
+              : <ShotVideo key={`${c.fileName}:${i}`} videoRef={(el) => { videoRefs.current[i] = el; }} visible={visible} style={style}
+                src={near(i, video.clips.length) ? c.previewUrl : undefined}
+                poster={posterOf(c.previewUrl, c.previewOffset + 0.1)} />;
           })}
           {placeholder && (
             <div className="psb-ph" role={retry ? 'alert' : undefined}>

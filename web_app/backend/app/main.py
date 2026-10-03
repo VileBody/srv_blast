@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.concurrency import run_in_threadpool
+from concurrent.futures import CancelledError as FutureCancelledError, TimeoutError as FutureTimeoutError
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import mock_store as store
@@ -2055,34 +2056,76 @@ def _media_response(store, name: str, request: Request, content_type: str, cache
                              media_type=ctype or content_type, headers=headers)
 
 
+MEDIA_TIMEOUT_DETAIL = "Превью готовится дольше обычного — попробуй ещё раз"
+
+
+def _media_failure(exc: BaseException) -> HTTPException:
+    if isinstance(exc, media_proxy.MediaProxyError):
+        return HTTPException(status_code=502, detail=f"Не удалось подготовить превью: {exc}")
+    return _production_error(exc if isinstance(exc, Exception) else RuntimeError(str(exc)))
+
+
 def _await_media(builder, name: str, fn) -> None:
-    try:
-        builder.run(name, fn).result(timeout=MEDIA_WAIT_S)
-    except media_proxy.MediaProxyError as exc:
-        raise HTTPException(status_code=502, detail=f"Не удалось подготовить превью: {exc}") from exc
-    except TimeoutError as exc:
-        raise HTTPException(status_code=504, detail="Превью готовится дольше обычного — попробуй ещё раз") from exc
-    except Exception as exc:
-        raise _production_error(exc) from exc
+    """Дождаться копии синхронно — для трека (у него контекст пользователя, обработчик в пуле)."""
+    for _attempt in range(2):
+        try:
+            builder.run(name, fn).result(timeout=MEDIA_WAIT_S)
+            return
+        except FutureCancelledError:
+            continue  # работу перехватил срочный пул — ждём её там
+        except FutureTimeoutError as exc:
+            raise HTTPException(status_code=504, detail=MEDIA_TIMEOUT_DETAIL) from exc
+        except Exception as exc:
+            raise _media_failure(exc) from exc
+    raise HTTPException(status_code=504, detail=MEDIA_TIMEOUT_DETAIL)
+
+
+async def _await_media_async(builder, name: str, fn) -> None:
+    """Дождаться копии, НЕ занимая поток пула запросов.
+
+    Синхронный обработчик ждал сжатия до MEDIA_WAIT_S (60 с) в потоке anyio-пула, а он один на
+    весь процесс (uvicorn --workers 1, по умолчанию 40 потоков). Стол с десятком клипов, которые
+    сервер ещё сжимает (срочный пул — 2 ffmpeg одновременно), у пары человек занимал весь пул —
+    и вставали даже готовые клипы, кадры и остальное API сайта. Ждём в event loop.
+    """
+    for _attempt in range(2):
+        waiter = asyncio.wrap_future(builder.run(name, fn))
+        done, _ = await asyncio.wait({waiter}, timeout=MEDIA_WAIT_S)
+        if not done:
+            # сжатие продолжается: повтор плеера получит готовую копию
+            waiter.add_done_callback(lambda f: f.cancelled() or f.exception())
+            raise HTTPException(status_code=504, detail=MEDIA_TIMEOUT_DETAIL)
+        if waiter.cancelled():
+            continue  # работу перехватил срочный пул — ждём её там
+        exc = waiter.exception()
+        if exc is None:
+            return
+        raise _media_failure(exc) from exc
+    raise HTTPException(status_code=504, detail=MEDIA_TIMEOUT_DETAIL)
+
+
+async def _serve_media(store, name: str, request: Request, content_type: str, cache: str) -> Response:
+    """Ответ с готовой копией: чтение из S3 блокирующее — в пул потоков, но коротко."""
+    return await run_in_threadpool(_media_response, store, name, request, content_type, cache)
 
 
 @app.get("/api/wizard/media/clip/{token}/clip.mp4", tags=["wizard"])
-def api_media_clip(token: str, request: Request) -> Response:
+async def api_media_clip(token: str, request: Request) -> Response:
     """Лёгкая копия клипа (540p, ключевой кадр каждые 0,5 с, faststart) — для превью."""
     try:
         locator = media_proxy.unsign(RUNTIME.session_secret, token).get("s", "")
     except (media_proxy.MediaProxyError, ValueError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     name = media_proxy.proxy_name(locator, "clip") + ".mp4"
-    store = _media_store()
-    if not store.has(name):
+    store = await run_in_threadpool(_media_store)
+    if not await run_in_threadpool(store.has, name):
         # экран просит клип прямо сейчас — он идёт впереди фонового прогрева
-        _await_media(media_proxy.NOW, name, lambda: media_proxy.build_clip(store, name, _media_fetch(locator)))
-    return _media_response(store, name, request, "video/mp4", CACHE_CLIP)
+        await _await_media_async(media_proxy.NOW, name, lambda: media_proxy.build_clip(store, name, _media_fetch(locator)))
+    return await _serve_media(store, name, request, "video/mp4", CACHE_CLIP)
 
 
 @app.get("/api/wizard/media/clip/{token}/poster.jpg", tags=["wizard"])
-def api_media_clip_poster(token: str, request: Request, t: float = 0.0) -> Response:
+async def api_media_clip_poster(token: str, request: Request, t: float = 0.0) -> Response:
     """Кадр клипа для миниатюры (JPEG ~10–20 КБ) — полоса кадров не качает видео ради картинки."""
     try:
         locator = media_proxy.unsign(RUNTIME.session_secret, token).get("s", "")
@@ -2091,11 +2134,11 @@ def api_media_clip_poster(token: str, request: Request, t: float = 0.0) -> Respo
     at = round(max(0.0, min(float(t), 600.0)), 1)
     clip = media_proxy.proxy_name(locator, "clip") + ".mp4"
     poster = f"{clip}.t{int(at * 10)}.jpg"
-    store = _media_store()
-    if not store.has(poster):
+    store = await run_in_threadpool(_media_store)
+    if not await run_in_threadpool(store.has, poster):
         # свой пул: полоса миниатюр не задерживает клип плеера и не ждёт сжатия клипов целиком
-        _await_media(media_proxy.POSTERS, poster, lambda: media_proxy.build_poster(store, clip, poster, at, _media_source(locator)))
-    return _media_response(store, poster, request, "image/jpeg", CACHE_CLIP)
+        await _await_media_async(media_proxy.POSTERS, poster, lambda: media_proxy.build_poster(store, clip, poster, at, _media_source(locator)))
+    return await _serve_media(store, poster, request, "image/jpeg", CACHE_CLIP)
 
 
 # ── превью каталогов (вайбы, фото, стили субтитров, эффекты) и картинки (рамки) ──────
@@ -2111,31 +2154,31 @@ def _unsign_catalog(token: str, kind: str) -> tuple[str, str]:
 
 
 @app.get("/api/wizard/media/preview/{token}/clip.mp4", tags=["wizard"])
-def api_media_preview(token: str, request: Request) -> Response:
+async def api_media_preview(token: str, request: Request) -> Response:
     """Лёгкая копия превью каталога (≤540 по короткой стороне, fps источника, без звука)."""
     locator, version = _unsign_catalog(token, "preview")
     name = media_proxy.preview_name(locator, version)
-    store = _media_store()
-    if not store.has(name):
-        _await_media(media_proxy.NOW, name, lambda: media_proxy.build_preview(store, name, _media_fetch(locator)))
-    return _media_response(store, name, request, "video/mp4", media_proxy.IMMUTABLE_PUBLIC)
+    store = await run_in_threadpool(_media_store)
+    if not await run_in_threadpool(store.has, name):
+        await _await_media_async(media_proxy.NOW, name, lambda: media_proxy.build_preview(store, name, _media_fetch(locator)))
+    return await _serve_media(store, name, request, "video/mp4", media_proxy.IMMUTABLE_PUBLIC)
 
 
 @app.get("/api/wizard/media/preview/{token}/poster.jpg", tags=["wizard"])
-def api_media_preview_poster(token: str, request: Request) -> Response:
+async def api_media_preview_poster(token: str, request: Request) -> Response:
     """Заставка карточки каталога: видна вместо ролика, пока он не в кадре (и в режиме экономии)."""
     locator, version = _unsign_catalog(token, "preview")
     clip = media_proxy.preview_name(locator, version)
     poster = media_proxy.preview_poster_name(locator, version)
-    store = _media_store()
-    if not store.has(poster):
-        _await_media(media_proxy.POSTERS, poster,
-                     lambda: media_proxy.build_preview_poster(store, clip, poster, _media_source(locator)))
-    return _media_response(store, poster, request, "image/jpeg", media_proxy.IMMUTABLE_PUBLIC)
+    store = await run_in_threadpool(_media_store)
+    if not await run_in_threadpool(store.has, poster):
+        await _await_media_async(media_proxy.POSTERS, poster,
+                                 lambda: media_proxy.build_preview_poster(store, clip, poster, _media_source(locator)))
+    return await _serve_media(store, poster, request, "image/jpeg", media_proxy.IMMUTABLE_PUBLIC)
 
 
 @app.get("/api/wizard/media/image/{token}/image.{ext}", tags=["wizard"])
-def api_media_image(token: str, ext: str, request: Request) -> Response:
+async def api_media_image(token: str, ext: str, request: Request) -> Response:
     """Картинка каталога (PNG рамки и т.п.) — уменьшенная копия со своего домена, альфа сохранена."""
     locator, version = _unsign_catalog(token, "image")
     try:
@@ -2144,10 +2187,10 @@ def api_media_image(token: str, ext: str, request: Request) -> Response:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if f".{ext}" != Path(name).suffix:
         raise HTTPException(status_code=404, detail="расширение не совпадает с картинкой")
-    store = _media_store()
-    if not store.has(name):
-        _await_media(media_proxy.NOW, name, lambda: media_proxy.build_image(store, name, _media_fetch(locator)))
-    return _media_response(store, name, request, media_proxy.IMAGE_TYPES[Path(name).suffix], media_proxy.IMMUTABLE_PUBLIC)
+    store = await run_in_threadpool(_media_store)
+    if not await run_in_threadpool(store.has, name):
+        await _await_media_async(media_proxy.NOW, name, lambda: media_proxy.build_image(store, name, _media_fetch(locator)))
+    return await _serve_media(store, name, request, media_proxy.IMAGE_TYPES[Path(name).suffix], media_proxy.IMMUTABLE_PUBLIC)
 
 
 def _track_media(track_id: str):
@@ -2288,13 +2331,16 @@ async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> 
 
     # Показываем топ-3, как бот: остальной пул нужен только батарее.
     drops = []
-    for index, candidate in enumerate(result.get("drop_candidates") or []):
+    for candidate in result.get("drop_candidates") or []:
         seconds = float(candidate.get("t"))
+        # дроп впритык к началу окна сборка не примет (render_job.MIN_DROP_LEAD_S)
+        if seconds - start <= render_job_builder.MIN_DROP_LEAD_S:
+            continue
         drops.append(
             {
                 "time": f"{int(seconds // 60):02d}:{int(seconds % 60):02d}",
                 "seconds": seconds,
-                "best": index == 0,
+                "best": not drops,
                 "confidence": float(candidate.get("confidence") or 0.0),
             }
         )

@@ -3,7 +3,7 @@ import { formatTimePrecise, formatTimeRange } from '../../../lib/timeFormat';
 import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../../lib/api';
-import { isVideoUrl } from '../../../lib/media';
+import { isVideoUrl, posterOf } from '../../../lib/media';
 import effectsRegistry from '../../../data/effects-registry.json';
 import { HookConfig, HookKind, MontageVideo, TimelinePace, TimelineRecipe, TimelineStyleRange, textSettingsFor, useWizardStore } from '../../../stores/wizardStore';
 import { KANT_STYLES, styleIdOf } from '../../../lib/subtitleText';
@@ -14,7 +14,7 @@ import { peakLevels, useTrackPeaks } from '../trackPeaks';
 import { usePhone } from '../../../lib/usePhone';
 import { useLowData } from '../../../lib/network';
 import { SubtitleTextCustomization } from '../SubtitlesPanel';
-import { SubtitleCanvas, type SubtitleCanvasProps } from '../SubtitleCanvas';
+import { SubtitleCanvas, SubtitlePreviewError, type SubtitleCanvasProps, type SubtitlePreviewIssue } from '../SubtitleCanvas';
 import { StoryboardReplaceGuideVisual, TimelineEntryGuideVisual } from '../timelineGuides';
 import { useGuideDismiss, useMarkGuideSeen } from '../../guidance/useGuideDismiss';
 import { useTranslation } from 'react-i18next';
@@ -26,6 +26,7 @@ import './montage.css';
 import './montage.mobile.css';
 import { useCombos, type Combo } from './combos';
 import { FrameDock, FrameView, useFramesOf, type Frame } from './sources';
+import { VideoPlayHint } from '../VideoLoading';
 import { createLedger, ledgerPush, ledgerRedo, ledgerUndo, type HistKey } from './history';
 
 /*
@@ -166,7 +167,19 @@ function Ic({ label, kind, on, size = 32 }: { label?: string; kind: 'hook' | 'st
   return <span className={`fxt-ic k-${kind}${on ? ' on' : ''}`} style={{ width: size, height: size }}><Glyph name={GLYPH[label ?? ''] ?? label} size={Math.round(size * 0.53)} /></span>;
 }
 function Thumb({ url, size = 32, ratio = 16 / 9, on }: { url?: string | null; size?: number; ratio?: number; on?: boolean }) {
-  return <span className={`mt-thumb${on ? ' on' : ''}`} style={{ width: Math.round(size / ratio * 1.0), height: size }}>{url && <img src={url} alt="" draggable={false} />}</span>;
+  const img = filmOf(url);
+  return <span className={`mt-thumb${on ? ' on' : ''}`} style={{ width: Math.round(size / ratio * 1.0), height: size }}>{img && <img src={img} alt="" draggable={false} />}</span>;
+}
+/**
+ * Картинка для ленты кадров на дорожке и мелких значков: у клипа — его JPEG-кадр, у фото — само
+ * фото. Сам mp4 картинкой не станет: раньше `background-image: url(clip.mp4)` ничего не рисовал,
+ * но браузер всё равно запрашивал клип КАЖДОГО кадра ролика разом — и сервер срочно сжимал их
+ * все, ставя клип, который сейчас играет в превью, в очередь за ними.
+ */
+function filmOf(url: string | null | undefined, offset = 0): string | null {
+  if (!url) return null;
+  // тот же кадр (offset + 0,1 с), что у полосы кадров раскадровки, — JPEG уже в кэше
+  return isVideoUrl(url) ? posterOf(url, offset + 0.1) : url;
 }
 
 /* ── хуки ── */
@@ -231,7 +244,7 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
   frames: Frame[]; bounds: number[]; t: number; playing?: boolean; fx: StageFx;
   sub?: SubProps; w: number; h: number; className?: string; children?: ReactNode;
 }) {
-  const [subError, setSubError] = useState<string | null>(null);
+  const [subError, setSubError] = useState<SubtitlePreviewIssue | null>(null);
   const fxName = useFxName();
   const shots = Math.max(1, bounds.length - 1);
   const fNow = frameIndex(bounds, t);
@@ -278,7 +291,7 @@ export function Stage({ frames, bounds, t, playing = false, fx, sub, w, h, class
       {sub && sub.words.length > 0 && (
         <div className="w12 mt-sub">
           <SubtitleCanvas {...sub} time={t} rest={!playing} onError={setSubError} />
-          {subError && <div className="w12-sub-error">{subError}</div>}
+          {subError && <SubtitlePreviewError issue={subError} />}
         </div>
       )}
       {children}
@@ -294,7 +307,8 @@ function ShotPlaceholder({ i, style }: { i: number; style?: CSSProperties }) {
 /**
  * Неподвижный кадр ролика: картинка кадра под временем t (JPEG прослойки, см. FrameView thumb),
  * его стили, плашка хука и рамка. Без <video>, субтитров и анимации — так стоят ролики сетки
- * «Все ролики» и плитки библиотеки, пока на них не навели: живой Stage — свой декодер на клип.
+ * «Все ролики» и плитки библиотеки только в режиме экономии трафика, пока на них не навели.
+ * Значок плея — чтобы кадр не выглядел готовой картинкой вместо видео.
  */
 function StagePoster({ frames, bounds, t, fx, w, h, className = '' }: { frames: Frame[]; bounds: number[]; t: number; fx: StageFx; w: number; h: number; className?: string }) {
   const fxName = useFxName();
@@ -310,6 +324,7 @@ function StagePoster({ frames, bounds, t, fx, w, h, className = '' }: { frames: 
       </div>
       {cover && <div className="mt-cover"><span>{fxName(fx.hookLabel)}</span></div>}
       {fx.frameUrl && <img className="mt-frame" src={fx.frameUrl} alt="" draggable={false} />}
+      <VideoPlayHint />
     </div>
   );
 }
@@ -318,8 +333,8 @@ function StagePoster({ frames, bounds, t, fx, w, h, className = '' }: { frames: 
 function LoopStage({ frames, bounds, at, dur, fx, w = 169, h = 300, lead = 0.5, span = 1.5, paused = false }: {
   frames: Frame[]; bounds: number[]; at: number; dur: number; fx: StageFx; w?: number; h?: number; lead?: number; span?: number;
   /**
-   * плитка не под курсором (или ушла из виду) — цикл стоит, вместо живого Stage неподвижный
-   * кадр: иначе каждая видимая плитка держала бы свои <video> и свой цикл одновременно
+   * плитка ушла из виду (или экономия трафика и она не под курсором) — цикл стоит, вместо
+   * живого Stage неподвижный кадр со значком плея
    */
   paused?: boolean;
 }) {
@@ -422,10 +437,11 @@ function TileMedia({ preview }: { preview: LibPreview }) {
   const [ref, visible, seen] = useInView<HTMLSpanElement>();
   // медленная сеть / экономия трафика: пример не стартует сам — играет по наведению или тапу
   const lowData = useLowData();
-  // «на твоём ролике» оживает только под курсором: остальные плитки — неподвижный кадр.
-  // На тач-экране наведения нет (тап добавляет эффект) — там видимая плитка играет сама, как раньше.
+  // «на твоём ролике» играет, пока плитка видна: пример эффекта — это видео, а не кадр.
+  // Экономия трафика — оживает только под курсором; на тач-экране наведения нет (тап добавляет
+  // эффект) — там видимая плитка играет сама.
   const [hovered, setHot] = useState(false);
-  const hot = hovered || COARSE_POINTER;
+  const hot = hovered || COARSE_POINTER || !lowData;
   const hover = (play: boolean) => (e: React.SyntheticEvent<HTMLSpanElement>) => {
     setHot(play);
     const video = e.currentTarget.querySelector('video');
@@ -1670,14 +1686,14 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   const editedCount = combos.filter(isEdited).length;
 
   /*
-   * «Все ролики»: живой (видео, субтитры) только один ролик — под курсором/фокусом, иначе
-   * выбранный; остальные — неподвижные кадры под тем же временем. Раньше каждый ролик батча
-   * был полным Stage с <video preload="auto"> и canvas субтитров — самый тяжёлый вид стола.
-   * На медленной сети выбранный сам не оживает — только по наведению.
+   * «Все ролики»: каждый ролик — живое видео (лёгкие 540p-копии клипов, не оригиналы).
+   * Неподвижные кадры вместо видео человек принимал за «картинки вместо роликов», поэтому они
+   * остались только на медленной сети / при экономии трафика: там живой лишь ролик под
+   * курсором/фокусом, остальные — кадр со значком плея (видно, что это видео, а не картинка).
    */
   const lowData = useLowData();
   const [gridHot, setGridHot] = useState<number | null>(null);
-  const gridLive = gridHot ?? (lowData ? null : index);
+  const gridIsLive = (i: number) => !lowData || i === gridHot;
   // «Все ролики»: сетка под размер области — все 9:16 целиком, синхронно по времени.
   const gridCell = useMemo(() => {
     const gap = 16; const labelH = 44;
@@ -1725,7 +1741,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
                       return (
                         <div key={`f${i}`} className={`fxt-clip fr mt-fr${sel?.type === 'frame' && sel.i === i ? ' sel' : ''}${i === fNow ? ' cur' : ''}`} data-frame={i} style={{ left: x + 1, width: w - 2 }}
                           >
-                          {clip?.url && <span className={`mt-film${clip.fit === 'contain' ? ' wide' : ''}`} style={{ backgroundImage: `url("${clip.url}")` }} />}
+                          {filmOf(clip?.url, clip?.offset) && <span className={`mt-film${clip?.fit === 'contain' ? ' wide' : ''}`} style={{ backgroundImage: `url("${filmOf(clip?.url, clip?.offset)}")` }} />}
                           {clip?.color && <span className={`mt-film mt-filmc${clip.strobe ? ' strobe' : ''}`} style={{ background: clip.color }} />}
                           {i > 0 && <i className="fxt-edge l" data-cut={i - 1} />}
                           <span className="n num">{pad(i + 1)}</span>
@@ -2059,7 +2075,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
               <button key={c.index} type="button" className={`mt-cell${c.index === index ? ' cur' : ''}`} onClick={() => { onIndex(c.index); setView('table'); }} aria-label={tr('wizard.montage.openVideo', { n: c.index + 1 })}
                 onPointerEnter={() => setGridHot(c.index)} onPointerLeave={() => setGridHot((h) => (h === c.index ? null : h))}
                 onFocus={() => setGridHot(c.index)} onBlur={() => setGridHot((h) => (h === c.index ? null : h))}>
-                {c.index === gridLive
+                {gridIsLive(c.index)
                   ? <Stage frames={clipsOf(c)} bounds={bounds} t={t} playing={playing} fx={stageFxFor(c)} sub={subFor(c)} w={gridCell.w} h={gridCell.h} />
                   : <StagePoster frames={clipsOf(c)} bounds={bounds} t={t} fx={stageFxFor(c)} w={gridCell.w} h={gridCell.h} />}
                 <span className="mt-cap"><b className="num tx">{c.index + 1}</b><span className="tx">{videoLabel(c)}</span>{isEdited(c) && <i className="mt-dot" />}</span>

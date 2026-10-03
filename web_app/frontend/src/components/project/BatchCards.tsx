@@ -8,6 +8,7 @@ import { PreviewPlayer } from '../ui/PreviewPlayer';
 import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { api } from '../../lib/api';
+import { SITE_METHODOLOGY_URL } from '../../lib/resources';
 import { failureKey, useIsAdmin } from '../../lib/failure';
 import { Button, Pager } from '../ui/kit';
 
@@ -703,8 +704,8 @@ export function ProcessingAside({ done, total, activeVideo, renderFormat, telegr
           <span className="mt-[6px] block text-[14px] leading-[18px] text-text-60">PDF · {t('processing.guideCaption')}</span>
         </span>
         <span className="flex shrink-0 items-center gap-[8px]">
-          <a href="/assets/resources/blast-tiktok-guide.pdf" target="_blank" rel="noreferrer" onClick={() => { void api.trackEvent('guide_opened').catch(() => {}); }} className="rounded-r10 border border-[rgba(246,245,253,.18)] px-[12px] py-[8px] text-[14px] text-text-80 transition hover:border-accent-light hover:text-text">{t('common.view')}</a>
-          <a href="/assets/resources/blast-tiktok-guide.pdf" download onClick={() => { void api.trackEvent('guide_downloaded').catch(() => {}); }} className="rounded-r10 border border-accent bg-grad-soft-20 px-[12px] py-[8px] text-[14px] text-text-80 transition hover:text-text">{t('common.download')}</a>
+          <a href={SITE_METHODOLOGY_URL} target="_blank" rel="noreferrer" onClick={() => { void api.trackEvent('guide_opened').catch(() => {}); }} className="rounded-r10 border border-[rgba(246,245,253,.18)] px-[12px] py-[8px] text-[14px] text-text-80 transition hover:border-accent-light hover:text-text">{t('common.view')}</a>
+          <a href={SITE_METHODOLOGY_URL} download onClick={() => { void api.trackEvent('guide_downloaded').catch(() => {}); }} className="rounded-r10 border border-accent bg-grad-soft-20 px-[12px] py-[8px] text-[14px] text-text-80 transition hover:text-text">{t('common.download')}</a>
         </span>
       </div>
 

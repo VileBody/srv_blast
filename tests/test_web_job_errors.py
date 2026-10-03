@@ -15,6 +15,26 @@ TRACEBACK = (
 )
 
 
+# Как его пишет celery_app.on_failure: заголовок с исключением + хвост трейсбека, в котором
+# видны строки кода (здесь — с `USER_DROP_T` и `footage_plan`): классифицируем по заголовку.
+BUILD_FAILURE = (
+    "celery_failed stage=build exc=RuntimeError(\"invalid effect_transition='of_invert_flash'; "
+    "allowed=['extract_flash', 'flash_on_cuts', 'invert_flash', 'layer_shake', 'minimax', 'snap_wipe']\")\n"
+    "--- traceback (tail) ---\n"
+    "Traceback (most recent call last):\n"
+    '  File "/app/services/orchestrator/tasks.py", line 2160, in _build_job_impl\n'
+    '    env["USER_DROP_T"] = str(user_drop_t)  # footage_plan\n'
+    "RuntimeError: invalid effect_transition='of_invert_flash'"
+)
+
+
+def test_error_headline_drops_the_traceback(monkeypatch: pytest.MonkeyPatch) -> None:
+    errors = _errors(monkeypatch)
+    assert errors.error_headline(BUILD_FAILURE).startswith("celery_failed stage=build exc=RuntimeError")
+    assert "Traceback" not in errors.error_headline(BUILD_FAILURE)
+    assert errors.error_headline(None) == ""
+
+
 def _errors(monkeypatch: pytest.MonkeyPatch):
     _env(monkeypatch)
     sys.modules.pop("app.job_errors", None)
@@ -35,8 +55,17 @@ def _errors(monkeypatch: pytest.MonkeyPatch):
         ("orchestrator does not support montage table edits", "queued", "service"),
         ("AfterFX exited with code 1", "render", "render"),
         ("render failed", "poll", "render"),
-        ("something odd", "build", "unknown"),
+        # сборка упала без узнаваемой причины — говорим про этап, а не «неизвестно»
+        ("something odd", "build", "build"),
+        ("something odd", "queued", "unknown"),
         (None, None, "unknown"),
+        # реальный прод-кейс (job 87b5f24f…): Kant-переход отвергнут списком сборки
+        (BUILD_FAILURE, "build", "hook"),
+        ("celery_failed stage=build exc=StoryboardPlanError('footage_plan clip 3 'a.mp4' is shorter than its 1.20s shot')",
+         "build", "storyboard"),
+        ("celery_failed stage=build exc=RuntimeError('user_drop_t=0.0 must be within user clip window [1.0, 13.0]')",
+         "build", "drop"),
+        ("worker_lost_or_unhandled: WorkerLostError: Worker exited prematurely: signal 11", "worker_lost", "lost"),
     ),
 )
 def test_failure_kind_by_error_text(monkeypatch: pytest.MonkeyPatch, error, stage, kind) -> None:

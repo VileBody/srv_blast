@@ -96,7 +96,7 @@ const QUOTA_TRIPWIRE: FunnelQuota = { ...QUOTA_OK, tripwire: true, maxVideos: 25
 
 const noop = () => {};
 const ON: UnlimitedHandlers = {
-  onRate: noop, onReasons: noop, onAnswer: noop, onMethodology: noop, onNext: noop, onChannelOpen: noop,
+  onRate: noop, onReasons: noop, onAnswer: noop, onMethodology: noop, onMethodologyBotOpened: noop, onNext: noop, onChannelOpen: noop,
   onChannelCheck: noop, onManager: noop, onUnlock: noop, onGenerate: noop, onClose: noop
 };
 
@@ -175,21 +175,30 @@ export function FunnelShowcasePage() {
             const index = path.includes(id) ? path.indexOf(id) : path.indexOf('q2a');
             return (
               <State key={id} label={`Вопрос ${id}${id === 'q2b' ? ' (ветка «С монтажёром», вместо q2a)' : ''}`}>
-                <QuizPanel view={{ kind: 'question', question, index, total: path.length }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
+                <QuizPanel view={{ kind: 'question', question, index, total: path.length }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
               </State>
             );
           })}
           <State label="Ответ отправляется">
-            <QuizPanel view={{ kind: 'question', question: questions[1] ?? q1, index: 1, total: path.length, pendingId: 'self' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
+            <QuizPanel view={{ kind: 'question', question: questions[1] ?? q1, index: 1, total: path.length, pendingId: 'self' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
           </State>
           <State label="Финал: мостик по ветке, одна кнопка «Получить» (после отправки окно закрывается, тост)">
-            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'idle' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
+            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'idle' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
           </State>
           <State label="Методичка отправляется">
-            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'sending' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
+            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'sending' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
           </State>
-          <State label="Бот не запущен: просим открыть бота">
-            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'needBot', botLink: '#' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onClose={noop} />
+          <State label="Бот не запущен: открыть бота или методичку на сайте">
+            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'needBot', botLink: 'https://t.me/blast808bot' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
+          </State>
+          <State label="Бота открыли: ждём повторного «Получить»">
+            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'botOpened', botLink: 'https://t.me/blast808bot' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
+          </State>
+          <State label="Сбой отправки: методичка на сайте или повтор в Telegram">
+            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'error' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
+          </State>
+          <State label="Отправка не настроена (503): только методичка на сайте">
+            <QuizPanel view={{ kind: 'done', bridge: BRIDGE, methodology: 'unavailable' }} onAnswer={noop} onSkip={noop} onMethodology={noop} onBotOpened={noop} onClose={noop} />
           </State>
         </Group>
 

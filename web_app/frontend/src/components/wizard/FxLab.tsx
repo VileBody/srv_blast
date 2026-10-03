@@ -14,6 +14,7 @@ import { FX_VARIANT_PALETTE, FxVariant, fxVariantsMode, HOOK_LABELS, variantsFro
 import { ActionGuideOverlay } from '../guidance/ActionGuideOverlay';
 import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
+import { useGuideAction, useGuideActed } from '../guidance/useGuideAction';
 import {
   ChipRow, FX_PREVIEWS_STALE_MS, HOOK_TYPES, HookStep, HookTypeHead,
   hookSteps, NO_GLUE, NO_STYLE, previewIdFor, selectedStyles, styleLocksFullWindow
@@ -81,6 +82,15 @@ interface LabState {
   /** последний удалённый вариант — для «Вернуть» (удаление в один клик, без подтверждения) */
   removed: { variant: LabVariant; index: number; count: number } | null;
   tab: number;
+  /**
+   * Варианты, которые человек довёл до конца сам («Готово» на последней вкладке) или
+   * открыл уже готовыми. Сама полнота конфига тут не годится: курсор просмотра выбирает
+   * пример сразу, и вариант «полон» с первого же пролистанного стиля — а подсказка про
+   * варианты должна ждать, пока человек закончит, а не всплывать посреди просмотра.
+   */
+  confirmed: Record<string, true>;
+  /** Счётчик «покажи рабочую зону»: растёт, когда человек раскрыл тип хука (см. LabWorkZone). */
+  focusSeq: number;
   select: (id: string) => void;
   toggleType: (kind: HookKind) => void;
   startPending: (kind: HookKind) => void;
@@ -92,6 +102,8 @@ interface LabState {
   patch: (patch: Partial<HookConfig>) => void;
   setTab: (tab: number) => void;
   setCount: (id: string, n: number) => void;
+  confirm: (id: string) => void;
+  requestFocus: () => void;
 }
 
 /** Id переживают перезагрузку (они ключи allocation.variants) — счётчик модуля тут не годится. */
@@ -124,13 +136,22 @@ export const useFxLabStore = create<LabState>((set, get) => ({
   pendingKind: null,
   removed: null,
   tab: 0,
-  select: (id) => set((s) => { const v = variantsNow().find((x) => x.id === id); return { activeId: id, expanded: v?.kind ?? s.expanded, pendingKind: null, tab: firstOpenTab(v) }; }),
+  confirmed: {},
+  focusSeq: 0,
+  select: (id) => set((s) => {
+    const v = variantsNow().find((x) => x.id === id);
+    // открыл уже готовый вариант (в т.ч. восстановленный после перезагрузки) — он и есть «доведённый»
+    const confirmed = v && hookComplete(v.kind, v.config) && !s.confirmed[id] ? { ...s.confirmed, [id]: true as const } : s.confirmed;
+    return { activeId: id, expanded: v?.kind ?? s.expanded, pendingKind: null, tab: firstOpenTab(v), confirmed };
+  }),
   toggleType: (kind) => {
     const s = get();
     if (s.expanded === kind) { set({ expanded: null, pendingKind: null }); return; }
     const first = variantsNow().find((v) => v.kind === kind && !v.draft);
-    if (first) set({ expanded: kind, activeId: first.id, pendingKind: null, tab: firstOpenTab(first) });
+    if (first) get().select(first.id);
     else get().startPending(kind);
+    // выбрал тип — дальше смотреть примеры: на телефоне рабочая зона ниже списка, ведём к ней
+    get().requestFocus();
   },
   startPending: (kind) => set({ expanded: kind, activeId: null, pendingKind: kind, tab: 0 }),
   add: (kind, config = {}, tab) => {
@@ -179,7 +200,9 @@ export const useFxLabStore = create<LabState>((set, get) => ({
   dismissRemoved: () => set({ removed: null }),
   patch: (patch) => { const id = get().activeId; setVariants(variantsNow().map((v) => (v.id === id ? { ...v, config: { ...v.config, ...patch } } : v))); },
   setTab: (tab) => set({ tab }),
-  setCount: (id, n) => setCounts((c) => ({ ...c, [id]: Math.max(0, n) }))
+  setCount: (id, n) => setCounts((c) => ({ ...c, [id]: Math.max(0, n) })),
+  confirm: (id) => set((s) => (s.confirmed[id] ? s : { confirmed: { ...s.confirmed, [id]: true } })),
+  requestFocus: () => set((s) => ({ focusSeq: s.focusSeq + 1 }))
 }));
 
 /**
@@ -225,16 +248,20 @@ export function useVariantLabel() {
 
 /** сколько живёт «Вернуть» после удаления варианта */
 const UNDO_MS = 8000;
+/** сколько человек не листает примеры, прежде чем над доком появится «Дальше ✓» */
+const NEXT_IDLE_MS = 2500;
 const iconOf = (kind: HookKind) => HOOK_TYPES.find((item) => item.kind === kind)!;
 const guideShell = { variant: 'visual' as const, shell: 'track-top' as const };
 
 /*
- * Тур шага FX в прототипе — одна цепочка на обе колонки: дроп → тип → варианты → док →
- * футер → кнопка «Таймлайн» (последнего шага нет там, где нет кнопки). Id со своим
- * префиксом: у старых hook-drop / hook-type «видел» уже записан у всех, кто проходил
- * прежний тур, и на новом маршруте они молча не показывались.
+ * Тур шага FX в прототипе — одна цепочка на обе колонки, и каждый шаг ждёт действия
+ * предыдущего (useGuideAction): дроп → тип → «посмотри примеры» (сразу после выбора типа)
+ * → [человек доводит вариант до конца: хук, склейка, стиль] → варианты → [завёл второй
+ * вариант или потрогал список] → футер. Раньше «Варианты» шли до дока и всплывали на
+ * первом же выборе примера. Id со своим префиксом: у старых hook-drop / hook-type «видел»
+ * уже записан у всех, кто проходил прежний тур, и на новом маршруте они молча не показывались.
  */
-export const FX_LAB_TOUR = ['drop', 'type', 'variants', 'dock', 'footer'] as const;
+export const FX_LAB_TOUR = ['drop', 'type', 'dock', 'variants', 'footer'] as const;
 export type FxLabTourStep = typeof FX_LAB_TOUR[number];
 export const fxLabGuideId = (step: FxLabTourStep) => `fx2-${step}`;
 export function useFxLabTourProgress() {
@@ -307,6 +334,7 @@ export function LabTypeList({ locked }: { locked: boolean }) {
   const label = useVariantLabel();
   const [hint, setHint] = useState<HookKind | null>(null);
   useDropStaleDrafts();
+  const openRef = useRef<HTMLDivElement>(null);
   // После перезагрузки варианты на месте, а выбор интерфейса — нет: открываем первый.
   // Раскрытый тип без варианта (pendingKind) — осознанное состояние, его не перебиваем.
   useEffect(() => {
@@ -315,7 +343,6 @@ export function LabTypeList({ locked }: { locked: boolean }) {
     const first = allVariants.find((v) => !v.draft);
     if (first) lab.select(first.id);
   }, [allVariants, lab]);
-  const openRef = useRef<HTMLDivElement>(null);
   // «Вернуть» живёт несколько секунд; уход со шага его гасит
   const removed = lab.removed;
   useEffect(() => {
@@ -325,13 +352,28 @@ export function LabTypeList({ locked }: { locked: boolean }) {
   }, [removed]);
   useEffect(() => () => useFxLabStore.getState().dismissRemoved(), []);
 
-  // Шаг «Варианты»: у раскрытого типа уже есть вариант, а подсказка про тип закрыта.
+  // Шаг «Варианты»: после «Посмотри примеры» (док — в рабочей зоне, поэтому его ЖИВОЙ
+  // dismissed) и только когда человек довёл вариант до конца — действие того шага.
   const hasOpen = Boolean(lab.expanded && allVariants.some((v) => v.kind === lab.expanded && !v.draft));
-  const typeDismissed = useGuideLiveDismissed(fxLabGuideId('type'));
+  const dockDismissed = useGuideLiveDismissed(fxLabGuideId('dock'));
+  const dockActed = useGuideActed(fxLabGuideId('dock'));
   const progress = useFxLabTourProgress();
+  // Док может показывать вариант другого типа, чем раскрытый (раскрыли пустой тип, а
+  // довели вариант соседнего) — шаг всё равно наступает: вариант доведён до конца.
+  const hasActive = Boolean(lab.activeId && allVariants.some((v) => v.id === lab.activeId && !v.draft));
+  const variantsTurn = (hasOpen || hasActive) && dockDismissed && dockActed;
   const [variantsGuideDismissed, setVariantsGuideDismissed] = useGuideDismiss(fxLabGuideId('variants'), false);
-  const showVariantsGuide = hasOpen && typeDismissed && !variantsGuideDismissed;
+  const showVariantsGuide = variantsTurn && !variantsGuideDismissed;
   useMarkGuideSeen(fxLabGuideId('variants'), showVariantsGuide);
+  // Действие шага: завёл ещё вариант (или потрогал список вариантов) — тогда и подсказка
+  // про футер, где между ними переключаются, к месту.
+  const variantCount = allVariants.filter((v) => !v.draft).length;
+  useGuideAction(fxLabGuideId('variants'), variantsTurn, { done: variantCount > 1, targetRef: openRef });
+  const prevCountRef = useRef(variantCount);
+  useEffect(() => {
+    if (showVariantsGuide && variantCount > prevCountRef.current) setVariantsGuideDismissed(true);
+    prevCountRef.current = variantCount;
+  });
 
   return (
     <>
@@ -377,11 +419,21 @@ export function LabTypeList({ locked }: { locked: boolean }) {
                       </div>
                     );
                   })}
-                  <button type="button" className="w12-fx-add" onClick={() => (variants.length ? lab.copyActive() : lab.startPending(item.kind))}>
-                    <Svg>{W12.plus}</Svg>
-                    <span className="w12-l">{t('wizard.fxv.add')}</span>
-                    <small>{t('wizard.fxv.addHint')}</small>
-                  </button>
+                  {/* Вариант рождается на первом выборе примера. Пока его нет, «+ Вариант · копия
+                      текущего» копировать нечего, а на телефоне его жали вместо примеров — вместо
+                      него ссылка к рабочей зоне. Сам «+» — второстепенный, не главная кнопка. */}
+                  {variants.length ? (
+                    <button type="button" className="w12-fx-add" onClick={() => lab.copyActive()}>
+                      <Svg>{W12.plus}</Svg>
+                      <span className="w12-l">{t('wizard.fxv.add')}</span>
+                      <small>{t('wizard.fxv.addHint')}</small>
+                    </button>
+                  ) : (
+                    <button type="button" className="w12-fx-add w12-fx-goto" onClick={() => lab.requestFocus()}>
+                      <span className="w12-l">{t('wizard.fxv.toExamples')}</span>
+                      <small>{t('wizard.fxv.toExamplesHint')}</small>
+                    </button>
+                  )}
                 </div>
               )}
               {removed?.variant.kind === item.kind && (
@@ -483,18 +535,31 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  // Шаги «Док» → «Футер»: после «Вариантов» (левая панель — поэтому её живой dismissed).
+  /*
+   * Шаг «Посмотри примеры» — сразу после выбора типа (подсказка про тип закрывается самим
+   * раскрытием, её живой dismissed — в левой панели). Закрывается первым же действием в доке.
+   * Его действие — вариант доведён до конца («Готово» на последней вкладке): только тогда
+   * дальше идут «Варианты» (левая панель), а за ними — «Футер».
+   */
   const progress = useFxLabTourProgress();
+  const typeDismissed = useGuideLiveDismissed(fxLabGuideId('type'));
   const variantsDismissed = useGuideLiveDismissed(fxLabGuideId('variants'));
+  const variantsActed = useGuideActed(fxLabGuideId('variants'));
   const [footGuideDismissed, setFootGuideDismissed] = useGuideDismiss(fxLabGuideId('footer'), false);
   const [dockGuideDismissed, setDockGuideDismissed] = useGuideDismiss(fxLabGuideId('dock'), false);
-  const showDockGuide = Boolean(v) && variantsDismissed && !dockGuideDismissed;
-  const showFootGuide = Boolean(v) && variantsDismissed && dockGuideDismissed && !footGuideDismissed;
+  const dockTurn = Boolean(v) && typeDismissed;
+  const showDockGuide = dockTurn && !dockGuideDismissed;
+  const variantDone = Boolean(stored && hookComplete(stored.kind, stored.config) && lab.confirmed[stored.id]);
+  useGuideAction(fxLabGuideId('dock'), dockTurn, { done: variantDone });
+  const showFootGuide = Boolean(v) && variantsDismissed && variantsActed && !footGuideDismissed;
   useMarkGuideSeen(fxLabGuideId('dock'), showDockGuide);
   useMarkGuideSeen(fxLabGuideId('footer'), showFootGuide);
+  // Подсказка дока прочитана — человек уже листает/выбирает: убираем её с примера.
+  const touchDock = () => { if (showDockGuide) setDockGuideDismissed(true); };
 
   const pick = (option?: string) => {
     if (!v || !step) return;
+    touchDock();
     // Стиль в варианте ровно один: два стиля в одном ролике непонятно, где и как
     // сработают. Нужен другой стиль — это другой вариант («+ Вариант»).
     if (option) setCursor(Math.max(0, options.indexOf(option)));
@@ -505,6 +570,51 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
     lab.patch(patch);
   };
   const styleLocked = styleLocksFullWindow(style);
+
+  /*
+   * «Дальше ✓»: вкладки дока (Эффект → Склейка → Стиль) не замечали — листали примеры и не
+   * понимали, как идти дальше. Выбор уже делает сам просмотр, поэтому, когда человек перестал
+   * листать на заполненной вкладке, над доком появляется кнопка: следующая вкладка, а на
+   * последней — «Готово» (вариант доведён; это и есть действие подсказки «Посмотри примеры»).
+   */
+  const stepIsFilled = Boolean(stored && step && stepFilled(step, config));
+  const complete = Boolean(stored && hookComplete(stored.kind, stored.config));
+  const lastTab = tab >= steps.length - 1;
+  // на последней вкладке недонастроенного варианта (вкладку открыли кликом, пропустив шаг) ведём на пропущенную
+  const nextTab = lastTab ? (complete ? -1 : firstOpenTab(stored)) : tab + 1;
+  const [nextReady, setNextReady] = useState(false);
+  useEffect(() => {
+    setNextReady(false);
+    if (!stepIsFilled) return undefined;
+    const timer = window.setTimeout(() => setNextReady(true), NEXT_IDLE_MS);
+    return () => window.clearTimeout(timer);
+  }, [stored?.id, tab, cursor, selected, stepIsFilled]);
+  const goNext = () => {
+    setNextReady(false);
+    if (!stored) return;
+    touchDock();
+    if (nextTab >= 0) lab.setTab(nextTab);
+    else lab.confirm(stored.id);
+  };
+
+  /* Раскрыли тип хука — ведём к примерам: на телефоне рабочая зона под списком типов, и без
+     этого человек жал «+ Вариант» вместо того, чтобы смотреть примеры. Док коротко подсвечивается. */
+  const stageRef = useRef<HTMLDivElement>(null);
+  const handledFocusRef = useRef(lab.focusSeq);
+  const [attention, setAttention] = useState(false);
+  useEffect(() => {
+    if (lab.focusSeq === handledFocusRef.current) return undefined;
+    handledFocusRef.current = lab.focusSeq;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // аккордеон слева только что раскрылся и сдвинул страницу — скроллим после раскладки;
+    // nearest — на широком экране зона и так видна, и страница не дёргается
+    const scroll = window.setTimeout(() => {
+      stageRef.current?.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'nearest', inline: 'nearest' });
+    }, 60);
+    setAttention(true);
+    const off = window.setTimeout(() => setAttention(false), 1400);
+    return () => { window.clearTimeout(scroll); window.clearTimeout(off); };
+  }, [lab.focusSeq]);
 
   // «+» футера копирует текущий вариант, а общий PillsFooter (WizardFrame — вне этой правки)
   // подписывает его «Перейти к следующему разделу». Пока у футера нет своего пропа подписи,
@@ -525,7 +635,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
         </div>
 
         {/* пример во всю высоту зоны; узкий экран — 9:16, как у превью фона */}
-        <div className="w12-fx-stage">
+        <div ref={stageRef} className="w12-fx-stage">
           {v && <LabPreview previewId={previewId} />}
           {/* «Без склейки» / «Без стилизации» — осознанный отказ, видео-примера у него нет:
               без подписи пустой кадр выглядел как недогрузившийся */}
@@ -555,13 +665,19 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
                   <button type="button" className="w12-rail-btn w12-r w12-fx-nav" aria-label={t('wizard.fxv.next')} onClick={() => browse(1)}><Svg>{W12.right}</Svg></button>
                 </>
               )}
-              <div ref={dockRef} className="w12-fx-dock">
+              <div ref={dockRef} className="w12-fx-dock" data-attn={attention || undefined}>
+                {nextReady && (
+                  <button type="button" className="w12-fx-next" onClick={goNext}>
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    <span className="w12-fx-next-l">{nextTab >= 0 ? t('wizard.fxv.stepNext', { step: t(STEP_NAME[steps[nextTab].key]) }) : t('wizard.fxv.stepDone')}</span>
+                  </button>
+                )}
                 <div className="w12-fx-steps" role="tablist" aria-label={t('wizard.fxv.settings')}>
                   {steps.map((s, i) => {
                     const filled = stepFilled(s, config);
                     const value = s.key === 'effectStyle' ? style : (config[s.key] as string | undefined);
                     return (
-                      <button key={s.key} type="button" role="tab" aria-selected={i === tab} className="w12-fx-step" onClick={() => lab.setTab(i)}>
+                      <button key={s.key} type="button" role="tab" aria-selected={i === tab} className="w12-fx-step" onClick={() => { touchDock(); lab.setTab(i); }}>
                         <small>{t(STEP_NAME[s.key])}</small>
                         <span className={cn(!filled && 'w12-off')}>{value ? chip(value) : t('wizard.fxv.choose')}</span>
                       </button>
@@ -596,7 +712,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
                       value={config}
                       // у ещё не созданного варианта выбор «звук/видео» живёт в самом вводе, вариант
                       // заводит готовая загрузка; у созданного — правка именно его (загрузка асинхронна)
-                      onPatch={(patch) => { if (stored) patchVariant(stored.id, patch); else if (patch.sound) lab.add(v.kind, patch, tab); }}
+                      onPatch={(patch) => { touchDock(); if (stored) patchVariant(stored.id, patch); else if (patch.sound) lab.add(v.kind, patch, tab); }}
                     />
                   )
                   : <ChipRow options={step.options} value={selected} onPick={pick} />)}

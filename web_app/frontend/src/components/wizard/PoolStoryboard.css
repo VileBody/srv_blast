@@ -73,3 +73,20 @@
 }
 .psb-info small.psb-note { color: var(--warning); }
 .psb-ph-in { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+
+/* Видео ещё грузится (раскадровка, стол, «Все ролики», плитки «на твоём ролике»): поверх обложки
+   бегущий блик и плашка «Загружаем видео…» — обложка не должна выглядеть готовой картинкой.
+   Плашка проявляется с задержкой: клип из кэша успевает встать раньше, и ничего не мигает. */
+.vload { position: absolute; inset: 0; z-index: 3; display: flex; align-items: center; justify-content: center; padding: 0 8px; overflow: hidden; pointer-events: none; opacity: 0; animation: vload-in .2s ease .35s forwards; }
+.vload::before { content: ""; position: absolute; inset: 0; background: linear-gradient(100deg, transparent 30%, var(--neutral-bg) 50%, transparent 70%); background-size: 250% 100%; animation: vload-shimmer 1.4s linear infinite; }
+.vload-pill { position: relative; display: inline-flex; align-items: center; gap: 8px; max-width: 100%; padding: 6px 12px; border-radius: 999px; background: var(--scrim); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); color: var(--text); font-size: 12px; line-height: 1.2; text-align: center; }
+.vload-pill .spinner { width: 14px; height: 14px; flex: none; }
+.vload.failed::before { animation: none; }
+/* в раскадровке по центру — кнопка плея: плашка под ней */
+.psb-frame .vload { align-items: flex-start; padding-top: calc(46% * 16 / 9 + 44px); }
+@keyframes vload-in { to { opacity: 1; } }
+@keyframes vload-shimmer { from { background-position: 125% 0; } to { background-position: -125% 0; } }
+@media (prefers-reduced-motion: reduce) { .vload::before { animation: none; } }
+
+/* Кадр там, где видео само не стартует (экономия трафика): значок плея — «наведи или нажми». */
+.vplay { position: absolute; left: 50%; top: 50%; z-index: 3; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 999px; transform: translate(-50%, -50%); background: var(--scrim); color: var(--text); pointer-events: none; }

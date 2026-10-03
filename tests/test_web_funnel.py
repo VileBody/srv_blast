@@ -485,3 +485,89 @@ def test_rating_is_scoped_to_an_own_job_and_its_videos(client) -> None:
     assert r.status_code == 422 and r.json()["detail"]["code"] == "video_not_in_job"
     assert "videoRatings" not in main.store.JOBS["job_z"]
     assert tc.post("/api/funnel/rating", json={"videoId": "v1", "jobId": "job_z", "score": 5}).json() == {"ok": True}
+
+
+def _prod_methodology(monkeypatch, main, api):
+    """send_methodology в production-режиме с подменённым Bot API."""
+    import dataclasses
+
+    funnel = main.funnel
+    monkeypatch.setattr(funnel, "RUNTIME", dataclasses.replace(funnel.RUNTIME, backend="production"))
+    monkeypatch.setattr(funnel, "METHODOLOGY_URL", "")
+    monkeypatch.setenv("WEB_PUBLIC_BOT_TOKEN", "123:test")
+    monkeypatch.setattr(funnel.telegram_bot, "_api", api)
+    return funnel
+
+
+def _http_error(code: int, description: str):
+    import io
+    import json
+    import urllib.error
+
+    body = json.dumps({"ok": False, "error_code": code, "description": description}).encode()
+    return urllib.error.HTTPError("https://api.telegram.org/bot***/sendDocument", code, "err", {}, io.BytesIO(body))
+
+
+def test_methodology_without_token_is_503_unavailable(client, monkeypatch) -> None:
+    _, main = client
+    funnel = _prod_methodology(monkeypatch, main, lambda *a, **k: {"ok": True})
+    monkeypatch.delenv("WEB_PUBLIC_BOT_TOKEN", raising=False)
+    with pytest.raises(funnel.FunnelError) as exc:
+        funnel.send_methodology(7)
+    assert exc.value.code == "methodology_unavailable" and exc.value.status_code == 503
+
+
+def test_methodology_sent_with_the_public_bot_token(client, monkeypatch) -> None:
+    _, main = client
+    calls = []
+
+    def api(method, params, *, token=None):
+        calls.append((method, params, token))
+        return {"ok": True}
+
+    funnel = _prod_methodology(monkeypatch, main, api)
+    assert funnel.send_methodology(7) == {"url": None, "sent": True}
+    assert calls == [("sendDocument", {"chat_id": 7, "document": funnel.mt.METHODOLOGY_FILE_ID}, "123:test")]
+
+
+@pytest.mark.parametrize("code,description", [
+    (403, "Forbidden: bot can't initiate conversation with a user"),
+    (403, "Forbidden: bot was blocked by the user"),
+    (400, "Bad Request: chat not found"),
+])
+def test_methodology_user_never_started_the_bot_gets_the_bot_link(client, monkeypatch, code, description) -> None:
+    # urllib бросает HTTPError на 4xx: раньше это была 500, а «открой бота» не показывалось
+    _, main = client
+
+    def api(*a, **k):
+        raise _http_error(code, description)
+
+    funnel = _prod_methodology(monkeypatch, main, api)
+    result = funnel.send_methodology(7)
+    assert result["sent"] is False and result["botLink"] == f"https://t.me/{funnel.PUBLIC_BOT_USERNAME}"
+
+
+def test_methodology_wrong_file_id_is_a_send_failure_not_a_bot_link(client, monkeypatch, caplog) -> None:
+    # file_id привязан к боту: с токеном чужого бота Telegram ответит 400 wrong file identifier
+    _, main = client
+
+    def api(*a, **k):
+        raise _http_error(400, "Bad Request: wrong file identifier/HTTP URL specified")
+
+    funnel = _prod_methodology(monkeypatch, main, api)
+    with caplog.at_level("ERROR"), pytest.raises(funnel.FunnelError) as exc:
+        funnel.send_methodology(7)
+    assert exc.value.code == "methodology_send_failed" and exc.value.status_code == 502
+    assert "wrong file identifier" in caplog.text
+
+
+def test_methodology_network_error_is_a_send_failure(client, monkeypatch) -> None:
+    _, main = client
+
+    def api(*a, **k):
+        raise TimeoutError("timed out")
+
+    funnel = _prod_methodology(monkeypatch, main, api)
+    with pytest.raises(funnel.FunnelError) as exc:
+        funnel.send_methodology(7)
+    assert exc.value.code == "methodology_send_failed"

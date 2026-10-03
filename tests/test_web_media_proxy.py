@@ -43,8 +43,10 @@ def test_proxy_name_is_stable_and_kind_specific() -> None:
 def _fresh_job_registry():
     # реестр работ общий на процесс: у каждого теста своё хранилище, готовые работы не переносим
     mp._JOBS.clear()
+    mp._OWNER.clear()
     yield
     mp._JOBS.clear()
+    mp._OWNER.clear()
 
 
 def test_failed_build_is_retried_and_success_is_shared() -> None:
@@ -231,6 +233,88 @@ def test_same_file_is_not_built_twice_across_pools() -> None:
     assert a is b and calls["n"] == 1
 
 
+def test_urgent_pool_keeps_its_own_queued_job() -> None:
+    """Второй запрос того же клипа, пока он стоит в срочной очереди, ждёт ту же работу.
+
+    Раньше он отменял её и ставил заново в конец очереди: первый запрос падал (CancelledError →
+    503, <video> оставался на обложке), а каждый новый запрос отодвигал сжатие ещё дальше.
+    """
+    import threading
+    gate = threading.Event()
+    urgent = mp.Builder(workers=1, urgent=True)
+    urgent.run("busy", lambda: gate.wait(5))  # единственный срочный воркер занят
+    first = urgent.run("wanted", lambda: None)
+    again = urgent.run("wanted", lambda: None)
+    assert again is first and not first.cancelled()
+    other_urgent = mp.Builder(workers=1, urgent=True).run("wanted", lambda: None)
+    assert other_urgent is first  # чужой срочный пул тоже не перехватывает — ждёт
+    gate.set()
+    first.result(timeout=5)
+
+
+def _queued_clip(main, monkeypatch):
+    """Срочный пул занят — клип встаёт в очередь. Возвращает (адрес клипа, «отпустить пул»)."""
+    import threading
+    gate = threading.Event()
+    now = main.media_proxy.Builder(workers=1, urgent=True)
+    monkeypatch.setattr(main.media_proxy, "NOW", now)
+    now.run("busy", lambda: gate.wait(10))
+    track = main.store.ws().saved_tracks[0]
+    token = main.media_proxy.sign(main.RUNTIME.session_secret, {"s": str(track["localUrl"])})
+    return f"/api/wizard/media/clip/{token}/clip.mp4", gate
+
+
+def _get_in_threads(tc, url: str, n: int):
+    import threading
+    results: list = [None] * n
+
+    def go(i: int) -> None:
+        results[i] = tc.get(url)
+
+    threads = [threading.Thread(target=go, args=(i,)) for i in range(n)]
+    for th in threads:
+        th.start()
+    return threads, results
+
+
+def test_parallel_requests_for_a_queued_clip_all_get_it(client, monkeypatch) -> None:
+    """Тот же клип просят сразу несколько <video> (превью стола, сетка, плитки) — все получают его."""
+    import time
+    tc, main, calls = client
+    url, gate = _queued_clip(main, monkeypatch)
+    threads, results = _get_in_threads(tc, url, 3)
+    time.sleep(0.5)  # все три запроса ждут в очереди срочного пула
+    gate.set()
+    for th in threads:
+        th.join(timeout=15)
+    assert [r.status_code for r in results] == [200, 200, 200]
+    assert all(r.content.startswith(b"FAKEMEDIA") for r in results)
+    assert calls["transcode"] == 1
+
+
+def test_waiting_for_a_clip_does_not_hold_request_threads(client, monkeypatch) -> None:
+    """Пока клипы сжимаются, остальной сайт отвечает: ожидание идёт в event loop, не в потоках."""
+    import time
+    import anyio.to_thread
+    tc, main, _ = client
+    limiter = tc.portal.call(anyio.to_thread.current_default_thread_limiter)
+    tokens = limiter.total_tokens
+    tc.portal.call(setattr, limiter, "total_tokens", 2)
+    try:
+        url, gate = _queued_clip(main, monkeypatch)
+        threads, results = _get_in_threads(tc, url, 4)  # ждущих клипов больше, чем потоков
+        time.sleep(0.5)
+        started = time.monotonic()
+        other = tc.get("/api/auth/providers")  # обычный синхронный обработчик
+        assert other.status_code == 200 and time.monotonic() - started < 5
+        gate.set()
+        for th in threads:
+            th.join(timeout=15)
+        assert [r.status_code for r in results] == [200] * 4
+    finally:
+        tc.portal.call(setattr, limiter, "total_tokens", tokens)
+
+
 def test_clip_link_looks_like_video_to_the_site() -> None:
     # сайт отличает видео от картинки по расширению (lib/media.ts isVideoUrl)
     import re
@@ -392,3 +476,17 @@ def test_drop_analysis_is_cached_per_track_and_window(client, monkeypatch) -> No
     assert main._cached_hook_analysis("s3://raw/t.mp3", 10.0, 22.0) == first
     main._cached_hook_analysis("s3://raw/t.mp3", 11.0, 22.0)  # другое окно — свой анализ
     assert len(calls) == 2
+
+
+def test_drop_candidates_skip_the_window_start(client, monkeypatch) -> None:
+    """Дроп впритык к началу окна сборка молча выкидывает вместе с хук-блоком — не предлагаем его."""
+    import asyncio
+    import dataclasses
+    _, main, _ = client
+    monkeypatch.setattr(main, "RUNTIME", dataclasses.replace(main.RUNTIME, backend="production"))
+    monkeypatch.setattr(main.store, "saved_track", lambda track_id: {"s3Key": "s3://raw/t.mp3"})
+    monkeypatch.setattr(main, "_cached_hook_analysis", lambda url, start, end: {"bpm": 120.0, "drop_candidates": [
+        {"t": 0.0, "confidence": 0.88}, {"t": 1.0, "confidence": 0.8}, {"t": 4.2, "confidence": 0.74}, {"t": 10.0, "confidence": 0.65}]})
+    result = asyncio.run(main.api_drops(trackId="t1", clipFrom="00:00", clipTo="00:12"))
+    assert [d["seconds"] for d in result["drops"]] == [4.2, 10.0]
+    assert [d["best"] for d in result["drops"]] == [True, False]

@@ -38,6 +38,18 @@ function text(value: unknown): string | null {
 }
 
 /*
+ * Тело ответа не JSON, а страница: «502 Bad Gateway» от nginx, заглушка прокси, трейсбек.
+ * Раньше такой текст целиком становился сообщением ошибки и вываливался в интерфейс как есть
+ * (HTML с «a padding to disable MSIE…» прямо в превью субтитров). Разметку и простыни не
+ * показываем — у ошибки остаётся общий понятный текст, а статус виден в .status.
+ */
+const RAW_BODY_MAX = 300;
+function rawBodyReadable(value: string): boolean {
+  if (value.length > RAW_BODY_MAX) return false;
+  return !/^\s*</.test(value) && !/<\/?(?:!doctype|html|head|body|title|center|h1|hr)\b/i.test(value);
+}
+
+/*
  * Человеческий текст ошибки из тела ответа. FastAPI отдаёт `{"detail": "…"}`, наши ручки —
  * ещё `{"detail": {"code", "message"}}` / `{"detail": {"detail": "…"}}`, middleware —
  * `{"detail": "…", "code": "…"}`. Список валидации pydantic (422) — технический английский,
@@ -45,7 +57,7 @@ function text(value: unknown): string | null {
  */
 export function apiErrorMessage(body: unknown): string | null {
   const direct = text(body);
-  if (direct) return direct;
+  if (direct) return rawBodyReadable(direct) ? direct : null;
   if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
   const outer = body as { detail?: unknown; message?: unknown };
   const detail = outer.detail;
@@ -197,6 +209,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
+}
+
+/*
+ * Запрос с потолком по времени. Ручка раскладки отвечает за миллисекунды; если ответа нет
+ * дольше — бэк недоступен (перезапуск, деплой), и превью должно сказать об этом и дать
+ * повторить, а не висеть пустым. Отмена снаружи (react-query при размонтировании) тоже работает.
+ */
+const SUBTITLE_GEOMETRY_TIMEOUT_MS = 15_000;
+async function requestWithTimeout<T>(path: string, init: RequestInit, ms: number, outer?: AbortSignal): Promise<T> {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(outer?.reason);
+  if (outer?.aborted) onAbort();
+  else outer?.addEventListener('abort', onAbort, { once: true });
+  const timer = window.setTimeout(() => controller.abort(new DOMException('Request timed out', 'TimeoutError')), ms);
+  try {
+    return await request<T>(path, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+    outer?.removeEventListener('abort', onAbort);
+  }
 }
 
 export const api = {
@@ -435,8 +467,8 @@ export const api = {
   frames: () => request<{ status: string; frames: { id: string; label: string; labelEn: string; previewUrl: string }[] }>('/api/wizard/frames'),
   subtitleFonts: () => request<SubtitleFontCatalog>('/api/wizard/subtitle-fonts'),
   // числа раскладки стиля для превью субтитров — тот же движок, что считает сборку
-  subtitleGeometry: (payload: { style: string; settings: Record<string, unknown>; renderPreset: 'vertical' | 'wide' }) =>
-    request<SubtitleGeometry>('/api/wizard/subtitle-geometry', { method: 'POST', body: JSON.stringify(payload) }),
+  subtitleGeometry: (payload: { style: string; settings: Record<string, unknown>; renderPreset: 'vertical' | 'wide' }, signal?: AbortSignal) =>
+    requestWithTimeout<SubtitleGeometry>('/api/wizard/subtitle-geometry', { method: 'POST', body: JSON.stringify(payload) }, SUBTITLE_GEOMETRY_TIMEOUT_MS, signal),
   wizardSession: () => request<{ session: WizardSession | null }>('/api/wizard/session'),
   saveWizardSession: (payload: { projectId?: string | null; stage: number; data: Record<string, unknown> }) =>
     request<{ session: WizardSession }>('/api/wizard/session', { method: 'POST', body: JSON.stringify(payload) }),
