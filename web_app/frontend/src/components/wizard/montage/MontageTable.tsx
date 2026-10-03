@@ -24,6 +24,7 @@ import './montage.css';
 import './montage.mobile.css';
 import { useCombos, type Combo } from './combos';
 import { FrameDock, FrameView, useFramesOf, type Frame } from './sources';
+import { createLedger, ledgerPush, ledgerRedo, ledgerUndo, type HistKey } from './history';
 
 /*
  * Монтажный стол — финальный экран батча, открывается с «Пула». Основа — таймлайн FX: та же
@@ -444,8 +445,17 @@ type PlaceTarget = { lane: string; a: number; b: number; bad?: boolean; label?: 
 /**
  * Шаг истории стола: прежнее состояние затронутых роликов (null — записи ещё не было) и, если
  * правка общая для батча, — склеек и дропа. Отмена возвращает ровно это и не трогает остальное.
+ * seq/prev — номер шага и прежние верхи его ключей в учёте живых шагов (montage/history.ts).
  */
-interface Snapshot { videos: Record<number, MontageVideo | null>; timeline?: Pick<TimelineRecipe, 'key' | 'pace' | 'cuts' | 'edited'>; dropTime?: string }
+interface Snapshot { videos: Record<number, MontageVideo | null>; timeline?: Pick<TimelineRecipe, 'key' | 'pace' | 'cuts' | 'edited'>; dropTime?: string; seq?: number; prev?: Record<HistKey, number> }
+/** ключи учёта, которые меняет шаг: ролики, склейки, дроп */
+const keysOf = (snap: Snapshot): HistKey[] => [...Object.keys(snap.videos).map((i) => `v${i}`), ...(snap.timeline ? ['tl'] : []), ...('dropTime' in snap ? ['drop'] : [])];
+/** часть шага — только эти ключи */
+const pickKeys = (snap: Snapshot, keys: HistKey[]): Snapshot => ({
+  videos: Object.fromEntries(Object.entries(snap.videos).filter(([i]) => keys.includes(`v${i}`))),
+  ...(snap.timeline && keys.includes('tl') ? { timeline: snap.timeline } : {}),
+  ...('dropTime' in snap && keys.includes('drop') ? { dropTime: snap.dropTime } : {})
+});
 /** Поля самого хука: «Во все N» у хука переносит только их — склейка и стили ролика остаются его. */
 const HOOK_FIELDS: readonly (keyof HookConfig)[] = ['object', 'effectHook', 'effectHookExtend', 'motion', 'thought', 'warmupKind', 'sound', 'soundUrl', 'soundPlaybackUrl', 'soundDuration', 'videoUrl', 'videoWidth', 'videoHeight', 'videoDuration', 'videoHasAudio'];
 
@@ -1073,8 +1083,13 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
    * Раньше одна история на весь батч: правка ролика 1, «]», Ctrl+Z — и переходы ролика 1
    * записывались в ролик 2. Теперь шаг помнит, какие ролики он менял, и возвращает только их;
    * общие правки (дроп, темп, «Во все N») лежат в истории ролика, где их сделали.
+   * Такой шаг откатывает другой ролик (склейки, дроп), только если его не правили позже, —
+   * иначе снимок «до» стёр бы новые правки; пропущенное стол называет в тосте (history.ts).
+   * Отдельная история батча этого не решила бы: откат общего шага всё равно ложился бы
+   * поверх более поздних правок роликов.
    */
   const hist = useRef<Record<number, { past: Snapshot[]; future: Snapshot[] }>>({});
+  const ledger = useRef(createLedger());
   const [, bump] = useState(0);
   const stackOf = (i: number) => (hist.current[i] ??= { past: [], future: [] });
   const capture = (indices: number[], opts: { timeline?: boolean; drop?: boolean } = {}): Snapshot => {
@@ -1088,7 +1103,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   };
   const pushHistory = (snap: Snapshot) => {
     const h = stackOf(combo.index);
-    h.past.push(snap);
+    h.past.push({ ...snap, ...ledgerPush(ledger.current, keysOf(snap)) });
     if (h.past.length > 80) h.past.shift();
     h.future = [];
     bump((n) => n + 1);
@@ -1099,17 +1114,41 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     for (const [k, v] of Object.entries(snap.videos)) { if (v) videos[Number(k)] = v; else delete videos[Number(k)]; }
     setMontage({ videos });
     // дроп раньше склеек: склейки сверяются с ключом рецепта, а он считается от дропа
-    if (snap.dropTime !== undefined) setWizardHooks({ dropTime: snap.dropTime });
+    if ('dropTime' in snap) setWizardHooks({ dropTime: snap.dropTime });
     if (snap.timeline) setWTimeline(snap.timeline);
   };
-  const flip = (from: Snapshot[], to: Snapshot[]) => {
-    const snap = from.pop();
-    if (!snap) return;
-    to.push(capture(Object.keys(snap.videos).map(Number), { timeline: Boolean(snap.timeline), drop: snap.dropTime !== undefined }));
-    restore(snap); setSel(null); setPop(null); bump((n) => n + 1);
+  /** Что шаг не тронул: ролики по номерам, склейки и дроп — одной строкой. */
+  const sayHistorySkipped = (skipped: HistKey[], nothing: boolean) => {
+    if (!skipped.length) return;
+    const names = skipped.filter((k) => k.startsWith('v')).map((k) => tr('wizard.montage.historySkipVideo', { n: Number(k.slice(1)) + 1 }));
+    if (skipped.some((k) => !k.startsWith('v'))) names.push(tr('wizard.montage.historySkipCuts'));
+    say(tr(nothing ? 'wizard.montage.historySkippedAll' : 'wizard.montage.historySkipped', { list: names.join(', ') }));
   };
-  const undo = () => { const h = stackOf(combo.index); flip(h.past, h.future); };
-  const redo = () => { const h = stackOf(combo.index); flip(h.future, h.past); };
+  // отменённое ложится в «вернуть» только по тем ключам, что реально откатились
+  const undo = () => {
+    const h = stackOf(combo.index); const snap = h.past.pop();
+    if (!snap || snap.seq === undefined) return;
+    const { ok, skipped } = ledgerUndo(ledger.current, snap.seq, keysOf(snap));
+    if (ok.length) {
+      const now = capture(Object.keys(snap.videos).map(Number).filter((i) => ok.includes(`v${i}`)), { timeline: ok.includes('tl'), drop: ok.includes('drop') });
+      h.future.push({ ...now, seq: snap.seq, prev: snap.prev });
+      restore(pickKeys(snap, ok));
+    }
+    sayHistorySkipped(skipped, !ok.length);
+    setSel(null); setPop(null); bump((n) => n + 1);
+  };
+  const redo = () => {
+    const h = stackOf(combo.index); const snap = h.future.pop();
+    if (!snap || snap.seq === undefined) return;
+    const { ok, skipped } = ledgerRedo(ledger.current, snap.seq, snap.prev ?? {}, keysOf(snap));
+    if (ok.length) {
+      const now = capture(Object.keys(snap.videos).map(Number).filter((i) => ok.includes(`v${i}`)), { timeline: ok.includes('tl'), drop: ok.includes('drop') });
+      h.past.push({ ...now, seq: snap.seq, prev: snap.prev });
+      restore(pickKeys(snap, ok));
+    }
+    sayHistorySkipped(skipped, !ok.length);
+    setSel(null); setPop(null); bump((n) => n + 1);
+  };
   const canUndo = (hist.current[combo.index]?.past.length ?? 0) > 0;
   const canRedo = (hist.current[combo.index]?.future.length ?? 0) > 0;
 

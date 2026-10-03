@@ -1291,7 +1291,11 @@
         "Блики": "flickering hotspots",
         "Мерцание": "brightness flicker",
         "Линза": "soft BCC defocus"
-      }
+      },
+      "historySkipVideo": "video {{n}}",
+      "historySkipCuts": "cuts and drop",
+      "historySkipped": "Not everything: {{list}} changed later, left as is",
+      "historySkippedAll": "Nothing changed: {{list}} changed later"
     }
   },
   "chip": {
