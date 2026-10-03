@@ -20,7 +20,7 @@ import { useGuideDismiss, useMarkGuideSeen } from '../../guidance/useGuideDismis
 import { useTranslation } from 'react-i18next';
 import { useChip } from '../../../i18n/useChip';
 import { ActionGuideOverlay } from '../../guidance/ActionGuideOverlay';
-import { useModalCount } from '../../ui/Modal';
+import { useCoverCount, useModalCount } from '../../ui/Modal';
 import '../FxTimeline.css';
 import './montage.css';
 import './montage.mobile.css';
@@ -781,6 +781,11 @@ function PickPopover({ title, options, current, left, bottom, preview, onApply, 
  */
 export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false }: { index: number; onIndex: (i: number) => void; onClose: () => void; onGenerate: () => string | null; busy?: boolean }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  // стол накрывает весь экран: плашка воронки в углу легла бы на его кнопки
+  useEffect(() => {
+    useCoverCount.getState().inc();
+    return () => useCoverCount.getState().dec();
+  }, []);
   useTooltips(rootRef);
   const { t: tr, i18n } = useTranslation();
   const fxName = useFxName();

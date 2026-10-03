@@ -11,7 +11,7 @@ import { FunnelDialog, FunnelSheet } from './FunnelSheet';
 import { QuizPanel, UnlimitedPanel, quizPath, type QuizView, type UnlimitedStep } from './panels';
 import { FN_GLYPH, VideoRatingRow, type ActionStatus, type LadderTier, type MethodologyState } from './parts';
 import { Button, Icon } from '../ui/kit';
-import { useModalCount } from '../ui/Modal';
+import { useCoverCount, useModalCount } from '../ui/Modal';
 import { Skeleton } from '../ui/Skeleton';
 import { apiErrorCode, isUnlimitedTrack, trackTitleOf, useFunnelState, useTripwirePurchase } from './useFunnel';
 
@@ -434,12 +434,29 @@ export function FunnelBadge() {
   const open = useFunnelUi((state) => state.open);
   const openUnlimited = useFunnelUi((state) => state.openUnlimited);
   const clearBadge = useFunnelUi((state) => state.clearBadge);
+  const location = useLocation();
+  const modals = useModalCount((state) => state.count);
+  const covers = useCoverCount((state) => state.count);
   const funnel = useFunnelState(Boolean(badge)).data;
   const settled = Boolean(funnel && (funnel.hasPaid || funnel.unlimited));
   useEffect(() => {
     if (badge && settled) clearBadge();
   }, [badge, settled, clearBadge]);
-  if (!badge || !funnel || settled || open) return null;
+  /*
+   * Плашка фиксирована в правом нижнем углу — там же кнопки «Опубликовать» выкладки в TikTok,
+   * действия модалок и монтажного стола. Под ними её не показываем: она бы их накрыла
+   * (на телефоне особенно) или висела бы поверх диалогов визарда.
+   */
+  const hidden = location.pathname.endsWith('/post') || modals > 0 || covers > 0;
+  const visible = Boolean(badge && funnel && !settled && !open && !hidden);
+  // Пока плашка видна, на телефоне у содержимого есть запас снизу (index.css): последние
+  // кнопки страницы прокручиваются выше неё, а не прячутся под ней.
+  useEffect(() => {
+    if (!visible) return undefined;
+    document.documentElement.setAttribute('data-funnel-badge', '');
+    return () => document.documentElement.removeAttribute('data-funnel-badge');
+  }, [visible]);
+  if (!visible || !badge) return null;
   return (
     <button
       type="button"
