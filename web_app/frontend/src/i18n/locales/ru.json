@@ -1073,7 +1073,8 @@
     "tgCtaLogin": "Войти через Telegram",
     "tgCtaRegister": "Продолжить в Telegram",
     "googleCtaLogin": "Войти через Google",
-    "googleCtaRegister": "Продолжить с Google"
+    "googleCtaRegister": "Продолжить с Google",
+    "tgCheckFail": "Не удалось проверить вход"
   },
   "processing": {
     "progress": "Прогресс: {{done}}/{{total}} видео",

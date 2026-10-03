@@ -1070,7 +1070,8 @@
     "tgCtaLogin": "Sign in with Telegram",
     "tgCtaRegister": "Continue in Telegram",
     "googleCtaLogin": "Sign in with Google",
-    "googleCtaRegister": "Continue with Google"
+    "googleCtaRegister": "Continue with Google",
+    "tgCheckFail": "Couldn't check the sign-in"
   },
   "processing": {
     "progress": "Progress: {{done}}/{{total}} videos",
