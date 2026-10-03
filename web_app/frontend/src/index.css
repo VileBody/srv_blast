@@ -991,7 +991,7 @@ input, textarea, [contenteditable] { caret-color: var(--accent-light); }
      содержимого: карточка 70 + 12 от края + 12 зазор (свёрнутая — круг 44), плюс полоса жестов */
   .funnel-dock { left: 12px; right: 12px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); width: auto; max-width: none; }
   .funnel-dock--mini { left: auto; }
-  :root[data-funnel-badge] .app-content { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+  :root[data-funnel-badge] .app-content { padding-bottom: calc(116px + env(safe-area-inset-bottom, 0px)); }
   :root[data-funnel-badge="mini"] .app-content { padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px)); }
   /* строки пула: подпись ужимается с многоточием, степпер не сжимается */
   .mini-pill { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

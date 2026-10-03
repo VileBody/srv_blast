@@ -632,7 +632,7 @@ export function FunnelBadge() {
             </span>
             <span className="flex min-w-0 flex-1 flex-col gap-[2px]">
               <span className="truncate text-ui-16 text-text">{title}</span>
-              <span className={cn('truncate text-ui-14', kind === 'tripwire' ? 'tabular-nums text-accent-light' : 'text-text-60')}>{text}</span>
+              <span className={cn('line-clamp-2 text-ui-14', kind === 'tripwire' ? 'tabular-nums text-accent-light' : 'text-text-60')}>{text}</span>
             </span>
             <span className="shrink-0 text-ui-16 text-text-40 transition-[color,transform] duration-150 group-hover:translate-x-[2px] group-hover:text-text">
               <Icon>{GLYPH.right}</Icon>
