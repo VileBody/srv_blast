@@ -559,6 +559,8 @@
 .w12 .w12-font-menu .w12-dd-opt:hover:not(.w12-off) { background: var(--w12-field); color: var(--w12-text); }
 .w12 .w12-font-menu .w12-dd-opt[aria-selected="true"] { background: var(--w12-accent-soft); }
 .w12 .w12-dd-opt.w12-off { cursor: not-allowed; color: var(--w12-text-3); }
+/* фокус в открытом списке шрифтов — у самого списка; где он, показывает подсвеченная строка (data-active) */
+.w12 .w12-font-menu:focus { outline: none; }
 .w12 .w12-font-name { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .w12 .w12-font-name small { font-size: 11px; line-height: 14px; color: var(--w12-text-3); }
 .w12 .w12-font-sample { flex: none; font-size: 18px; line-height: 1; color: var(--w12-text-2); }
