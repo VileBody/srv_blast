@@ -1742,8 +1742,15 @@ def _clip_preview_url(preview_url: str | None) -> str | None:
     return f"/api/wizard/media/clip/{media_proxy.sign(RUNTIME.session_secret, {'s': locator})}/clip.mp4"
 
 
-def _media_response(store, name: str, request: Request, content_type: str) -> Response:
-    headers = {"Cache-Control": "private, max-age=86400", "Accept-Ranges": "bytes"}
+# Клип и кадр адресуются содержимым (имя копии = хэш оригинала + VERSION прослойки) — один и
+# тот же адрес всегда отдаёт те же байты, перепроверять нечего. Трек — свой у каждого юзера
+# (адрес по id трека), поэтому private и сутки, как было.
+CACHE_CLIP = "private, max-age=31536000, immutable"
+CACHE_TRACK = "private, max-age=86400"
+
+
+def _media_response(store, name: str, request: Request, content_type: str, cache: str) -> Response:
+    headers = {"Cache-Control": cache, "Accept-Ranges": "bytes"}
     if isinstance(store, media_proxy.LocalStore):
         from fastapi.responses import FileResponse
         return FileResponse(store.path(name), media_type=content_type, headers=headers)
@@ -1779,7 +1786,7 @@ def api_media_clip(token: str, request: Request) -> Response:
     if not store.has(name):
         # экран просит клип прямо сейчас — он идёт впереди фонового прогрева
         _await_media(media_proxy.NOW, name, lambda: media_proxy.build_clip(store, name, _media_fetch(locator)))
-    return _media_response(store, name, request, "video/mp4")
+    return _media_response(store, name, request, "video/mp4", CACHE_CLIP)
 
 
 @app.get("/api/wizard/media/clip/{token}/poster.jpg", tags=["wizard"])
@@ -1796,7 +1803,59 @@ def api_media_clip_poster(token: str, request: Request, t: float = 0.0) -> Respo
     if not store.has(poster):
         # свой пул: полоса миниатюр не задерживает клип плеера и не ждёт сжатия клипов целиком
         _await_media(media_proxy.POSTERS, poster, lambda: media_proxy.build_poster(store, clip, poster, at, _media_source(locator)))
-    return _media_response(store, poster, request, "image/jpeg")
+    return _media_response(store, poster, request, "image/jpeg", CACHE_CLIP)
+
+
+# ── превью каталогов (вайбы, фото, стили субтитров, эффекты) и картинки (рамки) ──────
+# Адрес — оригинал + его ETag (см. production_backend.preview_catalog): тот же адрес = те же
+# байты, перезалили оригинал — адрес другой. Поэтому public + immutable: браузер и любой кэш
+# по пути не перекачивают превью при каждом заходе в визард.
+
+def _unsign_catalog(token: str, kind: str) -> tuple[str, str]:
+    try:
+        return media_proxy.unsign_kind(RUNTIME.session_secret, token, kind)
+    except (media_proxy.MediaProxyError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/wizard/media/preview/{token}/clip.mp4", tags=["wizard"])
+def api_media_preview(token: str, request: Request) -> Response:
+    """Лёгкая копия превью каталога (≤540 по короткой стороне, fps источника, без звука)."""
+    locator, version = _unsign_catalog(token, "preview")
+    name = media_proxy.preview_name(locator, version)
+    store = _media_store()
+    if not store.has(name):
+        _await_media(media_proxy.NOW, name, lambda: media_proxy.build_preview(store, name, _media_fetch(locator)))
+    return _media_response(store, name, request, "video/mp4", media_proxy.IMMUTABLE_PUBLIC)
+
+
+@app.get("/api/wizard/media/preview/{token}/poster.jpg", tags=["wizard"])
+def api_media_preview_poster(token: str, request: Request) -> Response:
+    """Заставка карточки каталога: видна вместо ролика, пока он не в кадре (и в режиме экономии)."""
+    locator, version = _unsign_catalog(token, "preview")
+    clip = media_proxy.preview_name(locator, version)
+    poster = media_proxy.preview_poster_name(locator, version)
+    store = _media_store()
+    if not store.has(poster):
+        _await_media(media_proxy.POSTERS, poster,
+                     lambda: media_proxy.build_preview_poster(store, clip, poster, _media_source(locator)))
+    return _media_response(store, poster, request, "image/jpeg", media_proxy.IMMUTABLE_PUBLIC)
+
+
+@app.get("/api/wizard/media/image/{token}/image.{ext}", tags=["wizard"])
+def api_media_image(token: str, ext: str, request: Request) -> Response:
+    """Картинка каталога (PNG рамки и т.п.) — уменьшенная копия со своего домена, альфа сохранена."""
+    locator, version = _unsign_catalog(token, "image")
+    try:
+        name = media_proxy.image_name(locator, version)
+    except media_proxy.MediaProxyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if f".{ext}" != Path(name).suffix:
+        raise HTTPException(status_code=404, detail="расширение не совпадает с картинкой")
+    store = _media_store()
+    if not store.has(name):
+        _await_media(media_proxy.NOW, name, lambda: media_proxy.build_image(store, name, _media_fetch(locator)))
+    return _media_response(store, name, request, media_proxy.IMAGE_TYPES[Path(name).suffix], media_proxy.IMMUTABLE_PUBLIC)
 
 
 def _track_media(track_id: str):
@@ -1846,7 +1905,7 @@ async def api_media_prewarm(payload: MediaPrewarmPayload) -> dict[str, Any]:
 def api_media_track(track_id: str, request: Request) -> Response:
     """Трек для прослушки на сайте: AAC 96 кбит/с вместо оригинала (в 3–4 раза легче)."""
     media, name = _track_media(track_id)
-    return _media_response(media, f"{name}.m4a", request, "audio/mp4")
+    return _media_response(media, f"{name}.m4a", request, "audio/mp4", CACHE_TRACK)
 
 
 @app.get("/api/wizard/media/track/{track_id}/peaks", tags=["wizard"])
@@ -1854,7 +1913,7 @@ def api_media_track_peaks(track_id: str) -> Response:
     """Громкость трека каждые 50 мс — волну сайт рисует по ним, не скачивая файл."""
     media, name = _track_media(track_id)
     return Response(media.read(f"{name}.json"), media_type="application/json",
-                    headers={"Cache-Control": "private, max-age=86400"})
+                    headers={"Cache-Control": CACHE_TRACK})
 
 
 @app.get("/api/wizard/drops", tags=["wizard"])

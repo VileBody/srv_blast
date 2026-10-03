@@ -72,6 +72,12 @@ class _FakeS3:
     def __init__(self) -> None:
         self.presigns: list[dict[str, Any]] = []
         self.downloads: list[dict[str, str]] = []
+        self.heads: list[str] = []
+        self.etags: dict[str, str] = {}
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
+        self.heads.append(f"{Bucket}/{Key}")
+        return {"ETag": self.etags.get(f"{Bucket}/{Key}", '"0123abcd"')}
 
     def generate_presigned_url(self, operation: str, *, Params: dict[str, Any], ExpiresIn: int):
         self.presigns.append({"operation": operation, "params": Params, "expires": ExpiresIn})
@@ -301,19 +307,61 @@ def test_tiktok_file_upload_downloads_only_from_configured_s3(
         backend.download_video("https://cdn.example/result.mp4", destination)
 
 
-def test_preview_catalog_presigns_s3_and_keeps_explicit_https(monkeypatch: pytest.MonkeyPatch) -> None:
+def _catalog_backend(monkeypatch: pytest.MonkeyPatch):
     module = _module(monkeypatch)
-    backend = _backend(module, _config(module))
+    module._CATALOG_VERSIONS.clear()
+    queued: list[str] = []
+    monkeypatch.setattr(module.media_proxy.BUILDER, "run", lambda name, fn: queued.append(name))
+    return module, _backend(module, _config(module)), queued
+
+
+def test_preview_catalog_serves_stable_proxy_links_and_keeps_explicit_https(monkeypatch: pytest.MonkeyPatch) -> None:
+    module, backend, queued = _catalog_backend(monkeypatch)
 
     footage = backend.preview_catalog("footage")
+    again = backend.preview_catalog("footage")
     photos = backend.preview_catalog("photo")
 
-    assert footage[0]["previewUrl"] == "https://signed.example/download"
-    assert backend._s3.presigns[-1]["params"] == {
-        "Bucket": "assets",
-        "Key": "previews/neon.mp4",
-    }
+    url = footage[0]["previewUrl"]
+    assert url.startswith("/api/wizard/media/preview/") and url.endswith("/clip.mp4")
+    assert again[0]["previewUrl"] == url  # тот же адрес на каждый запрос → кэш браузера работает
+    assert backend._s3.presigns == []  # сырой оригинал наружу больше не отдаётся
+    assert backend._s3.heads == ["assets/previews/neon.mp4"]  # ETag — один раз за TTL
+    locator, version = module.media_proxy.unsign_kind("test-session-secret", url.split("/")[-2], "preview")
+    assert (locator, version) == ("s3://assets/previews/neon.mp4", "0123abcd")
+    assert set(queued) == {module.media_proxy.preview_name(locator, version)}  # копия готовится сразу в фоне
     assert photos[0]["previewUrl"] == "https://cdn.example/neon.jpg"
+
+
+def test_reuploaded_preview_gets_a_new_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ключи превью не версионированы (сборщик перезаливает на место): новый ETag → новый адрес."""
+    module, backend, _ = _catalog_backend(monkeypatch)
+    first = backend.preview_catalog("footage")[0]["previewUrl"]
+    backend._s3.etags["assets/previews/neon.mp4"] = '"ffff9999"'
+    module._CATALOG_VERSIONS.clear()  # TTL истёк
+    assert backend.preview_catalog("footage")[0]["previewUrl"] != first
+
+
+def test_missing_preview_original_fails_the_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
+    module, backend, _ = _catalog_backend(monkeypatch)
+
+    def gone(**_kw: Any) -> dict[str, Any]:
+        raise RuntimeError("NoSuchKey")
+
+    backend._s3.head_object = gone
+    with pytest.raises(RuntimeError, match="NoSuchKey"):
+        backend.preview_catalog("footage")
+
+
+def test_frame_preview_is_a_stable_png_proxy_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    module, backend, queued = _catalog_backend(monkeypatch)
+    monkeypatch.setenv("FX_ASSETS_S3_BUCKET", "fx")
+    monkeypatch.setenv("FX_ASSETS_S3_PREFIX", "fx_assets/")
+    url = backend.frame_preview_url("exclude.png")
+    assert url.startswith("/api/wizard/media/image/") and url.endswith("/image.png")
+    assert backend.frame_preview_url("exclude.png") == url
+    assert backend._s3.heads == ["fx/fx_assets/frames/exclude.png"] and queued == []
+    assert "s3://fx/fx_assets/frames/exclude.png" in backend.catalog_sources()
 
 
 def test_f1_and_f5_hooks_use_orchestrator_contract(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -397,7 +445,8 @@ def test_semantic_ranking_preserves_preview_order_and_rejects_catalog_drift(monk
     monkeypatch.setattr(backend._http, "post", rank)
     result = backend.ranked_backgrounds(lyrics="ночной город", media_type=media_type)
     assert [item["id"] for item in result] == ["second", original["id"]]
-    assert all(item["previewUrl"].startswith("https://") for item in result)
+    # s3-превью — через прослойку сайта, явные https — как есть
+    assert all(item["previewUrl"].startswith(("https://", "/api/wizard/media/preview/")) for item in result)
     response["buckets"] = [{"bucket_id": "unknown"}]
     with pytest.raises(module.ProductionBackendError, match="does not match"):
         backend.ranked_backgrounds(lyrics="ночной город", media_type=media_type)

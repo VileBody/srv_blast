@@ -5,6 +5,9 @@ import json
 import mimetypes
 import os
 import re
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
@@ -16,12 +19,21 @@ import httpx
 import logging
 from botocore.config import Config
 
-from . import asr_preview, bot_import, subtitle_text
+from . import asr_preview, bot_import, media_proxy, subtitle_text
 from .runtime import SETTINGS
 
 
 class ProductionBackendError(RuntimeError):
     pass
+
+
+# ETag оригиналов превью каталогов: от него адрес лёгкой копии. Кэш на 5 минут — каталог
+# запрашивается на каждом заходе в визард, а HEAD на ~60 объектов каждый раз — лишняя задержка;
+# перезалитый ролик получит новый адрес не позже чем через TTL.
+CATALOG_VERSION_TTL_S = 300.0
+_CATALOG_VERSIONS: dict[str, tuple[float, str]] = {}
+_CATALOG_VERSIONS_LOCK = threading.Lock()
+_VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm"}
 
 
 class AsrPreviewPending(ProductionBackendError):
@@ -574,6 +586,11 @@ class ProductionBackend:
         return [by_id[item_id] for item_id in ranked_ids]
 
     def preview_catalog(self, kind: str) -> list[dict[str, Any]]:
+        """Каталог превью со стабильными адресами лёгких копий (`/api/wizard/media/preview/...`).
+
+        Раньше здесь была новая presigned-ссылка на сырой AE-рендер 1080×1920 на КАЖДЫЙ запрос:
+        другой адрес → промах кэша браузера → ролики качались заново при каждом заходе
+        (~500 МБ за проход визарда). Явные https-адреса каталога отдаются как есть."""
         source = {
             "footage": self.config.footage_catalog,
             "photo": self.config.photo_catalog,
@@ -582,24 +599,85 @@ class ProductionBackend:
         }.get(kind)
         if source is None:
             raise ProductionBackendError(f"unsupported preview catalog {kind!r}")
-        return [
-            {
-                **item,
-                "previewUrl": self._preview_url(
-                    str(item["previewUrl"]),
-                    filename=f"{item['id']}-preview",
-                ),
-            }
-            for item in source
-        ]
+        versions = self.catalog_versions([str(item["previewUrl"]) for item in source])
+        return [{**item, "previewUrl": self._catalog_media_path(str(item["previewUrl"]), versions)} for item in source]
 
-    def frame_preview_url(self, file: str) -> str:
-        """Подписанная ссылка на PNG рамки. Рамки рендер берёт из бакета ассетов эффектов —
-        деплой ставит его равным S3_BUCKET_ASSET_STORAGE с префиксом fx_assets/."""
+    def frame_locator(self, file: str) -> str:
+        """PNG рамки в бакете ассетов эффектов (деплой ставит его равным S3_BUCKET_ASSET_STORAGE,
+        префикс fx_assets/) — тот же файл, что берёт рендер."""
         prefix = (os.environ.get("FX_ASSETS_S3_PREFIX") or "fx_assets/").strip().strip("/")
         bucket = (os.environ.get("FX_ASSETS_S3_BUCKET") or "").strip() or self.config.asset_bucket
         key = f"{prefix}/frames/{file}" if prefix else f"frames/{file}"
-        return self._presign(bucket, key, filename=file, attachment=False, content_type="image/png")
+        return f"s3://{bucket}/{key}"
+
+    def frame_preview_url(self, file: str) -> str:
+        """Стабильный адрес уменьшенной копии PNG рамки (альфа сохраняется) со своего домена."""
+        locator = self.frame_locator(file)
+        return self._catalog_media_path(locator, self.catalog_versions([locator]))
+
+    def catalog_sources(self) -> list[str]:
+        """Все s3-оригиналы превью сайта (каталоги + рамки) — для прогрева копий."""
+        from . import frames as frames_catalog
+
+        items = (*self.config.footage_catalog, *self.config.photo_catalog,
+                 *self.config.subtitle_catalog, *self.config.fx_catalog)
+        out = [str(item["previewUrl"]) for item in items if str(item["previewUrl"]).startswith("s3://")]
+        out += [self.frame_locator(file) for file, _ru, _en in frames_catalog.FRAMES.values()]
+        return list(dict.fromkeys(out))
+
+    def catalog_versions(self, locators: list[str]) -> dict[str, str]:
+        """Версия (ETag) каждого s3-оригинала; HEAD параллельно и только для устаревших в кэше.
+
+        Объекта нет / S3 не отвечает — ошибка всплывает (каталог не отдаётся), а не ссылка
+        на оригинал в обход прослойки."""
+        wanted = list(dict.fromkeys(loc for loc in locators if loc.startswith("s3://")))
+        now = time.monotonic()
+        out: dict[str, str] = {}
+        stale: list[str] = []
+        with _CATALOG_VERSIONS_LOCK:
+            for loc in wanted:
+                hit = _CATALOG_VERSIONS.get(loc)
+                if hit and now - hit[0] < CATALOG_VERSION_TTL_S:
+                    out[loc] = hit[1]
+                else:
+                    stale.append(loc)
+        if not stale:
+            return out
+
+        def head(loc: str) -> tuple[str, str]:
+            bucket, key = self._parse_s3_locator(loc)
+            meta = self._s3.head_object(Bucket=bucket, Key=key)
+            try:
+                return loc, media_proxy.object_version(str(meta.get("ETag") or ""))
+            except media_proxy.MediaProxyError as exc:
+                raise ProductionBackendError(f"{exc}: {loc}") from exc
+
+        with ThreadPoolExecutor(max_workers=min(8, len(stale)), thread_name_prefix="catalog-head") as pool:
+            fresh = list(pool.map(head, stale))
+        with _CATALOG_VERSIONS_LOCK:
+            for loc, version in fresh:
+                _CATALOG_VERSIONS[loc] = (now, version)
+                out[loc] = version
+        return out
+
+    def _catalog_media_path(self, locator: str, versions: dict[str, str]) -> str:
+        if locator.startswith("https://"):
+            return locator
+        self._parse_s3_locator(locator)
+        version = versions[locator]
+        ext = Path(locator).suffix.lower()
+        if ext in _VIDEO_EXTS:
+            name = media_proxy.preview_name(locator, version)
+            store = self.media_store()
+            # копия готовится в фоне сразу: к моменту, когда карточка доедет до экрана, она
+            # обычно уже есть (готовая — run возвращает завершённую работу без похода в S3)
+            media_proxy.BUILDER.run(name, lambda: media_proxy.build_preview(
+                store, name, lambda path: self.download_locator(locator, path)))
+            return media_proxy.preview_path(SETTINGS.session_secret, locator, version)
+        try:
+            return media_proxy.image_path(SETTINGS.session_secret, locator, version)
+        except media_proxy.MediaProxyError as exc:
+            raise ProductionBackendError(f"preview catalog item has unsupported type: {exc}") from exc
 
     def upload_track(
         self,
