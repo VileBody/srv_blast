@@ -166,5 +166,12 @@ fi
 
 wait_http "https://${DOMAIN}/healthz" '"backend":"production"' 30
 preview_compose down --remove-orphans || true
+# Прогрев копий превью (вайбы, стили, эффекты, рамки): без него первые посетители после выкатки
+# видят заставки, пока ffmpeg готовит копии. Идемпотентно — готовые пропускаются. Идёт в фоне
+# внутри контейнера, вывод — в его stdout (видно в docker logs / Loki); сбой прогрева не роняет
+# уже проверенный деплой, а копии всё равно доделаются по первому запросу.
+if ! docker exec -d blast-web-api sh -c 'python /app/scripts/prewarm_web_previews.py > /proc/1/fd/1 2>&1'; then
+  echo "[web-production] WARNING: preview prewarm did not start (see docker logs blast-web-api)" >&2
+fi
 docker compose --project-name blast-web -f "$COMPOSE_FILE" ps
 echo "[web-production] ready url=https://${DOMAIN}"
