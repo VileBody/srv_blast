@@ -441,7 +441,9 @@ export function PricingPage() {
         <div className="flex shrink-0 items-center gap-[20px] max-md:gap-[10px]">
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            // прямой заход / новая вкладка: истории внутри приложения нет, и -1 уводил с сайта
+            // (или никуда). idx кладёт в history.state сам react-router.
+            onClick={() => (((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0 ? navigate(-1) : navigate('/app'))}
             aria-label={t('common.back')}
             className="flex h-[60px] w-[60px] shrink-0 items-center justify-center rounded-r15 bg-grad-soft-20 transition hover:brightness-125 max-md:h-[36px] max-md:w-[36px] max-md:rounded-r10"
           >
