@@ -70,6 +70,12 @@ export function apiErrorBodyCode(body: unknown): string | undefined {
   return undefined;
 }
 
+/** Какой Telegram войдёт / привяжется по ссылке из бота (подпись в вопросах HandoffPage) */
+export interface HandoffTelegram {
+  username: string;
+  name: string;
+}
+
 export class ApiError extends Error {
   status: number;
   /** сырое тело ответа (объект JSON или текст) — старые проверки читают `.detail.detail.code` */
@@ -229,7 +235,15 @@ export const api = {
       wizardImport?: import('../stores/wizardImport').WizardImport;
       /** монтаж не переехал: почему (визард откроется только с треком, окном и текстом) */
       wizardImportError?: string;
+      /** 202 на «Привязать»: ждём подтверждения в Telegram (опрос — handoffLinkStatus) */
+      pending?: boolean;
+      telegram?: HandoffTelegram;
     }>('/api/auth/handoff', { method: 'POST', body: JSON.stringify({ token, ...answer }) }),
+  /** Подтвердили ли привязку Telegram кнопкой в боте. GET — не тратит лимит POST /api/auth/* */
+  handoffLinkStatus: () =>
+    request<{ status: 'none' | 'pending' | 'confirmed' | 'rejected' | 'expired' | 'completed' }>(
+      '/api/auth/handoff/link-status'
+    ),
   logout: () => request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }),
   /* ---------------- воронка после генерации (docs/BOT_TO_WEB_FLOW.md) ---------------- */
   funnelState: () => request<FunnelState>('/api/funnel/state'),
