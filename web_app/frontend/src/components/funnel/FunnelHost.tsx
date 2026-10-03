@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../../lib/api';
+import { api, ApiError } from '../../lib/api';
 import type { FunnelState, GenerationJob, RatingReason, VideoRating, VideoVersion } from '../../lib/types';
 import { useToast } from '../../contexts/ToastContext';
-import { bindFunnelUser, funnelSeen, markFunnelSeen, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
+import { bindFunnelUser, funnelSeen, markFunnelSeen, markQuizSkipped, quizSkippedRecently, useFunnelUi, type UnlimitedContext } from '../../stores/funnelUi';
 import { startNextBatch } from '../../stores/wizardStore';
+import { guardDraft } from '../../stores/draftGuard';
 import { FunnelDialog, FunnelSheet } from './FunnelSheet';
 import { QuizPanel, UnlimitedPanel, quizPath, type QuizView, type UnlimitedStep } from './panels';
 import { FN_GLYPH, VideoRatingRow, type ActionStatus, type LadderTier, type MethodologyState } from './parts';
 import { Button, Icon } from '../ui/kit';
-import { useModalCount } from '../ui/Modal';
+import { useCoverCount, useModalCount } from '../ui/Modal';
 import { Skeleton } from '../ui/Skeleton';
-import { apiErrorCode, isUnlimitedTrack, trackTitleOf, useFunnelState, useTripwirePurchase } from './useFunnel';
+import { apiErrorCode, isUnlimitedTrack, trackTitleOf, useFunnelState, useQuizCopy, useTripwirePurchase } from './useFunnel';
 
 /*
  * Хост модалок воронки (docs/BOT_TO_WEB_FLOW.md, раздел 4). Живёт в AppShell, поэтому
@@ -44,6 +45,43 @@ function useFunnelErrorToast() {
   const { t } = useTranslation();
   const { push } = useToast();
   return useCallback(() => push({ variant: 'error', title: t('funnel.errors.save') }), [push, t]);
+}
+
+/**
+ * Сохранения оценки по одному ролику — строго по очереди. Два быстрых клика (7, потом 8)
+ * уходили параллельно, и бэк мог принять их в обратном порядке: на сервере оставалась 7.
+ * `pending` — по ролику идёт сохранение (строка оценки показывает это и ждёт).
+ */
+function useSerialSaves() {
+  const chains = useRef(new Map<string, Promise<unknown>>());
+  const [inFlight, setInFlight] = useState<Record<string, number>>({});
+  const bump = useCallback((id: string, delta: number) => setInFlight((prev) => {
+    const count = (prev[id] ?? 0) + delta;
+    const next = { ...prev };
+    if (count > 0) next[id] = count;
+    else delete next[id];
+    return next;
+  }), []);
+  const run = useCallback((id: string, task: () => Promise<unknown>) => {
+    bump(id, 1);
+    // упавшее предыдущее сохранение очередь не рвёт: о нём уже сказал свой тост
+    const queued = (chains.current.get(id) ?? Promise.resolve()).catch(() => undefined).then(task);
+    chains.current.set(id, queued);
+    return queued.finally(() => {
+      bump(id, -1);
+      if (chains.current.get(id) === queued) chains.current.delete(id);
+    });
+  }, [bump]);
+  return { run, pending: (id: string) => Boolean(inFlight[id]) };
+}
+
+/**
+ * Оценки без привязанного Telegram бэк отдаёт 409 (решение бэка: воронка живёт в боте).
+ * Повтор ответил бы тем же — не ретраим; прочие сбои — как по умолчанию (до трёх раз).
+ */
+function retryRatings(failures: number, error: unknown): boolean {
+  if (error instanceof ApiError && error.status === 409) return false;
+  return failures < 3;
 }
 
 /* ------------------------------------------------------------------ квиз */
@@ -83,6 +121,7 @@ function useMethodology(onSent: () => void) {
 function useQuiz(funnel: FunnelState | undefined, onDone: (bridge: string | null) => void) {
   const queryClient = useQueryClient();
   const failed = useFunnelErrorToast();
+  const copy = useQuizCopy();
   const [answers, setAnswers] = useState<Record<string, { id: string }>>({});
   const [current, setCurrent] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
@@ -99,14 +138,14 @@ function useQuiz(funnel: FunnelState | undefined, onDone: (bridge: string | null
         setAnswers((prev) => ({ ...prev, [question.id]: { id: answerId } }));
         if (res.done) {
           void queryClient.invalidateQueries({ queryKey: ['funnel-state'] });
-          onDone(res.bridge ?? null);
+          onDone(copy.bridge(res.branch, res.bridge ?? null));
         } else setCurrent(res.next);
       })
       .catch(failed)
       .finally(() => setPendingId(null));
   };
   const view: QuizView | null = question
-    ? { kind: 'question', question, index: Math.max(0, path.indexOf(question.id)), total: path.length, pendingId }
+    ? { kind: 'question', question: copy.question(question), index: Math.max(0, path.indexOf(question.id)), total: path.length, pendingId }
     : null;
   return { view, answer, touched: Object.keys(answers).length > 0 || pendingId !== null };
 }
@@ -118,6 +157,12 @@ function QuizModal({ jobId, onClose, onDismiss }: { jobId?: string; onClose: () 
   const [bridge, setBridge] = useState<string | null | undefined>(undefined);
   const quiz = useQuiz(funnel.data, (b) => setBridge(b));
   useEffect(() => { if (jobId) markFunnelSeen(`quiz:${jobId}`); }, [jobId]);
+  // закрыли до конца квиза — это пропуск: на следующих батчах неделю не открываем
+  const finished = bridge !== undefined;
+  const skip = useCallback(() => {
+    if (!finished) markQuizSkipped();
+    onClose();
+  }, [finished, onClose]);
   const view: QuizView | null = bridge !== undefined
     ? { kind: 'done', bridge, methodology: methodology.state, url: methodology.url, botLink: methodology.botLink }
     : quiz.view;
@@ -129,8 +174,8 @@ function QuizModal({ jobId, onClose, onDismiss }: { jobId?: string; onClose: () 
   useEffect(() => { if (nothing) onDismiss(); }, [nothing, onDismiss]);
   if (!view || nothing) return null;
   return (
-    <FunnelDialog open onClose={onClose} labelledBy={titleId}>
-      <QuizPanel titleId={titleId} view={view} onAnswer={quiz.answer} onSkip={onClose} onMethodology={methodology.get} onClose={onClose} />
+    <FunnelDialog open onClose={skip} labelledBy={titleId}>
+      <QuizPanel titleId={titleId} view={view} onAnswer={quiz.answer} onSkip={skip} onMethodology={methodology.get} onClose={skip} />
     </FunnelDialog>
   );
 }
@@ -165,6 +210,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const { t } = useTranslation();
   const titleId = useId();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const { push } = useToast();
   const clearBadge = useFunnelUi((state) => state.clearBadge);
@@ -173,7 +219,8 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const ratingsQuery = useQuery({
     queryKey: ['funnel-ratings', ctx.jobId],
     queryFn: () => api.funnelRatings(ctx.jobId ?? ''),
-    enabled: Boolean(ctx.jobId)
+    enabled: Boolean(ctx.jobId),
+    retry: retryRatings
   });
   // Ролики — из батча: у плашки после перезагрузки их нет (ссылки подписанные, не храним),
   // а в контексте с оценки 7+ — только готовые на тот момент. Ключ общий со страницей
@@ -188,6 +235,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const failed = useFunnelErrorToast();
   const tripwire = useTripwirePurchase();
   const openTable = useOpenJobOnTable();
+  const saves = useSerialSaves();
   const [ratings, setRatings] = useState<Record<string, VideoRating>>({});
   const [bridge, setBridge] = useState<string | null>(null);
   const [channel, setChannel] = useState<ActionStatus>('todo');
@@ -195,6 +243,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const [unlockPending, setUnlockPending] = useState(false);
   const [tier, setTier] = useState<LadderTier | null>(null);
   const quiz = useQuiz(funnel, (b) => { setBridge(b); setIndex((i) => i + 1); });
+  const copy = useQuizCopy();
   // Сама больше не откроется: окно на экране. Ставим здесь, а не в момент «пора открыть» —
   // окно, которое ждало квиз и пропало с перезагрузкой, откроется при следующем заходе.
   useEffect(() => { if (ctx.jobId) markFunnelSeen(`unlimited:${ctx.jobId}`); }, [ctx.jobId]);
@@ -210,7 +259,8 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
     && (!ctx.jobId || (ratingsQuery.isFetched && (Boolean(ctx.videos) || jobQuery.isFetched)));
   if (!plan && ready && funnel) {
     const rated = ratingsQuery.data?.ratings ?? {};
-    setPlan({ rate: videos.some((video) => !rated[video.id]), quiz: !funnel.survey.completed });
+    // квиз, пропущенный недавно (в окне квиза или здесь), шагом безлимита не возвращаем
+    setPlan({ rate: videos.some((video) => !rated[video.id]), quiz: !funnel.survey.completed && !quizSkippedRecently() });
   }
 
   // Без привязанного Telegram воронки нет (409 telegram_required): окно не держим и плашку не ставим.
@@ -243,7 +293,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
   const reasons = Array.from(new Set(reasonTargets.flatMap((id) => allRatings[id]?.reasons ?? [])));
   const saveRating = (videoId: string, score: number, nextReasons: RatingReason[]) => {
     setRatings((prev) => ({ ...prev, [videoId]: { score, reasons: nextReasons, comment: '' } }));
-    api.funnelRate({ videoId, jobId: ctx.jobId ?? '', projectId: ctx.projectId ?? '', score, reasons: nextReasons })
+    saves.run(videoId, () => api.funnelRate({ videoId, jobId: ctx.jobId ?? '', projectId: ctx.projectId ?? '', score, reasons: nextReasons }))
       .then(() => queryClient.invalidateQueries({ queryKey: ['funnel-ratings', ctx.jobId] }))
       .catch(failed);
   };
@@ -285,7 +335,7 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
           reasons,
           canFix: Boolean(ctx.projectId),
           quiz: quiz.view ?? undefined,
-          bridge: bridge ?? funnel.survey.bridge,
+          bridge: bridge ?? copy.bridge(funnel.survey.branch, funnel.survey.bridge),
           methodology: methodology.state,
           methodologyUrl: methodology.url,
           botLink: methodology.botLink ?? funnel.links.bot,
@@ -308,6 +358,12 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
           onAnswer: quiz.answer,
           onMethodology: methodology.get,
           onNext: next,
+          onSkipQuiz: () => {
+            markQuizSkipped();
+            // квиз и методичка идут парой: пропуск ведёт сразу за методичку
+            const methodologyAt = steps.indexOf('methodology');
+            setIndex(methodologyAt >= 0 ? methodologyAt + 1 : index + 1);
+          },
           onChannelOpen: () => setChannel((s) => (s === 'done' ? s : 'todo')),
           onChannelCheck: () => {
             setChannel('checking');
@@ -340,7 +396,17 @@ function UnlimitedModal({ ctx, onClose, onDismiss }: { ctx: UnlimitedContext; on
           },
           onGenerate: () => {
             onClose();
-            navigate(ctx.projectId ? startNextBatch(ctx.projectId) : '/app/generate');
+            // Упёрлись в лимит посреди настройки или окно открыто прямо в визарде: настройка
+            // батча — работа человека, «новый батч» стёр бы фон, хуки, субтитры и правки стола.
+            // Просто возвращаем к визарду, «Сгенерировать» он нажмёт сам.
+            if (ctx.source === 'gate' || location.pathname.startsWith('/app/generate')) return;
+            const projectId = ctx.projectId;
+            if (!projectId) {
+              navigate('/app/generate');
+              return;
+            }
+            // другой проект в черновике стёрся бы молча — сначала спрашиваем
+            guardDraft({ projectId }, () => navigate(startNextBatch(projectId)));
           },
           onClose,
           onFix: () => {
@@ -373,12 +439,19 @@ function useOpenJobOnTable() {
   return useCallback((projectId?: string, jobId?: string) => {
     if (!projectId) return;
     if (!jobId) {
-      navigate(startNextBatch(projectId));
+      guardDraft({ projectId }, () => navigate(startNextBatch(projectId)));
       return;
     }
     // модуль тянет раскладку «Пула» — грузим по требованию, как импорт из бота
     Promise.all([api.job(jobId), import('../../stores/reopenJob')])
-      .then(([{ job }, { openJobOnTable }]) => navigate(openJobOnTable(job)))
+      .then(([{ job }, { openJobOnTable }]) => {
+        // Батч заменяет черновик целиком: недоделанную настройку другого трека — только по «Заменить»
+        const key = (job.stageData?.final as { idempotencyKey?: unknown } | undefined)?.idempotencyKey;
+        guardDraft(
+          { projectId: job.projectId, idempotencyKey: typeof key === 'string' ? key : undefined },
+          () => navigate(openJobOnTable(job))
+        );
+      })
       .catch(() => push({ variant: 'error', title: t('funnel.errors.reopen') }));
   }, [navigate, push, t]);
 }
@@ -424,12 +497,29 @@ export function FunnelBadge() {
   const open = useFunnelUi((state) => state.open);
   const openUnlimited = useFunnelUi((state) => state.openUnlimited);
   const clearBadge = useFunnelUi((state) => state.clearBadge);
+  const location = useLocation();
+  const modals = useModalCount((state) => state.count);
+  const covers = useCoverCount((state) => state.count);
   const funnel = useFunnelState(Boolean(badge)).data;
   const settled = Boolean(funnel && (funnel.hasPaid || funnel.unlimited));
   useEffect(() => {
     if (badge && settled) clearBadge();
   }, [badge, settled, clearBadge]);
-  if (!badge || !funnel || settled || open) return null;
+  /*
+   * Плашка фиксирована в правом нижнем углу — там же кнопки «Опубликовать» выкладки в TikTok,
+   * действия модалок и монтажного стола. Под ними её не показываем: она бы их накрыла
+   * (на телефоне особенно) или висела бы поверх диалогов визарда.
+   */
+  const hidden = location.pathname.endsWith('/post') || modals > 0 || covers > 0;
+  const visible = Boolean(badge && funnel && !settled && !open && !hidden);
+  // Пока плашка видна, на телефоне у содержимого есть запас снизу (index.css): последние
+  // кнопки страницы прокручиваются выше неё, а не прячутся под ней.
+  useEffect(() => {
+    if (!visible) return undefined;
+    document.documentElement.setAttribute('data-funnel-badge', '');
+    return () => document.documentElement.removeAttribute('data-funnel-badge');
+  }, [visible]);
+  if (!visible || !badge) return null;
   return (
     <button
       type="button"
@@ -453,7 +543,7 @@ export function useQuizOnGeneration(job: GenerationJob | undefined) {
   const openQuiz = useFunnelUi((state) => state.openQuiz);
   useEffect(() => {
     const data = funnel.data;
-    if (!job || !data || data.hasPaid || data.survey.completed) return undefined;
+    if (!job || !data || data.hasPaid || data.survey.completed || quizSkippedRecently()) return undefined;
     if (job.status === 'COMPLETED' || job.status === 'FAILED' || funnelSeen(`quiz:${job.id}`)) return undefined;
     const timer = window.setTimeout(() => openQuiz(job.id), 2500);
     return () => window.clearTimeout(timer);
@@ -481,7 +571,9 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
   const ratingsQuery = useQuery({
     queryKey: ['funnel-ratings', job?.id],
     queryFn: () => api.funnelRatings(job?.id ?? ''),
-    enabled: Boolean(job?.id)
+    // без состояния воронки строку всё равно не рисуем (см. render) — и не спрашиваем
+    enabled: Boolean(job?.id && funnel.data),
+    retry: retryRatings
   });
   const [local, setLocal] = useState<Record<string, VideoRating>>({});
   const ratings = { ...(ratingsQuery.data?.ratings ?? {}), ...local };
@@ -528,9 +620,10 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
     if (watchedRunning.has(job.id) || (fresh && entry.current?.jobId === job.id)) offer();
   }, [job, finished, ratingsQuery.isFetched, offer]);
 
+  const saves = useSerialSaves();
   const save = (video: VideoVersion, score: number, reasons: RatingReason[]) => {
     setLocal((prev) => ({ ...prev, [video.id]: { score, reasons, comment: '' } }));
-    api.funnelRate({ videoId: video.id, jobId: job?.id ?? '', projectId: projectId ?? '', score, reasons })
+    saves.run(video.id, () => api.funnelRate({ videoId: video.id, jobId: job?.id ?? '', projectId: projectId ?? '', score, reasons }))
       .then(() => queryClient.invalidateQueries({ queryKey: ['funnel-ratings', job?.id] }))
       .catch(failed);
   };
@@ -539,7 +632,9 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
   const unavailable = apiErrorCode(funnel.error) === 'telegram_required';
 
   const render = (video: VideoVersion) => {
-    if (video.status !== 'COMPLETED' || unavailable) return null;
+    // Строка — только когда воронка доехала: иначе у аккаунта без Telegram она мелькала
+    // до ответа 409 и пропадала.
+    if (video.status !== 'COMPLETED' || unavailable || !funnel.data) return null;
     const current = ratings[video.id];
     return (
       <VideoRatingRow
@@ -552,6 +647,7 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
         }}
         onReasons={(next) => save(video, current?.score ?? 1, next)}
         onFix={projectId ? () => openTable(projectId, job?.id) : undefined}
+        pending={saves.pending(video.id)}
       />
     );
   };

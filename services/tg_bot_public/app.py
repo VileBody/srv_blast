@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -478,6 +479,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] tg_bot: %(message)s",
 )
 log = logging.getLogger("tg_bot")
+# Сколько раз гейт подписки пропустил человека из-за сбоя getChatMember (fail-open),
+# по месту проверки. Счётчик процесса: пишется в каждый error-лог сбоя.
+SUBSCRIPTION_CHECK_FAILURES: "collections.Counter[str]" = collections.Counter()
 
 
 # --- Footage bucket previews mirror (precision flow, phase 4) -----------------
@@ -4019,7 +4023,16 @@ class BlastBotApp:
         в метриках по событиям), с местом, где он случился."""
         result = await self._check_subscription(int(user_id))
         if result is None:
-            log.warning("subscription_check_failed_passed chat=%s user_id=%s where=%s", chat_id, user_id, where)
+            # TODO(product): fail-open — решение не принято (пускать ли при сбое
+            # getChatMember). До решения поведение прежнее, но сбой видно: error-лог
+            # со счётчиком процесса (алерт в Loki по `subscription_check_failed_passed`)
+            # + событие в activity_log.
+            SUBSCRIPTION_CHECK_FAILURES[where] += 1
+            log.error(
+                "subscription_check_failed_passed chat=%s user_id=%s where=%s count=%s total=%s",
+                chat_id, user_id, where, SUBSCRIPTION_CHECK_FAILURES[where],
+                sum(SUBSCRIPTION_CHECK_FAILURES.values()),
+            )
             await self.credits_db.log_event(int(chat_id), "subscription_check_failed", where)
             return True
         return bool(result)

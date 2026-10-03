@@ -306,6 +306,16 @@ export function ChipRow({ options, value, values, onPick, rightGap = 0, edgePad 
     return () => observer.disconnect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options.join(',')]);
+  // Выбор поменялся (в т.ч. стрелками над примером) — лента доезжает до выбранной пилюли,
+  // иначе выбранное оставалось за краем и казалось, что ничего не выбралось
+  useEffect(() => {
+    const el = scroll.ref.current;
+    const pill = el?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (!el || !pill) return;
+    const at = pill.getBoundingClientRect().left - el.getBoundingClientRect().left + el.scrollLeft;
+    el.scrollTo({ left: Math.max(0, at - (el.clientWidth - pill.offsetWidth) / 2), behavior: 'smooth' });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
   // Края тают только там, где за ними есть пилюли; справа фейд встаёт перед зоной кнопки (rightGap)
   return (
     <div

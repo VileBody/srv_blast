@@ -610,3 +610,42 @@ def test_recharge_and_idle_rows_query_only_what_they_need():
                    "f.action = 'tripwire_offer'"):
         assert member in idle, member
     assert "opened.first_open > NOW() - make_interval(days => $1)" in forks
+
+
+def test_release_web_handoff_returns_one_redemption_never_below_zero():
+    """Сайт погасил ссылку, но открыть её не смог — погашение возвращается (одноразовая
+    ссылка не сгорает на сбое, а напоминания не считают её «открытой»)."""
+    calls: list[tuple] = []
+
+    class _Conn:
+        async def execute(self, sql, *args):
+            calls.append((sql, args))
+            return "UPDATE 1"
+
+    db = CreditsDB.__new__(CreditsDB)
+    db._pool_or_fail = lambda: _RecordingPool(_Conn())
+    _run(db.release_web_handoff("tok-123"))
+    _run(db.release_web_handoff(""))  # пустой токен — ничего не трогаем
+    assert len(calls) == 1
+    sql, args = calls[0]
+    assert "GREATEST(redeem_count - 1, 0)" in sql and args == (CreditsDB.hash_handoff_token("tok-123"),)
+
+
+def test_fail_open_subscription_check_is_counted_and_logged_as_error(monkeypatch, caplog):
+    """Поведение fail-open не меняем (решение не принято), но сбой обязан быть виден:
+    error-лог со счётчиком по месту проверки, а не warning."""
+    import logging
+
+    app = _make_app(generation_subscription_required=True)
+
+    async def _broken(user_id):
+        return None
+
+    monkeypatch.setattr(app, "_check_subscription", _broken, raising=False)
+    monkeypatch.setattr(pub, "SUBSCRIPTION_CHECK_FAILURES", pub.collections.Counter())
+    with caplog.at_level(logging.ERROR, logger="tg_bot"):
+        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is True
+        assert _run(pub.BlastBotApp._subscription_gate_passes(app, 1, CHAT, where="launch")) is True
+    assert pub.SUBSCRIPTION_CHECK_FAILURES["launch"] == 2
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert any("subscription_check_failed_passed" in m and "count=2" in m for m in errors)

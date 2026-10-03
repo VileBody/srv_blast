@@ -1,11 +1,11 @@
-import { useEffect } from 'react';
+import { useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { currentAppPath } from '../../lib/appPath';
 import { useToast } from '../../contexts/ToastContext';
-import type { FunnelQuota, FunnelState } from '../../lib/types';
+import type { FunnelQuestion, FunnelQuota, FunnelState } from '../../lib/types';
 
 /** Название трека для людей — без расширения файла («Нет любви.mp3» → «Нет любви»). */
 export function trackTitleOf(filename?: string | null): string | undefined {
@@ -39,6 +39,40 @@ export function isUnlimitedTrack(unlimited: FunnelState['unlimited'], track?: Tr
 /** Состояние воронки: квиз, действия, безлимит на трек и его квота. Общий ключ для всех мест. */
 export function useFunnelState(enabled = true) {
   return useQuery({ queryKey: ['funnel-state'], queryFn: api.funnelState, staleTime: 15_000, retry: false, enabled });
+}
+
+/**
+ * Тексты квиза и мостиков приходят с бэка по-русски (общие с ботом, marketing_texts). На
+ * русском показываем их как есть — правит их бэк; на других языках — перевод по id
+ * вопроса, ответа и ветки (funnel.quizCopy). Id, которого фронт ещё не знает, остаётся
+ * бэковым текстом и пишет предупреждение в консоль — новый вопрос виден, а не пропадает.
+ */
+const warnedCopy = new Set<string>();
+
+export function useQuizCopy() {
+  const { t, i18n } = useTranslation();
+  const native = (i18n.resolvedLanguage ?? i18n.language ?? 'ru').startsWith('ru');
+  return useMemo(() => {
+    const pick = (key: string, server: string) => {
+      if (native) return server;
+      if (i18n.exists(key)) return t(key);
+      if (!warnedCopy.has(key)) {
+        warnedCopy.add(key);
+        console.warn(`funnel: no translation for ${key}, showing the server text`);
+      }
+      return server;
+    };
+    return {
+      question: (q: FunnelQuestion): FunnelQuestion => ({
+        ...q,
+        text: pick(`funnel.quizCopy.q.${q.id}`, q.text),
+        options: q.options.map((o) => ({ ...o, label: pick(`funnel.quizCopy.o.${q.id}.${o.id}`, o.label) }))
+      }),
+      // пустая ветка у бэка — мостик ветки time (WEB_BRIDGE_TEXT_DEFAULT), переводим так же
+      bridge: (branch: string | undefined, server: string | null): string | null =>
+        server === null ? null : pick(`funnel.quizCopy.bridge.${branch || 'time'}`, server)
+    };
+  }, [native, t, i18n]);
 }
 
 /** Сколько осталось в текущем окне трека — для шкалы: «доступно» из «за раз». */

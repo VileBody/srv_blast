@@ -16,7 +16,7 @@ import { useGuideDismiss, useMarkGuideSeen } from '../guidance/useGuideDismiss';
 import { useGuideLiveDismissed } from '../guidance/guideLiveState';
 import {
   ChipRow, FX_PREVIEWS_STALE_MS, HOOK_TYPES, HookStep, HookTypeHead,
-  hookSteps, previewIdFor, selectedStyles, styleLocksFullWindow
+  hookSteps, NO_GLUE, NO_STYLE, previewIdFor, selectedStyles, styleLocksFullWindow
 } from './hookCatalog';
 
 // Таймлайн сам берёт каталоги из HookPanel — статический импорт дал бы цикл модулей.
@@ -455,7 +455,9 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
   const config = v?.config ?? {};
   const style = selectedStyles(config)[0];
   const selected = step ? (step.key === 'effectStyle' ? style : (config[step.key] as string | undefined)) : undefined;
-  // Курсор просмотра: стрелки на видео листают примеры, ничего не выбирая. Выбор — в ленте.
+  // Курсор просмотра = выбор: стрелки на видео листают примеры, и тот, на котором человек
+  // остановился, сразу становится выбранным (раньше выбор был отдельным — приходилось искать
+  // этот же вариант в ленте и жать его). Лента сама доезжает до выбранного.
   const options = step?.options ?? [];
   const [cursor, setCursor] = useState(0);
   useEffect(() => {
@@ -465,7 +467,12 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
   }, [v?.id, tab]);
   const browsed = options[Math.min(cursor, Math.max(0, options.length - 1))];
   const previewId = step && browsed ? previewIdFor(step.key, browsed) : undefined;
-  const browse = (d: number) => { if (options.length) setCursor((c) => (c + d + options.length) % options.length); };
+  const browse = (d: number) => {
+    if (!options.length) return;
+    const next = (Math.min(cursor, options.length - 1) + d + options.length) % options.length;
+    setCursor(next);
+    pick(options[next]);
+  };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.target instanceof HTMLElement) || e.target.matches('input, textarea, select')) return;
@@ -520,6 +527,14 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
         {/* пример во всю высоту зоны; узкий экран — 9:16, как у превью фона */}
         <div className="w12-fx-stage">
           {v && <LabPreview previewId={previewId} />}
+          {/* «Без склейки» / «Без стилизации» — осознанный отказ, видео-примера у него нет:
+              без подписи пустой кадр выглядел как недогрузившийся */}
+          {v && (browsed === NO_GLUE || browsed === NO_STYLE) && (
+            <div className="w12-fx-none" role="status">
+              <b className="w12-l">{chip(browsed)}</b>
+              <span>{t(browsed === NO_GLUE ? 'wizard.fxv.noneGlueHint' : 'wizard.fxv.noneStyleHint')}</span>
+            </div>
+          )}
           {!v && <div className="w12-empty">{t('wizard.fx.empty')}</div>}
           {v && (
             <>

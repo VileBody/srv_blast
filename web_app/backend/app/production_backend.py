@@ -48,6 +48,19 @@ def _required(name: str) -> str:
     return value
 
 
+def _require_handoff_bot_token() -> None:
+    """Вход по ссылке из бота в проде включён всегда, и пришедшим так «Ролик готов»
+    пишет только публичный бот (у них notifyBot=public). Без его токена уведомления
+    молча копились в outbox — теперь это ошибка в логе на старте (видна в Loki).
+    Процесс не роняем: без уведомлений сайт работает, а упавший деплой из-за одной
+    переменной оставил бы без сайта всех."""
+    if not str(os.getenv("WEB_PUBLIC_BOT_TOKEN") or "").strip():
+        logging.getLogger(__name__).error(
+            "production_backend: WEB_PUBLIC_BOT_TOKEN is empty — bot handoff users get NO "
+            "notifications (they are routed via the public bot); set it in the web .env"
+        )
+
+
 def _json_mapping(name: str) -> dict[str, str]:
     raw = _required(name)
     try:
@@ -226,6 +239,7 @@ class ProductionConfig:
             raise ProductionBackendError(
                 "production_backend: BLAST_BACKEND_MODE is not production"
             )
+        _require_handoff_bot_token()
         stage1_backend = _required("WEB_STAGE1_ALIGNMENT_BACKEND")
         if stage1_backend not in {"gemini", "local_ctc"}:
             raise ProductionBackendError(

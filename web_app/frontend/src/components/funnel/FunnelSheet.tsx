@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../lib/cn';
-import { useModalCount } from '../ui/Modal';
+import { FOCUSABLE, useModalCount } from '../ui/Modal';
 import { Button, GLYPH, Icon } from '../ui/kit';
 
 /*
@@ -92,7 +92,14 @@ export function FunnelSheet({
   );
 }
 
-/** Та же карточка поверх страницы: подложка, Esc, фокус, счётчик модалок (как kit/Dialog). */
+/**
+ * Та же карточка поверх страницы: подложка, Esc, фокус, счётчик модалок (как kit/Dialog).
+ *
+ * Клавиатура слушается в фазе захвата и дальше окна не уходит: безлимит открывается и
+ * поверх монтажного стола (генерация со стола → credits_exhausted), а у стола свои
+ * горячие клавиши на window — Esc закрывал бы оба окна, Ctrl+Z и [ ] правили бы стол
+ * под подложкой. Tab зациклен внутри окна.
+ */
 export function FunnelDialog({
   open,
   onClose,
@@ -105,21 +112,55 @@ export function FunnelDialog({
   children: ReactNode;
 }) {
   const panel = useRef<HTMLDivElement>(null);
-  const returnTo = useRef<Element | null>(null);
+  // свежий onClose без переподписки: иначе каждый новый колбэк снова уводил бы фокус в окно
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
 
   useEffect(() => {
     if (!open) return undefined;
     useModalCount.getState().inc();
-    returnTo.current = document.activeElement;
+    const returnTo = document.activeElement;
     panel.current?.focus({ preventScroll: true });
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
+    const onKey = (event: KeyboardEvent) => {
+      const root = panel.current;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeRef.current();
+        return;
+      }
+      if (event.key === 'Tab' && root) {
+        event.stopPropagation();
+        const items = Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
+        const active = document.activeElement;
+        if (!items.length) {
+          event.preventDefault();
+          root.focus();
+          return;
+        }
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (event.shiftKey && (active === first || active === root || !root.contains(active))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (active === last || !root.contains(active))) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
+      // Клавиши мимо окна (фокус остался на странице) странице не достаются. Клавиши внутри
+      // окна идут дальше — кнопкам окна нужны свои обработчики; стол их отсекает сам по
+      // счётчику модалок.
+      if (!root || !root.contains(event.target as Node)) event.stopPropagation();
+    };
+    window.addEventListener('keydown', onKey, true);
     return () => {
       useModalCount.getState().dec();
-      window.removeEventListener('keydown', onKey);
-      if (returnTo.current instanceof HTMLElement) returnTo.current.focus({ preventScroll: true });
+      window.removeEventListener('keydown', onKey, true);
+      if (returnTo instanceof HTMLElement) returnTo.focus({ preventScroll: true });
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   return createPortal(

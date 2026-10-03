@@ -390,7 +390,7 @@ export function PoolStoryboard({ slots, current, chips, edited }: { slots: Story
               ? <img key={`${c.fileName}:${i}`} className={`shot${visible ? ' on' : ''}`} src={c.previewUrl} alt="" draggable={false} style={style} />
               // качаем только соседей текущего кадра (предыдущий — для перехода, следующий — к склейке):
               // раньше все кадры ролика грузились разом, на слабой сети это забивало канал
-              : <video key={`${c.fileName}:${i}`} ref={(el) => { videoRefs.current[i] = el; }} className={`shot${visible ? ' on' : ''}`} src={Math.abs(i - s) <= 1 || (s === video.clips.length - 1 && i === 0) ? c.previewUrl : undefined} muted playsInline preload="auto" style={style} />;
+              : <video key={`${c.fileName}:${i}`} ref={(el) => { videoRefs.current[i] = el; }} className={`shot${visible ? ' on' : ''}`} src={Math.abs(i - s) <= 1 || (s === video.clips.length - 1 && i === 0) ? c.previewUrl : undefined} poster={posterOf(c.previewUrl, c.previewOffset + 0.1) ?? undefined} muted playsInline preload="auto" style={style} />;
           })}
           {placeholder && (
             <div className="psb-ph" role={retry ? 'alert' : undefined}>
