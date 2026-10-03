@@ -306,8 +306,6 @@ export function AppShell() {
         <ProfileSetupGate open={meQuery.isSuccess && meQuery.data.user.profileComplete === false} />
         {/* модалки воронки после генерации: квиз и безлимит на трек */}
         {meQuery.isSuccess && <FunnelHost />}
-        {/* модалку безлимита закрыли, не пройдя: плашка в углу открывает её снова */}
-        {meQuery.isSuccess && <FunnelBadge />}
         {/* «Заменить текущую настройку?» перед подменой черновика визарда */}
         <DraftReplaceDialog />
         <main className="with-sidebar min-w-0 flex-1">
@@ -336,6 +334,8 @@ export function AppShell() {
               // страницу: перемонтирование заново слало все её запросы и сбрасывало состояние
               <ErrorBoundary>
                 <Outlet />
+                {/* телефон: вход в безлимит — последней карточкой в ленте страницы (десктоп — в сайдбаре) */}
+                <FunnelBadge />
               </ErrorBoundary>
             )}
           </div>

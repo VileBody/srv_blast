@@ -517,15 +517,11 @@ export function FunnelHost() {
 }
 
 /**
- * Карточка воронки внизу экрана (docs/BOT_TO_WEB_FLOW.md, раздел 4). Два повода:
+ * Вход в безлимит (docs/BOT_TO_WEB_FLOW.md, раздел 4). Два повода:
  * - `unlimited` — модалку безлимита закрыли, не пройдя: вход в неё остаётся под рукой;
  * - `tripwire` — безлимит открыт, но собрать не из чего (квота ждёт, генераций нет), а окно
  *   предложения трипваера открыто: таймер до бесплатного батча и вход в покупку.
- * Только бесплатным. Крестик сворачивает карточку в круглую кнопку (помним по поводу),
- * а не убирает вход совсем.
- *
- * Геометрия — поля страницы: на десктопе в правом нижнем углу с отступом .app-content,
- * на телефоне во всю ширину с её полями и над полосой жестов (index.css, .funnel-dock).
+ * Только бесплатным: платящему и тому, у кого есть из чего собирать, входа нет.
  */
 type DockKind = 'unlimited' | 'tripwire';
 
@@ -581,7 +577,6 @@ function useFunnelDock() {
     kind,
     title: kind === 'tripwire' ? t('funnel.dock.tripwireTitle', { price: funnel?.rules.tripwirePriceRub }) : t('funnel.dock.unlimitedTitle'),
     text: kind === 'tripwire' ? t('funnel.dock.tripwireText', { time: timer.text }) : t('funnel.dock.unlimitedText'),
-    pill: kind === 'tripwire' ? t('funnel.dock.tripwirePill', { price: funnel?.rules.tripwirePriceRub }) : t('funnel.dock.unlimitedPill'),
     glyph: kind === 'tripwire' ? FN_GLYPH.bolt : FN_GLYPH.key,
     openDock
   };
@@ -605,9 +600,8 @@ function DockHint({ className }: { className?: string }) {
 }
 
 /**
- * Вход в безлимит на телефоне (docs/BOT_TO_WEB_FLOW.md, раздел 4): полоса, прикреплённая к низу
- * экрана, всегда на виду. Содержимое страницы получает запас снизу (index.css), поэтому футер
- * визарда с «Продолжить» встаёт над ней. Два повода:
+ * Вход в безлимит на телефоне (docs/BOT_TO_WEB_FLOW.md, раздел 4): последняя карточка в ленте
+ * страницы — те же поля и форма, что у остальных контейнеров, под футером с главной кнопкой. Два повода:
  * - `unlimited` — модалку безлимита закрыли, не пройдя: вход в неё остаётся под рукой;
  * - `tripwire` — безлимит открыт, но собрать не из чего, а окно предложения трипваера открыто.
  * На десктопе вход живёт в сайдбаре (FunnelRailEntry).
@@ -615,15 +609,9 @@ function DockHint({ className }: { className?: string }) {
 export function FunnelBadge() {
   const dock = useFunnelDock();
   const hideHint = useFunnelUi((state) => state.hideDockHint);
-  const visible = Boolean(dock);
-  useEffect(() => {
-    if (!visible) return undefined;
-    document.documentElement.setAttribute('data-funnel-badge', 'card');
-    return () => document.documentElement.removeAttribute('data-funnel-badge');
-  }, [visible]);
   if (!dock) return null;
   return (
-    <div className="funnel-dock md:hidden" role="region" aria-label={dock.title}>
+    <section className="card-2 shrink-0 p-[20px] md:hidden" aria-label={dock.title}>
       <DockHint />
       <button
         type="button"
@@ -641,13 +629,18 @@ export function FunnelBadge() {
           <Icon>{GLYPH.right}</Icon>
         </span>
       </button>
-    </div>
+    </section>
   );
 }
 
-/** Вход в безлимит в сайдбаре десктопа: ключ (молния — трипваер) с фиолетовым пилом под ним. */
+/**
+ * Вход в безлимит в сайдбаре десктопа: такая же ячейка 52×52, как пункты навигации, только
+ * иконка фиолетовая — чтобы выделялась без подписи. Пояснение — всплывашкой при наведении
+ * и фокусе; разовая подсказка после закрытого питча (DockHint) встаёт на её место.
+ */
 export function FunnelRailEntry() {
   const dock = useFunnelDock();
+  const hint = useFunnelUi((state) => state.dockHint);
   const hideHint = useFunnelUi((state) => state.hideDockHint);
   if (!dock) return null;
   return (
@@ -656,15 +649,18 @@ export function FunnelRailEntry() {
         type="button"
         onClick={() => { hideHint(); dock.openDock(); }}
         aria-label={`${dock.title}. ${dock.text}`}
-        title={dock.text}
-        className="funnel-rail-btn group"
+        className="funnel-rail-btn"
       >
-        <span className="grid h-ctl w-ctl place-items-center rounded-r10 bg-accent-soft text-ui-20 text-accent-light transition-colors duration-150 group-hover:bg-accent-20">
-          <Icon>{dock.glyph}</Icon>
-        </span>
-        <span className="funnel-rail-pill">{dock.pill}</span>
+        <Icon style={{ width: 30, height: 30 }}>{dock.glyph}</Icon>
       </button>
-      <DockHint className="funnel-dock-hint--rail" />
+      {hint ? (
+        <DockHint className="funnel-rail-pop" />
+      ) : (
+        <span className="funnel-rail-pop funnel-rail-tip" aria-hidden="true">
+          <span className="block text-ui-14 text-text">{dock.title}</span>
+          <span className="block text-ui-12 text-text-60">{dock.text}</span>
+        </span>
+      )}
     </div>
   );
 }
