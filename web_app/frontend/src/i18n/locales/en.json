@@ -468,7 +468,12 @@
       "lockedCut": "Select a fragment on the waveform. Then type the lines sung in it here.",
       "undoText": "The fragment moved, so the lyrics were cleared.",
       "undo": "Undo",
-      "hintFull": "Write it the way it is sung, one line at a time."
+      "hintFull": "Write it the way it is sung, one line at a time.",
+      "asrRetry": "Retry recognition",
+      "asrRetryTip": "Retry recognition: lay the words out on the track again",
+      "asrRetryBusy": "Recognition is already running",
+      "asrResetTip": "Reset edits: restore timings and focus from recognition",
+      "asrStartFailed": "Could not start recognition"
     },
     "bg": {
       "heading": "Choose background",
@@ -601,7 +606,8 @@
       "dropListenHint": "3 s before the drop, 2 after",
       "dropListenClipHint": "the whole clip",
       "dropIn": "drop in {{seconds}} s",
-      "dropNow": "drop"
+      "dropNow": "drop",
+      "dropBadFormat": "The drop timing is incomplete — enter minutes and seconds: 00:42 or 00:42:50."
     },
     "subs": {
       "title": "Subtitles",
@@ -733,7 +739,11 @@
       "guideFooterTitle": "All variants in the batch",
       "guideFooterText": "Switch between variants here. “+” copies the current one — change its style or transition.",
       "visBrowse": "browse examples",
-      "visPick": "pick in the strip below"
+      "visPick": "pick in the strip below",
+      "copyVariant": "Copy the current variant",
+      "removedVariant": "Removed: {{label}}",
+      "undoRemove": "Undo",
+      "guideDone": "Done"
     },
     "pool": {
       "total": "Total videos:",
@@ -852,7 +862,10 @@
       "queueDone": "done",
       "queueError": "failed",
       "summary": "Videos going to the Pool: {{count}}",
-      "chooseSource": "Source:"
+      "chooseSource": "Source:",
+      "seconds": "{{value}} s",
+      "deleteConfirm": "Delete from server",
+      "deleteCancel": "Keep"
     },
     "preview": {
       "unavailable": "Video example unavailable",
@@ -870,7 +883,12 @@
       "processing": "Processing…",
       "tooLarge": "File exceeds 200 MB",
       "audioOnly": "Choose an audio file for the Audio option",
-      "videoOnly": "Choose a video file for the Video option"
+      "videoOnly": "Choose a video file for the Video option",
+      "deleteVideo": "Delete video",
+      "videoUploadFailed": "Could not upload the video",
+      "backConfirm": "The uploaded file will be removed",
+      "backConfirmYes": "Remove and go back",
+      "cancel": "Cancel"
     },
     "missing": {
       "track": "Upload a track.",

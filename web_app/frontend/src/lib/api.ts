@@ -352,7 +352,7 @@ export const api = {
     request<{ queued: number }>('/api/wizard/media/prewarm', { method: 'POST', body: JSON.stringify(payload) }),
   storyboardAlternatives: (payload: { clipFrom: string; clipTo: string; cuts: number[]; group: string; shot: number; seedKey: string; exclude: string[]; limit?: number }) =>
     request<{ candidates: StoryboardCandidate[]; mock?: boolean }>('/api/wizard/storyboard/alternatives', { method: 'POST', body: JSON.stringify(payload) }),
-  asrStart: (payload: { clipFrom: string; clipTo: string; fragment: string; lyrics: string; trackId: string }) =>
+  asrStart: (payload: { clipFrom: string; clipTo: string; fragment: string; lyrics: string; trackId: string; force?: boolean }) =>
     request<{ asr: AsrPreviewResponse; mock?: boolean }>('/api/wizard/asr/start', { method: 'POST', body: JSON.stringify(payload) }),
   asrState: (key: string) =>
     request<{ asr: AsrPreviewResponse; mock?: boolean }>(`/api/wizard/asr?key=${encodeURIComponent(key)}`),

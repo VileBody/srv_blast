@@ -415,6 +415,8 @@ class AsrStartPayload(BaseModel):
     # Трек визарда, а не «последний загруженный»: человек мог залить новый файл и
     # вернуться к предыдущему — примерка обязана считаться по тому, что уйдёт в рендер.
     trackId: str = ""
+    # «Повторить распознавание»: готовую примерку с тем же ключом посчитать заново
+    force: bool = False
 
 
 class RatePayload(BaseModel):
@@ -2097,7 +2099,8 @@ async def api_asr_start(payload: AsrStartPayload) -> dict[str, Any]:
     track, start, end, text = inputs
     key = asr_preview.preview_key(str(track["s3Key"]), start, end, text)
     state = _asr_state_for(key)
-    if state["status"] not in {"IDLE", "FAILED"}:
+    redo = payload.force and state["status"] == "COMPLETED"  # идущую не перезапускаем
+    if state["status"] not in {"IDLE", "FAILED"} and not redo:
         try:
             state = await run_in_threadpool(_asr_sync, state)
         except Exception as exc:

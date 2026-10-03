@@ -37,17 +37,39 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
   const [error, setError] = useState('');
   const [link, setLink] = useState<{ url: string; qrSvg: string; expiresAt: number }>();
   const [drag, setDrag] = useState<{ planId: string; sourceId: string }>();
+  /** «Удалить» у неиспользованного файла стирает его с сервера — второй клик подтверждает */
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLHeadingElement>(null);
   const titleId = useId();
-  const sources = useQuery({ queryKey: ['sources', projectId], queryFn: () => api.sources(projectId!), enabled: open && Boolean(projectId), refetchInterval: open ? 3000 : false });
+  /*
+   * Опрос — только пока что-то может прийти: идёт загрузка с компьютера или открыт QR для
+   * телефона (файлы оттуда появляются сами). Раньше список дёргался каждые 3 с всегда, а
+   * каждый ответ — новые presigned-ссылки, и превью видео перезагружались.
+   */
+  const awaitingFiles = busy || (tab === 'qr' && Boolean(link));
+  const sources = useQuery({ queryKey: ['sources', projectId], queryFn: () => api.sources(projectId!), enabled: open && Boolean(projectId), refetchInterval: open && awaitingFiles ? 3000 : false });
   const list = sources.data?.sources ?? [];
+  // Превью держит первую ссылку на файл, пока окно открыто: новая presigned-ссылка на тот же
+  // файл при опросе иначе заново грузила бы <video>.
+  const thumbUrls = useRef(new Map<string, string>());
+  const thumbUrl = (source: UserSource) => {
+    if (!source.localUrl) return undefined;
+    if (!thumbUrls.current.has(source.id)) thumbUrls.current.set(source.id, source.localUrl);
+    return thumbUrls.current.get(source.id);
+  };
+  const seconds = (value: number) => t('wizard.sources.seconds', { value: value.toFixed(1) });
+  // onClose родитель передаёт инлайном: в зависимостях эффекта фокуса он перезапускал его на
+  // каждый рендер родителя (после каждой загрузки фокус прыгал на заголовок)
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const plans = bg.sourceVideos;
   const active = plans.find(plan => plan.id === activeId) ?? plans[0];
 
   useEffect(() => {
     if (!open) return;
-    setTab('pc'); setError(''); setLink(undefined); setQueue([]); setActiveId(bg.sourceVideos[0]?.id);
+    setTab('pc'); setError(''); setLink(undefined); setQueue([]); setActiveId(bg.sourceVideos[0]?.id); setConfirmDelete(null);
+    thumbUrls.current.clear();
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const report = (e: unknown) => {
@@ -132,14 +154,14 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
     useModalCount.getState().inc();
     const returnTo = document.activeElement;
     titleRef.current?.focus({ preventScroll: true });
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onCloseRef.current(); };
     window.addEventListener('keydown', onKey);
     return () => {
       useModalCount.getState().dec();
       window.removeEventListener('keydown', onKey);
       if (returnTo instanceof HTMLElement) returnTo.focus({ preventScroll: true });
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
   const vert = { transform: 'rotate(90deg)' };
@@ -237,9 +259,20 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
                   <span className="w12-m-hint" style={{ margin: 0 }}>{t('wizard.sources.unused')}</span>
                   {unused.map((source) => (
                     <div key={source.id} className="w12-clip">
-                      {source.localUrl ? <video src={source.localUrl} muted playsInline preload="metadata" className="w12-th" /> : <span className="w12-th" />}
-                      <button type="button" className="w12-nm" style={{ textAlign: 'left' }} onClick={() => append(source)}>+ {source.name} <span className="w12-num">· {source.format} · {source.duration.toFixed(1)} с</span></button>
-                      {mini(t('wizard.sources.delete'), <Svg>{W12.close}</Svg>, async () => { try { await api.deleteSource(source.id); await sources.refetch(); } catch (e) { report(e); } })}
+                      {source.localUrl ? <video src={thumbUrl(source)} muted playsInline preload="metadata" className="w12-th" /> : <span className="w12-th" />}
+                      <button type="button" className="w12-nm" style={{ textAlign: 'left' }} onClick={() => append(source)}>+ {source.name} <span className="w12-num">· {source.format} · {seconds(source.duration)}</span></button>
+                      {confirmDelete === source.id ? (
+                        <>
+                          <button
+                            type="button"
+                            className="w12-split w12-split-warn"
+                            onClick={async () => { setConfirmDelete(null); try { await api.deleteSource(source.id); await sources.refetch(); } catch (e) { report(e); } }}
+                          >
+                            <span className="w12-l">{t('wizard.sources.deleteConfirm')}</span>
+                          </button>
+                          <button type="button" className="w12-split" onClick={() => setConfirmDelete(null)}><span className="w12-l">{t('wizard.sources.deleteCancel')}</span></button>
+                        </>
+                      ) : mini(t('wizard.sources.delete'), <Svg>{W12.close}</Svg>, () => setConfirmDelete(source.id))}
                     </div>
                   ))}
                 </div>
@@ -254,15 +287,20 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
                 {plans.map((plan, planIndex) => {
                   const total = totalDuration(plan);
                   const short = requiredDuration > total;
+                  const select = () => { setActiveId(plan.id); setFormat(plan.format); };
                   return (
                     <div
                       key={plan.id}
                       className="w12-plan"
                       style={active?.id === plan.id ? { borderColor: 'var(--w12-accent-line)' } : undefined}
-                      onClick={() => { setActiveId(plan.id); setFormat(plan.format); }}
+                      // клик по карточке — для мыши; с клавиатуры ролик выбирает кнопка-заголовок
+                      // (role=button на всю карточку нельзя: внутри свои кнопки)
+                      onClick={select}
                     >
                       <div className="w12-plan-head">
-                        <span>{t('wizard.sources.videoTitle', { n: planIndex + 1 })} · {plan.format}</span>
+                        <button type="button" className="w12-plan-pick" aria-pressed={active?.id === plan.id} onClick={(event) => { event.stopPropagation(); select(); }}>
+                          {t('wizard.sources.videoTitle', { n: planIndex + 1 })} · {plan.format}
+                        </button>
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                           <span className={cn('w12-tot w12-num', short && 'w12-short')}>
                             {short ? t('wizard.sources.tooShort', { selected: total.toFixed(1), required: requiredDuration.toFixed(1) }) : t('wizard.sources.total', { seconds: total.toFixed(1) })}
@@ -287,8 +325,8 @@ export function SourcesModal({ open, onClose }: { open: boolean; onClose: () => 
                               const ids = plan.sourceIds.filter((id) => id !== drag.sourceId); ids.splice(index, 0, drag.sourceId); updatePlan(plan.id, ids); setDrag(undefined);
                             }}
                           >
-                            {source.localUrl ? <video src={source.localUrl} muted playsInline preload="metadata" className="w12-th" /> : <span className="w12-th" />}
-                            <span className="w12-nm">{source.name} <span className="w12-num">· {source.duration.toFixed(1)} с</span></span>
+                            {source.localUrl ? <video src={thumbUrl(source)} muted playsInline preload="metadata" className="w12-th" /> : <span className="w12-th" />}
+                            <span className="w12-nm">{source.name} <span className="w12-num">· {seconds(source.duration)}</span></span>
                             {mini(t('wizard.sources.up'), <Svg style={vert}>{W12.left}</Svg>, () => swap(index - 1), index === 0)}
                             {mini(t('wizard.sources.down'), <Svg style={vert}>{W12.right}</Svg>, () => swap(index + 1), index === plan.sourceIds.length - 1)}
                             {plan.sourceIds.length > 1 && <button type="button" className="w12-split" onClick={(event) => { event.stopPropagation(); split(plan, sourceId); }}><span className="w12-l">{t('wizard.sources.split')}</span></button>}

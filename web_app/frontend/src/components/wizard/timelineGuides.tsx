@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { create } from 'zustand';
 import { cn } from '../../lib/cn';
 
@@ -38,6 +39,7 @@ export function StoryboardGuideVisual() {
 
 /** Пул 4/4: у кадра на экране перебираются варианты, «Готово» закрепляет. */
 export function StoryboardReplaceGuideVisual() {
+  const { t } = useTranslation();
   return (
     <div className="flex w-full flex-col gap-[7px]" aria-hidden="true">
       <span className="guide-mode-reveal guide-mode-delay-1 flex items-center justify-between gap-[8px]">
@@ -51,7 +53,7 @@ export function StoryboardReplaceGuideVisual() {
         </span>
         <span className="flex h-[22px] items-center gap-[5px] rounded-[7px] bg-[#5f42b9] px-[8px] text-[11px] leading-none text-white">
           <svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 11V8a4 4 0 0 1 8 0v3M6 11h12v9H6z" /></svg>
-          <span>Готово</span>
+          <span>{t('wizard.fxv.guideDone')}</span>
         </span>
       </span>
       <span className="flex h-[26px] gap-[3px]">

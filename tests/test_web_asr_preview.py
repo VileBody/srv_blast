@@ -251,3 +251,23 @@ def test_asr_endpoints_mock_flow(client) -> None:
     # без текста fragment → берётся lyrics (то же правило, что у рендера)
     r = tc.post("/api/wizard/asr/start", json={"clipFrom": "00:10", "clipTo": "00:20", "fragment": "", "lyrics": "весь текст"})
     assert [w["text"] for w in r.json()["asr"]["words"]] == ["весь", "текст"]
+
+
+def test_asr_force_recomputes_completed_preview(client, monkeypatch) -> None:
+    """«Повторить распознавание»: без force готовая примерка отдаётся как есть, с force — считается заново."""
+    tc, main = client
+    main.store.save_track("song.mp3", audio_hash="h")
+    calls = {"n": 0}
+    real = main.asr_preview.mock_words
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(main.asr_preview, "mock_words", counting)
+    body = {"clipFrom": "00:10", "clipTo": "00:20", "fragment": "раз два", "lyrics": ""}
+    assert tc.post("/api/wizard/asr/start", json=body).json()["asr"]["status"] == "COMPLETED"
+    tc.post("/api/wizard/asr/start", json=body)
+    assert calls["n"] == 1  # идемпотентно по ключу
+    r = tc.post("/api/wizard/asr/start", json={**body, "force": True})
+    assert r.json()["asr"]["status"] == "COMPLETED" and calls["n"] == 2
