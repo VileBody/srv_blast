@@ -361,3 +361,26 @@ def test_draft_payload_accepts_null_privacy(monkeypatch: pytest.MonkeyPatch) -> 
     main = importlib.import_module("app.main")
     payload = main.TiktokPostPayload(projectId="p", videoId="v", mode="draft", privacy=None)
     assert payload.privacy is None and payload.mode == "draft"
+
+
+def test_oauth_returns_to_safe_app_path_and_rejects_foreign(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Подключение с экрана выкладки возвращает туда же (с проектом/батчем/роликом), а любой
+    # путь вне /app — в дефолтный профиль: открытого редиректа через OAuth быть не должно.
+    import importlib
+    import sys
+
+    from tests.test_web_asr_preview import _env
+
+    _env(monkeypatch)
+    for name in list(sys.modules):
+        if name == "app" or name.startswith("app."):
+            sys.modules.pop(name, None)
+    main = importlib.import_module("app.main")
+    base = main._app_url()
+
+    ok = main._tiktok_outcome_redirect("connected", "/app/projects/p1/post?batch=j1&video=2")
+    assert ok.headers["location"] == f"{base}/app/projects/p1/post?batch=j1&video=2&tiktok=connected"
+
+    for bad in (None, "", "https://evil.example/app", "//evil.example/app", "/app/../admin", "/login"):
+        resp = main._tiktok_outcome_redirect("denied", bad)
+        assert resp.headers["location"] == f"{base}/app/profile?tiktok=denied"

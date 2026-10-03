@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { usePhone } from '../lib/usePhone';
 import { useLowData } from '../lib/network';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
@@ -110,8 +110,10 @@ function AuthField({ label, value, onChange, error }: { label: string; value: st
 /** TTL одноразового токена на бэке (auth_store.TOKEN_TTL_SEC) — модалка не должна сдаваться раньше. */
 const TOKEN_TTL_MS = 10 * 60 * 1000;
 
-function TgVerifyModal({ verify, onDone, onClose, onRetry, retrying }: {
+function TgVerifyModal({ verify, registerPath, onDone, onClose, onRetry, retrying }: {
   verify: VerifyResult | null;
+  /** куда вести «Зарегистрироваться» — с тем же ?next, что и у входа */
+  registerPath: string;
   onDone: () => void;
   onClose: () => void;
   onRetry: () => void;
@@ -173,6 +175,9 @@ function TgVerifyModal({ verify, onDone, onClose, onRetry, retrying }: {
       } else {
         push({ variant: 'info', title: t('auth.tgNotYet') });
       }
+    } catch (error) {
+      // сеть/5xx: без catch промис падал в unhandled rejection, а кнопка молча «ничего не делала»
+      push({ variant: 'error', title: t('auth.tgCheckFail'), text: error instanceof Error ? error.message : undefined });
     } finally {
       setChecking(false);
     }
@@ -200,7 +205,7 @@ function TgVerifyModal({ verify, onDone, onClose, onRetry, retrying }: {
             Аккаунта нет — та же кнопка уводит на регистрацию. */}
         <button
           type="button"
-          onClick={noAccount ? () => navigate('/register') : expired ? onRetry : opened ? checkNow : openBot}
+          onClick={noAccount ? () => navigate(registerPath) : expired ? onRetry : opened ? checkNow : openBot}
           disabled={checking || retrying}
           className="flex h-[60px] w-full items-center justify-center rounded-r15 bg-grad-main text-[18px] font-[400] leading-none text-text transition hover:brightness-110 disabled:opacity-60"
         >
@@ -287,6 +292,20 @@ export function AuthPage({ mode }: { mode: Mode }) {
    */
   // Куда вернуть после входа (/login?next=/app/…): туда вела ссылка, когда сессии не было
   const nextPath = safeAppPath(params.get('next'));
+  const nextQuery = nextPath ? `?next=${encodeURIComponent(nextPath)}` : '';
+
+  // Уже вошедшему /login и /register не нужны — сразу туда, куда он шёл. 401 здесь — нормальный
+  // ответ (api не редиректит со страниц входа), поэтому без ретраев.
+  const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me, retry: false, staleTime: 15_000 });
+
+  /*
+   * /login и /register — один и тот же экземпляр компонента: без сброса модалка «аккаунта нет»
+   * оставалась открытой поверх формы регистрации, куда сама же и увела.
+   */
+  useEffect(() => {
+    setVerify(null);
+    setSubmitted(false);
+  }, [mode]);
   const authResult = params.get('auth');
   const shownAuthResult = useRef<string | null>(null);
   useEffect(() => {
@@ -328,10 +347,14 @@ export function AuthPage({ mode }: { mode: Mode }) {
 
   const onVerified = async () => {
     await queryClient.invalidateQueries({ queryKey: ['me'] });
-    navigate(nextPath ?? '/app');
+    // replace: свежий /api/me и так уводит со страницы входа (<Navigate replace>), а «Назад»
+    // не должен возвращать на /login уже вошедшего
+    navigate(nextPath ?? '/app', { replace: true });
   };
 
   const busy = tgStartMutation.isPending;
+
+  if (meQuery.data) return <Navigate to={nextPath ?? '/app'} replace />;
 
   return (
     <main className="auth-scene">
@@ -392,7 +415,7 @@ export function AuthPage({ mode }: { mode: Mode }) {
           </p>
           <p className="auth-small">
             {mode === 'register' ? t('auth.haveAccount') : t('auth.noAccount')}{' '}
-            <Link className="auth-link" to={`${mode === 'register' ? '/login' : '/register'}${nextPath ? `?next=${encodeURIComponent(nextPath)}` : ''}`}>
+            <Link className="auth-link" to={`${mode === 'register' ? '/login' : '/register'}${nextQuery}`}>
               {mode === 'register' ? t('auth.loginCta') : t('auth.registerCta')}
             </Link>
           </p>
@@ -400,6 +423,7 @@ export function AuthPage({ mode }: { mode: Mode }) {
       </section>
       <TgVerifyModal
         verify={verify}
+        registerPath={`/register${nextQuery}`}
         onDone={onVerified}
         onClose={() => setVerify(null)}
         // перезапрос ссылки идёт тем же путём, каким модалка была открыта

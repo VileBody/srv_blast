@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { type MouseEvent, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { LanguageSwitcher } from '../components/layout/LanguageSwitcher';
 import {
   LEGAL_DOCS,
@@ -23,6 +24,23 @@ export function LegalPage({ kind }: { kind: LegalKind }) {
   const doc = LEGAL_DOCS[lang][kind];
   const other: LegalKind = kind === 'policy' ? 'offer' : 'policy';
   const missing = missingRequisites();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+
+  /*
+   * Куда «Назад» и логотип. Документ открывают и без входа (ссылки с экрана входа, модерация
+   * Google/TikTok): `/app` отбрасывал такого читателя на /login. /api/me тут не зовём —
+   * его 401 сам увёл бы на вход; хватает кэша: он есть, только если человек пришёл из
+   * приложения. Без кэша — /login, а уже вошедшего AuthPage сам переправит в /app.
+   */
+  const home = queryClient.getQueryData(['me']) ? '/app' : '/login';
+  const goBack = (event: MouseEvent<HTMLAnchorElement>) => {
+    // idx в history.state кладёт react-router: > 0 — есть куда вернуться внутри сайта
+    if (((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0) {
+      event.preventDefault();
+      navigate(-1);
+    }
+  };
 
   useEffect(() => {
     // Модерация Google/TikTok смотрит на заголовок вкладки — он должен называть документ
@@ -40,7 +58,7 @@ export function LegalPage({ kind }: { kind: LegalKind }) {
     <main className="min-h-dvh bg-bg px-[24px] py-[40px]">
       <div className="mx-auto w-full" style={{ maxWidth: 880 }}>
         <header className="flex flex-wrap items-center justify-between gap-[16px]">
-          <Link to="/app" className="flex items-center gap-[12px]">
+          <Link to={home} className="flex items-center gap-[12px]">
             <img src="/assets/figma/logo-star.svg" width="40" height="40" alt="Blast" />
             <span className="text-[20px] font-[400] leading-none text-text-80">Blast</span>
           </Link>
@@ -48,7 +66,8 @@ export function LegalPage({ kind }: { kind: LegalKind }) {
             <LanguageSwitcher />
             <Link
               className="flex h-[44px] items-center rounded-r12 border border-accent-light bg-grad-soft-20 px-[20px] text-[16px] leading-none text-text-80 transition hover:text-text"
-              to="/app"
+              to={home}
+              onClick={goBack}
             >
               {t('legal.back')}
             </Link>

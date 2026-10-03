@@ -14,11 +14,19 @@ export function MobileUploadPage() {
   const [busy, setBusy] = useState(false);
   const [rows, setRows] = useState<UploadRow[]>([]);
 
+  /*
+   * Ответ читаем текстом и разбираем сами: прокси на 502/504 отдаёт HTML, и response.json()
+   * показывал человеку сырую ошибку парсера («Unexpected token <») вместо понятной фразы.
+   */
   const requestInfo = async (): Promise<UploadInfo> => {
-    const response = await fetch('/api/mobile-upload', { credentials: 'omit', headers: { 'X-Upload-Token': token } });
-    const data = await response.json();
-    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : t('wizard.sources.uploadFail'));
-    return data;
+    const fail = t('wizard.sources.uploadFail');
+    const response = await fetch('/api/mobile-upload', { credentials: 'omit', headers: { 'X-Upload-Token': token } })
+      .catch(() => { throw new Error(fail); });
+    const body = await response.text().catch(() => '');
+    const data = (() => { try { return JSON.parse(body) as Partial<UploadInfo> & { detail?: unknown }; } catch { return null; } })();
+    if (!response.ok) throw new Error(typeof data?.detail === 'string' ? data.detail : fail);
+    if (!data || typeof data.format !== 'string' || typeof data.remaining !== 'number') throw new Error(fail);
+    return { format: data.format, remaining: data.remaining };
   };
   const upload = (file: File, rowIndex: number) => new Promise<void>((resolve, reject) => {
     const body = new FormData(); body.append('file', file);

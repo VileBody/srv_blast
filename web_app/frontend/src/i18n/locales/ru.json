@@ -389,7 +389,11 @@
     "collectingSameTitle": "Все выложенные ролики собраны на одних настройках",
     "collectingSameText": "Добавлять такие же бесполезно — сравнивать будет нечего. Сделай батч, где меняется что-то одно: минимум по {{count}} ролика на каждый вариант.",
     "collectingLeftTitle": "Осталось выложить ещё {{count}}",
-    "collectingLeftText": "Как только на каждое значение наберётся по {{count}} ролика, покажем, что именно сработало: футаж, субтитры или хук — по отдельности, а не связкой."
+    "collectingLeftText": "Как только на каждое значение наберётся по {{count}} ролика, покажем, что именно сработало: футаж, субтитры или хук — по отдельности, а не связкой.",
+    "videoCountMax": "макс. {{count}}",
+    "videoCountPlanLimit": "По тарифу осталось роликов: {{count}} — больше в итерацию не поставить",
+    "videoCountIterationLimit": "В одной итерации — не больше {{count}} роликов",
+    "videoCountNoCredits": "Ролики по тарифу закончились — пополни лимит, чтобы запустить итерацию"
   },
   "wizard": {
     "guideProgress": "Шаг {{current}} из {{total}}",
@@ -1433,7 +1437,8 @@
     "tgCtaLogin": "Войти через Telegram",
     "tgCtaRegister": "Продолжить в Telegram",
     "googleCtaLogin": "Войти через Google",
-    "googleCtaRegister": "Продолжить с Google"
+    "googleCtaRegister": "Продолжить с Google",
+    "tgCheckFail": "Не удалось проверить вход"
   },
   "processing": {
     "progress": "Прогресс: {{done}}/{{total}} видео",

@@ -3088,9 +3088,17 @@ def _restore_tiktok_and_start_refresh() -> None:
     telegram_bot.ensure_started()
 
 
+def _tiktok_outcome_redirect(outcome: str, return_path: str | None = None) -> RedirectResponse:
+    """Куда вернуть после OAuth: по умолчанию профиль, а если подключали с экрана выкладки —
+    обратно туда (иначе терялись проект/батч/ролик). Путь уже проверен safe_app_path."""
+    path = security.safe_app_path(return_path) or "/app/profile"
+    return RedirectResponse(f"{_app_url()}{security.with_query_param(path, 'tiktok', outcome)}", status_code=302)
+
+
 def _finish_tiktok_connect(*, handle: str, open_id: str, mock: bool = False,
                            tokens: dict[str, Any] | None = None,
-                           info: dict[str, Any] | None = None) -> RedirectResponse:
+                           info: dict[str, Any] | None = None,
+                           return_path: str | None = None) -> RedirectResponse:
     """Единая точка подключения TikTok: сперва анти-фрод, только потом сохранение.
 
     Проверка стоит ДО записи специально: подключить аккаунт и тут же забанить — значит
@@ -3104,12 +3112,12 @@ def _finish_tiktok_connect(*, handle: str, open_id: str, mock: bool = False,
             analytics.track("tiktok_reuse_blocked", user_id, {"accounts": verdict.get("accounts")})
             return RedirectResponse(f"{_app_url()}/blocked", status_code=302)
         # Реестр недоступен — не подключаем (fail-closed): молча пропустить проверку хуже
-        return RedirectResponse(f"{_app_url()}/app/profile?tiktok=guard_error", status_code=302)
+        return _tiktok_outcome_redirect("guard_error", return_path)
 
     if mock:
         _connect_mock(open_id)
         persistence.flush_user(user_id)
-        return RedirectResponse(f"{_app_url()}/app/profile?tiktok=mock", status_code=302)
+        return _tiktok_outcome_redirect("mock", return_path)
 
     store.connect_tiktok(
         handle=handle,
@@ -3122,22 +3130,32 @@ def _finish_tiktok_connect(*, handle: str, open_id: str, mock: bool = False,
     # Колбэк — GET, а сброс в middleware висит на мутирующих методах: без явного вызова
     # подключение не попало бы в БД до следующей правки чего-нибудь другого.
     persistence.flush_user(user_id)
-    return RedirectResponse(f"{_app_url()}/app/profile?tiktok=connected", status_code=302)
+    return _tiktok_outcome_redirect("connected", return_path)
 
 
 @app.get("/api/tiktok/auth", tags=["tiktok"])
-def api_tiktok_auth(request: Request, reuse: bool = False) -> RedirectResponse:
-    """Старт OAuth: уводим на TikTok. state и PKCE-verifier кладём в серверную сессию."""
+def api_tiktok_auth(request: Request, reuse: bool = False, next: str | None = None) -> RedirectResponse:
+    """Старт OAuth: уводим на TikTok. state и PKCE-verifier кладём в серверную сессию.
+
+    `next` — путь внутри /app, куда вернуть после колбэка (экран выкладки). Чужое/кривое
+    значение отбрасываем в дефолт-профиль: открытого редиректа через OAuth быть не должно.
+    """
+    return_path = security.safe_app_path(next)
     cfg = tiktok_config.load()
     if not _tiktok_ready(cfg):
         if RUNTIME.production:
-            return RedirectResponse(f"{_app_url()}/app/profile?tiktok=not_configured", status_code=302)
-        return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True)
+            return _tiktok_outcome_redirect("not_configured", return_path)
+        return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True,
+                                      return_path=return_path)
 
     state = secrets.token_urlsafe(24)
     verifier, challenge = tiktok_api.new_pkce()
     request.session["tiktok_state"] = state
     request.session["tiktok_verifier"] = verifier
+    if return_path:
+        request.session["tiktok_next"] = return_path
+    else:
+        request.session.pop("tiktok_next", None)
     return RedirectResponse(tiktok_api.build_auth_url(cfg, state, challenge), status_code=302)
 
 
@@ -3145,32 +3163,36 @@ def api_tiktok_auth(request: Request, reuse: bool = False) -> RedirectResponse:
 def api_tiktok_callback(request: Request, code: str | None = None, state: str | None = None,
                         error: str | None = None, reuse: bool = False) -> RedirectResponse:
     """Возврат от TikTok: сверяем state (CSRF), меняем code на токен, тянем профиль."""
+    # путь возврата из сессии, перепроверяем на чтении — сессия не место для слепого доверия
+    return_path = security.safe_app_path(request.session.pop("tiktok_next", None))
     cfg = tiktok_config.load()
     if not _tiktok_ready(cfg):
         if RUNTIME.production:
-            return RedirectResponse(f"{_app_url()}/app/profile?tiktok=not_configured", status_code=302)
-        return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True)
+            return _tiktok_outcome_redirect("not_configured", return_path)
+        return _finish_tiktok_connect(handle="808max", open_id=_mock_open_id(reuse), mock=True,
+                                      return_path=return_path)
 
     if error:
-        return RedirectResponse(f"{_app_url()}/app/profile?tiktok=denied", status_code=302)
+        return _tiktok_outcome_redirect("denied", return_path)
 
     saved_state = request.session.pop("tiktok_state", None)
     verifier = request.session.pop("tiktok_verifier", None)
     if not code or not state or not saved_state or state != saved_state or not verifier:
         # чужой/протухший редирект — токен не запрашиваем
-        return RedirectResponse(f"{_app_url()}/app/profile?tiktok=error", status_code=302)
+        return _tiktok_outcome_redirect("error", return_path)
 
     try:
         tokens = tiktok_api.exchange_code(cfg, code, verifier)
         info = tiktok_api.fetch_user_info(tokens["access_token"])
     except Exception:
-        return RedirectResponse(f"{_app_url()}/app/profile?tiktok=error", status_code=302)
+        return _tiktok_outcome_redirect("error", return_path)
 
     return _finish_tiktok_connect(
         handle=info.get("display_name") or "",
         open_id=tokens.get("open_id") or info.get("open_id") or "",
         tokens=tokens,
         info=info,
+        return_path=return_path,
     )
 
 

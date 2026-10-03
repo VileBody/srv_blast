@@ -388,7 +388,11 @@
     "collectingSameTitle": "Every published clip uses the same settings",
     "collectingSameText": "More of the same will not help — there is nothing to compare. Make a batch where exactly one thing changes: at least {{count}} clips per variant.",
     "collectingLeftTitle": "{{count}} more clips to publish",
-    "collectingLeftText": "Once each value has {{count}} clips, we will show what actually worked: footage, subtitles or the hook — each on its own, not as a bundle."
+    "collectingLeftText": "Once each value has {{count}} clips, we will show what actually worked: footage, subtitles or the hook — each on its own, not as a bundle.",
+    "videoCountMax": "max {{count}}",
+    "videoCountPlanLimit": "Your plan has {{count}} videos left — the iteration can't take more",
+    "videoCountIterationLimit": "One iteration holds at most {{count}} videos",
+    "videoCountNoCredits": "You're out of videos on your plan — top up to start an iteration"
   },
   "wizard": {
     "guideProgress": "Step {{current}} of {{total}}",
@@ -1424,7 +1428,8 @@
     "tgCtaLogin": "Sign in with Telegram",
     "tgCtaRegister": "Continue in Telegram",
     "googleCtaLogin": "Sign in with Google",
-    "googleCtaRegister": "Continue with Google"
+    "googleCtaRegister": "Continue with Google",
+    "tgCheckFail": "Couldn't check the sign-in"
   },
   "processing": {
     "progress": "Progress: {{done}}/{{total}} videos",

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { TiktokButton } from '../components/ui/TiktokButton';
 import { cn } from '../lib/cn';
@@ -8,6 +8,7 @@ import { useWizardStore } from '../stores/wizardStore';
 import { CreateProjectModal } from '../components/project/CreateProjectModal';
 import { InsightChart } from './StatsPage';
 import { api } from '../lib/api';
+import { isVideoPosted } from '../lib/types';
 import type { IterationAnalysis, Project } from '../lib/types';
 import { DIMENSION_KEY, leaderBars, leadingDimension } from '../lib/analysis';
 import { Skeleton } from '../components/ui/Skeleton';
@@ -140,7 +141,7 @@ function Hero({ name, resume, onCreate, onResume }: {
               <button
                 type="button"
                 onClick={onResume}
-                className="flex h-[60px] items-center rounded-r15 bg-accent px-space-6 text-[20px] font-[400] leading-none text-text transition hover:brightness-110 focus-visible:outline-none max-md:h-[44px] max-md:flex-1 max-md:justify-center max-md:whitespace-nowrap max-md:px-[10px] max-md:text-[13px]"
+                className="flex h-[60px] items-center rounded-r15 bg-accent px-space-6 text-[20px] font-[400] leading-none text-text transition hover:brightness-110 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-light max-md:h-[44px] max-md:flex-1 max-md:justify-center max-md:whitespace-nowrap max-md:px-[10px] max-md:text-[13px]"
               >
                 {resume.kind === 'post' ? t('dashboard.resumePostCta') : t('dashboard.resumeWizardCta')}
               </button>
@@ -352,11 +353,44 @@ export function DashboardPage() {
    * они уже стоили человеку кредитов, и до результата остался один шаг.
    */
   const wizard = useWizardStore();
-  const unpostedProject = projects.find((project) => (project.generated ?? 0) > 0 && project.status === 'COMPLETED');
+  /*
+   * Кандидаты «Выложить» — проекты, где сгенерировано больше, чем выложено. Статус тут ни при чём:
+   * COMPLETED значит лишь «по другому проекту генерили позже», а свежий батч живёт в IN_PROGRESS.
+   * Текущий проект первым (с ним человек работает сейчас), дальше — от новых к старым.
+   * `generated` в списке считает и ещё рендерящиеся слоты, поэтому точное число готовых
+   * невыложенных берём из деталей проекта (тот же ключ, что у экрана выкладки — кэш общий).
+   */
+  const postCandidates = projects
+    .filter((project) => (project.generated ?? 0) > (project.posted ?? 0))
+    .sort((a, b) => Number(Boolean(b.isCurrent)) - Number(Boolean(a.isCurrent)))
+    .slice(0, 3);
+  const candidateQueries = useQueries({
+    queries: postCandidates.map((project) => ({
+      queryKey: ['project', project.id],
+      queryFn: () => api.project(project.id)
+    }))
+  });
+  // Ждём кандидатов по порядку: иначе герой сперва предложил бы второй проект, а потом перескочил
+  let postResume: { project: Project; count: number } | null = null;
+  let postPending = false;
+  for (let i = 0; i < postCandidates.length; i += 1) {
+    const detail = candidateQueries[i]?.data?.project;
+    if (!detail) {
+      postPending = Boolean(candidateQueries[i]?.isPending);
+      if (postPending) break;
+      continue;
+    }
+    const ready = (detail.jobs ?? []).flatMap((job) => job.videos)
+      .filter((video) => video.status === 'COMPLETED' && !isVideoPosted(video)).length;
+    if (ready > 0) {
+      postResume = { project: postCandidates[i], count: ready };
+      break;
+    }
+  }
   const draftProject = projects.find((project) => project.id === wizard.projectId);
-  const resume = unpostedProject
-    ? { kind: 'post' as const, project: unpostedProject, count: unpostedProject.generated ?? 0 }
-    : wizard.projectId && wizard.track && draftProject
+  const resume = postResume
+    ? { kind: 'post' as const, project: postResume.project, count: postResume.count }
+    : !postPending && wizard.projectId && wizard.track && draftProject
       ? { kind: 'wizard' as const, project: draftProject, count: undefined }
       : null;
 

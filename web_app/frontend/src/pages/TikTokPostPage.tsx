@@ -8,6 +8,8 @@ import { cn } from '../lib/cn';
 import { Button } from '../components/ui/kit';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { useWizardStore } from '../stores/wizardStore';
+import { tiktokConnectUrl } from '../components/ui/TiktokButton';
+import { useToast } from '../contexts/ToastContext';
 import './TikTokPostPage.css';
 
 /*
@@ -230,7 +232,7 @@ function CoverStrip({
 export function TikTokPostPage() {
   const { t } = useTranslation();
   const { id } = useParams();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const qaPost = import.meta.env.DEV ? params.get('qaPost') : null;
   const batchId = params.get('batch');
   const navigate = useNavigate();
@@ -239,6 +241,30 @@ export function TikTokPostPage() {
   const setWizardStage = useWizardStore((state) => state.setStage);
   const projectQuery = useQuery({ queryKey: ['project', id], queryFn: () => api.project(id ?? ''), enabled: Boolean(id) });
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
+  const { push } = useToast();
+
+  /*
+   * Возврат из OAuth прямо сюда (?tiktok=connected|mock|denied|…): тот же разбор, что в профиле.
+   * ref-гард — под StrictMode эффект прогоняется дважды до асинхронной чистки query.
+   */
+  const tiktokResult = params.get('tiktok');
+  const shownTiktokResult = useRef<string | null>(null);
+  useEffect(() => {
+    if (!tiktokResult || shownTiktokResult.current === tiktokResult) return;
+    shownTiktokResult.current = tiktokResult;
+    if (tiktokResult === 'connected' || tiktokResult === 'mock') {
+      void queryClient.invalidateQueries({ queryKey: ['me'] });
+      push({ variant: 'success', title: t('profile.tiktokConnected'), text: tiktokResult === 'mock' ? t('profile.tiktokMock') : undefined });
+    } else if (tiktokResult === 'denied') {
+      push({ variant: 'error', title: t('profile.tiktokDenied') });
+    } else if (tiktokResult === 'guard_error') {
+      push({ variant: 'error', title: t('profile.tiktokGuardError'), text: t('profile.tiktokGuardErrorText') });
+    } else {
+      push({ variant: 'error', title: t('profile.tiktokError') });
+    }
+    params.delete('tiktok');
+    setParams(params, { replace: true });
+  }, [tiktokResult, queryClient, push, t, params, setParams]);
   const creatorQuery = useQuery({
     queryKey: ['tiktok-creator-info'],
     queryFn: api.tiktokCreatorInfo,
@@ -439,7 +465,10 @@ export function TikTokPostPage() {
         <BackToProject onClick={() => navigate(`/app/projects/${id}`)} className="absolute left-[20px] top-[20px]" />
         <h1 className="text-ui-32 font-[400] text-text">{t('tiktok.connectRequiredTitle')}</h1>
         <p className="mt-[12px] max-w-[420px] text-ui-16 text-text-60">{t('tiktok.connectRequiredText')}</p>
-        <Button variant="primary" size="lg" onClick={() => window.location.assign(api.tiktokAuthUrl())} className="mt-[28px]">
+        <Button variant="primary" size="lg" onClick={() => window.location.assign(tiktokConnectUrl(
+          // вернуться ровно сюда: тот же батч и ролик, что человек собирался выложить
+          `/app/projects/${id}/post?${new URLSearchParams({ ...(batchId ? { batch: batchId } : {}), video: String(index) }).toString()}`
+        ))} className="mt-[28px]">
           {t('tiktok.connect')}
         </Button>
       </div>
@@ -534,6 +563,9 @@ export function TikTokPostPage() {
       setStage('posted');
       // без этого «выложено N из M» и пропуск уже выложенных считались по устаревшему проекту
       queryClient.invalidateQueries({ queryKey: ['project', id] });
+      // счётчики «выложено» на дашборде/в проектах и лента роликов TikTok тоже устарели
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['tiktok-videos'] });
     } catch (error) {
       setStage('draft');
       setProgress(null);
@@ -652,7 +684,7 @@ export function TikTokPostPage() {
   ];
 
   const card = (
-    <main className={cn('ttp', !draft && 'locked')} aria-label={t('tiktok.screenTitle')}>
+    <section className={cn('ttp', !draft && 'locked')} aria-label={t('tiktok.screenTitle')}>
       <header className="ttp-top">
         <div className="ttp-batch">
           <BackToProject onClick={() => navigate(`/app/projects/${id}`)} />
@@ -983,7 +1015,7 @@ export function TikTokPostPage() {
           </span>
         </button>
       </div>
-    </main>
+    </section>
   );
 
   return <PostShell card={card} />;

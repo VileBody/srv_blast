@@ -330,9 +330,12 @@ export function CreateProjectModal({ open, onClose }: { open: boolean; onClose: 
           </button>
         </div>
 
+        {/* пока трек грузится — не создаём: проект ушёл бы без трека, а загрузка всё равно
+            списала бы трек из лимита */}
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || trackMutation.isPending}
+          aria-busy={trackMutation.isPending || undefined}
           onClick={() => createMutation.mutate()}
           className="mt-[28px] flex h-[60px] w-full items-center justify-center rounded-r15 bg-grad-main text-[20px] font-[400] leading-none text-text transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
         >
