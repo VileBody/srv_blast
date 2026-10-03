@@ -121,10 +121,11 @@ export interface UnlimitedView {
   botLink?: string;
   /* actions */
   channel?: ActionStatus;
-  manager?: ActionStatus;
+  /** второе условие: оценка ролика или пройденный опрос (сервер проверяет сам) */
+  feedback?: ActionStatus;
+  /** в окне есть готовые ролики — можно вернуться к их оценке */
+  canRate?: boolean;
   channelLink?: string;
-  managerLink?: string;
-  managerCode?: string;
   unlockPending?: boolean;
   /* done */
   quota?: FunnelQuota | null;
@@ -146,7 +147,10 @@ export interface UnlimitedHandlers {
   onSkipQuiz?: () => void;
   onChannelOpen: () => void;
   onChannelCheck: () => void;
-  onManager: () => void;
+  /** вернуться к оценке роликов этого батча */
+  onRateVideos?: () => void;
+  /** открыть короткий опрос */
+  onTakeSurvey?: () => void;
   onUnlock: () => void;
   onGenerate: () => void;
   onClose: () => void;
@@ -253,7 +257,7 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
         />
       );
     case 'actions': {
-      const both = view.channel === 'done' && view.manager === 'done';
+      const both = view.channel === 'done' && view.feedback === 'done';
       return (
         <FunnelSheet
           {...common}
@@ -270,7 +274,11 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
               index={1}
               status={view.channel ?? 'todo'}
               title={t('funnel.actions.channelTitle')}
-              text={view.channel === 'missing' ? <span className="text-warning">{t('funnel.actions.channelMissing')}</span> : t(view.channel === 'done' ? 'funnel.actions.channelDone' : 'funnel.actions.channelText')}
+              text={
+                view.channel === 'missing' ? <span className="text-warning">{t('funnel.actions.channelMissing')}</span>
+                  : view.channel === 'error' ? <span className="text-warning">{t('funnel.actions.channelCheckFailed')}</span>
+                    : t(view.channel === 'done' ? 'funnel.actions.channelDone' : 'funnel.actions.channelText')
+              }
             >
               {view.channel !== 'done' && (
                 <>
@@ -285,14 +293,26 @@ export function UnlimitedPanel({ view, on, titleId }: { view: UnlimitedView; on:
             </UnlockActionRow>
             <UnlockActionRow
               index={2}
-              status={view.manager ?? 'todo'}
-              title={t('funnel.actions.managerTitle')}
-              text={view.manager === 'done' ? t('funnel.actions.managerDone') : t('funnel.actions.managerText', { code: view.managerCode })}
+              status={view.feedback ?? 'todo'}
+              title={t('funnel.actions.feedbackTitle')}
+              text={
+                view.feedback === 'missing' ? <span className="text-warning">{t('funnel.actions.feedbackMissing')}</span>
+                  : t(view.feedback === 'done' ? 'funnel.actions.feedbackDone' : 'funnel.actions.feedbackText')
+              }
             >
-              {view.manager !== 'done' && (
-                <ButtonLink variant="secondary" size="sm" href={view.managerLink} target="_blank" rel="noreferrer" onClick={on.onManager} icon={<Icon>{FN_GLYPH.send}</Icon>}>
-                  {t('funnel.actions.managerOpen')}
-                </ButtonLink>
+              {view.feedback !== 'done' && (
+                <>
+                  {view.canRate && on.onRateVideos && (
+                    <Button variant="secondary" size="sm" onClick={on.onRateVideos}>
+                      {t('funnel.actions.feedbackRate')}
+                    </Button>
+                  )}
+                  {on.onTakeSurvey && (
+                    <Button variant={view.canRate ? 'ghost' : 'secondary'} size="sm" onClick={on.onTakeSurvey}>
+                      {t('funnel.actions.feedbackSurvey')}
+                    </Button>
+                  )}
+                </>
               )}
             </UnlockActionRow>
           </ol>

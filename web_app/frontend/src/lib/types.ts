@@ -599,6 +599,8 @@ export interface FunnelState {
     bridge: string | null;
   };
   actions: { channel_subscribed: boolean; manager_contacted: boolean };
+  /** второе условие безлимита: оценка ролика своего батча или пройденный опрос (считает сервер) */
+  feedback: { rated: boolean; surveyCompleted: boolean; done: boolean };
   /** предложение трипваера: сутки с первого упора в лимит; null — закрыто или не открывалось */
   tripwireOffer: { expiresAt: string; priceRub: number } | null;
   unlimited: null | {

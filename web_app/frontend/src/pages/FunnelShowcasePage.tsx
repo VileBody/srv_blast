@@ -97,7 +97,7 @@ const QUOTA_TRIPWIRE: FunnelQuota = { ...QUOTA_OK, tripwire: true, maxVideos: 25
 const noop = () => {};
 const ON: UnlimitedHandlers = {
   onRate: noop, onReasons: noop, onAnswer: noop, onMethodology: noop, onNext: noop, onChannelOpen: noop,
-  onChannelCheck: noop, onManager: noop, onUnlock: noop, onGenerate: noop, onClose: noop
+  onChannelCheck: noop, onRateVideos: noop, onTakeSurvey: noop, onUnlock: noop, onGenerate: noop, onClose: noop
 };
 
 const HIGH: UnlimitedStep[] = ['rate', 'quiz', 'methodology', 'pitch', 'actions', 'done'];
@@ -112,8 +112,7 @@ function view(step: UnlimitedStep, extra: Partial<UnlimitedView> = {}): Unlimite
     videos: VIDEOS,
     ratings: {},
     channelLink: '#',
-    managerLink: '#',
-    managerCode: 'B-4F2K1C',
+    canRate: true,
     ...extra
   };
 }
@@ -219,13 +218,16 @@ export function FunnelShowcasePage() {
             <UnlimitedPanel view={view('methodology', { bridge: BRIDGE, methodology: 'idle' })} on={ON} />
           </State>
           <State label="Два шага: ничего не сделано">
-            <UnlimitedPanel view={view('actions', { channel: 'todo', manager: 'todo' })} on={ON} />
+            <UnlimitedPanel view={view('actions', { channel: 'todo', feedback: 'todo' })} on={ON} />
           </State>
-          <State label="Подписку не нашли, менеджеру написал">
-            <UnlimitedPanel view={view('actions', { channel: 'missing', manager: 'done' })} on={ON} />
+          <State label="Подписку не нашли, ролик оценён">
+            <UnlimitedPanel view={view('actions', { channel: 'missing', feedback: 'done' })} on={ON} />
+          </State>
+          <State label="Проверка подписки не прошла, сервер не видит оценки">
+            <UnlimitedPanel view={view('actions', { channel: 'error', feedback: 'missing' })} on={ON} />
           </State>
           <State label="Оба шага готовы">
-            <UnlimitedPanel view={view('actions', { channel: 'done', manager: 'done' })} on={ON} />
+            <UnlimitedPanel view={view('actions', { channel: 'done', feedback: 'done' })} on={ON} />
           </State>
           <State label="Безлимит открыт">
             <UnlimitedPanel view={view('done', { quota: QUOTA_OK })} on={ON} />

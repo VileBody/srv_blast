@@ -24,7 +24,8 @@ import { WizardCanvas, WizardHeaderCard } from '../components/wizard/WizardFrame
 import { demoTrackUrl } from '../dev/demoTrack';
 import { useToast } from '../contexts/ToastContext';
 import { useFunnelUi } from '../stores/funnelUi';
-import { trackTitleOf } from '../components/funnel/useFunnel';
+import { apiErrorCode, trackTitleOf } from '../components/funnel/useFunnel';
+import { ChannelGate } from '../components/funnel/ChannelGate';
 import { useWizardStore } from '../stores/wizardStore';
 import { useCombos } from '../components/wizard/montage/combos';
 import { useFxTimelineOpen } from '../components/wizard/timelineGuides';
@@ -68,6 +69,9 @@ export function WizardPage() {
   const setProjectId = useWizardStore((state) => state.setProjectId);
   const state = useWizardStore();
   const openUnlimited = useFunnelUi((ui) => ui.openUnlimited);
+  // 403 channel_subscription_required: бесплатный без подписки на канал — окно подписки
+  // (ссылка из ответа сервера); подтвердил подписку — запускаем тот же сабмит ещё раз.
+  const [channelGate, setChannelGate] = useState<string | null>(null);
   // Вайб выбран на «Фоне» — сервер сразу начинает готовить лёгкие копии его клипов: к «Пулу»
   // превью кадров открываются без ожидания. Один раз на вайб и отрывок; это ускорение,
   // поэтому сбой не мешает работе — подбор на «Пуле» всё равно подготовит свои клипы сам.
@@ -231,6 +235,18 @@ export function WizardPage() {
         && (error.detail as { detail?: { code?: string } })?.detail?.code === 'asr_preview_pending';
       if (asrPending) {
         push({ variant: 'info', title: t('wizard.page.asrPendingTitle'), text: t('wizard.page.asrPendingText') });
+        return;
+      }
+      // Бесплатные генерации — только подписчикам канала (сервер проверяет сам)
+      const code = apiErrorCode(error);
+      if (code === 'channel_subscription_required') {
+        const detail = (error as ApiError).detail as { detail?: { channel?: string } } | null;
+        setChannelGate(detail?.detail?.channel || 'https://t.me/impulsemarketing');
+        return;
+      }
+      // Проверка подписки сломалась (сбой Telegram): не «не подписан», а «повтори»
+      if (code === 'channel_check_unavailable') {
+        push({ variant: 'error', title: t('funnel.actions.channelCheckFailed') });
         return;
       }
       // Воронка: бесплатные ролики кончились — открываем безлимит на этот трек; квота трека
@@ -613,6 +629,16 @@ export function WizardPage() {
         tableOpen ? <aside className="w12-col-aside" aria-hidden="true" /> : <SliceWorkZone ready={ready} canContinue={canContinue} loading={busy} onBack={back} onNext={next}
           index={safePoolIndex} onIndex={setPoolIndex} edited={poolEdited}
           onOpenTimeline={(index) => { setPoolIndex(index); setTableOpen(true); }} />
+      )}
+      {channelGate && (
+        <ChannelGate
+          channelLink={channelGate}
+          onClose={() => setChannelGate(null)}
+          onPassed={() => {
+            setChannelGate(null);
+            submitMutation.mutate();
+          }}
+        />
       )}
     </WizardCanvas>
     {stage === 5 && tableOpen && (
