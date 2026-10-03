@@ -873,6 +873,8 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     // своё видео — один переход на весь ролик; статичный цвет склеек не имеет вовсе
     if (c.bgKey?.startsWith('upload:') && new Set(labels).size > 1) return true;
     if (c.bgKey === '__color__' && !strobe && labels.some((l) => l !== NO_GLUE)) return true;
+    // рамка нарисована под 9:16 — на 16:9 бэк её отвергает (montage.py)
+    if (v.frame && !c.vertical) return true;
     return false;
   };
 
