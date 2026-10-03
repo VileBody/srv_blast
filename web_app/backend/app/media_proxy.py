@@ -187,8 +187,10 @@ def peaks(src: Path) -> dict[str, object]:
 # ── одна подготовка на файл: параллельные запросы ждут ту же работу ──────────────
 
 # Общий реестр работ на все пулы: один и тот же файл не сжимается дважды, даже если его
-# одновременно просят фоновый прогрев и открытый экран.
+# одновременно просят фоновый прогрев и открытый экран. Рядом с работой — пул, в чьей
+# очереди она стоит: перехватывать можно только из ЧУЖОЙ (фоновой) очереди.
 _JOBS: dict[str, Future] = {}
+_OWNER: dict[str, "Builder"] = {}
 _JOBS_LOCK = threading.Lock()
 
 
@@ -197,6 +199,10 @@ class Builder:
 
     urgent — пул открытого экрана: если тот же файл ещё только стоит в очереди фонового
     прогрева, работа снимается оттуда и запускается здесь сразу, а не ждёт свою очередь.
+    Работу из своей же очереди не перехватывает: раньше второй запрос того же клипа (тот же
+    клип в превью стола и в сетке «Все ролики», повторный запрос плеера) отменял работу,
+    которую ждал первый, — первый получал ошибку (а <video> навсегда оставался на обложке),
+    а сама работа уезжала в конец срочной очереди при каждом новом запросе.
     """
 
     def __init__(self, workers: int = 3, *, urgent: bool = False) -> None:
@@ -207,11 +213,14 @@ class Builder:
         """Запустить подготовку или вернуть уже идущую. Упавшую — запустить заново."""
         with _JOBS_LOCK:
             job = _JOBS.get(name)
-            if job is not None and self._urgent and not job.running() and not job.done():
-                job.cancel()  # ещё не начата в чужой очереди — забираем себе
+            owner = _OWNER.get(name)
+            if (job is not None and self._urgent and owner is not None and not owner._urgent
+                    and not job.running() and not job.done()):
+                job.cancel()  # ещё не начата в фоновой очереди — забираем себе
             if job is None or job.cancelled() or (job.done() and job.exception() is not None):
                 job = self._pool.submit(self._guarded, name, fn)
                 _JOBS[name] = job
+                _OWNER[name] = self
             return job
 
     @staticmethod

@@ -874,6 +874,8 @@
       "sbPicking": "Подбираем исходники…",
       "sbRetry": "Повторить",
       "sbLoading": "Загружается",
+      "videoLoading": "Загружаем видео…",
+      "videoFailed": "Видео не загрузилось",
       "sbPause": "Пауза",
       "sbPlay": "Воспроизвести",
       "guideTextRow": "Текст",

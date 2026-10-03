@@ -869,6 +869,8 @@
       "sbPicking": "Picking sources…",
       "sbRetry": "Retry",
       "sbLoading": "Loading",
+      "videoLoading": "Loading video…",
+      "videoFailed": "Video didn’t load",
       "sbPause": "Pause",
       "sbPlay": "Play",
       "guideTextRow": "Text",
