@@ -970,6 +970,9 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
     const l = el.scrollLeft > 4; const r = el.scrollLeft + el.clientWidth < el.scrollWidth - 4;
     setBarFade((cur) => (cur.l === l && cur.r === r ? cur : { l, r }));
   }, []);
+  // Стабильный ref: колбэк, объявленный прямо в разметке, React вызывает на КАЖДОМ рендере, а он
+  // ставил состояние — на телефоне это давало «Maximum update depth exceeded» (Стиль → Esc → Хук).
+  const barRefCb = useCallback((el: HTMLElement | null) => { barRef.current = el; }, []);
   // разовая подсказка, как работать с таймлайном на телефоне
   const [mobIntroDismissed, setMobIntroDismissed] = useGuideDismiss('table-mobile-intro', phone);
   // шторка открывается сразу с плитками: если в ней ничего не раскрыто — раскрываем первую
@@ -982,6 +985,16 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
   }, [sheet]);
   // Исходники в два шага: вайб в библиотеке → кадры ролика справа (механика раскадровки «Пула»)
   const [editK, setEditK] = useState<number | null>(null);
+  // края пересчитываем, когда лента появилась (её подменяет панель замены кадра) и когда меняется
+  // её размер; прокрутка — через onScroll. Наблюдатель срабатывает вне рендера — цикла не будет.
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el) return undefined;
+    syncBar();
+    const ro = new ResizeObserver(syncBar);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [editK, phone, syncBar]);
   const dockRef = useRef<HTMLDivElement>(null);
   // Тур стола (общая память подсказок): кадры в превью → дорожки ролика.
   const [framesGuideDismissed, setFramesGuideDismissed] = useGuideDismiss('table-frames', false);
@@ -1824,7 +1837,7 @@ export function MontageTable({ index, onIndex, onClose, onGenerate, busy = false
       </section>
       {editK !== null
         ? <div ref={setReplaceSlot} className="mm-bar mm-replace-slot" />
-        : <nav ref={(el) => { barRef.current = el; if (el) syncBar(); }} className="mm-bar" aria-label={tr('wizard.montage.tools')} data-fade-l={barFade.l || undefined} data-fade-r={barFade.r || undefined} onScroll={syncBar}>{tools}</nav>}
+        : <nav ref={barRefCb} className="mm-bar" aria-label={tr('wizard.montage.tools')} data-fade-l={barFade.l || undefined} data-fade-r={barFade.r || undefined} onScroll={syncBar}>{tools}</nav>}
       {!mobIntroDismissed && editK === null && !sheet && (
         <div className="mm-intro" role="note">
           <ul>
