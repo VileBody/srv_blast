@@ -334,10 +334,10 @@ class Settings:
     # the bot then behaves exactly as before (generation in the bot only).
     web_app_url: str = _env("WEB_APP_URL", "")
     web_handoff_ttl_s: int = _int_env("WEB_HANDOFF_TTL_S", 24 * 3600)
-    # Гейт «подписка на @impulsemarketing» на онбординге. По умолчанию ВКЛ: без него
-    # стартовые кредиты выдавались без подписки (решение продукта 2026-10). Выключить —
-    # только явным ONBOARDING_SUBSCRIPTION_REQUIRED=0.
-    onboarding_subscription_required: bool = _bool_env("ONBOARDING_SUBSCRIPTION_REQUIRED", True)
+    # Гейт «подписка на @impulsemarketing» на онбординге. По умолчанию ВЫКЛ: «Едем!» сразу
+    # ведёт к загрузке трека (решение продукта). Подписка проверяется перед генерацией
+    # (generation_subscription_required ниже) и на сайте для бесплатных — строго, при сбое не пускаем.
+    onboarding_subscription_required: bool = _bool_env("ONBOARDING_SUBSCRIPTION_REQUIRED", False)
     # Подписка на канал — шаг прямо перед «Запустить» генерацию в боте. По умолчанию вкл.
     generation_subscription_required: bool = _bool_env("GENERATION_SUBSCRIPTION_REQUIRED", True)
 

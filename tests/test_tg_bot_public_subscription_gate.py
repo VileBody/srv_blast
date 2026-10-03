@@ -16,22 +16,23 @@ def _with_check(monkeypatch, app, value):
     monkeypatch.setattr(app, "_check_subscription", _check, raising=False)
 
 
-def test_onboarding_subscription_is_required_by_default() -> None:
+def test_onboarding_subscription_is_off_by_default() -> None:
     # Дефолт поля считается при импорте из env — сверяем сам дефолт в коде и в compose.
     from pathlib import Path
 
     from services.tg_bot_public import config
 
-    assert '_bool_env("ONBOARDING_SUBSCRIPTION_REQUIRED", True)' in Path(config.__file__).read_text(encoding="utf-8")
+    # продукт: «Едем!» сразу ведёт к треку, онбординг-гейта по умолчанию нет
+    assert '_bool_env("ONBOARDING_SUBSCRIPTION_REQUIRED", False)' in Path(config.__file__).read_text(encoding="utf-8")
     compose = (Path(__file__).resolve().parents[1] / "docker-compose.yml").read_text(encoding="utf-8")
-    assert "${ONBOARDING_SUBSCRIPTION_REQUIRED:-0}" not in compose
+    assert "${ONBOARDING_SUBSCRIPTION_REQUIRED:-1}" not in compose
 
 
-def test_onboarding_can_still_be_switched_off_explicitly(monkeypatch) -> None:
+def test_onboarding_gate_can_be_switched_on_explicitly(monkeypatch) -> None:
     from services.tg_bot_public import config
 
-    monkeypatch.setenv("ONBOARDING_SUBSCRIPTION_REQUIRED", "0")
-    assert config._bool_env("ONBOARDING_SUBSCRIPTION_REQUIRED", True) is False
+    monkeypatch.setenv("ONBOARDING_SUBSCRIPTION_REQUIRED", "1")
+    assert config._bool_env("ONBOARDING_SUBSCRIPTION_REQUIRED", False) is True
 
 
 def test_onboarding_check_failure_grants_nothing_and_asks_to_retry(monkeypatch) -> None:
