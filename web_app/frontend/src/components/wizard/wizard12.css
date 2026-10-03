@@ -179,13 +179,42 @@
 .w12 .w12-back:active { transform: scale(.96); }
 .w12 .w12-cta-row { display: flex; gap: 10px; }
 /* ── фон ── */
-.w12 .w12-modes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; padding: 4px; border-radius: 14px; background: var(--w12-panel-2); position: relative; }
-.w12 .w12-mode { height: 44px; line-height: 20px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; gap: .45em; font-size: 16px; color: var(--w12-text-2); transition: background-color .18s ease, color .18s ease; }
+/* Сегментный переключатель «Футажи / Фото / Цвет»: три равные ячейки сетки, активная плашка
+   ровно заполняет свою ячейку. Отступ плашки от края контейнера = gap между ячейками = padding,
+   радиус контейнера = радиус плашки + этот отступ — углы концентричны. Контент (значок, метка,
+   счётчик) центрирован в ячейке и никогда не шире её: метка ужимается многоточием, счётчик без
+   выбора не занимает места (раньше он был прозрачным, но держал 22px — весь контент уезжал влево,
+   а значок «Футажей» вылезал за левый край плашки). */
+.w12 .w12-modes { --w12-seg-pad: 4px; --w12-seg-r: 10px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--w12-seg-pad); padding: var(--w12-seg-pad); border-radius: calc(var(--w12-seg-r) + var(--w12-seg-pad)); background: var(--w12-panel-2); container-type: inline-size; }
+.w12 .w12-mode { min-width: 0; height: 44px; padding: 0 10px; line-height: 20px; border-radius: var(--w12-seg-r); display: flex; align-items: center; justify-content: center; gap: 8px; overflow: hidden; font-size: 16px; color: var(--w12-text-2); white-space: nowrap; transition: background-color .18s ease, color .18s ease; }
 .w12 .w12-mode:hover:not([aria-selected="true"]) { color: var(--w12-text); background: var(--w12-field); }
 .w12 .w12-mode[aria-selected="true"] { background: var(--w12-accent-strong); color: var(--w12-text); }
-.w12 .w12-mode .w12-cnt { min-width: 22px; height: 22px; line-height: 14px; padding: 4px 6px 0; border-radius: 999px; background: rgba(246, 245, 253, 0.12); font-size: 12px; font-variant-numeric: tabular-nums; }
-.w12 .w12-mode .w12-cnt.w12-zero { opacity: 0; }
-.w12 .w12-mode svg.w12-i { width: 18px; height: 18px; }
+/* метка: ужимается по ширине, но не режет Ф/Ц сверху и снизу (text-box обрезает строку по заглавным) */
+.w12 .w12-mode > .w12-l { min-width: 0; overflow-x: clip; overflow-y: visible; text-overflow: ellipsis; }
+.w12 .w12-mode .w12-cnt { flex: none; min-width: 22px; height: 22px; line-height: 14px; padding: 4px 6px 0; border-radius: 999px; background: rgba(246, 245, 253, 0.12); font-size: 12px; font-variant-numeric: tabular-nums; text-align: center; }
+.w12 .w12-mode .w12-cnt.w12-zero { display: none; }
+@supports not (text-box: trim-both cap alphabetic) {
+  .w12 .w12-mode > .w12-l, .w12 .w12-tab > .w12-l, .w12 .w12-sub-retry > .w12-l { transform: translateY(1px); }
+}
+@supports (text-box: trim-both cap alphabetic) {
+  .w12 .w12-mode .w12-cnt { display: inline-block; height: 22px; line-height: normal; padding: calc((22px - 1cap) / 2) 6px 0; text-box: trim-both cap alphabetic; }
+}
+/* Ширина считается по самому переключателю (container query), а не по экрану: колонка бывает узкой
+   и на десктопе. Пороги — по самой длинной метке «Footage» + счётчик: сначала кегль 14, потом
+   уходят значки, на самой узкой полосе (телефон 320px) — компактный счётчик. */
+@container (max-width: 419px) {
+  .w12 .w12-mode { padding: 0 8px; gap: 6px; font-size: 14px; }
+}
+@container (max-width: 367px) {
+  .w12 .w12-mode > .w12-mi { display: none; }
+}
+@container (max-width: 315px) {
+  .w12 .w12-mode { padding: 0 4px; gap: 4px; }
+  .w12 .w12-mode .w12-cnt { min-width: 18px; height: 18px; line-height: 10px; padding: 4px 4px 0; }
+  @supports (text-box: trim-both cap alphabetic) {
+    .w12 .w12-mode .w12-cnt { height: 18px; line-height: normal; padding: calc((18px - 1cap) / 2) 4px 0; }
+  }
+}
 .w12 .w12-pool { border-radius: 16px; background: var(--w12-panel-2); border: 1px solid var(--w12-line); padding: 14px 0 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 300px; }
 .w12 .w12-pool.w12-invalid { border-color: var(--w12-warn-line); }
 .w12 .w12-pool-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 0 16px; flex-wrap: wrap; }
@@ -272,7 +301,6 @@
 .w12 .w12-player.w12-st-neon .w12-media { filter: saturate(2.2) brightness(1.25) contrast(1.2); }
 .w12 .w12-player.w12-st-oldcam .w12-media { filter: sepia(.85) contrast(1.1) blur(.6px); }
 .w12 .w12-player .w12-shade { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(5, 1, 15, .4), transparent 22%, transparent 72%, rgba(5, 1, 15, .65)); pointer-events: none; }
-.w12 .w12-player .w12-lyric { position: absolute; left: 0; right: 0; top: 58%; text-align: center; font-weight: 400; font-size: 21px; letter-spacing: .02em; text-transform: uppercase; text-shadow: 0 2px 12px rgba(5, 1, 15, .55); padding: 0 16px; }
 .w12 .w12-player .w12-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; text-align: center; color: var(--w12-text-3); font-size: 14px; }
 .w12 .w12-pv-play { position: absolute; left: 50%; top: 44%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; display: grid; place-items: center; background: rgba(5, 1, 15, .5); backdrop-filter: blur(8px); color: var(--w12-text); transition: transform .12s var(--w12-ease), opacity .18s ease; }
 .w12 .w12-pv-play svg { width: 20px; height: 20px; fill: currentColor; stroke: none; }
@@ -356,8 +384,6 @@
   .w12 .w12-stage, .w12 .w12-aside { padding: 16px; }
   .w12 .w12-tf input { width: 70px; }
   .w12 .w12-dur { margin-left: 0; width: 100%; }
-  .w12 .w12-mode { font-size: 14px; gap: 6px; }
-  .w12 .w12-mode svg.w12-i { display: none; }
   .w12 .w12-mcard { min-height: 200px; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -447,7 +473,6 @@
 .w12 .w12-l { text-box: trim-both cap alphabetic; }
 .w12 .w12-sec-head h2 { min-height: 24px; }
 @supports (text-box: trim-both cap alphabetic) {
-  .w12 .w12-mode .w12-cnt { display: inline-block; height: 22px; line-height: normal; padding: calc((22px - 1cap) / 2) 6px 0; text-align: center; text-box: trim-both cap alphabetic; }
   .w12 .w12-mcard .w12-badge.w12-num { display: block; line-height: normal; padding-top: calc((24px - 1cap) / 2); text-align: center; text-box: trim-both cap alphabetic; }
   .w12 .w12-pv-tag, .w12 .w12-pv-count { height: 24px; line-height: normal; padding: calc((24px - 1cap) / 2) 8px 0; text-box: trim-both cap alphabetic; }
   .w12 .w12-win-label { height: 22px; line-height: normal; padding: calc((22px - 1cap) / 2) 8px 0; text-box: trim-both cap alphabetic; }
@@ -577,7 +602,11 @@
 /* ── превью субтитров: canvas по AE-геометрии стиля (SubtitleCanvas + lib/subtitleGeometry) ── */
 .w12 .w12-sub-canvas { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
 .w12 .w12-sub-canvas canvas { display: block; width: 100%; height: 100%; }
-.w12 .w12-sub-error { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 2; padding: 8px 10px; border-radius: 10px; background: rgba(5, 1, 15, .82); color: var(--w12-text-2); font-size: 13px; line-height: 18px; text-align: center; }
+.w12 .w12-sub-error { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 8px; max-height: calc(100% - 24px); overflow: hidden; padding: 8px 10px; border-radius: 10px; background: rgba(5, 1, 15, .82); color: var(--w12-text-2); font-size: 13px; line-height: 18px; text-align: center; overflow-wrap: anywhere; }
+/* «Обновить» под текстом сбоя загрузки превью */
+.w12 .w12-sub-retry { height: 32px; padding: 0 14px; border-radius: 10px; display: inline-flex; align-items: center; justify-content: center; background: var(--w12-field-2); color: var(--w12-text); font-size: 14px; line-height: 20px; transition: background-color .15s ease; }
+.w12 .w12-sub-retry:hover:not(:disabled) { background: var(--w12-accent-strong); }
+.w12 .w12-sub-retry:disabled { opacity: .6; cursor: wait; }
 /* Итог шага — одна строка с прокруткой вбок; затухает только тот край, за которым есть пилюли */
 .w12 .w12-sum { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
 .w12 .w12-sum::-webkit-scrollbar { display: none; }

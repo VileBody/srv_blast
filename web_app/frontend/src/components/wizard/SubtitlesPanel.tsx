@@ -15,7 +15,7 @@ import {
   styleIdOf, isFixedStyle, type SubtitleStyleId
 } from '../../lib/subtitleText';
 import { SubtitleTimeline } from './SubtitleTimeline';
-import { SubtitleCanvas, type SubtitleCanvasProps } from './SubtitleCanvas';
+import { SubtitleCanvas, SubtitlePreviewError, type SubtitleCanvasProps, type SubtitlePreviewIssue } from './SubtitleCanvas';
 import { useSubtitleClock } from '../../lib/subtitleClock';
 import { formatTimePrecise } from '../../lib/timeFormat';
 import { useSubtitleFonts } from '../../lib/useSubtitleFonts';
@@ -591,7 +591,7 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
   const timed = useMemo(() => (asr.status === 'COMPLETED'
     ? asr.words.map((w) => ({ text: w.text, start: w.tStart, end: w.tEnd, focus: w.focus }))
     : []), [asr.status, asr.words]);
-  const [geomError, setGeomError] = useState<string | null>(null);
+  const [geomError, setGeomError] = useState<SubtitlePreviewIssue | null>(null);
   const wideFrame = allBackgroundsWide(background);
 
   return (
@@ -618,7 +618,7 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
               ? <ClockedSubtitles style={tabStyle} settings={textSettings} color={subtitles.color} words={timed} lyrics={previewLyrics}
                   wide={wideFrame} onError={setGeomError} />
               : <div className="w12-empty">{t('wizard.subs.previewPickStyle')}</div>}
-            {tabStyle && geomError && <div className="w12-sub-error">{geomError}</div>}
+            {tabStyle && geomError && <SubtitlePreviewError issue={geomError} />}
             {tab && <span className="w12-pv-tag">{tab}</span>}
           </div>
         </div>
