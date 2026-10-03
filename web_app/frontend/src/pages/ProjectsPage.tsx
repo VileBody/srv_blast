@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -66,35 +66,68 @@ function StatCard({ label, value, to, onClick, variant }: { label: string; value
  * Правка: «⋯» в углу — переименовать / архив / удалить. До этого ошибку в названии нельзя было
  * исправить, а лента со временем зарастала мусорными проектами.
  */
-function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onDelete }: {
+function ProjectCard({ project, menuOpen, onToggleMenu, onCloseMenu, onRename, onArchive, onDelete }: {
   project: Project;
   menuOpen: boolean;
   onToggleMenu: () => void;
+  onCloseMenu: () => void;
   onRename: () => void;
   onArchive: () => void;
   onDelete: () => void;
 }) {
   const { t } = useTranslation();
-  const action = (handler: () => void) => (event: React.MouseEvent) => {
-    event.preventDefault();
-    event.stopPropagation();
-    handler();
-  };
+  const cardRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+
+  // меню закрывается кликом мимо карточки и по Escape (фокус — обратно на «⋯», чтобы не терялся)
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointer = (event: PointerEvent) => {
+      if (!cardRef.current?.contains(event.target as Node)) onCloseMenu();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      onCloseMenu();
+      toggleRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen, onCloseMenu]);
+
+  /* Ссылка карточки и меню — соседи, а не матрёшка: кнопка внутри <a> — невалидная разметка,
+     скринридер читал «⋯» частью ссылки, а клики приходилось глушить preventDefault. */
   return (
-    <Link
-      to={`/app/projects/${project.id}`}
+    <div
+      ref={cardRef}
       className={cn('group relative flex max-h-[380px] w-[300px] shrink-0 flex-col overflow-hidden rounded-r15 max-md:h-[112px] max-md:w-[150px]', project.archived && 'opacity-60')}
       style={{ background: 'var(--field)' }}
     >
-      {/* обложка: отступ 14 слева/сверху, уходит за правый край (bleed 38px) и перекрыта фейдом в цвет карты */}
-      <div className="relative ml-[14px] mr-[-38px] mt-[14px] min-h-0 flex-1 max-md:!min-h-0 max-md:!flex-1 max-md:ml-[10px] max-md:mt-[10px]">
-        <ProjectCover name={project.name} src={project.coverUrl} track={project.coverTrack} className="h-full w-full rounded-[14px]" />
-        <div className="pointer-events-none absolute inset-y-0 right-[38px] w-[100px]" style={{ background: 'linear-gradient(90deg, transparent 0%, var(--field) 100%)' }} />
-      </div>
+      <Link
+        to={`/app/projects/${project.id}`}
+        className="flex min-h-0 flex-1 flex-col rounded-r15 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent-light"
+      >
+        {/* обложка: отступ 14 слева/сверху, уходит за правый край (bleed 38px) и перекрыта фейдом в цвет карты */}
+        <div className="relative ml-[14px] mr-[-38px] mt-[14px] min-h-0 flex-1 max-md:!min-h-0 max-md:!flex-1 max-md:ml-[10px] max-md:mt-[10px]">
+          <ProjectCover name={project.name} src={project.coverUrl} track={project.coverTrack} className="h-full w-full rounded-[14px]" />
+          <div className="pointer-events-none absolute inset-y-0 right-[38px] w-[100px]" style={{ background: 'linear-gradient(90deg, transparent 0%, var(--field) 100%)' }} />
+        </div>
+
+        <div className="mx-[16px] mb-[14px] mt-[12px] flex items-center gap-[8px] max-md:mx-[10px] max-md:mb-[10px] max-md:mt-[8px] max-md:gap-[6px]">
+          <span className="truncate text-ui-20 font-[400] text-transparent" style={gradLight}>{project.name}</span>
+          {project.archived && <span className="shrink-0 whitespace-nowrap rounded-[5px] bg-grad-soft-20 px-[8px] py-[4px] text-[12px] leading-none text-text-60">{t('projects.archivedBadge')}</span>}
+          <FigIcon name="home-arrow.svg" h={11} className="shrink-0 transition-transform duration-200 group-hover:translate-x-[3px]" />
+        </div>
+      </Link>
 
       <button
+        ref={toggleRef}
         type="button"
-        onClick={action(onToggleMenu)}
+        onClick={onToggleMenu}
+        aria-haspopup="true"
         aria-label={t('projects.manage')}
         aria-expanded={menuOpen}
         className={cn(
@@ -116,7 +149,7 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
             <button
               key={item.label}
               type="button"
-              onClick={action(item.run)}
+              onClick={item.run}
               className={cn('block w-full px-[14px] py-[9px] text-left text-[15px] leading-none transition hover:bg-accent-10', item.danger ? 'text-[#ff8f9a]' : 'text-text-80 hover:text-text')}
             >
               {item.label}
@@ -124,13 +157,7 @@ function ProjectCard({ project, menuOpen, onToggleMenu, onRename, onArchive, onD
           ))}
         </div>
       )}
-
-      <div className="mx-[16px] mb-[14px] mt-[12px] flex items-center gap-[8px] max-md:mx-[10px] max-md:mb-[10px] max-md:mt-[8px] max-md:gap-[6px]">
-        <span className="truncate text-ui-20 font-[400] text-transparent" style={gradLight}>{project.name}</span>
-        {project.archived && <span className="shrink-0 whitespace-nowrap rounded-[5px] bg-grad-soft-20 px-[8px] py-[4px] text-[12px] leading-none text-text-60">{t('projects.archivedBadge')}</span>}
-        <FigIcon name="home-arrow.svg" h={11} className="shrink-0 transition-transform duration-200 group-hover:translate-x-[3px]" />
-      </div>
-    </Link>
+    </div>
   );
 }
 
@@ -236,13 +263,8 @@ export function ProjectsPage() {
     onError: () => push({ variant: 'error', title: t('simple.error') })
   });
 
-  // клик мимо карточки закрывает меню — иначе оно висит поверх соседних проектов
-  useEffect(() => {
-    if (!menuFor) return;
-    const close = () => setMenuFor(null);
-    window.addEventListener('click', close);
-    return () => window.removeEventListener('click', close);
-  }, [menuFor]);
+  // стабильная ссылка: эффект карточки подписывается на документ только пока меню открыто
+  const closeMenu = useCallback(() => setMenuFor(null), []);
 
   if (queryDown(query)) return <QueryError query={query} className="min-h-[560px]" />;
   if (query.isLoading) return <Skeleton className="h-full min-h-[560px]" />;
@@ -271,6 +293,7 @@ export function ProjectsPage() {
               project={project}
               menuOpen={menuFor === project.id}
               onToggleMenu={() => setMenuFor((current) => (current === project.id ? null : project.id))}
+              onCloseMenu={closeMenu}
               onRename={() => { setMenuFor(null); setRenameValue(project.name); setRenameFor(project); }}
               onArchive={() => { setMenuFor(null); archiveMutation.mutate({ id: project.id, archived: !project.archived }); }}
               onDelete={() => { setMenuFor(null); setDeleteFor(project); }}
