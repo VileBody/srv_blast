@@ -119,7 +119,9 @@
 .w12 .w12-win { position: absolute; top: -6px; bottom: -6px; border-radius: 10px; background: rgba(139, 111, 230, 0.14); box-shadow: inset 0 0 0 1.5px var(--w12-accent); cursor: grab; }
 .w12 .w12-win:active { cursor: grabbing; }
 .w12 .w12-win.w12-over { background: var(--w12-warn-soft); box-shadow: inset 0 0 0 1.5px var(--w12-warn); }
-.w12 .w12-handle { position: absolute; top: 0; bottom: 0; width: 18px; cursor: ew-resize; display: grid; place-items: center; }
+.w12 .w12-handle { position: absolute; top: 0; bottom: 0; width: 18px; cursor: ew-resize; display: grid; place-items: center; touch-action: none; }
+/* приближенную волну листают пальцем: прокрутку ведёт браузер, тап ставит окно (TrackStage.onWaveUp) */
+.w12 .w12-wave[data-pan] { touch-action: pan-x pan-y; }
 .w12 .w12-handle::after { content: ''; width: 4px; height: 30px; border-radius: 3px; background: var(--w12-text); box-shadow: 0 1px 4px rgba(5, 1, 15, .6); }
 .w12 .w12-handle.w12-l { left: -9px; }
 .w12 .w12-handle.w12-r { right: -9px; }

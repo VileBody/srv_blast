@@ -182,22 +182,52 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
     if (!rect || !duration) return 0;
     return Math.max(0, Math.min(duration, ((clientX - rect.left) / rect.width) * duration));
   };
+  /** окно на лимит тарифа с началом в точке клика (у конца трека — прижато к концу) */
+  const placeWindowAt = (at: number) => {
+    const start = snapTenth(Math.max(0, Math.min(at, duration - maxSegmentSeconds)));
+    const end = snapTenth(Math.min(duration, start + maxSegmentSeconds));
+    setCut(start, end);
+    return { start, end };
+  };
+  /*
+   * Палец на приближенной волне: протяжка листает волну (её скроллит сам браузер —
+   * touch-action: pan-x, см. data-pan), а окно ставит только тап без сдвига. Раньше любое
+   * касание сразу ставило новое окно и стирало текст отрывка — пролистать волну было нельзя.
+   */
+  const tap = useRef<null | { pointerId: number; x: number; y: number }>(null);
+  const TAP_SLOP_PX = 8;
   const onWaveDown = (event: PointerEvent<HTMLDivElement>) => {
     if (!track || !duration || event.button !== 0) return;
+    const handle = (event.target as HTMLElement).dataset.handle;
+    if (event.pointerType === 'touch' && zoom > 1 && handle !== 'l' && handle !== 'r') {
+      tap.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+      return;
+    }
     event.currentTarget.setPointerCapture(event.pointerId);
     const at = timeAt(event.clientX);
-    const handle = (event.target as HTMLElement).dataset.handle;
     if (handle === 'l' || handle === 'r') drag.current = { kind: handle };
     else if (selected && at >= from && at <= to) drag.current = { kind: 'move', off: at - from, len: to - from };
     else {
-      const start = snapTenth(Math.max(0, Math.min(at, duration - maxSegmentSeconds)));
-      const end = snapTenth(Math.min(duration, start + maxSegmentSeconds));
-      setCut(start, end);
+      const { start, end } = placeWindowAt(at);
       drag.current = { kind: 'move', off: at - start, len: end - start };
     }
     if (playing === 'cut') stop();
   };
+  const onWaveUp = (event: PointerEvent<HTMLDivElement>) => {
+    drag.current = null;
+    const pending = tap.current;
+    tap.current = null;
+    if (!pending || pending.pointerId !== event.pointerId) return;
+    // тап по окну ничего не меняет (как клик мышью без протяжки), мимо окна — ставит новое
+    const at = timeAt(event.clientX);
+    if (selected && at >= from && at <= to) return;
+    placeWindowAt(at);
+    if (playing === 'cut') stop();
+  };
+  const onWaveCancel = () => { drag.current = null; tap.current = null; };
   const onWaveMove = (event: PointerEvent<HTMLDivElement>) => {
+    const pending = tap.current;
+    if (pending && pending.pointerId === event.pointerId && Math.hypot(event.clientX - pending.x, event.clientY - pending.y) > TAP_SLOP_PX) tap.current = null;
     const d = drag.current;
     if (!d || !event.currentTarget.hasPointerCapture(event.pointerId) || from === null || to === null) return;
     const at = snapTenth(timeAt(event.clientX));
@@ -379,7 +409,7 @@ export function TrackStage({ creditsLeft, maxSegmentSeconds, paidPlan }: { credi
           <div className="w12-wave-box w12-wave-frame">
             <div ref={scrollRef} className="w12-wave-scroll">
             <div className="w12-wave-inner" style={{ width: `${zoom * 100}%` }}>
-            <div ref={waveRef} className="w12-wave" onPointerDown={onWaveDown} onPointerMove={onWaveMove} onPointerUp={() => { drag.current = null; }}>
+            <div ref={waveRef} className="w12-wave" data-pan={zoom > 1 || undefined} onPointerDown={onWaveDown} onPointerMove={onWaveMove} onPointerUp={onWaveUp} onPointerCancel={onWaveCancel}>
               <div className="w12-bars" aria-hidden="true">
                 {Array.from({ length: barCount }, (_, i) => {
                   const at = ((i + 0.5) / barCount) * duration;
