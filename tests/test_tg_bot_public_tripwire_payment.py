@@ -148,3 +148,71 @@ def test_tripwire_webhook_leaves_the_bot_stage_alone():
 def test_regular_package_webhook_still_resets_the_bot_stage():
     state_store, _ = _notify_app("Триал")
     assert state_store.reset_calls == [777]
+
+
+class _SlotConn:
+    """user_tracks / users / track_tripwire в памяти — ровно те запросы consume_track_slot."""
+
+    def __init__(self, *, track_credits: int, tripwire: set[tuple[int, str]] | None = None) -> None:
+        self.user_tracks: set[tuple[int, str]] = set()
+        self.track_credits = track_credits
+        self.tripwire = tripwire or set()
+
+    def transaction(self):
+        conn = self
+        snapshot = (set(self.user_tracks), self.track_credits)
+
+        class _Tx:
+            async def __aenter__(self):
+                return None
+
+            async def __aexit__(self, exc_type, *_):
+                if exc_type is not None:  # откат, как в Postgres
+                    conn.user_tracks, conn.track_credits = set(snapshot[0]), snapshot[1]
+                return False
+
+        return _Tx()
+
+    async def fetchval(self, sql, *args):
+        if sql.startswith("INSERT INTO user_tracks"):
+            key = (int(args[0]), str(args[1]))
+            if key in self.user_tracks:
+                return None
+            self.user_tracks.add(key)
+            return len(self.user_tracks)
+        if "FROM track_tripwire" in sql:
+            return 1 if (int(args[0]), str(args[1])) in self.tripwire else None
+        if sql.startswith("SELECT track_unlimited FROM users"):
+            return False
+        raise AssertionError(f"unexpected fetchval: {sql}")
+
+    async def fetchrow(self, sql, *args):
+        if sql.startswith("UPDATE users SET track_credits = track_credits - 1"):
+            if self.track_credits < 1:
+                return None
+            self.track_credits -= 1
+            return {"tg_id": args[0]}
+        raise AssertionError(f"unexpected fetchrow: {sql}")
+
+
+def _slot_db(conn: _SlotConn) -> cdb.CreditsDB:
+    credits = cdb.CreditsDB.__new__(cdb.CreditsDB)
+    credits._pool_or_fail = lambda: _Pool(conn)
+    return credits
+
+
+def test_paid_tripwire_track_does_not_need_a_free_track_slot():
+    """Регресс: единственный слот ушёл на трек A, трипваер куплен на трек B → первая
+    генерация по B получала "blocked" (402 «лимит треков»), хотя человек заплатил."""
+    conn = _SlotConn(track_credits=1, tripwire={(7, "track-b")})
+    credits = _slot_db(conn)
+
+    assert asyncio.run(credits.consume_track_slot(7, "track-a")) == "consumed"
+    assert conn.track_credits == 0
+    assert asyncio.run(credits.consume_track_slot(7, "track-b")) == "tripwire"
+    assert conn.track_credits == 0  # слот не тратится и в минус не уходит
+    assert asyncio.run(credits.consume_track_slot(7, "track-b")) == "known"  # идемпотентно
+    # трек без трипваера по-прежнему упирается в лимит и не оседает в user_tracks
+    assert asyncio.run(credits.consume_track_slot(7, "track-c")) == "blocked"
+    assert (7, "track-c") not in conn.user_tracks
+

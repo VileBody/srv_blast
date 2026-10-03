@@ -328,6 +328,9 @@ class BillingBackend:
         await self.ensure_user(int(tg_id))
         if await self._db.has_track_hash(int(tg_id), audio_hash):
             return True
+        # Трек с купленным трипваером слот не тратит (consume_track_slot → "tripwire").
+        if await self._db.has_track_tripwire(int(tg_id), audio_hash):
+            return True
         if await self._db.is_track_unlimited(int(tg_id)):
             return True
         return await self._db.get_track_balance(int(tg_id)) > 0

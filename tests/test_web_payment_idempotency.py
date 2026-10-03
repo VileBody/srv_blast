@@ -371,3 +371,29 @@ def test_subscription_retry_endpoint_passes_idempotency_key(monkeypatch) -> None
     assert second["paymentUrl"] == first["paymentUrl"]
     assert len(tbank.calls) == 1
     assert tbank.calls[0]["recurrent"] is True
+
+
+def test_tripwire_track_can_be_opened_without_free_track_slots():
+    """Ссылка из бота на трек с трипваером не должна предупреждать «лимит треков»."""
+    class _DB:
+        async def has_track_hash(self, tg_id, audio_hash):
+            return False
+
+        async def has_track_tripwire(self, tg_id, audio_hash):
+            return audio_hash == "track-b"
+
+        async def is_track_unlimited(self, tg_id):
+            return False
+
+        async def get_track_balance(self, tg_id):
+            return 0
+
+    backend = BillingBackend.__new__(BillingBackend)
+    backend._db = _DB()
+
+    async def ensure_user(*_a, **_kw):
+        return None
+
+    backend.ensure_user = ensure_user
+    assert asyncio.run(backend.can_upload_track(7, "track-b")) is True
+    assert asyncio.run(backend.can_upload_track(7, "track-c")) is False

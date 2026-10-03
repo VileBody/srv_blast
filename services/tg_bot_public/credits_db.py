@@ -1663,8 +1663,9 @@ class CreditsDB:
         """Atomically resolve a track upload against the user's unique-track quota.
 
         Returns "known" (already-seen track, quota untouched), "consumed"
-        (new track, one track_credit spent), or "blocked" (new track, no
-        quota left).
+        (new track, one track_credit spent), "tripwire" (new track with a paid
+        399 ₽ tripwire — the purchase itself is its slot, quota untouched), or
+        "blocked" (new track, no quota left).
 
         The INSERT is the arbiter of newness: only the transaction that
         actually inserts the (tg_id, audio_hash) row proceeds to spend a
@@ -1685,6 +1686,16 @@ class CreditsDB:
                     )
                     if inserted is None:
                         return "known"
+                    # Купленный трипваер — это и есть право на трек: без этого человек,
+                    # потративший единственный слот на трек A, платил 399 ₽ за трек B и
+                    # получал 402 «лимит треков» на первой же генерации.
+                    paid_tripwire = await conn.fetchval(
+                        "SELECT 1 FROM track_tripwire WHERE tg_id = $1 AND audio_hash = $2",
+                        int(tg_id),
+                        str(audio_hash),
+                    )
+                    if paid_tripwire is not None:
+                        return "tripwire"
                     unlimited = bool(await conn.fetchval(
                         "SELECT track_unlimited FROM users WHERE tg_id = $1 FOR UPDATE",
                         int(tg_id),
