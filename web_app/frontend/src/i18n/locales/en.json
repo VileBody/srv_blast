@@ -946,7 +946,7 @@
       "cut": "Select a fragment on the waveform within the limit.",
       "lyrics": "Type the lines sung in the fragment.",
       "background": "Pick at least one background.",
-      "fx": "Set up at least one FX variant: unfinished ones are marked «set up».",
+      "fx": "Add an FX variant and finish every one marked «set up», or remove the extra ones.",
       "drop": "Pick the drop moment inside the fragment.",
       "subtitles": "Pick at least one subtitle style.",
       "storyboard": "The storyboard is still being built, give it a few seconds.",

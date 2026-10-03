@@ -414,6 +414,18 @@ export function WizardPage() {
     if (attempt.stage !== stage) attempt.clear();
   }, [stage]);
 
+  // Причина под кнопкой живёт вместе с шагом: человек исправил одно — показываем следующую
+  // проблему, исправил всё — убираем. Иначе «Строб включён — выбери склейку» висела бы и после
+  // выбора склейки, до следующего нажатия «Продолжить».
+  const markedStage = useWizardAttempt((a) => a.stage);
+  const markedMessage = useWizardAttempt((a) => a.message);
+  const markedProblem = markedStage === null ? null : stageProblems[markedStage] ?? null;
+  useEffect(() => {
+    if (markedStage === null || markedMessage === t('wizard.missing.submitting')) return;
+    if (!markedProblem) useWizardAttempt.getState().clear();
+    else if (markedProblem !== markedMessage) useWizardAttempt.getState().mark(markedStage, markedProblem);
+  }, [markedStage, markedMessage, markedProblem, t]);
+
   /** Пометить шаг пропусками; не текущий — открыть его, чтобы человек увидел, что чинить. */
   const block = (target: number, reason: string) => {
     if (target !== stage) setStage(target);
