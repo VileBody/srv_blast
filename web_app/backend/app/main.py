@@ -2333,9 +2333,8 @@ async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> 
     drops = []
     for candidate in result.get("drop_candidates") or []:
         seconds = float(candidate.get("t"))
-        # дроп впритык к началу окна сборка не примет (render_job.MIN_DROP_LEAD_S)
-        if seconds - start <= render_job_builder.MIN_DROP_LEAD_S:
-            continue
+        # Дроп на старте окна — нормальный кандидат («Эффектам» его хватает); какие хуки
+        # с ним не настраиваются, решает визард по DROP_LEAD_S.
         drops.append(
             {
                 "time": f"{int(seconds // 60):02d}:{int(seconds % 60):02d}",

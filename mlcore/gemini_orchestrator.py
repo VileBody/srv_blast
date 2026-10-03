@@ -5429,9 +5429,12 @@ def build_all_via_gemini_one_call(
                 if not _udt:
                     raise RuntimeError("F3 hook requires USER_DROP_T (drop anchor)")
                 _drop_rel = float(_udt) - _cs
-                if not (_drop_rel > 0.0):
+                # Дроп на первом кадре отрывка — нормальный приём (отрывок с припева): стек хука
+                # и так встаёт с отрицательным сдвигом при дропе раньше якоря (rebuild_light),
+                # а «до дропа» стилю веб тогда сам ставит весь ролик. Раньше дропа — ошибка.
+                if not (_drop_rel >= 0.0):
                     raise RuntimeError(
-                        f"F3 hook drop_rel must be > 0 (USER_DROP_T={_udt}, clip_start={_cs})"
+                        f"F3 hook drop_rel must be >= 0 (USER_DROP_T={_udt}, clip_start={_cs})"
                     )
             else:
                 # No semantic drop: composition end is only a legacy scope boundary.

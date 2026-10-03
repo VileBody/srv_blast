@@ -478,15 +478,27 @@ def test_drop_analysis_is_cached_per_track_and_window(client, monkeypatch) -> No
     assert len(calls) == 2
 
 
-def test_drop_candidates_skip_the_window_start(client, monkeypatch) -> None:
-    """Дроп впритык к началу окна сборка молча выкидывает вместе с хук-блоком — не предлагаем его."""
+def test_drop_candidates_keep_the_window_start(client, monkeypatch) -> None:
+    """Дроп на старте окна — нормальный кандидат («Эффектам» хватает); какие хуки с ним не
+    настраиваются, решает визард по DROP_LEAD_S."""
     import asyncio
     import dataclasses
     _, main, _ = client
     monkeypatch.setattr(main, "RUNTIME", dataclasses.replace(main.RUNTIME, backend="production"))
     monkeypatch.setattr(main.store, "saved_track", lambda track_id: {"s3Key": "s3://raw/t.mp3"})
     monkeypatch.setattr(main, "_cached_hook_analysis", lambda url, start, end: {"bpm": 120.0, "drop_candidates": [
-        {"t": 0.0, "confidence": 0.88}, {"t": 1.0, "confidence": 0.8}, {"t": 4.2, "confidence": 0.74}, {"t": 10.0, "confidence": 0.65}]})
+        {"t": 0.0, "confidence": 0.88}, {"t": 4.2, "confidence": 0.74}, {"t": 10.0, "confidence": 0.65}, {"t": 11.0, "confidence": 0.6}]})
     result = asyncio.run(main.api_drops(trackId="t1", clipFrom="00:00", clipTo="00:12"))
-    assert [d["seconds"] for d in result["drops"]] == [4.2, 10.0]
-    assert [d["best"] for d in result["drops"]] == [True, False]
+    assert [d["seconds"] for d in result["drops"]] == [0.0, 4.2, 10.0]
+    assert [d["best"] for d in result["drops"]] == [True, False, False]
+
+
+def test_hook_lead_table_matches_what_each_hook_needs(client) -> None:
+    _, main, _ = client
+    rj = main.render_job_builder
+    assert rj.hook_fits_drop("effects", 0.0)          # молния на первом кадре — можно
+    assert not rj.hook_fits_drop("effects", -0.1)     # раньше окна — нельзя
+    assert not rj.hook_fits_drop("warmup", 1.0)       # F1: строго больше секунды
+    assert rj.hook_fits_drop("warmup", 1.01)
+    assert not rj.hook_fits_drop("object", 2.0) and rj.hook_fits_drop("object", 2.5)
+    assert not rj.hook_fits_drop("motion", 3.0) and rj.hook_fits_drop("motion", 3.2)

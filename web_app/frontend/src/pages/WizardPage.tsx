@@ -9,13 +9,13 @@ import { Skeleton } from '../components/ui/Skeleton';
 import { QueryError, queryDown } from '../components/ui/ErrorState';
 import { backgroundVariations, BackgroundWorkZone, StageBackground } from '../components/wizard/BackgroundPanel';
 import { HooksWorkZone, StageHooks } from '../components/wizard/HookPanel';
-import { backgroundUnits, footagePlaneOf, hasTrackInput, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER, subtitleTextProblem } from '../stores/wizardStore';
+import { backgroundUnits, footagePlaneOf, hasTrackInput, HOOK_LABELS, hookComplete, hookPills, selectedEffectStyles, STAGE_ORDER, subtitleTextProblem } from '../stores/wizardStore';
 import { compatibleHookTarget, SliceWorkZone, StageSlice } from '../components/wizard/SlicePanel';
 import { useStoryboardBusy } from '../components/wizard/storyboardData';
 import { LabWorkZone, useFxLab, useLegacyHooksToVariants } from '../components/wizard/FxLab';
 import { StageSubtitles, SubtitlesWorkZone } from '../components/wizard/SubtitlesPanel';
 import { TextPanel } from '../components/wizard/TextPanel';
-import { dropPlacement, dropToSeconds, timingToSeconds } from '../components/wizard/useFragmentAudio';
+import { DROP_LEAD_S, dropLead, dropToSeconds, hookFitsDrop, timingToSeconds } from '../components/wizard/useFragmentAudio';
 import { SEGMENT_SECONDS, segmentSeconds } from '../components/wizard/timing';
 import { TrackStage } from '../components/wizard/TrackStage';
 import { useWizardAttempt } from '../components/wizard/wizardAttempt';
@@ -313,7 +313,7 @@ export function WizardPage() {
   const dropSeconds = dropToSeconds(state.hooks.dropTime);
   const clipFromSeconds = timingToSeconds(state.timingFrom);
   const clipToSeconds = timingToSeconds(state.timingTo);
-  const dropReady = dropPlacement(dropSeconds, clipFromSeconds, clipToSeconds) === 'ok';
+  const dropLeadS = dropLead(dropSeconds, clipFromSeconds, clipToSeconds);
   const configuredHooks = hookPills(state.hooks);
   const configuredHookCount = configuredHooks.length;
   const configuredHooksNeedDrop = configuredHooks.some((pill) => pill.kind !== 'none');
@@ -351,6 +351,11 @@ export function WizardPage() {
    * доехали бы до бэка (422) или молча выпали бы из рендера.
    */
   const needDrop = (fxLab ? labVariants.some((v) => v.kind !== 'none') : configuredHooksNeedDrop) || montageHooks;
+  // Дроп внутри отрывка и каждому выбранному хуку хватает трека до него (DROP_LEAD_S):
+  // окно могли сдвинуть уже после настройки «Объекта» или «Движения».
+  const dropKinds = fxLab ? labVariants.map((v) => v.kind) : configuredHooks.map((pill) => pill.kind);
+  const shortKind = dropLeadS === null ? undefined : dropKinds.find((kind) => !hookFitsDrop(kind, dropLeadS));
+  const dropReady = dropLeadS !== null && !shortKind;
   const fxConfigured = fxLab ? labVariantsComplete : configuredHookCount > 0;
   const stageProblems: Record<number, string | null> = {
     1: !state.track ? t('wizard.missing.track')
@@ -364,7 +369,8 @@ export function WizardPage() {
     // Варианты: все должны быть настроены (у недонастроенного на шаге FX метка «настроить»),
     // дроп внутри отрывка нужен, если хоть один вариант — не «Без хука».
     3: !fxConfigured ? t('wizard.missing.fx')
-      : needDrop && !dropReady ? t('wizard.missing.drop') : null,
+      : needDrop && shortKind ? t('wizard.missing.dropLead', { hook: t(`chip.${HOOK_LABELS[shortKind]}`, { defaultValue: HOOK_LABELS[shortKind] }), seconds: DROP_LEAD_S[shortKind] })
+        : needDrop && !dropReady ? t('wizard.missing.drop') : null,
     // Те же невозможные настройки текста, что горят красным на шаге, — бэк отклонил бы их 422
     4: state.subtitles.pool.length === 0 ? t('wizard.missing.subtitles')
       : textProblem?.kind === 'font' ? t('wizard.missing.textFont', { style: textProblem.style })

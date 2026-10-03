@@ -596,7 +596,7 @@
       "dropAnalyzing": "Analysing drop moments in the fragment…",
       "dropManualOnly": "No automatic candidates — set the drop timing manually.",
       "dropOutsideClip": "The drop timing must be inside the selected clip.",
-      "dropTooEarly": "The drop is too close to the start of the clip: leave at least a second before it. Move the drop or the clip start.",
+      "dropTooEarly": "“{{hook}}” won't fit before this drop: it needs more than {{seconds}} s from the clip start. Pick a later drop or remove this hook.",
       "scopeLabel": "Apply:",
       "scopeDrop": "before drop",
       "scopeFull": "whole video",
@@ -622,7 +622,9 @@
       "dropListenClipHint": "the whole clip",
       "dropIn": "drop in {{seconds}} s",
       "dropNow": "drop",
-      "dropBadFormat": "The drop timing is incomplete — enter minutes and seconds: 00:42 or 00:42:50."
+      "dropBadFormat": "The drop timing is incomplete — enter minutes and seconds: 00:42 or 00:42:50.",
+      "kindNeedsLead": "Needs a later drop: more than {{seconds}} s from the clip start",
+      "scopeDropAtStart": "The drop is at the very start of the clip — there's nothing before it, so the style covers the whole video."
     },
     "subs": {
       "title": "Subtitles",
@@ -981,7 +983,8 @@
       "textFont": "Text · {{style}}: the chosen font isn’t available for this style, pick another.",
       "textFontUnknown": "Text · {{style}}: this font is no longer in the catalog, pick another.",
       "textDown": "Text · {{style}}: the “Down” position is for 16:9 only, pick another.",
-      "submitting": "Already sending, give it a few seconds."
+      "submitting": "Already sending, give it a few seconds.",
+      "dropLead": "“{{hook}}” won't fit before the drop: it needs more than {{seconds}} s from the clip start. Move the drop on the FX step."
     },
     "montage": {
       "guideFramesTitle": "Pick the shots",

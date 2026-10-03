@@ -20,7 +20,7 @@ import logging
 from botocore.config import Config
 
 from . import asr_preview, bot_import, media_proxy, subtitle_text
-from .render_job import MIN_DROP_LEAD_S
+from .render_job import DROP_LEAD_S, hook_fits_drop
 from .runtime import SETTINGS
 
 
@@ -1442,10 +1442,12 @@ class ProductionBackend:
                 raise ProductionBackendError("Для хука нужны отрывок и тайминг дропа")
             if float(drop) < float(start) or float(drop) > float(end):
                 raise ProductionBackendError("Дроп должен находиться внутри выбранного отрывка")
-            if float(drop) - float(start) <= MIN_DROP_LEAD_S:
-                # Оркестратор требует дроп строго позже начала окна (F1 — больше секунды) и
-                # иначе выкидывает весь хук-блок молча: ролик без выбранных эффектов. Отказываем здесь.
-                raise ProductionBackendError("Дроп слишком близко к началу отрывка: до него нужна хотя бы секунда")
+            if not hook_fits_drop(str(family), float(drop) - float(start)):
+                # Хуку не хватает трека до дропа: часть хука молча не попала бы в ролик
+                # (визард такие хуки не даёт настроить — сюда доходит только устаревший черновик).
+                raise ProductionBackendError(
+                    f"Хуку «{family}» нужно больше {DROP_LEAD_S.get(str(family), 0.0):g} с от начала отрывка до дропа"
+                )
         if family == "warmup" and hook_config.get("warmupKind") == "video":
             if not hook_config.get("videoUrl") or not hook_config.get("videoDuration") or not hook_config.get("videoWidth") or not hook_config.get("videoHeight"):
                 raise ProductionBackendError("Загрузите видео для прогрева заново")
@@ -1507,7 +1509,12 @@ class ProductionBackend:
             "effect_hook": resolved.get("hook"),
             "effect_transition": resolved.get("transition"),
             "effect_extra": resolved.get("extra"),
-            "effect_extra_full": bool(resolved.get("extraFull")),
+            # Дроп на самом старте отрывка: «до дропа» стилю ложиться не на что — он на весь ролик
+            # (визард показывает то же самое и хранит это в варианте).
+            "effect_extra_full": bool(resolved.get("extraFull")) or bool(
+                resolved.get("extra") and hook_enabled and start is not None and hook.get("dropTime") is not None
+                and float(hook.get("dropTime")) - float(start) < 0.5
+            ),
             "effect_hook_extend": resolved.get("hookExtend"),
             "f2_shape": f2_shape,
             "subtitle_color_hex": variation.get("subtitle", {}).get("color"),

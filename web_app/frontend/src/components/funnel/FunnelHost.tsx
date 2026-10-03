@@ -10,6 +10,7 @@ import { startNextBatch } from '../../stores/wizardStore';
 import { guardDraft } from '../../stores/draftGuard';
 import { FunnelDialog, FunnelSheet } from './FunnelSheet';
 import { QuizPanel, UnlimitedPanel, quizPath, type QuizView, type UnlimitedStep } from './panels';
+import { useAnyVideoWatched } from '../../lib/videoWatch';
 import { FN_GLYPH, VideoRatingRow, type ActionStatus, type LadderTier, type MethodologyState } from './parts';
 import { Button, Icon } from '../ui/kit';
 import { useCoverCount, useModalCount } from '../ui/Modal';
@@ -622,11 +623,13 @@ export function useVideoRatings(job: GenerationJob | undefined, projectId: strin
   useEffect(() => {
     if (job && !finished) watchedRunning.add(job.id);
   }, [job, finished]);
+  // Оценивать предлагаем то, что видели: окно ждёт, пока хоть один ролик батча досмотрят
+  const seenOne = useAnyVideoWatched((job?.videos ?? []).map((video) => video.id));
   useEffect(() => {
-    if (!job || !finished || !ratingsQuery.isFetched) return;
+    if (!job || !finished || !ratingsQuery.isFetched || !seenOne) return;
     const fresh = Date.now() - Date.parse(job.completedAt ?? job.createdAt) < OFFER_FRESH_MS;
     if (watchedRunning.has(job.id) || (fresh && entry.current?.jobId === job.id)) offer();
-  }, [job, finished, ratingsQuery.isFetched, offer]);
+  }, [job, finished, ratingsQuery.isFetched, seenOne, offer]);
 
   const saves = useSerialSaves();
   const save = (video: VideoVersion, score: number, reasons: RatingReason[]) => {

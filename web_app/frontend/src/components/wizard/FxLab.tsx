@@ -8,6 +8,7 @@ import { useChip } from '../../i18n/useChip';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { CatalogMedia } from './CatalogPreview';
 import { WarmupInput } from './WarmupInput';
+import { DROP_LEAD_S, dropLead, dropToSeconds, hookFitsDrop, timingToSeconds } from './useFragmentAudio';
 import { useDragScroll } from './useDragScroll';
 import { PillsFooter, Svg, W12 } from './WizardFrame';
 import { FX_VARIANT_PALETTE, FxVariant, fxVariantsMode, HOOK_LABELS, variantsFromLegacyHooks, HookConfig, HookKind, hookComplete, useWizardStore } from '../../stores/wizardStore';
@@ -327,7 +328,7 @@ function FooterGuideVisual() {
 
 /* ── левая панель: типы-аккордеон с вариантами ─────────────────────────────── */
 
-export function LabTypeList({ locked }: { locked: boolean }) {
+export function LabTypeList({ locked, dropLeadS }: { locked: boolean; dropLeadS: number | null }) {
   const { t } = useTranslation();
   const lab = useFxLabStore();
   const allVariants = useLabVariants();
@@ -343,6 +344,10 @@ export function LabTypeList({ locked }: { locked: boolean }) {
     const first = allVariants.find((v) => !v.draft);
     if (first) lab.select(first.id);
   }, [allVariants, lab]);
+  // Дроп сдвинули раньше, чем нужно раскрытому типу: закрываем его, пока там не завели вариант
+  useEffect(() => {
+    if (lab.expanded && dropLeadS !== null && !hookFitsDrop(lab.expanded, dropLeadS)) lab.toggleType(lab.expanded);
+  }, [dropLeadS, lab]);
   // «Вернуть» живёт несколько секунд; уход со шага его гасит
   const removed = lab.removed;
   useEffect(() => {
@@ -382,7 +387,9 @@ export function LabTypeList({ locked }: { locked: boolean }) {
           const variants = allVariants.filter((v) => v.kind === item.kind && !v.draft);
           const open = lab.expanded === item.kind;
           const has = variants.length > 0;
-          const isLocked = locked && item.kind !== 'none';
+          // Дроп оставил типу меньше трека, чем ему нужно (DROP_LEAD_S): такой хук не настраивается
+          const shortLead = dropLeadS !== null && !hookFitsDrop(item.kind, dropLeadS);
+          const isLocked = (locked && item.kind !== 'none') || shortLead;
           return (
             <div key={item.kind} ref={open ? openRef : undefined} className={cn('w12-fx-type', (open || has) && 'w12-on', open && 'w12-open', isLocked && 'w12-locked')}>
               {/* строка типа: иконка · название · «?» рядом с названием · метки вариантов · стрелка справа */}
@@ -401,6 +408,7 @@ export function LabTypeList({ locked }: { locked: boolean }) {
                 )}
                 <span className="w12-fx-chev" aria-hidden="true"><Svg>{W12.down}</Svg></span>
               </HookTypeHead>
+              {shortLead && <p className="w12-fx-type-note">{t('wizard.fx.kindNeedsLead', { seconds: DROP_LEAD_S[item.kind] })}</p>}
               {open && (
                 <div className="w12-fx-vars">
                   {variants.map((v) => {
@@ -569,7 +577,15 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
     // без перехода на следующую вкладку: человек может сравнить другие варианты этого шага
     lab.patch(patch);
   };
-  const styleLocked = styleLocksFullWindow(style);
+  // Дроп на самом старте отрывка (раньше полсекунды): «до дропа» стилю ложиться не на что —
+  // он идёт на весь ролик, и вариант это хранит явно, чтобы экран и рендер совпадали.
+  const dropAtStart = useWizardStore((state) => {
+    const lead = dropLead(dropToSeconds(state.hooks.dropTime), timingToSeconds(state.timingFrom), timingToSeconds(state.timingTo));
+    return lead !== null && lead < 0.5;
+  });
+  const needsFullScope = Boolean(stored && dropAtStart && style && !stored.config.effectStyleFull);
+  useEffect(() => { if (needsFullScope) lab.patch({ effectStyleFull: true }); }, [needsFullScope, lab]);
+  const styleLocked = styleLocksFullWindow(style) || dropAtStart;
 
   /*
    * «Дальше ✓»: вкладки дока (Эффект → Склейка → Стиль) не замечали — листали примеры и не
@@ -692,7 +708,7 @@ export function LabWorkZone({ ready, canContinue, loading, onBack, onNext }: { r
                     value={styleLocked || config.effectStyleFull ? 'full' : 'pre'}
                     options={[['pre', t('wizard.fxv.scopePre')], ['full', t('wizard.fxv.scopeFull')]]}
                     disabledValues={styleLocked ? ['pre'] : undefined}
-                    note={styleLocked ? t('wizard.fx.scopeLocked') : undefined}
+                    note={dropAtStart ? t('wizard.fx.scopeDropAtStart') : styleLocked ? t('wizard.fx.scopeLocked') : undefined}
                     onPick={(val) => lab.patch({ effectStyleFull: val === 'full' })}
                   />
                 )}

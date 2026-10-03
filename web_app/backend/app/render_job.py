@@ -11,10 +11,18 @@ from . import effect_map as em
 from . import montage as montage_edits
 from . import storyboard as storyboard_plans
 
-# Минимум от начала отрывка до дропа — тот же порог, что у визарда (useFragmentAudio.MIN_DROP_LEAD_S):
-# оркестратор требует дроп строго позже начала окна (F1 — больше секунды) и иначе молча
-# выкидывает весь хук-блок.
-MIN_DROP_LEAD_S = 1.0
+# Сколько трека нужно ДО дропа каждому типу хука — та же таблица, что у визарда
+# (useFragmentAudio.DROP_LEAD_S). «Эффектам» хватает дропа на первом кадре отрывка; остальным
+# нужен разгон, иначе часть хука молча не попадает в ролик: «Объект» ставит форму на склейку до
+# дропа, «Прогрев» играет звук в окне до него (F1: drop_rel > 1 с), «Движение» — жест-интро
+# (F4_MIN_INTRO_SEC), «Мысль» — голос перед дропом. `sound` — старое имя «Прогрева».
+DROP_LEAD_S = {"none": 0.0, "effects": 0.0, "warmup": 1.0, "sound": 1.0, "thought": 1.0, "object": 2.0, "motion": 3.0}
+
+
+def hook_fits_drop(family: str, lead: float) -> bool:
+    """Хватает ли хуку трека до дропа: при пороге 0 — дроп хоть на первом кадре, иначе строго больше."""
+    need = DROP_LEAD_S.get(family, 0.0)
+    return lead >= 0.0 if need == 0.0 else lead > need
 
 SCHEMA = "blast.render_job/1"
 OUTPUT_DEFAULT = {
