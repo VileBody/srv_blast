@@ -56,6 +56,19 @@ def test_kant_ids_are_selectable_everywhere():
             assert e["id"] in contract["effect_transition"]
 
 
+def test_build_task_accepts_every_selectable_effect():
+    """tasks.py проверяет effect_* запроса перед сборкой — тем же набором, что overlay и схема
+    (раньше там была своя копия списка, и build падал на каждом эффекте Kant)."""
+    from services.orchestrator.tasks import f3_allowed_ids
+
+    allowed = f3_allowed_ids()
+    contract = contract_ids(ROOT)
+    assert allowed["hook"] == set(overlay.F3_HOOKS) == set(contract["effect_hook"])
+    assert allowed["transition"] == set(overlay.F3_TRANSITIONS) == set(contract["effect_transition"])
+    assert allowed["extra"] == set(overlay.F3_EXTRAS) == set(contract["effect_extra"])
+    assert "of_invert_flash" in allowed["transition"]
+
+
 def test_registry_has_every_kant_effect_with_a_table_group():
     by_id = {r["manifestId"]: (group, r) for group in ("glue", "style") for r in REGISTRY[group]}
     for e in KANT:
