@@ -5,6 +5,8 @@ import { api } from '../../lib/api';
 import { cn } from '../../lib/cn';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
 import { MediaCard, Rail, useBackdrop } from './BackgroundPanel';
+import { PreviewVideo } from './CatalogPreview';
+import { catalogPosterOf, useInView } from '../../lib/media';
 import { PAUSE, PLAY, PillsFooter, Svg, W12 } from './WizardFrame';
 import { SubtitleTextSettings, activeTextTab, allBackgroundsWide, textSettingsFor, useWizardStore } from '../../stores/wizardStore';
 import {
@@ -219,10 +221,26 @@ function SubtitleColorControl({ label, value, defaultColor, defaultLabel, onChan
 
 type FontOption = { value: string; label: string; family: string; disabled?: string; lowercase?: boolean };
 
+/**
+ * Образец «Аа» в строке меню шрифтов. Шрифт скачивается, только когда строка показалась в
+ * прокрутке меню: раньше открытие меню тянуло все ~39 шрифтов каталога (~2,9 МБ) разом.
+ * Показавшийся раз образец остаётся своим шрифтом (файл уже в кэше).
+ */
+function FontSample({ option, menuRef }: { option: FontOption; menuRef: RefObject<HTMLDivElement> }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const shown = useInView(ref, { root: menuRef, rootMargin: '120px 0px', once: true });
+  return (
+    <span ref={ref} className="w12-font-sample" aria-hidden="true" style={shown ? { fontFamily: option.family } : { visibility: 'hidden' }}>
+      {option.lowercase ? 'аа' : 'Аа'}
+    </span>
+  );
+}
+
 /** Выбор шрифта: выпадающий список с образцом «Аа» каждым шрифтом; недоступные — с причиной. */
 function FontMenu({ label, value, options, onChange }: { label: string; value: string; options: FontOption[]; onChange: (value: string) => void }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const selected = options.find((option) => option.value === value) ?? options[0];
   useEffect(() => {
@@ -240,7 +258,7 @@ function FontMenu({ label, value, options, onChange }: { label: string; value: s
           <span className="w12-l">{selected?.label}</span><Svg>{W12.down}</Svg>
         </button>
         {open && (
-          <div id={listId} role="listbox" aria-label={label} className="w12-dd-menu w12-font-menu">
+          <div ref={menuRef} id={listId} role="listbox" aria-label={label} className="w12-dd-menu w12-font-menu">
             {options.map((option) => (
               <div key={option.value} role="option" aria-selected={value === option.value} aria-disabled={Boolean(option.disabled) || undefined}
                 title={option.disabled} className={cn('w12-dd-opt', option.disabled && 'w12-off')}
@@ -249,7 +267,7 @@ function FontMenu({ label, value, options, onChange }: { label: string; value: s
                   <span className="w12-l">{option.label}</span>
                   {option.disabled && <small>{option.disabled}</small>}
                 </span>
-                <span className="w12-font-sample" aria-hidden="true" style={{ fontFamily: option.family }}>{option.lowercase ? 'аа' : 'Аа'}</span>
+                <FontSample option={option} menuRef={menuRef} />
               </div>
             ))}
           </div>
@@ -537,12 +555,13 @@ export function SubtitlesWorkZone({ ready, canContinue, loading, onBack, onNext 
         </div>
         {/* кадр — выбранный на «Фоне» (первый футаж/фото или цвет): субтитры видно так, как они лягут */}
         <div className={cn('w12-pv-stage', wideFrame && 'w12-pv-ambient')}>
+          {/* размытая подложка — заставка ролика, а не второй экземпляр того же видео */}
           {wideFrame && backdrop.url && (backdrop.isVideo
-            ? <video className="w12-ambient-bg" src={backdrop.url} muted loop playsInline autoPlay aria-hidden="true" />
+            ? catalogPosterOf(backdrop.url) && <img className="w12-ambient-bg" src={catalogPosterOf(backdrop.url)!} alt="" aria-hidden="true" />
             : <img className="w12-ambient-bg" src={backdrop.url} alt="" aria-hidden="true" />)}
           <div className={cn('w12-player', wideFrame && 'w12-cine')} style={{ containerType: 'inline-size' }}>
             {backdrop.url && (backdrop.isVideo
-              ? <video className="w12-media-el" src={backdrop.url} muted loop playsInline autoPlay />
+              ? <PreviewVideo key={backdrop.url} className="w12-media-el" src={backdrop.url} ignoreLowData />
               : <img className="w12-media-el" src={backdrop.url} alt="" />)}
             {backdrop.color && <div className="w12-media-el" style={{ background: backdrop.color }} />}
             <div className="w12-shade" />

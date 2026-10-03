@@ -4,13 +4,14 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { create } from 'zustand';
 import { useChip } from '../../i18n/useChip';
 import { api } from '../../lib/api';
-import { isVideoUrl } from '../../lib/media';
+import { catalogPosterOf, isVideoUrl } from '../../lib/media';
 import { cn } from '../../lib/cn';
 import { HUE_GRADIENT, hueAt } from '../../lib/color';
 import type { Vibe } from '../../lib/types';
 import { SvgMaskIcon } from '../layout/SvgMaskIcon';
 import { InlineError, queryDown } from '../ui/ErrorState';
 import { ChipIcon, EffectPreview, previewIdFor } from './hookCatalog';
+import { PreviewVideo } from './CatalogPreview';
 import { PAUSE, PLAY, PillsFooter, Svg, W12 } from './WizardFrame';
 import { useFragmentAudio } from './useFragmentAudio';
 import { SourcesModal } from './SourcesEditor';
@@ -308,8 +309,9 @@ export function MediaCard({ item, order, format, caption, onToggle }: { item: Pi
       onClick={() => { if (!railMovedRef.current()) onToggle(); }}
     >
       <span className="w12-media">
+        {/* играет только карточка в кадре ленты (заставка до тех пор) — см. PreviewVideo */}
         {!broken && (isVideo
-          ? <video src={item.previewUrl} muted loop playsInline autoPlay draggable={false} onError={() => setBroken(true)} />
+          ? <PreviewVideo src={item.previewUrl} draggable={false} onError={() => setBroken(true)} />
           : <img src={item.previewUrl} alt="" draggable={false} onError={() => setBroken(true)} />)}
       </span>
       <span className="w12-badge w12-num">{order > 0 ? order : ''}</span>
@@ -661,12 +663,14 @@ export function BackgroundWorkZone({ ready, loading, onBack, onNext }: { ready: 
         {/* широкий кадр (4:3, 16:9) в высокой колонке: вокруг него — размытая копия того же кадра,
             как у горизонтальных видео в вертикальных лентах, а не пустое поле сверху и снизу */}
         <div className={cn('w12-pv-stage', format !== '9:16' && 'w12-pv-ambient')}>
+          {/* размытая подложка — заставка (картинка), а не второй экземпляр того же ролика:
+              раньше выбранное превью качалось и декодировалось дважды */}
           {format !== '9:16' && current && !broken[current.id] && !example && (isVideo
-            ? <video key={`bg-${current.id}`} className="w12-ambient-bg" src={current.previewUrl} muted loop playsInline autoPlay aria-hidden="true" />
+            ? catalogPosterOf(current.previewUrl) && <img key={`bg-${current.id}`} className="w12-ambient-bg" src={catalogPosterOf(current.previewUrl)!} alt="" aria-hidden="true" />
             : <img key={`bg-${current.id}`} className="w12-ambient-bg" src={current.previewUrl} alt="" aria-hidden="true" />)}
           <div className={cn('w12-player', format === '4:3' && 'w12-wide', format === '16:9' && 'w12-cine', fragmentAudio.playing && 'w12-playing')}>
             {current && !broken[current.id] && (isVideo
-              ? <video key={current.id} className="w12-media-el" src={current.previewUrl} muted loop playsInline autoPlay onError={() => setBroken((b) => ({ ...b, [current.id]: true }))} />
+              ? <PreviewVideo key={current.id} className="w12-media-el" src={current.previewUrl} ignoreLowData onError={() => setBroken((b) => ({ ...b, [current.id]: true }))} />
               : <img key={current.id} className="w12-media-el" src={current.previewUrl} alt="" onError={() => setBroken((b) => ({ ...b, [current.id]: true }))} />)}
             {color && (
               <div
