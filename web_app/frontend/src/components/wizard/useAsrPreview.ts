@@ -23,6 +23,10 @@ interface AsrRunState {
 }
 export const useAsrRun = create<AsrRunState>(() => ({ nonce: 0, starting: false, startFailed: false, inputsReady: false }));
 
+/** Последний повтор, который уже ушёл на бэк с force: перемонтирование хука не должно
+ * пересчитывать готовую примерку заново — это десятки секунд ASR на проде. */
+let forcedNonce = 0;
+
 /** Перезапустить примерку с теми же вводными (после сбоя или по просьбе человека). */
 export function retryAsrPreview() {
   useAsrRun.setState((s) => ({ nonce: s.nonce + 1, startFailed: false }));
@@ -71,7 +75,10 @@ export function useAsrPreview(active: boolean) {
     attemptRef.current = { key: '', n: 0 };
     let cancelled = false;
     useAsrRun.setState({ starting: true, startFailed: false });
-    api.asrStart({ clipFrom: timingFrom, clipTo: timingTo, fragment, lyrics, trackId: track?.id ?? '' })
+    // «Повторить» после успешной примерки: без force бэк вернул бы ту же готовую раскладку
+    const force = nonce !== forcedNonce;
+    forcedNonce = nonce;
+    api.asrStart({ clipFrom: timingFrom, clipTo: timingTo, fragment, lyrics, trackId: track?.id ?? '', force })
       .then(({ asr }) => { if (!cancelled) { setAsrResult(asr); useAsrRun.setState({ starting: false }); } })
       .catch(() => { if (!cancelled) { startedForRef.current = ''; useAsrRun.setState({ starting: false, startFailed: true }); } });
     // Размонтирование до ответа (StrictMode дважды монтирует эффект) — ответ уже
