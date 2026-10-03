@@ -136,6 +136,11 @@ export function LimitsIndicator({
   useEffect(() => () => { if (closeTimer.current) window.clearTimeout(closeTimer.current); }, []);
   const [anchor, setAnchor] = useState<{ host: HTMLElement; x: number; y: number } | null>(null);
   const ringRef = useRef<HTMLSpanElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  // поповер живёт в портале — для «фокус был внутри?» нужен свой ref
+  const popRef = useRef<HTMLSpanElement>(null);
+  // фокус вернули на кружок после Escape — этот onFocus не должен снова открыть поповер
+  const refocusing = useRef(false);
   const queryClient = useQueryClient();
   const meQuery = useQuery({ queryKey: ['me'], queryFn: api.me });
   const funnelQuery = useFunnelState();
@@ -200,6 +205,31 @@ export function LimitsIndicator({
     setClosedKey(popout.key);
   };
 
+  // Escape закрывает поповер (и окно у кружка) и возвращает фокус на кружок — раньше
+  // поповер с клавиатуры было не закрыть, кроме как увести фокус Tab'ом.
+  const closePopoutRef = useRef(closePopout);
+  closePopoutRef.current = closePopout;
+  useEffect(() => {
+    if (!open && !showPopout) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (closeTimer.current) window.clearTimeout(closeTimer.current);
+      if (open) setOpen(false);
+      else closePopoutRef.current();
+      // фокус возвращаем, только если он был в поповере: окно всплывает само, и Escape
+      // в чужом поле не должен уводить фокус на кружок
+      const trigger = triggerRef.current;
+      const active = document.activeElement;
+      const inside = Boolean(active && (popRef.current?.contains(active) || ringRef.current?.contains(active)));
+      if (trigger && inside && active !== trigger) {
+        refocusing.current = true;
+        trigger.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, showPopout]);
+
   // позиция кружка внутри карточки-хоста — по ней ставим копию кружка и поповер
   useLayoutEffect(() => {
     if ((!open && !showPopout) || !ringRef.current) { setAnchor(null); return; }
@@ -230,10 +260,14 @@ export function LimitsIndicator({
       onMouseLeave={hideSoon}
     >
       <button
+        ref={triggerRef}
         type="button"
         aria-label={t('limits.title')}
         aria-expanded={open}
-        onFocus={() => setOpen(true)}
+        onFocus={() => {
+          if (refocusing.current) { refocusing.current = false; return; }
+          setOpen(true);
+        }}
         onBlur={() => setOpen(false)}
         className="block"
       >
@@ -242,7 +276,7 @@ export function LimitsIndicator({
 
       {showPopout && popout && anchor && funnel && createPortal(
         // ui-allow: якорь окна повторяет геометрию кружка 25×25, как у поповера ниже
-        <span className="pointer-events-none absolute z-[9] h-[25px] w-[25px] max-md:!left-[20px] max-md:right-[20px] max-md:w-auto" style={{ left: anchor.x, top: anchor.y }}>
+        <span ref={popRef} className="pointer-events-none absolute z-[9] h-[25px] w-[25px] max-md:!left-[20px] max-md:right-[20px] max-md:w-auto" style={{ left: anchor.x, top: anchor.y }}>
           <span className="absolute right-0 max-md:left-0" style={{ top: 25 + offsetY }}>
             <LimitsPopoutCard
               variant={popout.variant}
@@ -269,7 +303,7 @@ export function LimitsIndicator({
       {open && !showPopout && anchor && createPortal(
         <>
           <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-[6] rounded-r25 bg-[rgba(20,14,36,0.4)]" />
-          <span className="pointer-events-none absolute z-[8] h-[25px] w-[25px] max-md:!left-[20px] max-md:right-[20px] max-md:w-auto" style={{ left: anchor.x, top: anchor.y }}>
+          <span ref={popRef} className="pointer-events-none absolute z-[8] h-[25px] w-[25px] max-md:!left-[20px] max-md:right-[20px] max-md:w-auto" style={{ left: anchor.x, top: anchor.y }}>
             <span
               role="tooltip"
               onMouseEnter={show}
