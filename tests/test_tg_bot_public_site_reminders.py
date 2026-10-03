@@ -41,6 +41,9 @@ class _Bot:
     async def send_message(self, chat_id, text, reply_markup=None, **kw):
         self.sent.append((chat_id, text, reply_markup))
 
+    async def get_chat(self, chat_id):
+        return SimpleNamespace(first_name="Лена", last_name="", username="lena_beats")
+
 
 class _DB:
     def __init__(self, *, handoffs=(), unlimited=(), batches=None, idle=(), paid=(), tripwire=()):
@@ -82,9 +85,8 @@ class _DB:
         self.last[tg_id] = DAY
         return True
 
-    async def create_web_handoff(self, tg_id, kind, payload=None, *, ttl_seconds, single_use=False):
+    async def create_web_handoff(self, tg_id, kind, payload=None, *, ttl_seconds):
         self.tokens.append((tg_id, kind, payload or {}))
-        self.single_use = getattr(self, "single_use", []) + [single_use]
         return f"tok{len(self.tokens)}"
 
     async def log_event(self, tg_id, event, detail=""):
@@ -222,7 +224,8 @@ def test_tripwire_offer_is_chased_within_its_day_even_right_after_another_remind
     bot = _Bot()
     asyncio.run(_app(db, bot)._site_reminders_tick(DAY))
     assert bot.sent and "21 ч" in bot.sent[0][1] and "399" in bot.sent[0][1]
-    assert db.single_use == [True]  # ссылки из напоминаний одноразовые
+    # в ссылке — профиль Telegram: сайт покажет его в вопросе «привязать этот Telegram?»
+    assert db.tokens[0][2]["profile"] == {"name": "Лена", "surname": "", "username": "lena_beats"}
 
 
 def test_reminder_track_link_is_marked_so_it_does_not_restart_the_chain():
