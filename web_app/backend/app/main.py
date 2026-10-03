@@ -2650,6 +2650,8 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
         # claim_track_batch в проде): два сабмита подряд не уходят бесплатно оба.
         tg_mock = _funnel_tg_id()
         mock_hash = str((stage_data.get("track") or {}).get("audioHash") or "")
+        if not replay:
+            await _require_channel_or_http(tg_mock, mock_hash)
         async with funnel.repo().batch_lock(tg_mock):
             mock_batch_mode = "credits"
             if credits_total is not None and not replay:
@@ -2664,6 +2666,13 @@ async def api_submit_wizard(payload: SubmitPayload) -> dict[str, Any]:
                     videos=int(job.get("versions") or payload.videosToGenerate), mode=mock_batch_mode,
                 )
     else:
+        if RUNTIME.backend == "production" and not replay:
+            # Подписка на канал — до заведения джоба: откатывать нечего. Без привязанного
+            # Telegram сюда не доходим — _telegram_chat_id отвечает 409 telegram_required
+            # (бесплатные кредиты на сайте тоже только у привязавших Telegram).
+            await _require_channel_or_http(
+                _telegram_chat_id(), str((stage_data.get("track") or {}).get("audioHash") or ""),
+            )
         job = _create_job_or_422(project_id, stage_data, payload)
     if RUNTIME.backend == "production":
         live_job = store.JOBS[job["id"]]
@@ -2849,7 +2858,17 @@ async def _plan_generation_or_402(tg_id: int, track_hash: str, videos: int, cred
 
 
 def _funnel_http(exc: funnel.FunnelError) -> HTTPException:
-    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": exc.message})
+    return HTTPException(status_code=exc.status_code, detail={**exc.extra, "code": exc.code, "message": exc.message})
+
+
+async def _require_channel_or_http(tg_id: int, track_hash: str) -> None:
+    """Гейт сабмита: бесплатный — только с подпиской на канал (fail-closed)."""
+    try:
+        await funnel.require_channel_for_free(tg_id, track_hash)
+    except funnel.FunnelError as exc:
+        if exc.code == "channel_subscription_required":
+            analytics.track("limit_hit", store.current_user_id(), {"limit": "channel_subscription"})
+        raise _funnel_http(exc) from exc
 
 
 def _track_hash_for(track_id: str) -> tuple[dict[str, Any], str]:
@@ -2961,7 +2980,7 @@ async def api_funnel_ratings(jobId: str) -> dict[str, Any]:
 async def api_funnel_channel() -> dict[str, Any]:
     tg_id = _funnel_tg_id()
     try:
-        subscribed = await run_in_threadpool(funnel.check_channel_member, tg_id)
+        subscribed = await run_in_threadpool(funnel.check_channel_member, tg_id, where="funnel")
     except funnel.FunnelError as exc:
         raise _funnel_http(exc) from exc
     if subscribed:
@@ -2972,7 +2991,8 @@ async def api_funnel_channel() -> dict[str, Any]:
 
 @app.post("/api/funnel/actions/manager", tags=["funnel"])
 async def api_funnel_manager() -> dict[str, Any]:
-    # Факт отправки сообщения проверить нельзя — засчитываем переход по диплинку.
+    # Только аналитика перехода по ссылке менеджеру: факт сообщения не проверить, поэтому
+    # условием безлимита этот шаг больше НЕ является (funnel.UNLOCK_ACTIONS).
     await funnel.repo().mark_funnel_action(_funnel_tg_id(), funnel.ACTION_MANAGER)
     analytics.track("funnel_action", store.current_user_id(), {"action": "manager"})
     return {"ok": True}
