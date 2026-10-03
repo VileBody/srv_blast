@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../../lib/api';
 import type { SavedTrack } from '../../lib/types';
-import { useWizardStore } from '../../stores/wizardStore';
+import { useWizardStore, type HookKind } from '../../stores/wizardStore';
 
 /**
  * Ссылка на прослушивание трека.
@@ -50,17 +50,25 @@ export function dropToSeconds(value: string | null | undefined): number | null {
 }
 
 /**
- * Минимум от начала отрывка до дропа. Сборка требует дроп СТРОГО позже начала окна (F1 —
- * больше секунды), иначе оркестратор молча выкидывает весь хук-блок: ролик собирается,
- * но без выбранных эффектов. Тот же порог — в бэке (`production_backend.MIN_DROP_LEAD_S`).
+ * Сколько трека нужно ДО дропа каждому типу хука (секунды от начала отрывка). Дроп на самом
+ * старте — нормальный приём (отрывок с припева), и «Эффектам» его хватает: молния встаёт на
+ * первый кадр. Остальным нужен разгон до дропа, иначе часть хука молча не попадёт в ролик:
+ * «Объект» ставит форму на склейку ДО дропа, «Прогрев» играет звук в окне до него (F1 требует
+ * больше секунды), «Движение» — жест-интро (F4_MIN_INTRO_SEC), «Мысль» — голос перед дропом.
+ * Такие хуки при раннем дропе не настраиваются. Та же таблица — в бэке (`render_job.DROP_LEAD_S`).
  */
-export const MIN_DROP_LEAD_S = 1;
+export const DROP_LEAD_S: Record<HookKind, number> = { none: 0, effects: 0, warmup: 1, thought: 1, object: 2, motion: 3 };
 
-/** Где дроп относительно отрывка: внутри, слишком близко к началу или вне окна. */
-export function dropPlacement(drop: number | null, from: number | null, to: number | null): 'ok' | 'early' | 'outside' | null {
-  if (drop === null || from === null || to === null) return null;
-  if (drop < from || drop > to) return 'outside';
-  return drop - from > MIN_DROP_LEAD_S ? 'ok' : 'early';
+/** Секунды от начала отрывка до дропа; null — дропа нет или он вне окна. */
+export function dropLead(drop: number | null, from: number | null, to: number | null): number | null {
+  if (drop === null || from === null || to === null || drop < from || drop > to) return null;
+  return drop - from;
+}
+
+/** Хватает ли хуку трека до дропа: «Эффектам» — дроп хоть на первом кадре, остальным — строго больше порога. */
+export function hookFitsDrop(kind: HookKind, lead: number): boolean {
+  const need = DROP_LEAD_S[kind];
+  return need === 0 ? lead >= 0 : lead > need;
 }
 
 /**

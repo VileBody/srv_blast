@@ -1,5 +1,6 @@
 import { PointerEvent as ReactPointerEvent, ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { markVideoWatched, WATCHED_SHARE } from '../../lib/videoWatch';
 import { isVideoPosted, type VideoVersion } from '../../lib/types';
 import { cn } from '../../lib/cn';
 import { LimitsIndicator } from '../ui/LimitsIndicator';
@@ -612,7 +613,8 @@ export function PreviewColumn({ videos, onBack }: { videos: VideoVersion[]; onBa
             playsInline
             preload="auto"
             onError={() => setPreviewError(true)}
-            onEnded={() => setPlaying(false)}
+            onEnded={() => { setPlaying(false); markVideoWatched(video.id); }}
+            onTimeUpdate={(e) => { const el = e.currentTarget; if (el.duration && el.currentTime / el.duration >= WATCHED_SHARE) markVideoWatched(video.id); }}
             className="absolute inset-0 h-full w-full rounded-r15 bg-black object-contain"
           />
         ) : (
@@ -698,15 +700,15 @@ export function ProcessingAside({ done, total, activeVideo, renderFormat, telegr
         <p className="mt-[8px] text-[14px] leading-[18px] text-text-60">{t(telegram ? 'processing.closeTabText' : 'processing.closeTabTextNoBot')}</p>
       </div>
 
-      <div className="mt-[10px] flex shrink-0 items-center justify-between gap-[16px] rounded-r15 bg-grad-soft-10 px-[20px] py-[14px]">
-        <span className="min-w-0">
-          <span className="block truncate text-[16px] leading-none text-text">{t('processing.guideTitle')}</span>
-          <span className="mt-[6px] block text-[14px] leading-[18px] text-text-60">PDF · {t('processing.guideCaption')}</span>
-        </span>
-        <span className="flex shrink-0 items-center gap-[8px]">
-          <a href={SITE_METHODOLOGY_URL} target="_blank" rel="noreferrer" onClick={() => { void api.trackEvent('guide_opened').catch(() => {}); }} className="rounded-r10 border border-[rgba(246,245,253,.18)] px-[12px] py-[8px] text-[14px] text-text-80 transition hover:border-accent-light hover:text-text">{t('common.view')}</a>
-          <a href={SITE_METHODOLOGY_URL} download onClick={() => { void api.trackEvent('guide_downloaded').catch(() => {}); }} className="rounded-r10 border border-accent bg-grad-soft-20 px-[12px] py-[8px] text-[14px] text-text-80 transition hover:text-text">{t('common.download')}</a>
-        </span>
+      {/* Колонка узкая (сайдбар, телефон): кнопки справа сжимали подпись в столбик по слову —
+          текст сверху во всю ширину, две равные кнопки под ним. */}
+      <div className="mt-[10px] shrink-0 rounded-r15 bg-grad-soft-10 px-[20px] py-[16px]">
+        <p className="text-ui-16 leading-none text-text">{t('processing.guideTitle')}</p>
+        <p className="mt-[8px] text-ui-14 text-text-60">PDF · {t('processing.guideCaption')}</p>
+        <div className="mt-[14px] grid grid-cols-2 gap-[8px]">
+          <a href={SITE_METHODOLOGY_URL} target="_blank" rel="noreferrer" onClick={() => { void api.trackEvent('guide_opened').catch(() => {}); }} className="flex h-ctl items-center justify-center rounded-r10 border border-line-strong text-ui-14 text-text-80 transition hover:border-accent-light hover:text-text">{t('common.view')}</a>
+          <a href={SITE_METHODOLOGY_URL} download onClick={() => { void api.trackEvent('guide_downloaded').catch(() => {}); }} className="flex h-ctl items-center justify-center rounded-r10 border border-accent bg-grad-soft-20 text-ui-14 text-text-80 transition hover:text-text">{t('common.download')}</a>
+        </div>
       </div>
 
       <Button size="lg" onClick={onBack} className="mt-[20px] w-full shrink-0 max-md:mt-[14px]" iconEnd={<FigIcon name="pd-arrow-right.svg" w={20} />}>
