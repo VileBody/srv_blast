@@ -341,3 +341,33 @@ def test_payment_confirmation_grants_video_and_track_limits_once() -> None:
     assert renewal["tracks_added"] == 1
     assert conn.users[777] == {"credits": 800, "track_credits": 11}
     assert [tx["order_id"] for tx in conn.transactions] == ["order-1", "order-2"]
+
+
+def test_subscription_retry_endpoint_passes_idempotency_key(monkeypatch) -> None:
+    """«Обновить оплату» в проде: заказ BLAST с ключом из браузера, ответ — ссылка банка."""
+    import dataclasses
+
+    from web_app.backend.app import main
+
+    db = _FakePaymentDB()
+    tbank = _FakeTBank()
+    backend = _backend(db, tbank)
+
+    async def _bundle(bundle: Any) -> dict[str, Any]:
+        return {"subscription": {"tier": "BLAST", "billingStatus": "past_due"}}
+
+    monkeypatch.setattr(main, "RUNTIME", dataclasses.replace(main.RUNTIME, backend="production"))
+    monkeypatch.setattr(main, "_sync_billing_bundle", _bundle)
+    monkeypatch.setattr(main.store, "get_user_bundle", lambda: {})
+    monkeypatch.setattr(main, "_billing_backend", lambda: backend)
+    monkeypatch.setattr(main, "_telegram_chat_id", lambda: 777)
+    monkeypatch.setattr(main, "_billing_email", lambda: "user@example.com")
+
+    payload = main.RetryPaymentPayload(idempotencyKey="retry-1234567890123456789012345678")
+    first = asyncio.run(main.api_payment_retry(payload))
+    second = asyncio.run(main.api_payment_retry(payload))
+
+    assert first["paymentUrl"] == "https://pay.example/order"
+    assert second["paymentUrl"] == first["paymentUrl"]
+    assert len(tbank.calls) == 1
+    assert tbank.calls[0]["recurrent"] is True

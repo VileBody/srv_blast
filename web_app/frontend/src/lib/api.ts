@@ -313,7 +313,12 @@ export const api = {
   cancelSubscription: (immediate = false) =>
     request<{ ok: boolean; subscription: Subscription }>(`/api/payments/cancel-sub?immediate=${immediate}`, { method: 'POST' }),
   /** Повтор списания после неудачной оплаты */
-  retryPayment: () => request<{ ok: boolean; subscription: Subscription; paymentUrl: string | null }>('/api/payments/retry', { method: 'POST' }),
+  /** Повторная оплата подписки: прод отдаёт `paymentUrl` заказа в банке, мок — null (уже оплачено) */
+  retryPayment: (idempotencyKey: string) =>
+    request<{ ok: boolean; subscription: Subscription; paymentUrl: string | null }>('/api/payments/retry', {
+      method: 'POST',
+      body: JSON.stringify({ idempotencyKey })
+    }),
   /** Вернуть автопродление после запланированной отмены */
   resumeSubscription: () => request<{ ok: boolean; subscription: Subscription }>('/api/payments/resume', { method: 'POST' }),
   /** Забрать бонус со шкалы месяцев (+1 трек, за третий месяц — снятие лимита) */
