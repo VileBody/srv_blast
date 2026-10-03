@@ -370,14 +370,41 @@ export function SubtitleTimeline() {
     const tStart = Math.round(Math.min(max - len, Math.max(min, word.tStart + delta)) * 1000) / 1000;
     setAsrWord(index, { tStart, tEnd: Math.round((tStart + len) * 1000) / 1000 });
   };
+  /*
+   * Клавиатура дорожки. Слова — список с одним таб-стопом (roving tabindex): ←/→ выбирают
+   * соседнее слово, Home/End — крайние; Alt+←/→ двигают выбранное слово (с Shift — на 0,2 с).
+   * Раньше стрелки сразу двигали слово, а выбрать его можно было только мышью — без мыши
+   * ни сдвиг, ни «F» не работали.
+   */
+  const wordRefs = useRef<Array<HTMLDivElement | null>>([]);
+  /** слово выбрано с клавиатуры — показываем его тайминг подсказкой, как по ховеру */
+  const [keyboardPick, setKeyboardPick] = useState(false);
+  const selectWord = (index: number) => {
+    setSelected(index);
+    setKeyboardPick(true);
+    wordRefs.current[index]?.focus();
+  };
   const onKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
     if (e.key === ' ') { e.preventDefault(); toggle(); return; }
     if (e.key === 'Escape') { setSelected(null); return; }
+    const count = asr.words.length;
+    if (!count) return;
+    const arrow = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+    if (arrow && e.altKey) {
+      if (selected === null) return;
+      e.preventDefault();
+      nudge(selected, arrow * (e.shiftKey ? 0.2 : 0.05));
+      return;
+    }
+    if (arrow) {
+      e.preventDefault();
+      const from = selected ?? (activeIndex >= 0 ? activeIndex : arrow > 0 ? -1 : count);
+      selectWord(Math.min(count - 1, Math.max(0, from + arrow)));
+      return;
+    }
+    if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); selectWord(e.key === 'Home' ? 0 : count - 1); return; }
     if (selected === null) return;
-    const step = e.shiftKey ? 0.2 : 0.05;
-    if (e.key === 'ArrowLeft') { e.preventDefault(); nudge(selected, -step); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); nudge(selected, step); }
-    else if (e.key === 'f' || e.key === 'F' || e.key === 'а' || e.key === 'А') { e.preventDefault(); toggleAsrFocus(selected); }
+    if (e.key === 'f' || e.key === 'F' || e.key === 'а' || e.key === 'А') { e.preventDefault(); toggleAsrFocus(selected); }
   };
 
   const ticks = useMemo(() => {
@@ -441,6 +468,12 @@ export function SubtitleTimeline() {
     seek(clipStart + ((clientX - rect.left) / cssZoom(box) + box.scrollLeft - X0) / pxPerSec);
   };
   const onHeadDown = (e: ReactPointerEvent<HTMLElement>) => { e.stopPropagation(); capture(e); seekFromLane(e.clientX); };
+  /** плейхед — слайдер: ←/→ перематывают на 0,1 с (с Shift — на 1 с), Home/End — к краям отрывка */
+  const onHeadKey = (e: ReactKeyboardEvent<HTMLElement>) => {
+    const dir = e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : 0;
+    if (dir) { e.preventDefault(); e.stopPropagation(); seek(time + dir * (e.shiftKey ? 1 : 0.1)); return; }
+    if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); e.stopPropagation(); seek(e.key === 'Home' ? clipStart : clipEnd); }
+  };
   const onHeadMove = (e: ReactPointerEvent<HTMLElement>) => { if (e.buttons) seekFromLane(e.clientX); };
 
   const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
@@ -454,6 +487,9 @@ export function SubtitleTimeline() {
   const ready = asr.status === 'COMPLETED' && asr.words.length > 0;
 
   const focusOn = selected !== null && Boolean(asr.words[selected]?.focus);
+  // единственный таб-стоп среди слов: выбранное, иначе играющее, иначе первое
+  const tabWord = selected ?? (activeIndex >= 0 ? activeIndex : 0);
+  const keysHintId = useId();
   const weakWords = asr.words.filter((w) => w.weak).map((w) => w.text);
   const progress = Math.min(1, Math.max(0, (time - clipStart) / duration));
 
@@ -465,7 +501,7 @@ export function SubtitleTimeline() {
           {/* «?» — как работать с дорожкой (по ховеру и фокусу), сразу у заголовка */}
           <span className="w12-stl-help">
             <button type="button" className="w12-help-dot" aria-label={t('wizard.subs.timeline.help')}><span className="w12-l">?</span></button>
-            <span role="tooltip" className="w12-stl-tip-box">{t('wizard.subs.timeline.hint')}</span>
+            <span role="tooltip" className="w12-stl-tip-box">{t('wizard.subs.timeline.hint')} <span id={keysHintId}>{t('wizard.text.timelineKeys')}</span></span>
           </span>
         </h2>
         <div className="w12-side">
@@ -501,7 +537,8 @@ export function SubtitleTimeline() {
           <div
             ref={scrollRef}
             id="subtitle-timeline-lane"
-            tabIndex={0}
+            // пока слов нет — фокус на самой дорожке (пробел = плей); со словами таб-стоп у слова
+            tabIndex={ready ? -1 : 0}
             onKeyDown={onKey}
             className="w12-stl-lane"
             onScroll={onLaneScroll}
@@ -537,7 +574,9 @@ export function SubtitleTimeline() {
                 ))}
                 {/* волна отрывка — фоном под словами */}
                 <canvas ref={waveRef} aria-hidden className="w12-stl-wave" style={{ left: X0, width: Math.ceil(duration * pxPerSec), height: BAR_TOP }} />
-                {/* слова: обычное / играет сейчас / выделенное (обводка) / фокусное (белое) / слабо легло */}
+                {/* слова: обычное / играет сейчас / выделенное (обводка) / фокусное (белое) / слабо легло.
+                    Обёртка без позиционирования — слова по-прежнему меряются от холста */}
+                <div role="listbox" aria-label={t('wizard.text.timelineWords')} aria-orientation="horizontal" aria-describedby={keysHintId}>
                 {asr.words.map((word, index) => {
                   const cur = live && live.index === index ? live : word;
                   const left = X0 + (cur.tStart - clipStart) * pxPerSec;
@@ -545,11 +584,15 @@ export function SubtitleTimeline() {
                   return (
                     <div
                       key={index}
-                      role="button"
-                      tabIndex={-1}
+                      ref={(el) => { wordRefs.current[index] = el; }}
+                      role="option"
+                      aria-selected={selected === index}
+                      aria-label={t('wizard.text.timelineWordLabel', { word: word.text, from: formatTimePrecise(cur.tStart), to: formatTimePrecise(cur.tEnd) })}
+                      tabIndex={index === tabWord ? 0 : -1}
+                      onFocus={() => { if (selected === null) setSelected(index); }}
                       onPointerEnter={() => hoverIn(index)}
                       onPointerLeave={hoverOut}
-                      onPointerDown={onPillDown(index, 'move')}
+                      onPointerDown={(e) => { setKeyboardPick(false); onPillDown(index, 'move')(e); }}
                       onPointerMove={onPillMove}
                       onPointerUp={onPillUp}
                       onPointerCancel={onPillUp}
@@ -565,15 +608,19 @@ export function SubtitleTimeline() {
                       style={{ left, width: w, top: WORD_TOP, height: WORD_H }}
                     >
                       {w >= 32 && <span className="w12-l">{word.text}</span>}
-                      {hovered === index && !drag && (
+                      {(hovered === index || (keyboardPick && selected === index)) && !drag && (
                         <span role="tooltip" className="w12-stl-tip w12-num">{formatTimePrecise(cur.tStart)} – {formatTimePrecise(cur.tEnd)}</span>
                       )}
                       {/* ручки длительности — тянут только край */}
-                      <span onPointerDown={onPillDown(index, 'start')} className="w12-stl-edge w12-l-edge" />
-                      <span onPointerDown={onPillDown(index, 'end')} className="w12-stl-edge w12-r-edge" />
+                      {/* ручки — только мышью/пальцем; с клавиатуры слово двигают Alt+←/→ */}
+                      <span onPointerDown={onPillDown(index, 'start')} className="w12-stl-edge w12-l-edge" role="separator" aria-orientation="vertical"
+                        aria-label={t('wizard.text.timelineWordStart', { word: word.text })} aria-valuetext={formatTimePrecise(cur.tStart)} />
+                      <span onPointerDown={onPillDown(index, 'end')} className="w12-stl-edge w12-r-edge" role="separator" aria-orientation="vertical"
+                        aria-label={t('wizard.text.timelineWordEnd', { word: word.text })} aria-valuetext={formatTimePrecise(cur.tEnd)} />
                     </div>
                   );
                 })}
+                </div>
                 {/* подписи сетки */}
                 {ticks.map((s) => (
                   <span key={`l${s}`} aria-hidden className={cn('w12-stl-lbl w12-num', X0 + (s - clipStart) * pxPerSec >= 30 && 'w12-mid')} style={{ left: X0 + (s - clipStart) * pxPerSec, top: LABEL_TOP }}>
@@ -582,7 +629,15 @@ export function SubtitleTimeline() {
                 ))}
                 {/* плейхед: линия с ромбиком, от верха до ползунка; тянется */}
                 <span
-                  role="presentation"
+                  role="slider"
+                  tabIndex={0}
+                  aria-label={t('wizard.text.timelinePlayhead')}
+                  aria-orientation="horizontal"
+                  aria-valuemin={Math.round(clipStart * 100) / 100}
+                  aria-valuemax={Math.round(clipEnd * 100) / 100}
+                  aria-valuenow={Math.round(time * 100) / 100}
+                  aria-valuetext={formatTimePrecise(time)}
+                  onKeyDown={onHeadKey}
                   onPointerDown={onHeadDown}
                   onPointerMove={onHeadMove}
                   className="w12-stl-head"
