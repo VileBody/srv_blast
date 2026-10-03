@@ -480,7 +480,13 @@
       "asrRetryTip": "Retry recognition: lay the words out on the track again",
       "asrRetryBusy": "Recognition is already running",
       "asrResetTip": "Reset edits: restore timings and focus from recognition",
-      "asrStartFailed": "Could not start recognition"
+      "asrStartFailed": "Could not start recognition",
+      "timelineWords": "Fragment words",
+      "timelineKeys": "Keyboard: ←/→ — next word, Home/End — first and last, Alt+←/→ — move the word (with Shift — by 0.2 s), F — focus word, Space — play, Esc — clear selection.",
+      "timelineWordLabel": "{{word}}, {{from}} – {{to}}",
+      "timelineWordStart": "Start of «{{word}}»",
+      "timelineWordEnd": "End of «{{word}}»",
+      "timelinePlayhead": "Playback position"
     },
     "bg": {
       "heading": "Choose background",

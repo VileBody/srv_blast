@@ -119,7 +119,9 @@
 .w12 .w12-win { position: absolute; top: -6px; bottom: -6px; border-radius: 10px; background: rgba(139, 111, 230, 0.14); box-shadow: inset 0 0 0 1.5px var(--w12-accent); cursor: grab; }
 .w12 .w12-win:active { cursor: grabbing; }
 .w12 .w12-win.w12-over { background: var(--w12-warn-soft); box-shadow: inset 0 0 0 1.5px var(--w12-warn); }
-.w12 .w12-handle { position: absolute; top: 0; bottom: 0; width: 18px; cursor: ew-resize; display: grid; place-items: center; }
+.w12 .w12-handle { position: absolute; top: 0; bottom: 0; width: 18px; cursor: ew-resize; display: grid; place-items: center; touch-action: none; }
+/* приближенную волну листают пальцем: прокрутку ведёт браузер, тап ставит окно (TrackStage.onWaveUp) */
+.w12 .w12-wave[data-pan] { touch-action: pan-x pan-y; }
 .w12 .w12-handle::after { content: ''; width: 4px; height: 30px; border-radius: 3px; background: var(--w12-text); box-shadow: 0 1px 4px rgba(5, 1, 15, .6); }
 .w12 .w12-handle.w12-l { left: -9px; }
 .w12 .w12-handle.w12-r { right: -9px; }
@@ -496,6 +498,10 @@
 .w12 .w12-stl-lbl { position: absolute; pointer-events: none; font-size: 11px; line-height: 12px; color: var(--w12-text-3); }
 .w12 .w12-stl-lbl.w12-mid { transform: translateX(-50%); }
 .w12 .w12-stl-head { position: absolute; left: 0; top: 0; z-index: 3; width: 14px; cursor: ew-resize; will-change: transform; }
+/* слова и плейхед доступны с клавиатуры — фокус видно (мышью ловится как обычно, без рамки) */
+.w12 .w12-stl-head:focus { outline: none; }
+.w12 .w12-stl-head:focus-visible, .w12 .w12-stl-word:focus-visible { outline: 2px solid var(--w12-accent); outline-offset: 2px; }
+.w12 .w12-stl-word:focus:not(:focus-visible) { outline: none; }
 .w12 .w12-stl-head::before { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); background: var(--w12-text); border-radius: 2px; }
 .w12 .w12-stl-head::after { content: ''; position: absolute; top: 0; left: 50%; width: 9px; height: 9px; transform: translate(-50%, -50%) rotate(45deg); background: var(--w12-text); border-radius: 2px; }
 /* ползунок непрозрачный: пунктир сетки и волна под ним не просвечивают */
@@ -557,6 +563,8 @@
 .w12 .w12-font-menu .w12-dd-opt:hover:not(.w12-off) { background: var(--w12-field); color: var(--w12-text); }
 .w12 .w12-font-menu .w12-dd-opt[aria-selected="true"] { background: var(--w12-accent-soft); }
 .w12 .w12-dd-opt.w12-off { cursor: not-allowed; color: var(--w12-text-3); }
+/* фокус в открытом списке шрифтов — у самого списка; где он, показывает подсвеченная строка (data-active) */
+.w12 .w12-font-menu:focus { outline: none; }
 .w12 .w12-font-name { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .w12 .w12-font-name small { font-size: 11px; line-height: 14px; color: var(--w12-text-3); }
 .w12 .w12-font-sample { flex: none; font-size: 18px; line-height: 1; color: var(--w12-text-2); }
