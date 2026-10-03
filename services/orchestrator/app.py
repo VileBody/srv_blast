@@ -1037,7 +1037,6 @@ def create_app() -> FastAPI:
 
     @app.post("/hook/analyze", response_model=HookAnalyzeResponse)
     def hook_analyze(req: HookAnalyzeRequest) -> HookAnalyzeResponse:
-        import tempfile
         from urllib.parse import urlparse
 
         url = str(req.audio_s3_url).strip()
@@ -1050,18 +1049,15 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=400, detail=f"invalid s3 url: {url!r}")
 
         try:
-            from src.storage.s3 import get_s3_client
-            from mlcore.audio_analysis import analyze_focus_clip, to_jsonable  # noqa: F401
+            # тот же кэшированный анализ, что у /storyboard/cuts: «Пул» после шага FX
+            # не гоняет трек второй раз
+            from .storyboard_api import analyze_window
 
-            with tempfile.TemporaryDirectory(prefix="hook_analyze_") as td:
-                suffix = Path(key).suffix or ".mp3"
-                local = Path(td) / f"audio{suffix}"
-                get_s3_client().download_file(bucket, key, str(local))
-                result = analyze_focus_clip(
-                    audio_path=local,
-                    clip_start_abs=float(req.clip_start_sec),
-                    clip_end_abs=float(req.clip_end_sec),
-                )
+            result = analyze_window(
+                audio_s3_url=url,
+                clip_start_abs=float(req.clip_start_sec),
+                clip_end_abs=float(req.clip_end_sec),
+            )
         except Exception as e:
             log.exception("hook_analyze failed url=%s window=%.3f..%.3f",
                           url, req.clip_start_sec, req.clip_end_sec)
