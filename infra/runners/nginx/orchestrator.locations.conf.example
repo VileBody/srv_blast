@@ -1,5 +1,10 @@
 # Paste inside nginx `server {}` that should expose orchestrator endpoint.
 # Example public URL: https://orchestrator.blast808.com/
+#
+# WARNING: the orchestrator API has NO authentication (/jobs/*, /jobs/{id}/edit_state,
+# /asr/preview/from-job, ...). Its port is bound to 127.0.0.1 on purpose. Expose it
+# only behind an IP allowlist (render nodes / office), never to the open internet:
+#   allow <render-node-ip>; deny all;
 
 location / {
     proxy_pass http://blast_orchestrator_api_ha;

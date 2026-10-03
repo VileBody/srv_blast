@@ -245,16 +245,18 @@ def link_telegram(user_id: str, chat_id: Any, profile: dict[str, Any] | None = N
 
     Если этот chat_id уже у другого аккаунта — отказ: склеивать два аккаунта молча
     нельзя, у каждого свои проекты и своя подписка."""
-    user = user_by_id(user_id)
-    if user is None:
-        raise ValueError("user_not_found")
-    owner = get_user_by_chat(chat_id)
-    if owner is not None and owner.get("id") != user_id:
-        raise ValueError("telegram_taken")
-    if user.get("tgChatId") not in (None, chat_id):
-        raise ValueError("telegram_other")
     username = str((profile or {}).get("username") or "").strip() or None
+    # Проверка владельца и запись — под одним замком: иначе два параллельных входа
+    # (привязка одного chat_id к двум аккаунтам) успевали оба увидеть «chat_id свободен».
     with _lock:
+        user = user_by_id(user_id)
+        if user is None:
+            raise ValueError("user_not_found")
+        owner = get_user_by_chat(chat_id)
+        if owner is not None and owner.get("id") != user_id:
+            raise ValueError("telegram_taken")
+        if user.get("tgChatId") not in (None, chat_id):
+            raise ValueError("telegram_other")
         user["tgChatId"] = chat_id
         user["tgVerified"] = True
         if username:

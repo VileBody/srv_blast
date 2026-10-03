@@ -33,13 +33,22 @@ def manager_event(key: str, text: str) -> None:
     enqueue(key, chat_id=None, text=text, manager=True)
 
 
+# Лимит попыток: при бэкоффе до 15 мин это ~2 часа. Дальше событие уходит в
+# dead-letter (dead_at), остаётся видно в БД, но больше не выбирается.
+MAX_ATTEMPTS = 12
+# Сколько событий за тик. Свежие (attempts=0) выбираются первыми, поэтому завал
+# повторов по заблокировавшим бота не задерживает новое «Ролик готов».
+BATCH_SIZE = 50
+
+
 def deliver_pending() -> None:
     now = time.time()
     with db.read() as cursor:
         cursor.execute(db.sql(
             "SELECT event_key, payload, attempts FROM notification_outbox "
-            "WHERE delivered_at IS NULL AND next_attempt <= %s ORDER BY next_attempt, event_key LIMIT 20"
-        ), (now,))
+            "WHERE delivered_at IS NULL AND dead_at IS NULL AND next_attempt <= %s "
+            "ORDER BY attempts, next_attempt, event_key LIMIT %s"
+        ), (now, BATCH_SIZE))
         rows = cursor.fetchall()
     for key, raw, attempts in rows:
         payload: dict[str, Any] = db.json_value(raw)
@@ -50,17 +59,24 @@ def deliver_pending() -> None:
             from . import auth_store
 
             via = auth_store.notify_bot_for_chat(chat_id)
-        ok = bool(chat_id) and telegram_bot._send(
-            chat_id, payload["text"], payload.get("markup"), manager=manager, via=via
-        )
+        if chat_id:
+            result = telegram_bot.deliver(chat_id, payload["text"], payload.get("markup"), manager=manager, via=via)
+        else:
+            result = telegram_bot.SendResult(False, error="no chat id (WEB_MANAGER_CHAT_ID / owner chat)")
+        attempt = int(attempts) + 1
         delay = min(900, 30 * 2 ** min(int(attempts), 5))
+        dead = not result.ok and (result.permanent or attempt >= MAX_ATTEMPTS)
         with db.transaction() as cursor:
             cursor.execute(db.sql(
                 "UPDATE notification_outbox SET attempts = attempts + 1, next_attempt = %s, "
-                "delivered_at = %s, last_error = %s WHERE event_key = %s"
-            ), (now + delay, time.time() if ok else None, "" if ok else "Telegram delivery failed; see API logs/routing configuration", key))
-        if not ok:
-            log.error("notification_pending event=%s attempt=%s retry_in=%ss", key, attempts + 1, delay)
+                "delivered_at = %s, dead_at = %s, last_error = %s WHERE event_key = %s"
+            ), (now + delay, time.time() if result.ok else None, time.time() if dead else None,
+                "" if result.ok else (result.error or "Telegram delivery failed")[:500], key))
+        if dead:
+            log.error("notification_dead_letter event=%s attempt=%s permanent=%s error=%s",
+                      key, attempt, result.permanent, result.error)
+        elif not result.ok:
+            log.error("notification_pending event=%s attempt=%s retry_in=%ss error=%s", key, attempt, delay, result.error)
 
 
 def queue_job(job: dict[str, Any], *, unlimited_offer: bool = False) -> None:

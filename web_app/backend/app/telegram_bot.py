@@ -17,8 +17,10 @@ import logging
 import os
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from typing import Any
 
 from . import auth_store, tiktok_config
@@ -77,8 +79,37 @@ def _api(method: str, params: dict, *, token: str | None = None) -> dict:
         return json.loads(resp.read().decode("utf-8"))
 
 
+@dataclass(frozen=True)
+class SendResult:
+    ok: bool
+    # Повтор не поможет: человек заблокировал бота / чата нет. Такие события outbox
+    # уводит в dead-letter, а не крутит вечно поверх свежих «Ролик готов».
+    permanent: bool = False
+    error: str = ""
+
+
+# Ответы Bot API, после которых повтор бессмыслен: 403 — бот заблокирован, аккаунт
+# удалён или бот не может писать первым; 400 — чата/пользователя не существует.
+_PERMANENT_400 = ("chat not found", "user not found", "peer_id_invalid", "chat_id is empty")
+
+
+def _is_permanent(code: Any, description: str) -> bool:
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        return False
+    if code == 403:
+        return True
+    return code == 400 and any(marker in description.lower() for marker in _PERMANENT_400)
+
+
 def _send(chat_id: object, text: str, markup: dict | None = None, *, manager: bool = False,
           via: str = "auth") -> bool:
+    return deliver(chat_id, text, markup, manager=manager, via=via).ok
+
+
+def deliver(chat_id: object, text: str, markup: dict | None = None, *, manager: bool = False,
+            via: str = "auth") -> SendResult:
     """`via="public"` — отправить от публичного бота (@blast808bot) тем, кто пришёл
     на сайт по ссылке из него. Только sendMessage: апдейты этого бота принимает его
     вебхук, и отправка ему не мешает."""
@@ -90,22 +121,27 @@ def _send(chat_id: object, text: str, markup: dict | None = None, *, manager: bo
             token = os.getenv("WEB_MANAGER_BOT_TOKEN", "").strip()
             if not token:
                 log.error("telegram_auth: WEB_MANAGER_BOT_TOKEN is not configured")
-                return False
+                return SendResult(False, error="WEB_MANAGER_BOT_TOKEN is not configured")
             result = _api("sendMessage", params, token=token)
         elif via == "public":
             token = os.getenv("WEB_PUBLIC_BOT_TOKEN", "").strip()
             if not token:
                 log.error("telegram_auth: WEB_PUBLIC_BOT_TOKEN is not configured")
-                return False
+                return SendResult(False, error="WEB_PUBLIC_BOT_TOKEN is not configured")
             result = _api("sendMessage", params, token=token)
         else:
             result = _api("sendMessage", params)
         if not result.get("ok"):
-            log.error("telegram_auth: sendMessage rejected code=%s description=%s",
-                      result.get("error_code"), result.get("description"))
-            return False
+            return _rejected(result.get("error_code"), str(result.get("description") or ""))
         log.info("telegram_auth: sendMessage delivered")
-        return True
+        return SendResult(True)
+    except urllib.error.HTTPError as exc:
+        # urllib бросает на любой 4xx/5xx; тело — обычный JSON-ответ Bot API с причиной.
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+        except Exception:  # noqa: BLE001 — тело не JSON: решаем только по коду
+            body = {}
+        return _rejected(body.get("error_code") or exc.code, str(body.get("description") or ""))
     except Exception as exc:
         # Exceptions may contain the Bot API URL (including its token). Log
         # only their type/status; a timeout does not prove non-delivery and
@@ -113,7 +149,13 @@ def _send(chat_id: object, text: str, markup: dict | None = None, *, manager: bo
         # notifications retry separately with backoff and a persisted event key.
         log.error("telegram_auth: sendMessage delivery unknown error=%s status=%s",
                   type(exc).__name__, getattr(exc, "code", None))
-        return False
+        return SendResult(False, error=f"delivery unknown: {type(exc).__name__}")
+
+
+def _rejected(code: Any, description: str) -> SendResult:
+    log.error("telegram_auth: sendMessage rejected code=%s description=%s", code, description)
+    return SendResult(False, permanent=_is_permanent(code, description),
+                      error=f"Telegram {code}: {description}"[:500])
 
 
 # Сколько поштучных сообщений «Ролик N готов» отправляем, прежде чем перейти на сводку.

@@ -761,3 +761,16 @@ def test_credit_usage_meter_counts_spend_even_with_rolled_over_balance(monkeypat
     assert billing.credit_usage_view(100, balance=180, spent=20) == (200, 20)
     assert billing.credit_usage_view(100, balance=80, spent=20) == (100, 20)
     assert billing.credit_usage_view(None, balance=10_000, spent=23) == (None, 23)
+
+
+def test_production_config_logs_missing_public_bot_token(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """Регресс: без WEB_PUBLIC_BOT_TOKEN «Ролик готов» пришедшим из бота молча копился
+    в outbox. Теперь это ошибка в логе на старте; сайт при этом не роняем."""
+    module = _module(monkeypatch)
+    monkeypatch.setattr(module, "SETTINGS", dataclasses.replace(module.SETTINGS, backend="production"))
+    monkeypatch.delenv("WEB_PUBLIC_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("WEB_STAGE1_ALIGNMENT_BACKEND", raising=False)
+    # проверка идёт дальше — к следующей обязательной переменной, а не падает на токене
+    with pytest.raises(module.ProductionBackendError, match="WEB_STAGE1_ALIGNMENT_BACKEND"):
+        module.ProductionConfig.load()
+    assert "WEB_PUBLIC_BOT_TOKEN is empty" in caplog.text

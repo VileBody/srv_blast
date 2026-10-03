@@ -21,17 +21,30 @@ class _Billing:
         self.allowed = allowed
         self.consumed: list[tuple[int, str]] = []
         self.results: list[dict[str, Any]] = []
+        self.released = 0
+        self.max_redeems: int | None = None  # 1 — одноразовая ссылка (/site, напоминания)
 
     async def redeem_handoff(self, token: str) -> dict[str, Any] | None:
         assert token == TOKEN
         if self.record is None:
+            return None
+        if self.max_redeems is not None and self.record["redeem_count"] >= self.max_redeems:
             return None
         self.record["redeem_count"] += 1
         return {**self.record, "result": dict(self.record["result"])}
 
     async def peek_handoff_owner(self, token: str) -> int | None:
         assert token == TOKEN
-        return None if self.record is None else int(self.record["tg_id"])
+        if self.record is None:
+            return None
+        if self.max_redeems is not None and self.record["redeem_count"] >= self.max_redeems:
+            return None
+        return int(self.record["tg_id"])
+
+    async def release_handoff(self, token: str) -> None:
+        assert token == TOKEN
+        self.released += 1
+        self.record["redeem_count"] = max(0, self.record["redeem_count"] - 1)
 
     async def set_handoff_result(self, token: str, result: dict[str, Any]) -> None:
         self.results.append(result)
@@ -512,3 +525,148 @@ def test_remix_with_unreachable_edit_state_says_unavailable(client, monkeypatch)
     assert "wizardImport" not in body
     assert body["wizardImportError"] == main.bot_import.UNAVAILABLE_TEXT
     assert body["draft"]["clipEnd"] == 20.0
+
+
+def test_failed_open_does_not_burn_a_single_use_link(client, monkeypatch) -> None:
+    """Регресс: ссылка гасилась ДО проверки трека в S3 — сбой S3 сжигал одноразовую
+    ссылку (/site, напоминания), и повтор упирался в «ссылка устарела»."""
+    tc, main = client
+    billing = _Billing(_track_record())
+    billing.max_redeems = 1
+
+    class _Flaky(_Backend):
+        fail = True
+
+        def register_bot_track(self, s3_url: str, *, filename: str) -> dict[str, str]:
+            if self.fail:
+                raise TimeoutError("s3 head timeout")
+            return super().register_bot_track(s3_url, filename=filename)
+
+    backend = _Flaky()
+    _production(monkeypatch, main, billing, backend)
+    assert tc.post("/api/auth/handoff", json={"token": TOKEN}).status_code == 503
+    assert billing.released == 1 and billing.record["redeem_count"] == 0
+    backend.fail = False
+    ok = tc.post("/api/auth/handoff", json={"token": TOKEN})
+    assert ok.status_code == 200, ok.text
+    assert billing.released == 1 and billing.record["redeem_count"] == 1
+    # удачное открытие засчитано: одноразовая ссылка теперь и правда погашена
+    assert tc.post("/api/auth/handoff", json={"token": TOKEN}).status_code == 410
+
+
+def test_telegram_taken_while_linking_is_409_not_500(client, monkeypatch) -> None:
+    """Пока человек думал над «Привязать?», chat_id привязался к другому аккаунту:
+    понятный 409, и одноразовая ссылка не сгорает."""
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing)
+    _google_session(tc, main, billing)
+    original = billing.redeem_handoff
+
+    async def redeem_with_race(token: str):
+        main.auth_store.create_user_from_telegram(CHAT2, {"username": "other"})
+        return await original(token)
+
+    billing.redeem_handoff = redeem_with_race
+    redeemed = billing.record["redeem_count"]
+
+    r = tc.post("/api/auth/handoff", json={"token": TOKEN, "link": True})
+
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["code"] == "telegram_taken"
+    assert billing.record["redeem_count"] == redeemed and billing.released == 1
+
+
+def test_two_links_for_one_track_opened_at_once_make_one_project(client, monkeypatch) -> None:
+    """Регресс: замок был по токену — две РАЗНЫЕ ссылки на один трек, открытые разом
+    (напоминание + /site), обе проходили проверку «проекта нет» и заводили по проекту."""
+    import asyncio
+
+    tc, main = client
+    billing = _Billing(_track_record())
+    _production(monkeypatch, main, billing, _Backend())
+    tc.post("/api/auth/handoff", json={"token": TOKEN, "force": True})  # аккаунт заведён
+    user = main.auth_store.get_user_by_chat(CHAT)
+    main.store.use_user(user["id"])
+    for project in list(main.store.ws().projects):
+        main.store.ws().projects.remove(project)
+
+    gate = asyncio.Event()
+    entered = 0
+
+    async def slow_can_upload(tg_id: int, audio_hash: str) -> bool:
+        nonlocal entered
+        entered += 1
+        await gate.wait()  # оба запроса стоят между проверкой и созданием
+        return True
+
+    billing.can_upload_track = slow_can_upload
+
+    async def both() -> list[dict[str, Any]]:
+        records = [{**_track_record(), "result": {}} for _ in range(2)]
+        tasks = [asyncio.create_task(main._handoff_track_project(f"token-{i}", r, CHAT)) for i, r in enumerate(records)]
+        await asyncio.sleep(0.05)
+        gate.set()
+        return list(await asyncio.gather(*tasks))
+
+    first, second = asyncio.run(both())
+
+    assert entered == 1  # второй ждал замка и нашёл проект первого
+    assert first["projectId"] == second["projectId"] and second["repeat"] is True
+    assert [p["id"] for p in main.store.ws().projects] == [first["projectId"]]
+    assert main._HANDOFF_LOCKS == {}
+
+
+def test_remix_edit_states_are_fetched_in_parallel_with_a_deadline(client, monkeypatch) -> None:
+    """Регресс: до 20 последовательных edit_state держали запрос входа. Теперь они
+    параллельны, а не успевший к сроку ролик явно помечен «недоступен»."""
+    import threading
+    import time
+
+    tc, main = client
+    backend = _RemixBackend()
+    original = backend.job_edit_state
+    active = peak = 0
+    lock = threading.Lock()
+    release = threading.Event()
+
+    def slow(job_id: str) -> dict[str, Any]:
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            if job_id == "bot-stuck":
+                release.wait(5)  # завис дольше срока
+            else:
+                time.sleep(0.1)
+            return original(job_id)
+        finally:
+            with lock:
+                active -= 1
+
+    backend.job_edit_state = slow
+    monkeypatch.setattr(main, "_production_backend", lambda: backend)
+    monkeypatch.setattr(main, "REMIX_EDIT_STATE_DEADLINE_S", 0.5)
+    started = time.monotonic()
+    states = main._remix_edit_states(["bot-a", "bot-b", "bot-c", "bot-stuck"])
+    elapsed = time.monotonic() - started
+    release.set()
+
+    assert peak >= 3 and elapsed < 2.0
+    assert [s["status"] for s in states] == ["SUCCEEDED"] * 3 + [main.bot_import.STATUS_UNAVAILABLE]
+    assert [s["job_id"] for s in states] == ["bot-a", "bot-b", "bot-c", "bot-stuck"]
+
+
+def test_remix_import_over_the_total_deadline_says_so(client, monkeypatch) -> None:
+    import asyncio
+
+    tc, main = client
+    monkeypatch.setattr(main, "REMIX_IMPORT_DEADLINE_S", 0.05)
+
+    async def hang(payload, project):
+        await asyncio.sleep(5)
+
+    monkeypatch.setattr(main, "_remix_wizard_import", hang)
+    out = asyncio.run(main._remix_import_or_error({"jobIds": ["bot-a"]}, {"projectId": "p"}))
+    assert out == {"wizardImportError": main.REMIX_IMPORT_TIMEOUT_TEXT}
