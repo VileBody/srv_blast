@@ -352,3 +352,43 @@ def test_catalog_image_is_downscaled_with_alpha(tmp_path: Path) -> None:
                            str(store.path("image/aa/f.png"))], capture_output=True, text=True).stdout.strip()
     width, height, pix_fmt = info.split(",")[:3]
     assert (width, height) == ("720", "1280") and "a" in pix_fmt  # прозрачность рамки сохранена
+
+
+# ── поллинг примерки и кэш анализа дропа ─────────────────────────────────────────
+
+def test_asr_poll_writes_db_only_when_state_changes(client, monkeypatch) -> None:
+    import dataclasses
+    _, main, _ = client
+    flushes = []
+    answers = iter([{"status": "RUNNING"}, {"status": "RUNNING"}, {"status": "COMPLETED", "words": [{"text": "a"}]}])
+
+    class Backend:
+        def asr_preview_state(self, job_id):
+            return next(answers)
+
+    monkeypatch.setattr(main, "RUNTIME", dataclasses.replace(main.RUNTIME, backend="production"))
+    monkeypatch.setattr(main, "_production_backend", lambda: Backend())
+    monkeypatch.setattr(main.persistence, "flush_user", lambda uid: flushes.append(uid))
+    state = {"key": "k", "status": "RUNNING", "jobId": "j1", "words": []}
+    state = main._asr_sync(state)
+    state = main._asr_sync(state)
+    assert flushes == []  # опрос без изменений — без записи
+    state = main._asr_sync(state)
+    assert state["status"] == "COMPLETED" and len(flushes) == 1
+
+
+def test_drop_analysis_is_cached_per_track_and_window(client, monkeypatch) -> None:
+    _, main, _ = client
+    calls = []
+
+    class Backend:
+        def analyze_hook(self, *, audio_s3_url, clip_start_sec, clip_end_sec):
+            calls.append((audio_s3_url, clip_start_sec, clip_end_sec))
+            return {"bpm": 120.0, "drop_candidates": [{"t": clip_start_sec + 1, "confidence": 0.9}]}
+
+    main._DROPS_CACHE.clear()
+    monkeypatch.setattr(main, "_production_backend", lambda: Backend())
+    first = main._cached_hook_analysis("s3://raw/t.mp3", 10.0, 22.0)
+    assert main._cached_hook_analysis("s3://raw/t.mp3", 10.0, 22.0) == first
+    main._cached_hook_analysis("s3://raw/t.mp3", 11.0, 22.0)  # другое окно — свой анализ
+    assert len(calls) == 2

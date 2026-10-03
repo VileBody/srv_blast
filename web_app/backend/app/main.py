@@ -12,6 +12,7 @@ import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from collections import OrderedDict
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 from uuid import uuid4
@@ -1916,6 +1917,36 @@ def api_media_track_peaks(track_id: str) -> Response:
                     headers={"Cache-Control": CACHE_TRACK})
 
 
+# Анализ дропа (оркестратор `/hook/analyze`, ~секунды CPU) детерминирован для пары
+# трек+окно, а сайт зовёт его многократно: каждый вход в FX, сетка битов SubtitleTimeline,
+# возврат назад по шагам. Ключ трека — s3-адрес загрузки (uuid, файл не перезаписывается).
+# TTL — чтобы после выкатки нового анализатора в оркестраторе старые ответы не жили вечно.
+DROPS_CACHE_MAX = 512
+DROPS_CACHE_TTL_S = 6 * 3600.0
+_DROPS_CACHE: "OrderedDict[tuple[str, float, float], tuple[float, dict[str, Any]]]" = OrderedDict()
+_DROPS_CACHE_LOCK = threading.Lock()
+
+
+def _cached_hook_analysis(audio_s3_url: str, start: float, end: float) -> dict[str, Any]:
+    import time
+
+    key = (audio_s3_url, round(float(start), 2), round(float(end), 2))
+    now = time.monotonic()
+    with _DROPS_CACHE_LOCK:
+        hit = _DROPS_CACHE.get(key)
+        if hit and now - hit[0] < DROPS_CACHE_TTL_S:
+            _DROPS_CACHE.move_to_end(key)
+            return hit[1]
+    # ошибки не кэшируем: следующий заход спросит оркестратор заново
+    result = _production_backend().analyze_hook(audio_s3_url=audio_s3_url, clip_start_sec=start, clip_end_sec=end)
+    with _DROPS_CACHE_LOCK:
+        _DROPS_CACHE[key] = (now, result)
+        _DROPS_CACHE.move_to_end(key)
+        while len(_DROPS_CACHE) > DROPS_CACHE_MAX:
+            _DROPS_CACHE.popitem(last=False)
+    return result
+
+
 @app.get("/api/wizard/drops", tags=["wizard"])
 async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> dict[str, Any]:
     """Кандидаты дропа для выбранного отрывка — то же, что показывает бот.
@@ -1958,12 +1989,7 @@ async def api_drops(trackId: str = "", clipFrom: str = "", clipTo: str = "") -> 
         return {"status": "NEEDS_TRACK", "bpm": 0, "drops": [], "mock": False}
 
     try:
-        result = await run_in_threadpool(
-            _production_backend().analyze_hook,
-            audio_s3_url=audio_s3_url,
-            clip_start_sec=start,
-            clip_end_sec=end,
-        )
+        result = await run_in_threadpool(_cached_hook_analysis, audio_s3_url, start, end)
     except HTTPException:
         raise
     except Exception as exc:
@@ -2133,12 +2159,16 @@ def _asr_sync(state: dict[str, Any]) -> dict[str, Any]:
     if RUNTIME.backend != "production" or state.get("status") in asr_preview.TERMINAL or not state.get("jobId"):
         return state
     fresh = _production_backend().asr_preview_state(str(state["jobId"]))
-    state = {**state, **fresh}
-    store.set_asr_preview(state)
+    merged = {**state, **fresh}
+    if merged == state:
+        # ничего не поменялось (джоба ещё в очереди/считается) — фронт поллит каждые пару
+        # секунд, и запись воркспейса в БД на каждый опрос была пустой нагрузкой
+        return state
+    store.set_asr_preview(merged)
     # Поллинг — GET, а сброс в БД в middleware висит на мутирующих методах: без явного
     # вызова готовые слова жили бы только до рестарта.
     persistence.flush_user(store.current_user_id())
-    return state
+    return merged
 
 
 @app.post("/api/wizard/asr/start", tags=["wizard"])
